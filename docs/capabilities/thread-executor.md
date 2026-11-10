@@ -13,7 +13,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import UseThreadExecutor
 
 executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix='agent-worker')
-agent = Agent('openai:gpt-5.2', capabilities=[UseThreadExecutor(executor)])
+agent = Agent('{{ openai:medium }}', capabilities=[UseThreadExecutor(executor)])
 ```
 
 It declares a default `id` of `'use_thread_executor'`, so two instances merge instead of raising a duplicate-id error — see [building custom capabilities](custom.md) for the merge rules.

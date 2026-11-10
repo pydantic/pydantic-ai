@@ -10,8 +10,7 @@ from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
 from types import TracebackType
-
-from typing_extensions import Self
+from typing import Self
 
 __all__ = ('AbstractModel',)
 

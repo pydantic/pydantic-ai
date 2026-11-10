@@ -1,7 +1,7 @@
 # Docs Conventions
 
 How the harness's user-facing docs stay correct, consistent, and discoverable. Read this before
-touching `README.md`, `docs/`, or a capability README — and before adding a
+touching `src/pydantic_ai_harness/README.md`, `docs/harness/`, or a capability README — and before adding a
 capability, since every capability lands with docs or fails CI.
 
 ## Writing Style
@@ -12,24 +12,53 @@ mechanism, not significance; no throat-clearing, no "powerful"/"seamless"-class 
 "not just X, but Y" reveals; plain verbs over industry metaphors; lead with the fact; one idea
 per sentence.
 
-## The Parity Contract (enforced by `tests/test_docs_parity.py`)
+## The Parity Contract (enforced by `tests/harness/test_docs_parity.py`)
 
 Every capability package must, or CI fails:
 
 1. Have its own `README.md` (purpose-first lead, source-module link, spaced-words H1).
-2. Be linked from the top-level `README.md` capability tables.
-3. Have a `docs/<slug>.md` page registered in `_CAPABILITY_PAGE_META` (source module + exact H1).
-4. Have a partner PR that adds or updates the page in pydantic-ai's
-   `docs/navigation.yml`.
+2. Be linked from the `src/pydantic_ai_harness/README.md` capability tables.
+3. Have a `docs/harness/<slug>.md` page registered in `_CAPABILITY_PAGE_META` (source module + exact H1).
 
-## Sidebar Source Of Truth Lives In pydantic-ai (since 2026-08-12)
+Also add the page to `docs/navigation.yml`, in its category subsection under "Capabilities". A
+durable-execution backend goes in the "Durable Execution" section instead (like
+`harness/aws-lambda.md`). An interface goes in the "Interfaces" section instead (like
+`harness/acp.md`). `tests/test_docs_navigation.py` fails for a page that has no entry and is not
+listed in that test's `UNPUBLISHED_PAGES`.
 
-Since unified-docs #179, the harness sidebar renders from **pydantic-ai's
-`docs/navigation.yml`** (the "Pydantic AI Harness" section; entries carry
-`source: "harness"`). This repository has no local navigation file. Adding,
-renaming, removing, or regrouping a harness docs page therefore requires a partner
-PR that updates pydantic-ai's `docs/navigation.yml`. Keep slugs
-`harness/<page>` and preserve existing `aliases:` when renaming.
+## Semantic Parity
+
+Update both the capability README and `docs/harness/<capability>.md` for every user-facing change:
+public classes, parameters, defaults, tool names, extras, and safety semantics.
+ACP's README stays under `pydantic_ai_harness/experimental/acp/`; its docs page remains flat under `docs/harness/`.
+The two docs must agree with each other and the source. Document composition constraints and safety implications.
+Treat README, docs page, or example drift as a defect to fix before merge.
+
+Keep the packaged `pydantic-ai-harness` agent skill in sync too:
+`src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/`.
+Add new capabilities to its routing table and matching `references/` file.
+Update changed parameters, defaults, tool names, and extras there.
+
+Every snippet in both docs must run with the declared extras and all imports present.
+Check class and parameter names against the source; preserve the source's model choices.
+Use canonical module paths, without `experimental` for graduated capabilities.
+Follow the rendering-specific model-name rules under "Page Conventions" below.
+
+Use relative `.md` links for harness and Pydantic AI docs links on docs pages (`../toolsets.md` from `docs/harness/`).
+Use reference-style links for API elements (`[RunContext][pydantic_ai.tools.RunContext]`).
+CI's offline link check verifies target files and anchors.
+
+`tests/harness/test_docs_parity.py` enforces mechanical checks, not semantic agreement or runnable snippets.
+The [docs-parity-reviewer skill](../../../.agents/skills/docs-parity-reviewer/SKILL.md) covers those checks.
+
+## Sidebar Source Of Truth
+
+The harness sidebar renders from **`docs/navigation.yml`**: mostly the category
+subsections under "Capabilities", shared with core capability pages, plus a few
+pages under "Durable Execution" and "Interfaces". Harness entries carry
+`path: "harness/<page>.md"`. Adding, renaming, removing, or regrouping a harness
+docs page updates `docs/navigation.yml` in the same PR. Keep each harness page's
+slug as `harness/<page>`. When renaming a page, keep its existing `aliases:`.
 
 ## Page Conventions
 
@@ -44,47 +73,53 @@ PR that updates pydantic-ai's `docs/navigation.yml`. Keep slugs
   Use `uv run` for README follow-up executables in the uv project environment.
   Workflow YAML and repository-development commands retain
   their required execution environment rather than becoming `uv add` examples.
-- **Purpose-first lead**: the opening paragraph says what the capability is for and when to use
+- **Purpose-first lead**: the opening paragraph of each docs page and README says what the capability is for and when to use
   it. Lifecycle hook names (`before_model_request`, …) never appear in the lead — mechanism goes
-  below the purpose.
-- **H1 = the capability's spaced name** (`Code Mode`, not `CodeMode`), matching filename and nav
-  label. Allowlisted ClassName exceptions live in the parity test.
-- **Every page links its own source module** on GitHub.
-- **Experimental framing only on ACP.** Every other capability page carries the standard
-  version-promise blockquote ("While Pydantic AI Harness is on 0.x releases, the API may change
-  between minor releases — …") directly before its first `##` heading, linking the
+  below the purpose. Mention class names only after stating the purpose.
+- **Capability name**: the docs filename, page H1, README H1, and nav label match the capability's descriptive name.
+  H1s use spaced words (`Code Mode`, not `CodeMode`). Allowlisted ClassName exceptions live in the parity test.
+- **Every page links its own source module** on GitHub. A page exposing a public class may end
+  with `## API reference` and `::: pydantic_ai_harness.<Class>` autodoc blocks.
+- **Experimental framing only on ACP.** ACP keeps its experimental warning and possible-removal notice.
+  Every other capability page carries the standard version-promise blockquote
+  ("While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, ...")
+  directly before its first `##` heading, linking the
   [version policy](../../../docs/harness/index.md#version-policy). Copy it verbatim from an existing page;
   don't improvise variants.
 - **Example style**: comments one line max; outputs elided (`#> ...`) rather than long canned
-  text; models are the current generation (verify against core's `_known_model_names.py` — as of
-  2026-08 that means `claude-fable-5` / `gpt-5.6-sol`, not older defaults) unless a page
-  intentionally pins an older one.
+  text. On `docs/harness/` pages, name models with the aliases from
+  `docs/model_aliases/aliases.json` (`{{ anthropic:large }}`), never model IDs; see the "Model names"
+  section of `docs/AGENTS.md`.
+  READMEs, which GitHub renders without resolving aliases, keep concrete model IDs.
 
-## The Capability Index Spans Two Repos
+## The Capability Index Spans Core And Harness
 
-`README.md` and `docs/index.md` present **one capability index across core and Harness** (the
-"Ships in" column): core capabilities (Web Search, MCP, Tool Search, Thinking, tool approval, …)
-appear here linked to the pydantic-ai docs, and pydantic-ai's docs mirror harness entries in the
-other direction.
+`src/pydantic_ai_harness/README.md` and `docs/harness/index.md` present **one capability index across core and
+Harness** (the "Package" column): core capabilities (Web Search, MCP, Tool Search, Thinking, tool
+approval, …) appear there linked to the Pydantic AI docs, and the Pydantic AI docs mirror harness
+entries in the other direction.
 
 **This mirroring is a maintenance contract.** If you add, rename, re-categorize, or remove a
-capability here, check whether pydantic-ai's docs (its capabilities overview and front pages)
-reference it — and open a companion PR there when they do. The same applies in reverse when core
-capabilities change. Until an automated docs-review workflow enforces this, the reminder lives
-here: a rename PR is not done until both repos agree.
+harness capability, check whether the Pydantic AI docs (the capabilities overview and the front
+pages) reference it, and update them in the same PR when they do. The same applies in reverse
+when core capabilities change. Until an automated docs-review workflow enforces this, the
+reminder lives here: a rename PR is not done until both indexes agree.
 
 ## Categories
 
 Capabilities are grouped by what they give the agent, not by implementation detail:
 **Harnesses** (complete combined capabilities like `Coder`) · **Execution environments** (the
-workspace the agent acts in) · **Tools & native abilities** · **Web & research** ·
+workspace the agent acts in) · **Tools & native abilities** · **Integrations** (one third-party
+service each, like `GitHub` or `Slack`; also list a new one on `docs/harness/integrations.md`) ·
+**Web & research** ·
 **Reasoning, planning & delegation** · **Context management** (how the agent spends the context
 window — Code Mode lives here, not under execution: it changes *how* the agent executes, not
 *where*) · **Knowledge & memory** · **Control & safety** · **Self-extension** ·
 **Execution runtime** (durable execution, persistence, observability plumbing). The same scheme
-orders the sidebar in pydantic-ai's `docs/navigation.yml`. A new capability goes in the category
-matching its user-facing benefit; if none fits, raise it in the PR rather than inventing an
-eleventh silently. Keep every table's "Package" column and one-line description style intact.
+orders the subsections under "Capabilities" in `docs/navigation.yml`. That file adds a core-only
+"Loop Customization" subsection after them. A new capability goes in the category matching its
+user-facing benefit. If no category fits, say so in the PR instead of silently adding a new
+category. Keep every table's "Package" column and one-line description style intact.
 
 ## Harness Pages Specifically
 
@@ -93,14 +128,17 @@ capability composing other capabilities** and show the blown-out equivalent `cap
 list — the transparency promise is part of the product. Harness classes are named like the agent
 they create (`Coder`), not like capabilities; the word "preset" is not used.
 
-The blown-out equivalent — on the docs page and in the harness's `examples/` counterpart — writes
+Update the implementation, docs page, and example together in the same PR when composition or defaults change.
+
+The blown-out equivalent — on the docs page and in the harness's `src/pydantic_ai_harness/examples/` counterpart — writes
 the harness's defaults out literally (instructions, command allowlists) instead of importing the
 constants: the reader is meant to see the entire picture and copy-tweak it. It mirrors the
 exported agent (`coder_agent`, …) exactly, including its `name=` and identity `instructions=`.
 
 The Coder blown-out block lives on **five surfaces** that must stay identical:
-`docs/coder.md`, `docs/index.md`, `README.md`, `pydantic_ai_harness/coder/README.md`, and (as a
-parameterized module) `examples/coding_agent.py`. `tests/test_docs_parity.py` compares the four
+`docs/harness/coder.md`, `docs/harness/index.md`, `src/pydantic_ai_harness/README.md`,
+`src/pydantic_ai_harness/pydantic_ai_harness/coder/README.md`, and (as a parameterized module)
+`src/pydantic_ai_harness/examples/coding_agent.py`. `tests/harness/test_docs_parity.py` compares the four
 markdown copies byte-for-byte and checks the written-out allowlist against
 `DEFAULT_ALLOWED_COMMANDS`, so a change to any one of them fails CI until all move together —
 change the implementation, the pages, and the example in the same PR. Each block carries a

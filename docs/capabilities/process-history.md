@@ -16,7 +16,7 @@ def keep_recent(messages: list[ModelMessage]) -> list[ModelMessage]:
     return messages[-5:]  # (1)!
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[ProcessHistory(keep_recent)])
+agent = Agent('{{ openai:medium }}', capabilities=[ProcessHistory(keep_recent)])
 ```
 
 1. Keep only the five most recent messages. In practice you'll want to keep the first request too, so the system prompt survives — see [Processing Message History](../message-history.md#processing-message-history) for complete patterns.

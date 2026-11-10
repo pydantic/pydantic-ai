@@ -14,7 +14,7 @@ from pydantic_ai.capabilities import Instrumentation
 
 logfire.configure()  # (1)!
 
-agent = Agent('openai:gpt-5.2', capabilities=[Instrumentation()])
+agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation()])
 ```
 
 1. Sets the global `TracerProvider` that `Instrumentation` uses by default. Any OpenTelemetry SDK configuration works too.
@@ -23,4 +23,4 @@ Pass [`InstrumentationSettings`][pydantic_ai.models.instrumented.Instrumentation
 
 Other capabilities can attach attributes to the created spans through the OpenTelemetry API (`opentelemetry.trace.get_current_span().set_attribute(...)`).
 
-See [Debugging and Monitoring](../logfire.md) for the full guide: setup, what gets captured, semantic-conventions versions, and excluding sensitive or binary content.
+See [Debugging and Monitoring](../logfire.md#using-logfire) for the full guide: setup, what gets captured, semantic-conventions versions, and excluding sensitive or binary content.

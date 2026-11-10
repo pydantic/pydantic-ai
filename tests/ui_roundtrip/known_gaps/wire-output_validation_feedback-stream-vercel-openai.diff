@@ -1,0 +1,24 @@
+--- expected
++++ actual
+@@ -37,9 +37 @@
+-   "content": "draft"
+-  },
+-  {
+-   "role": "user",
+-   "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nThat was a draft; answer for real.\n</retry_feedback>"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": "final answer"
++   "content": "draft\n\nfinal answer"
+@@ -62,9 +54 @@
+-   "content": "draft"
+-  },
+-  {
+-   "role": "user",
+-   "content": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nThat was a draft; answer for real.\n</retry_feedback>"
+-  },
+-  {
+-   "role": "assistant",
+-   "content": "final answer"
++   "content": "draft\n\nfinal answer"

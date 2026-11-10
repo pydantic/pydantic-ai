@@ -1,0 +1,151 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2934"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 5
+        messages:
+        - role: user
+          content:
+          - text: "Record project decision DB-1: Use PostgreSQL 17 as the primary database. The reason: the team already runs it in two other services. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded DB-1: Use PostgreSQL 17 as the primary database."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision FE-1: Use React 19 for the web client. The reason: server components cut the bundle size for the dashboard. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded FE-1: Use React 19 for the web client."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision DB-2: Put pgbouncer in front of PostgreSQL. The reason: the worker fleet opens too many short-lived connections. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded DB-2: Put pgbouncer in front of PostgreSQL."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision OPS-1: Deploy on Fly.io in two regions. The reason: latency for European customers was over 300 ms. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded OPS-1: Deploy on Fly.io in two regions."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision DB-3: Take nightly base backups to S3 with 30-day retention. The reason: compliance asked for a month of history. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded DB-3: Take nightly base backups to S3 with 30-day retention."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision FE-2: Use Tailwind CSS for styling. The reason: the design system tokens map onto its theme config. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded FE-2: Use Tailwind CSS for styling."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision OPS-2: Ship logs and traces to Logfire. The reason: one place to debug both the API and the workers. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded OPS-2: Ship logs and traces to Logfire."
+            type: text
+        - role: user
+          content:
+          - text: "Record project decision DB-4: Run migrations with Alembic in a pre-deploy step. The reason: a failed migration must block the release. Acknowledge it in one sentence."
+            type: text
+        - role: assistant
+          content:
+          - text: "Recorded DB-4: Run migrations with Alembic in a pre-deploy step."
+            type: text
+        - role: user
+          content:
+          - text: Next, help me pick a job queue for the workers.
+            type: text
+        model: claude-haiku-5-5
+        compaction:
+          type: summarize
+        stream: false
+        system:
+        - type: text
+          text: You keep track of the decisions for a web application project.
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=660
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-9072318e18c8e3729f9221b8f94fd88a-75134151b0806a28-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-haiku-5-5
+        id: msg_011CgRYUJCeUXjQHk2FKGVZH
+        type: message
+        role: assistant
+        content: []
+        container: null
+        stop_reason: max_tokens
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          iterations:
+          - input_tokens: 790
+            output_tokens: 5
+            cache_read_input_tokens: 0
+            cache_creation_input_tokens: 0
+            cache_creation:
+              ephemeral_5m_input_tokens: 0
+              ephemeral_1h_input_tokens: 0
+            type: compaction
+          output_tokens: 0
+          service_tier: standard
+          inference_geo: global
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-10-26T21:16:50.992821+00:00

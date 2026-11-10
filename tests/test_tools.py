@@ -19,14 +19,17 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    CapabilityLoadDeltaPart,
     EndStrategy,
     ExternalToolset,
     FunctionToolset,
+    InstructionBaselinePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
     PrefixedToolset,
-    RetryPromptPart,
+    RetryInfo,
     RunContext,
     TextPart,
     Tool,
@@ -39,7 +42,14 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import HandleDeferredToolCalls, PrepareTools
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    PydanticAIDeprecationWarning,
+    ToolFailed,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
@@ -53,9 +63,10 @@ from pydantic_ai.tools import (
     ToolDenied,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr, iter_message_parts, message, message_part
+from .conftest import IsDatetime, IsStr, iter_message_parts, legacy_retry_prompt_part, message, message_part
 
 
 def test_tool_no_ctx():
@@ -203,6 +214,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
@@ -246,6 +258,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
@@ -297,10 +310,59 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
             'capability_id': None,
+        }
+    )
+
+
+def google_style_docstring_keyword_args(query: str, *, limit: int = 5) -> str:  # pragma: no cover
+    """Search the index.
+
+    Args:
+        query: The search query.
+
+    Keyword Args:
+        limit: The maximum number of results.
+    """
+    return query
+
+
+def numpy_style_docstring_other_parameters(query: str, limit: int = 5) -> str:  # pragma: no cover
+    """Search the index.
+
+    Parameters
+    ----------
+    query : str
+        The search query.
+
+    Other Parameters
+    ----------------
+    limit : int
+        The maximum number of results.
+    """
+    return query
+
+
+@pytest.mark.parametrize('tool', [google_style_docstring_keyword_args, numpy_style_docstring_other_parameters])
+def test_docstring_other_parameter_sections(tool: Callable[..., str]):
+    agent = Agent(FunctionModel(get_json_schema))
+    agent.tool_plain(require_parameter_descriptions=True)(tool)
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema['parameters_json_schema'] == snapshot(
+        {
+            'properties': {
+                'query': {'description': 'The search query.', 'type': 'string'},
+                'limit': {'default': 5, 'description': 'The maximum number of results.', 'type': 'integer'},
+            },
+            'required': ['query'],
+            'type': 'object',
+            'additionalProperties': False,
         }
     )
 
@@ -349,6 +411,7 @@ def test_google_style_with_returns():
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
@@ -398,6 +461,7 @@ def test_sphinx_style_with_returns():
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
@@ -453,6 +517,7 @@ def test_numpy_style_with_returns():
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
@@ -496,6 +561,7 @@ def test_only_returns_type():
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
@@ -530,6 +596,7 @@ def test_docstring_unknown():
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
@@ -582,10 +649,42 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
             'capability_id': None,
+        }
+    )
+
+
+def google_style_docstring_var_args(foo: int, *args: str, **kwargs: int) -> str:  # pragma: no cover
+    """Do foobar stuff.
+
+    Args:
+        foo: The foo thing.
+        *args: The extra things.
+        **kwargs: The extra options.
+    """
+    return f'{foo} {args} {kwargs}'
+
+
+def test_docstring_google_var_args():
+    """Google style documents `*args` and `**kwargs` with their stars, which must not hide the descriptions."""
+    agent = Agent(FunctionModel(get_json_schema))
+    agent.tool_plain(require_parameter_descriptions=True)(google_style_docstring_var_args)
+
+    result = agent.run_sync('')
+    json_schema = json.loads(result.output)
+    assert json_schema['parameters_json_schema'] == snapshot(
+        {
+            'additionalProperties': {'type': 'integer'},
+            'properties': {
+                'foo': {'description': 'The foo thing.', 'type': 'integer'},
+                'args': {'description': 'The extra things.', 'items': {'type': 'string'}, 'type': 'array'},
+            },
+            'required': ['foo', 'args'],
+            'type': 'object',
         }
     )
 
@@ -627,6 +726,7 @@ def test_takes_just_model():
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
@@ -681,6 +781,7 @@ def test_takes_model_and_int():
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
@@ -1002,6 +1103,7 @@ def test_tool_name():
     assert json_schema['name'] == 'foo_tool'
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 def test_dynamic_tool_use_messages():
     async def repeat_call_foobar(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if info.function_tools:
@@ -1079,6 +1181,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
@@ -1248,6 +1351,7 @@ def test_json_schema_required_parameters():
                 'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
+                'unless_tool_kind': None,
                 'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
@@ -1272,6 +1376,7 @@ def test_json_schema_required_parameters():
                 'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
+                'unless_tool_kind': None,
                 'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
@@ -1367,6 +1472,7 @@ def test_schema_generator():
                 'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
+                'unless_tool_kind': None,
                 'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
@@ -1390,6 +1496,7 @@ def test_schema_generator():
                 'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
+                'unless_tool_kind': None,
                 'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
@@ -1436,6 +1543,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
@@ -1684,7 +1792,7 @@ def test_tool_retries():
 
 
 def test_tool_failed():
-    """A tool raising `ToolFailed` produces a `ToolReturnPart(outcome='failed')` in history (not a `RetryPromptPart`), and the run continues."""
+    """A tool raising `ToolFailed` produces a `ToolReturnPart(outcome='failed')` in history (not a retried one), and the run continues."""
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -1705,7 +1813,7 @@ def test_tool_failed():
     assert len(tool_returns) == 1
     assert tool_returns[0].outcome == 'failed'
     assert tool_returns[0].content == 'Disk full'
-    assert not any(isinstance(p, RetryPromptPart) for p in parts)
+    assert not any(isinstance(p, ToolReturnPart) and p.outcome == 'retried' for p in parts)
 
 
 def test_tool_failed_parallel():
@@ -1779,6 +1887,51 @@ def test_tool_raises_call_deferred():
     )
 
 
+def test_test_model_same_name_calls_get_distinct_ids_and_both_run():
+    executed: list[tuple[int, int]] = []
+
+    def add(left: int, right: int) -> int:
+        executed.append((left, right))
+        return left + right
+
+    agent = Agent(TestModel(call_tools=['add', 'add'], custom_output_text='done'))
+    agent.tool_plain(add)
+
+    result = agent.run_sync('hello')
+
+    assert result.output == 'done'
+    assert len(executed) == 2
+    tool_call_parts = [
+        p for m in result.all_messages() for p in m.parts if isinstance(p, ToolCallPart) and p.tool_name == 'add'
+    ]
+    assert [p.tool_call_id for p in tool_call_parts] == ['pyd_ai_tool_call_id__add', 'pyd_ai_tool_call_id__add__2']
+    tool_return_ids = [p.tool_call_id for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert sorted(tool_return_ids) == ['pyd_ai_tool_call_id__add', 'pyd_ai_tool_call_id__add__2']
+
+    # A single call to the same tool keeps the documented `pyd_ai_tool_call_id__{name}` id format.
+    single_agent = Agent(TestModel(call_tools=['add'], custom_output_text='done'))
+    single_agent.tool_plain(add)
+    single_result = single_agent.run_sync('hello')
+    single_parts = [
+        p for m in single_result.all_messages() for p in m.parts if isinstance(p, ToolCallPart) and p.tool_name == 'add'
+    ]
+    assert [p.tool_call_id for p in single_parts] == ['pyd_ai_tool_call_id__add']
+
+    # A tool whose own name ends in `__<n>` doesn't collide with a repeated call's suffixed id.
+    def add__2(left: int, right: int) -> int:
+        return left + right
+
+    suffix_agent = Agent(TestModel(call_tools=['add', 'add', 'add__2'], custom_output_text='done'))
+    suffix_agent.tool_plain(add)
+    suffix_agent.tool_plain(add__2)
+    suffix_result = suffix_agent.run_sync('hello')
+    assert [p.tool_call_id for m in suffix_result.all_messages() for p in m.parts if isinstance(p, ToolCallPart)] == [
+        'pyd_ai_tool_call_id__add',
+        'pyd_ai_tool_call_id__add__2',
+        'pyd_ai_tool_call_id__add__2__2',
+    ]
+
+
 def test_tool_raises_approval_required():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -1829,6 +1982,7 @@ def test_tool_raises_approval_required():
                 parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='function:llm:',
+                model_id='function:function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1850,6 +2004,7 @@ def test_tool_raises_approval_required():
                 parts=[TextPart(content='Done!')],
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='function:llm:',
+                model_id='function:function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1952,6 +2107,66 @@ def test_prepare_preserves_approval_requirement(
     assert not executed
 
 
+@pytest.mark.parametrize('added_with', ['constructor', 'add_tool'])
+def test_toolset_requires_approval_applies_to_tool_instances(added_with: Literal['constructor', 'add_tool']):
+    """`FunctionToolset(requires_approval=True)` applies to a `Tool` it is given, as it does to a plain function."""
+    executed = False
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('Done!')])  # pragma: no cover
+
+    def my_tool() -> str:  # pragma: no cover
+        nonlocal executed
+        executed = True
+        return 'executed'
+
+    if added_with == 'constructor':
+        toolset = FunctionToolset([Tool(my_tool)], requires_approval=True)
+    else:
+        toolset = FunctionToolset(requires_approval=True)
+        toolset.add_tool(Tool(my_tool))
+
+    result = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests], toolsets=[toolset]).run_sync(
+        'Run the tool'
+    )
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call-1')])
+    )
+    assert not executed
+
+
+def test_function_requires_approval_false_overrides_the_toolset_default():
+    """A function added with `requires_approval=False` keeps that value in a `requires_approval=True` toolset.
+
+    The function still goes through `add_tool`, so a subclass that overrides it sees every tool.
+    """
+    seen: list[str] = []
+
+    class RecordingToolset(FunctionToolset[None]):
+        def add_tool(self, tool: Tool[None]) -> None:
+            seen.append(tool.name)
+            super().add_tool(tool)
+
+    toolset = RecordingToolset(requires_approval=True)
+
+    @toolset.tool_plain(requires_approval=False)
+    def decorated() -> str:  # pragma: no cover
+        return 'decorated'
+
+    def added() -> str:  # pragma: no cover
+        return 'added'
+
+    toolset.add_function(added, requires_approval=False)
+
+    assert seen == ['decorated', 'added']
+    assert {name: tool.requires_approval for name, tool in toolset.tools.items()} == {
+        'decorated': False,
+        'added': False,
+    }
+
+
 @pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
 def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy):
     """Not a VCR test: pins internal resume validation and message-history shape via `FunctionModel`,
@@ -2007,9 +2222,13 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
 
     assert result.output == MyOutput(value=42)
     messages = result.all_messages()
-    retry_parts = list(iter_message_parts(messages, ModelRequest, RetryPromptPart))
+    retry_parts = [
+        part for part in iter_message_parts(messages, ModelRequest, ToolReturnPart) if part.outcome == 'retried'
+    ]
     my_tool_returns = [
-        part for part in iter_message_parts(messages, ModelRequest, ToolReturnPart) if part.tool_name == 'my_tool'
+        part
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+        if part.tool_name == 'my_tool' and part.outcome == 'success'
     ]
     assert len(retry_parts) == 1
     assert retry_parts[0].tool_call_id == 'output_call'
@@ -2034,17 +2253,18 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                     ],
                     usage=RequestUsage(input_tokens=51, output_tokens=9),
                     model_name='function:llm:',
+                    model_id='function:function:llm:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content=[
                                 {
                                     'type': 'int_parsing',
-                                    'loc': ('value',),
+                                    'loc': ['value'],
                                     'msg': 'Input should be a valid integer, unable to parse string as an integer',
                                     'input': 'not-an-int',
                                 }
@@ -2052,6 +2272,8 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                             tool_name='final_result',
                             tool_call_id='output_call',
                             timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -2072,8 +2294,9 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                     parts=[
                         ToolCallPart(tool_name='final_result', args={'value': 42}, tool_call_id='valid_output_call')
                     ],
-                    usage=RequestUsage(input_tokens=90, output_tokens=13),
+                    usage=RequestUsage(input_tokens=78, output_tokens=13),
                     model_name='function:llm:',
+                    model_id='function:function:llm:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -2471,6 +2694,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 usage=RequestUsage(input_tokens=68, output_tokens=35),
                 model_name='function:llm:',
+                model_id='function:function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2484,11 +2708,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: banana',
                         tool_name='get_price',
                         tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
@@ -2497,11 +2723,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: grape',
                         tool_name='get_price',
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
@@ -2538,7 +2766,7 @@ def test_parallel_tool_return_with_deferred():
                     content='I bought a banana',
                     metadata={'fruit': 'banana', 'price': 100.0},
                 ),
-                'buy_pear': RetryPromptPart(
+                'buy_pear': legacy_retry_prompt_part(
                     content='The purchase of pears was denied.',
                 ),
             },
@@ -2569,6 +2797,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 usage=RequestUsage(input_tokens=68, output_tokens=35),
                 model_name='function:llm:',
+                model_id='function:function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2582,11 +2811,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: banana',
                         tool_name='get_price',
                         tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
@@ -2595,11 +2826,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: grape',
                         tool_name='get_price',
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
@@ -2616,11 +2849,13 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Apples are not available',
                         tool_name='buy',
                         tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     ToolReturnPart(
                         tool_name='buy',
@@ -2629,11 +2864,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The purchase of pears was denied.',
                         tool_name='buy',
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     UserPromptPart(
                         content='I bought a banana',
@@ -2646,8 +2883,9 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=137, output_tokens=36),
+                usage=RequestUsage(input_tokens=121, output_tokens=36),
                 model_name='function:llm:',
+                model_id='function:function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2659,11 +2897,13 @@ def test_parallel_tool_return_with_deferred():
         [
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Apples are not available',
                         tool_name='buy',
                         tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     ToolReturnPart(
                         tool_name='buy',
@@ -2672,11 +2912,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The purchase of pears was denied.',
                         tool_name='buy',
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     UserPromptPart(
                         content='I bought a banana',
@@ -2689,8 +2931,9 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=137, output_tokens=36),
+                usage=RequestUsage(input_tokens=121, output_tokens=36),
                 model_name='function:llm:',
+                model_id='function:function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2723,6 +2966,7 @@ def test_parallel_tool_return_with_deferred():
                 ],
                 usage=RequestUsage(input_tokens=68, output_tokens=35),
                 model_name='function:llm:',
+                model_id='function:function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2736,11 +2980,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: banana',
                         tool_name='get_price',
                         tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
@@ -2749,17 +2995,21 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: grape',
                         tool_name='get_price',
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Apples are not available',
                         tool_name='buy',
                         tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     ToolReturnPart(
                         tool_name='buy',
@@ -2768,11 +3018,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The purchase of pears was denied.',
                         tool_name='buy',
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
@@ -2846,7 +3098,11 @@ def test_unapproved_tool_invalid_args_retry():
 
     result = agent.run_sync('test')
     assert result.output == 'done'
-    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+    retry_parts = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried'
+    ]
     assert len(retry_parts) == 1
     assert retry_parts[0].tool_name == 'my_tool'
 
@@ -2921,6 +3177,7 @@ async def test_approval_required_toolset():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=12),
                 model_name='function:llm:',
+                model_id='function:function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2979,6 +3236,7 @@ async def test_approval_required_toolset():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=12),
                 model_name='function:llm:',
+                model_id='function:function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3020,6 +3278,7 @@ async def test_approval_required_toolset():
                 parts=[TextPart(content='Done!')],
                 usage=RequestUsage(input_tokens=59, output_tokens=13),
                 model_name='function:llm:',
+                model_id='function:function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3039,7 +3298,7 @@ def test_deferred_tool_results_serializable():
             ),
             'tool-failed': ToolFailed('The tool failed.'),
             'model-retry': ModelRetry('The tool call was denied.'),
-            'retry-prompt-part': RetryPromptPart(
+            'retry-prompt-part': legacy_retry_prompt_part(
                 content='The tool call was denied.',
                 tool_name='foo',
                 tool_call_id='foo',
@@ -3085,7 +3344,10 @@ def test_deferred_tool_results_serializable():
             'metadata': {},
         }
     )
-    deserialized = results_ta.validate_python(serialized)
+    # `DeferredToolCallResult` still accepts the deprecated part, and unlike a message history it
+    # doesn't translate one — so reloading results that hold one rebuilds the class, and warns.
+    with pytest.warns(PydanticAIDeprecationWarning):
+        deserialized = results_ta.validate_python(serialized)
     assert deserialized == results
     assert TypeAdapter(DeferredToolCallResult).validate_python(results.calls['tool-failed']) == ToolFailed(
         'The tool failed.'
@@ -3225,6 +3487,7 @@ def test_retry_tool_until_last_attempt():
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -3232,11 +3495,13 @@ def test_retry_tool_until_last_attempt():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Please try again.',
                         tool_name='always_fail',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -3245,8 +3510,9 @@ def test_retry_tool_until_last_attempt():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=62, output_tokens=4),
+                usage=RequestUsage(input_tokens=58, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -3254,11 +3520,13 @@ def test_retry_tool_until_last_attempt():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Please try again.',
                         tool_name='always_fail',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=2, max_retries=2),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -3267,8 +3535,9 @@ def test_retry_tool_until_last_attempt():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=72, output_tokens=6),
+                usage=RequestUsage(input_tokens=64, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -3289,8 +3558,9 @@ def test_retry_tool_until_last_attempt():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"always_fail":"I guess you never learn"}')],
-                usage=RequestUsage(input_tokens=77, output_tokens=14),
+                usage=RequestUsage(input_tokens=69, output_tokens=14),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -3301,7 +3571,7 @@ def test_retry_tool_until_last_attempt():
 
 
 async def test_tool_timeout_triggers_retry():
-    """Test that a slow tool triggers RetryPromptPart when timeout is exceeded."""
+    """Test that a slow tool is answered with a retried tool return when its timeout is exceeded."""
     import asyncio
 
     call_count = 0
@@ -3327,11 +3597,11 @@ async def test_tool_timeout_triggers_retry():
     # Check that retry prompt was sent to the model
     retry_parts = [
         part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-        if 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+    assert 'Timed out after 0.1 seconds' in str(retry_parts[0].content)
     assert retry_parts[0].tool_name == 'slow_tool'
 
 
@@ -3358,11 +3628,11 @@ async def test_sync_tool_timeout_triggers_retry():
 
     retry_parts = [
         part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-        if 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert 'Timed out after 0.01 seconds' in retry_parts[0].content
+    assert 'Timed out after 0.01 seconds' in str(retry_parts[0].content)
     assert retry_parts[0].tool_name == 'slow_sync_tool'
 
 
@@ -3398,8 +3668,8 @@ async def test_tool_with_timeout_completes_successfully():
     # Should NOT have any retry prompts since tool completed within timeout
     retry_parts = [
         part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-        if 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 0
     assert 'completed successfully' in result.output
@@ -3468,12 +3738,12 @@ async def test_tool_timeout_message_format():
 
     retry_parts = [
         part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-        if 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
     # Check message contains timeout value (tool_name is in the part, not in content)
-    assert '0.1' in retry_parts[0].content
+    assert '0.1' in str(retry_parts[0].content)
     assert retry_parts[0].tool_name == 'my_slow_tool'
 
 
@@ -3553,11 +3823,11 @@ async def test_agent_level_tool_timeout():
     # Check that retry prompt was sent
     retry_parts = [
         part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-        if 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+    assert 'Timed out after 0.1 seconds' in str(retry_parts[0].content)
 
 
 async def test_per_tool_timeout_overrides_agent_timeout():
@@ -3586,11 +3856,11 @@ async def test_per_tool_timeout_overrides_agent_timeout():
     # Should timeout because per-tool timeout (0.1s) is applied, not agent timeout (10s)
     retry_parts = [
         part
-        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
-        if 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+    assert 'Timed out after 0.1 seconds' in str(retry_parts[0].content)
 
 
 def test_agent_tool_timeout_passed_to_toolset():
@@ -3847,6 +4117,7 @@ def test_args_validator_success():
                 ],
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -3869,6 +4140,7 @@ def test_args_validator_success():
                 parts=[TextPart(content='{"add_numbers":0}')],
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -3930,6 +4202,7 @@ async def test_args_validator_async():
                 ],
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -3952,6 +4225,7 @@ async def test_args_validator_async():
                 parts=[TextPart(content='{"add_numbers":0}')],
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -4023,6 +4297,7 @@ def test_args_validator_tool_direct():
                 ],
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -4045,6 +4320,7 @@ def test_args_validator_tool_direct():
                 parts=[TextPart(content='{"add_numbers":0}')],
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -4094,6 +4370,7 @@ def test_args_validator_toolset():
                 ],
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -4116,6 +4393,7 @@ def test_args_validator_toolset():
                 parts=[TextPart(content='{"add_numbers":0}')],
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -4162,6 +4440,7 @@ def test_args_validator_tool_plain():
                 ],
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -4184,6 +4463,7 @@ def test_args_validator_tool_plain():
                 parts=[TextPart(content='{"add_numbers":0}')],
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -4466,6 +4746,7 @@ def test_args_validator_requests_approval():
                 parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -4488,6 +4769,7 @@ def test_args_validator_requests_approval():
                 parts=[TextPart(content='{"my_tool":0}')],
                 usage=RequestUsage(input_tokens=52, output_tokens=7),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -4543,25 +4825,32 @@ def test_args_validator_defers_call():
     )
 
 
-def test_args_validator_deferral_metadata_not_merged_for_already_deferred_kinds():
-    """Pins current behavior: a tool that's already deferred by kind ignores the deferral's metadata.
+def test_args_validator_deferral_metadata_kept_for_already_deferred_kinds():
+    """A tool that's already deferred by kind keeps the metadata its `args_validator` deferred it with.
 
     A `requires_approval=True` (or external) tool is collected as deferred by its kind without being
-    executed, so neither its `args_validator` nor its function body can contribute
-    `ApprovalRequired(metadata=...)` to `DeferredToolRequests.metadata` — the validator case behaves
-    exactly like the pre-existing tool-body case, both asserted here. Only tools deferred *by* the
-    deferral itself (a plain function tool) carry metadata through.
+    executed, so its validator runs but its function body doesn't: only the validator's
+    `ApprovalRequired(metadata=...)` reaches `DeferredToolRequests.metadata`. A validator's
+    `CallDeferred` without metadata routes its call to `calls` and adds no metadata entry.
     """
     executed: list[str] = []
 
     def my_validator(ctx: RunContext, x: int) -> None:
         raise ApprovalRequired(metadata={'from': 'validator'})
 
+    def deferring_validator(ctx: RunContext, x: int) -> None:
+        raise CallDeferred()
+
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
     @agent.tool(requires_approval=True, args_validator=my_validator)
     def validator_defers(ctx: RunContext, x: int) -> int:  # pragma: no cover
         executed.append('validator_defers')
+        return x
+
+    @agent.tool(requires_approval=True, args_validator=deferring_validator)
+    def validator_hands_off(ctx: RunContext, x: int) -> int:  # pragma: no cover
+        executed.append('validator_hands_off')
         return x
 
     @agent.tool(requires_approval=True)
@@ -4572,16 +4861,22 @@ def test_args_validator_deferral_metadata_not_merged_for_already_deferred_kinds(
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
         DeferredToolRequests(
+            calls=[
+                ToolCallPart(
+                    tool_name='validator_hands_off',
+                    args={'x': 0},
+                    tool_call_id='pyd_ai_tool_call_id__validator_hands_off',
+                )
+            ],
             approvals=[
                 ToolCallPart(
                     tool_name='validator_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__validator_defers'
                 ),
                 ToolCallPart(tool_name='body_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__body_defers'),
-            ]
+            ],
+            metadata={'pyd_ai_tool_call_id__validator_defers': {'from': 'validator'}},
         )
     )
-    assert isinstance(result.output, DeferredToolRequests)
-    assert result.output.metadata == {}  # neither the validator's nor the body's metadata
     assert executed == []
 
 
@@ -4811,6 +5106,7 @@ def test_tool_ctx_agent():
                 parts=[ToolCallPart(tool_name='get_agent_info', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -4833,6 +5129,7 @@ def test_tool_ctx_agent():
                 parts=[ToolCallPart(tool_name='final_result', args={'response': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=52, output_tokens=6),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -4880,6 +5177,7 @@ def test_tool_ctx_agent_in_output_validator():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -4977,8 +5275,9 @@ def test_return_schema_tool_return_generic():
 
 def test_return_schema_self_bound_method():
     """Self return type on a bound method resolves to the owning class."""
+    from typing import Self
+
     from pydantic import BaseModel
-    from typing_extensions import Self
 
     class Weather(BaseModel):
         temperature: float
@@ -4995,9 +5294,7 @@ def test_return_schema_self_bound_method():
 
 def test_return_schema_self_unbound():
     """Self return type on a non-bound function falls back to unconstrained schema."""
-    from typing import Any
-
-    from typing_extensions import Self
+    from typing import Any, Self
 
     from pydantic_ai._function_schema import extract_return_schema_type
 
@@ -5031,7 +5328,19 @@ def test_include_return_schema_via_capability():
     result = agent.run_sync('test')
     request = message(result.all_messages(), ModelRequest)
     # The tool description should contain the return schema since the capability enables it
-    tool_parts = [p for p in request.parts if not isinstance(p, ToolAvailabilityDeltaPart)]
+    tool_parts = [
+        p
+        for p in request.parts
+        if not isinstance(
+            p,
+            (
+                ToolAvailabilityDeltaPart,
+                CapabilityLoadDeltaPart,
+                InstructionBaselinePart,
+                ModelSettingsDeltaPart,
+            ),
+        )
+    ]
     assert any('Return schema' in str(p.content) for p in tool_parts) or True  # TestModel may not inject
 
 
@@ -5282,14 +5591,14 @@ def test_tool_return_part_serializes_with_serialization_alias():
     assert set(serialized_obj) == set(return_schema.get('properties', {}))
 
 
-class DescribedEnum(UseEnumMemberDocstrings, str, Enum):
+class DescribedEnum(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """A base for enums built by the functional API, which takes one mix-in type and no extra bases."""
 
 
 def test_enum_member_docstrings_describe_options():
     """A docstring under an enum member becomes that option's description, as `anyOf` of `const`s."""
 
-    class Priority(UseEnumMemberDocstrings, str, Enum):
+    class Priority(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
         """How urgent the ticket is."""
 
         low = 'low'
@@ -5335,7 +5644,7 @@ def test_enum_member_docstrings_describe_options():
     )
 
 
-class Urgency(UseEnumMemberDocstrings, str, Enum):
+class Urgency(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     low = 'low'
@@ -5344,7 +5653,7 @@ class Urgency(UseEnumMemberDocstrings, str, Enum):
     """Needs attention today."""
 
 
-class UnopinionatedUrgency(str, Enum):
+class UnopinionatedUrgency(str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     low = 'low'
@@ -5396,7 +5705,7 @@ def test_an_enum_that_does_not_mix_it_in_is_described_exactly_as_pydantic_descri
     )
 
 
-class Level(UseEnumMemberDocstrings, str, Enum):
+class Level(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     low = 'low'
     """Can wait a week."""
     high = 'high'
@@ -5437,7 +5746,7 @@ def test_a_none_member_keeps_the_enum_in_its_plain_form():
     assert seen[0]['$defs']['Settled'] == snapshot({'enum': ['yes', None], 'title': 'Settled'})
 
 
-class Aliased(UseEnumMemberDocstrings, str, Enum):
+class Aliased(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     high = 'high'

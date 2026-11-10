@@ -13,7 +13,8 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import Callable, Hashable, Sequence
+import re
+from collections.abc import AsyncIterable, Callable, Hashable, Sequence
 from dataclasses import dataclass, field
 from inspect import isawaitable
 from typing import Generic, Literal, cast
@@ -24,7 +25,7 @@ import anyio
 from acp import schema
 from acp.interfaces import Client
 
-from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDenied, UsageLimitExceeded
+from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDenied, UsageLimitExceeded, capture_run_messages
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -32,19 +33,22 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelResponse,
+    ModelResponsePart,
+    ModelResponsePartDelta,
     PartDeltaEvent,
     PartStartEvent,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolReturnPart,
     UserContent,
 )
 from pydantic_ai.models import KnownModelName, Model, known_model_names
 from pydantic_ai.output import OutputDataT
-from pydantic_ai.run import AgentRunResultEvent
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -79,11 +83,6 @@ _logger = logging.getLogger(__name__)
 _MODEL_CONFIG_ID = 'model'
 
 
-def _all_known_model_names() -> tuple[str, ...]:
-    """Every model name Pydantic AI exposes through the public `known_model_names()` API."""
-    return known_model_names()
-
-
 def _finish_reason_to_stop_reason(finish_reason: FinishReason | None) -> schema.StopReason:
     """Map the model's terminal `finish_reason` to the ACP stop reason for a completed turn.
 
@@ -98,15 +97,78 @@ def _finish_reason_to_stop_reason(finish_reason: FinishReason | None) -> schema.
     return 'end_turn'
 
 
+_USAGE_LIMIT_STOP_REASONS: dict[str, schema.StopReason] = {
+    'request_limit': 'max_turn_requests',
+    'tool_calls_limit': 'max_turn_requests',
+    'input_tokens_limit': 'max_tokens',
+    'output_tokens_limit': 'max_tokens',
+    'total_tokens_limit': 'max_tokens',
+    'per_request_input_tokens_limit': 'max_tokens',
+    # ACP has no budget stop reason; a cost ceiling bounds how much work the turn may do.
+    'cost_limit': 'max_turn_requests',
+}
+"""The ACP stop reason for each `UsageLimits` field, keyed by the field name its exception names."""
+
+_USAGE_LIMIT_NAME = re.compile(rf'\b({"|".join(_USAGE_LIMIT_STOP_REASONS)})\b')
+
+
 def _usage_limit_stop_reason(exc: UsageLimitExceeded) -> schema.StopReason:
     """Map a run's exceeded usage limit to the ACP stop reason ending the turn.
 
-    Token-based limits report `max_tokens`; the request/tool-call count limits report
-    `max_turn_requests`. The exception carries no structured detail, so this reads its message; an
-    unrecognized wording falls back to `max_turn_requests` (the limit pydantic-ai's default
-    configuration can hit).
+    Token limits report `max_tokens`; the request, tool-call, and cost limits report
+    `max_turn_requests`. The exception carries no structured detail, so this finds the exceeded
+    `UsageLimits` field named in its message, matched as a whole identifier so
+    `input_tokens_limit` is not confused with `per_request_input_tokens_limit`. A message naming no
+    known field (a custom subclass such as a spend budget) falls back to `max_turn_requests`.
     """
-    return 'max_tokens' if 'tokens_limit' in str(exc) else 'max_turn_requests'
+    match = _USAGE_LIMIT_NAME.search(str(exc))
+    return _USAGE_LIMIT_STOP_REASONS[match.group(1)] if match else 'max_turn_requests'
+
+
+def _committable_history(messages: list[ModelMessage], ran_calls: set[str]) -> list[ModelMessage]:
+    """The history a turn ended by a usage limit commits: everything up to what actually happened.
+
+    Trailing messages are dropped, from the end, while they record nothing that took effect:
+
+    - a response whose tool calls never started (`tool_calls_limit` stops a batch before it runs);
+      committing it would also make the next prompt fail with "unprocessed tool calls";
+    - a request with no tool results, which the model never saw: a prompt refused before it was
+      sent (for example by `input_tokens_limit`), or the empty request a stopped batch leaves.
+      Resending it on the next turn would hit the same limit again.
+
+    A request interrupted while its calls were running is kept, so the next run marks those
+    calls as interrupted rather than pretending they never ran. `ran_calls` holds the ids of the
+    calls this turn started.
+    """
+    committed = list(messages)
+    while committed:
+        last = committed[-1]
+        if isinstance(last, ModelResponse):
+            if last.tool_calls and not any(call.tool_call_id in ran_calls for call in last.tool_calls):
+                committed.pop()
+                continue
+            break
+        if any(isinstance(part, ToolReturnPart) for part in last.parts):
+            break
+        if (
+            last.state == 'interrupted'
+            and len(committed) > 1
+            and isinstance(previous := committed[-2], ModelResponse)
+            and any(call.tool_call_id in ran_calls for call in previous.tool_calls)
+        ):
+            break
+        committed.pop()
+    return committed
+
+
+def _add_interrupted_pass_usage(
+    usage: RunUsage, captured: Sequence[ModelMessage], history: Sequence[ModelMessage]
+) -> None:
+    """Add to `usage` the responses an interrupted pass received: those of a run `history` does not yet hold."""
+    earlier_runs = {message.run_id for message in history}
+    for message in captured:
+        if isinstance(message, ModelResponse) and message.run_id not in earlier_runs:
+            usage.incr(message.usage)
 
 
 def _to_acp_usage(usage: RunUsage) -> schema.Usage:
@@ -131,7 +193,7 @@ class _TurnState:
     conn: Client
     session_id: str
     cwd: str
-    # Best-effort pre-run guess at which tools pause for approval (see `_approval_tool_names`):
+    # Best-effort pre-run guess at which tools pause for approval (see `_scan_approval_names`):
     # tools the static scan cannot see (per-run `for_run()` toolsets, callable `AgentToolset`
     # arms, non-`FunctionToolset` toolsets) are initially announced as running and corrected to
     # `pending` once the run reports which calls actually paused.
@@ -239,7 +301,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             models: Optional models the client may switch between with the stable ACP session
                 config option `model`. The first is each session's default. A selection applies as
                 a per-run override (the shared agent is never mutated) and is persisted with the
-                session. Pass `'all'` to offer every model Pydantic AI knows (its default is then
+                session. Pass `'all'` to offer every model `KnownModelName` lists (its default is then
                 the first known model, so the user should pick one). Defaults to `None`,
                 advertising no model config option.
             model_resolver: Optional hook mapping an advertised model id to the `Model` (or model
@@ -252,7 +314,8 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                 A turn that resumes after a tool approval starts a fresh run, so the limits bound
                 each approval-to-approval segment, not the whole turn. An exceeded limit ends the
                 turn with a `max_tokens`/`max_turn_requests` stop reason, never a request error.
-                Defaults to Pydantic AI's own defaults (50 requests per run).
+                By default, no request limit is applied. Pass `UsageLimits` to bound requests,
+                tokens, tool calls, or cost.
         """
         self._agent = agent
         self._deps = deps
@@ -270,9 +333,9 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         self._mcp_capabilities = mcp_capabilities or schema.McpCapabilities()
         self._tool_presenter = tool_presenter or default_coding_presenter
         self._session_store = session_store
-        self._models: tuple[str, ...] = _all_known_model_names() if models == 'all' else tuple(models) if models else ()
+        self._models: tuple[str, ...] = known_model_names() if models == 'all' else tuple(models) if models else ()
         self._model_resolver = model_resolver
-        self._usage_limits = usage_limits
+        self._usage_limits = usage_limits if usage_limits is not None else UsageLimits(request_limit=None)
         self._client_capabilities: schema.ClientCapabilities | None = None
         self._conn: Client | None = None
         # All live sessions, keyed by session id. Each owns its own turn lock (the dispatcher
@@ -398,10 +461,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
     async def _persist(self, state: SessionState[AgentDepsT]) -> None:
         """Save a session's committed state (history, transcript, selected model), if a store is configured.
 
-        A store failure is logged and swallowed rather than failing the operation that triggered the
-        save: the turn (or session) has already streamed and committed in memory, so a durable-write
-        error must not surface as a failure for work the user already saw succeed. The session stays
-        usable and the next successful save catches the store back up.
+        A store failure is logged, not raised; see `SessionStore` for why.
         """
         if self._session_store is None:
             return
@@ -525,8 +585,8 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             except asyncio.CancelledError:
                 # `turn.done()` cannot fully prove the cancellation came from the turn: in the one
                 # tick between the turn completing and this coroutine resuming, a teardown cancel
-                # aimed at *this* handler is indistinguishable on 3.10 (3.11's `Task.cancelling()`
-                # would settle it). Accepted residual; every wider window is covered below.
+                # aimed at this handler is indistinguishable using `turn.done()`.
+                # Accepted residual; every wider window is covered below.
                 if turn.done() and state.cancel_requested:
                     return schema.PromptResponse(stop_reason='cancelled')
                 if state.cancel_requested:
@@ -582,7 +642,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             except (asyncio.CancelledError, _TurnCancelled):
                 # As in `prompt`, `turn.done()` is a heuristic with a one-tick residual: a
                 # teardown cancel landing between the turn completing and this resuming is
-                # swallowed here on 3.10. Accepted.
+                # swallowed here. Accepted.
                 if not turn.done():
                     raise
 
@@ -596,8 +656,11 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
 
         The response carries the ACP stop reason mapped from the final model response, plus the
         turn's total token usage (summed across every run pass, one per approval pause). A turn
-        ended by a usage limit rolls back like a cancellation, so its response omits usage while
-        still answering with the limit's `max_tokens`/`max_turn_requests` stop reason.
+        ended by a usage limit answers with the limit's `max_tokens`/`max_turn_requests` stop
+        reason and commits the messages exchanged before the limit, so the next turn knows which
+        tools already ran. Its usage covers the completed passes and every response the interrupted
+        pass received before the limit, including one the history leaves out because its tool
+        calls never ran: those tokens were spent.
         """
         conn = self._conn
         assert conn is not None
@@ -608,12 +671,13 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         deferred_results: DeferredToolResults | None = None
         run_input: list[UserContent] | None = user_content
         output_type = [self._agent.output_type, DeferredToolRequests]
+        approval_names, known_non_approval_names = self._scan_approval_names(config)
         turn = _TurnState(
             conn=conn,
             session_id=state.session_id,
             cwd=state.cwd,
-            approval_names=self._approval_tool_names(config),
-            known_non_approval_names=self._known_non_approval_names(config),
+            approval_names=approval_names,
+            known_non_approval_names=known_non_approval_names,
         )
         # Recorded for replay only, never sent live: the client renders its own prompt during
         # the turn, but `session/load` must rebuild the user side of the conversation too.
@@ -621,48 +685,41 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         # persist its user message either.
         turn.updates.extend(acp.update_user_message(block) for block in prompt)
 
+        # The messages of the pass in flight, kept when a usage limit ends it (see below).
+        captured: list[ModelMessage] = []
         try:
             while True:
-                result = None
-                async with self._agent.run_stream_events(
-                    run_input,
-                    message_history=history,
-                    deferred_tool_results=deferred_results,
-                    output_type=output_type,
-                    deps=config.deps,
-                    capabilities=config.capabilities,
-                    toolsets=config.toolsets,
-                    workspace=config.workspace,
-                    # Per-run override for the client's model config choice; `None` uses the
-                    # agent's own model, never mutating the shared agent. A `model_resolver` (if
-                    # given) maps the advertised id to a pre-built `Model` for ids `infer_model`
-                    # can't parse.
-                    model=self._resolve_run_model(state.model),
-                    usage_limits=self._usage_limits,
-                ) as stream:
-                    event: AgentStreamEvent | AgentRunResultEvent[object]
-                    async for event in stream:
-                        if isinstance(event, AgentRunResultEvent):
-                            result = event.result
-                        else:
-                            await self._emit_event(turn, event)
+                with capture_run_messages() as captured:
+                    async with self._agent.run_stream_events(
+                        run_input,
+                        message_history=history,
+                        deferred_tool_results=deferred_results,
+                        output_type=output_type,
+                        deps=config.deps,
+                        capabilities=config.capabilities,
+                        toolsets=config.toolsets,
+                        workspace=config.workspace,
+                        # Per-run override for the client's model config choice; `None` uses the
+                        # agent's own model, never mutating the shared agent. A `model_resolver` (if
+                        # given) maps the advertised id to a pre-built `Model` for ids `infer_model`
+                        # can't parse.
+                        model=self._resolve_run_model(state.model),
+                        usage_limits=self._usage_limits,
+                    ) as stream:
+                        result = await self._forward_events(turn, stream)
 
                 assert result is not None, 'run_stream_events always yields a final result event'
                 history = result.all_messages()
-                usage += result.usage  # pydantic-ai 2.0: `usage` is a property, not a method
+                usage += result.usage
                 output = result.output
-                if isinstance(output, DeferredToolRequests):
-                    if not output.approvals and not output.calls:  # pragma: no cover
-                        break  # defensive: the run never yields an empty DeferredToolRequests
-                    deferred_results = await self._resolve_approvals(turn, state, output)
-                    run_input = None
-                    continue
-                if output is not None and not isinstance(output, str):
-                    # Structured output isn't streamed as text parts, so deliver it as a final message.
-                    # (`str` output already streamed via text deltas; `None` has nothing to show.)
-                    await self._emit_text(turn, json.dumps(jsonable(output)), thought=False)
-                stop_reason = _finish_reason_to_stop_reason(result.response.finish_reason)
-                break
+                if not isinstance(output, DeferredToolRequests):
+                    await self._emit_structured_output(turn, output)
+                    stop_reason = _finish_reason_to_stop_reason(result.response.finish_reason)
+                    break
+                if not output.approvals and not output.calls:  # pragma: no cover
+                    break  # defensive: the run never yields an empty DeferredToolRequests
+                deferred_results = await self._resolve_approvals(turn, state, output)
+                run_input = None
         except (asyncio.CancelledError, _TurnCancelled):
             # The turn is ending without finishing its tool calls; close out any still shown as
             # pending/in_progress so the client stops rendering them as running. Shielded because an
@@ -673,11 +730,15 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             raise
         except UsageLimitExceeded as exc:
             # ACP models a turn ending at a limit as a normal stop reason, not a request error.
-            # The raising run's partial messages are not retrievable, so nothing is committed --
-            # the turn rolls back to the prior state, like a cancellation, and the response must
-            # not report uncommitted usage.
-            await self._fail_outstanding_tool_calls(turn)
-            return schema.PromptResponse(stop_reason=_usage_limit_stop_reason(exc))
+            # Unlike a cancellation, the turn is committed up to the limit: its tools may already
+            # have edited files, and rolling the history back would leave the next turn unaware
+            # of those changes. The interrupted pass has no run result, so its usage is summed from
+            # the responses it got before the limit: those of a run the history does not yet hold.
+            await self._fail_outstanding_tool_calls(turn, record=True)
+            if captured:
+                _add_interrupted_pass_usage(usage, captured, history)
+                history = _committable_history(captured, turn.started)
+            stop_reason = _usage_limit_stop_reason(exc)
         except Exception:
             # The turn is failing with the error the client receives as the prompt's response;
             # close out its announced tool calls so they are not left rendering as running.
@@ -695,27 +756,47 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                 # The turn is already committed: a cancel landing inside the store's save came
                 # too late to roll anything back. The spec still requires the prompt to answer
                 # `cancelled`, so that stop reason is reported alongside committed usage. The
-                # interrupted save is the same benign failure `_persist` swallows; the next
-                # successful save catches the store up.
+                # interrupted save is handled like any other `_persist` failure.
                 _logger.warning(
                     'persisting ACP session %s was cancelled; durable state is now behind', state.session_id
                 )
                 stop_reason = 'cancelled'
         return schema.PromptResponse(stop_reason=stop_reason, usage=_to_acp_usage(usage))
 
-    async def _fail_outstanding_tool_calls(self, turn: _TurnState) -> None:
+    async def _forward_events(
+        self, turn: _TurnState, stream: AsyncIterable[AgentStreamEvent | AgentRunResultEvent[object]]
+    ) -> AgentRunResult[object] | None:
+        """Send one run pass's stream events to the client, returning the pass's result."""
+        result = None
+        async for event in stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
+            else:
+                await self._emit_event(turn, event)
+        return result
+
+    async def _emit_structured_output(self, turn: _TurnState, output: object) -> None:
+        """Deliver structured output as a final message: it isn't streamed as text parts.
+
+        `str` output already streamed via text deltas; `None` has nothing to show.
+        """
+        if output is not None and not isinstance(output, str):
+            await self._emit_text(turn, json.dumps(jsonable(output)), thought=False)
+
+    async def _fail_outstanding_tool_calls(self, turn: _TurnState, *, record: bool = False) -> None:
         """Drive every announced-but-unfinished tool call to a terminal `failed` status.
 
-        Called when a turn is cancelled, so a client does not keep rendering a `pending`/`in_progress`
-        tool call as running. Sent directly (not recorded for the transcript) and best-effort: the
-        connection may already be going away.
+        Called when a turn ends early, so a client does not keep rendering a `pending`/`in_progress`
+        tool call as running. Sent best-effort: the connection may already be going away. Recorded
+        for the transcript only when `record` is set, for a turn that is still committed (one ended
+        by a usage limit); a cancelled or failed turn's transcript is never persisted.
         """
         for tool_call_id in turn.started - turn.resulted:
+            update = acp.update_tool_call(tool_call_id=tool_call_id, status='failed')
+            if record:
+                turn.updates.append(update)
             with contextlib.suppress(Exception):
-                await turn.conn.session_update(
-                    session_id=turn.session_id,
-                    update=acp.update_tool_call(tool_call_id=tool_call_id, status='failed'),
-                )
+                await turn.conn.session_update(session_id=turn.session_id, update=update)
 
     async def _send_update(self, turn: _TurnState, update: SessionUpdate) -> None:
         """Send one `session/update` to the client, recording it for the transcript."""
@@ -747,60 +828,71 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
 
     async def _emit_event(self, turn: _TurnState, event: AgentStreamEvent) -> None:
         """Translate a single Pydantic AI stream event into an ACP `session/update`."""
-        if isinstance(event, PartStartEvent):
-            part = event.part
-            if isinstance(part, TextPart) and part.content:
-                await self._emit_text(turn, part.content, thought=False)
-            elif isinstance(part, ThinkingPart) and part.content:
-                await self._emit_text(turn, part.content, thought=True)
-        elif isinstance(event, PartDeltaEvent):
-            delta = event.delta
-            if isinstance(delta, TextPartDelta) and delta.content_delta:
-                await self._emit_text(turn, delta.content_delta, thought=False)
-            elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
-                await self._emit_text(turn, delta.content_delta, thought=True)
-        elif isinstance(event, FunctionToolCallEvent):
-            call = event.part
-            if call.tool_call_id in turn.started:
-                return  # the model re-emits the call event when resuming after approval
-            turn.started.add(call.tool_call_id)
-            fields = self._tool_call_fields(call, turn.cwd, default_kind=None)
-            # A call awaiting approval is not running yet: it starts `pending` and
-            # `_resolve_approvals` promotes it once approved. Any other call is already executing.
-            # The pre-run scan cannot see every approval requirement (per-run `for_run()` toolsets,
-            # callable `AgentToolset` arms, non-`FunctionToolset` toolsets), so a call announced
-            # here may still pause: `_resolve_approvals` corrects it once the run reports so.
-            status: schema.ToolCallStatus = 'pending' if call.tool_name in turn.approval_names else 'in_progress'
-            turn.announced_status[call.tool_call_id] = status
-            await self._send_update(
-                turn,
-                acp.start_tool_call(
-                    tool_call_id=call.tool_call_id,
-                    title=fields.title,
-                    kind=fields.kind,
-                    status=status,
-                    content=fields.content,
-                    locations=fields.locations,
-                    raw_input=bounded_jsonable(call.args),
-                ),
-            )
-        elif isinstance(event, FunctionToolResultEvent):
-            part = event.part
-            if isinstance(part, RetryPromptPart):
-                status, raw_output = 'failed', part.model_response()
-            elif part.tool_call_id in turn.denied:
-                status, raw_output = 'failed', part.content
-            else:
-                status, raw_output = 'completed', part.content
-            turn.resulted.add(part.tool_call_id)
-            await self._send_update(
-                turn,
-                acp.update_tool_call(
-                    tool_call_id=part.tool_call_id,
-                    status=status,
-                    raw_output=bounded_jsonable(raw_output),
-                ),
-            )
+        match event:
+            case PartStartEvent():
+                await self._emit_part_start(turn, event.part)
+            case PartDeltaEvent():
+                await self._emit_part_delta(turn, event.delta)
+            case FunctionToolCallEvent():
+                await self._emit_tool_call(turn, event.part)
+            case FunctionToolResultEvent():
+                await self._emit_tool_result(turn, event.part)
+            case _:
+                pass
+
+    async def _emit_part_start(self, turn: _TurnState, part: ModelResponsePart) -> None:
+        if isinstance(part, TextPart) and part.content:
+            await self._emit_text(turn, part.content, thought=False)
+        elif isinstance(part, ThinkingPart) and part.content:
+            await self._emit_text(turn, part.content, thought=True)
+
+    async def _emit_part_delta(self, turn: _TurnState, delta: ModelResponsePartDelta) -> None:
+        if isinstance(delta, TextPartDelta) and delta.content_delta:
+            await self._emit_text(turn, delta.content_delta, thought=False)
+        elif isinstance(delta, ThinkingPartDelta) and delta.content_delta:
+            await self._emit_text(turn, delta.content_delta, thought=True)
+
+    async def _emit_tool_call(self, turn: _TurnState, call: ToolCallPart) -> None:
+        if call.tool_call_id in turn.started:
+            return  # the model re-emits the call event when resuming after approval
+        turn.started.add(call.tool_call_id)
+        fields = self._tool_call_fields(call, turn.cwd, default_kind=None)
+        # A call awaiting approval is not running yet: it starts `pending` and
+        # `_resolve_approvals` promotes it once approved. Any other call is already executing.
+        status: schema.ToolCallStatus = 'pending' if call.tool_name in turn.approval_names else 'in_progress'
+        turn.announced_status[call.tool_call_id] = status
+        await self._send_update(
+            turn,
+            acp.start_tool_call(
+                tool_call_id=call.tool_call_id,
+                title=fields.title,
+                kind=fields.kind,
+                status=status,
+                content=fields.content,
+                locations=fields.locations,
+                raw_input=bounded_jsonable(call.args),
+            ),
+        )
+
+    async def _emit_tool_result(self, turn: _TurnState, part: ToolReturnPart) -> None:
+        if part.outcome == 'retried':
+            # The call has to be made again, which is a failure from the client's point of
+            # view. `model_response_str` reports the feedback the model itself was handed,
+            # unwrapped because the `{"error": ...}` envelope is a wire detail.
+            status, raw_output = 'failed', part.model_response_str(wrap_if_error=False)
+        elif part.tool_call_id in turn.denied:
+            status, raw_output = 'failed', part.content
+        else:
+            status, raw_output = 'completed', part.content
+        turn.resulted.add(part.tool_call_id)
+        await self._send_update(
+            turn,
+            acp.update_tool_call(
+                tool_call_id=part.tool_call_id,
+                status=status,
+                raw_output=bounded_jsonable(raw_output),
+            ),
+        )
 
     async def _resolve_approvals(
         self, turn: _TurnState, state: SessionState[AgentDepsT], requests: DeferredToolRequests
@@ -821,11 +913,9 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
 
         results = DeferredToolResults()
         for call in requests.approvals:
-            # A call announced `in_progress` that paused for approval never actually ran when its
-            # tool is invisible to the pre-run scan (a per-run `for_run()` toolset): correct it to
-            # `pending` before the decision so a client never renders a rejected call as if it had
-            # executed. A statically-known non-approval tool that pauses must have raised
-            # `ApprovalRequired` from its body after starting, so that one stays `in_progress`.
+            # A scan-invisible tool announced `in_progress` that paused for approval never ran:
+            # correct it to `pending` before the decision so a rejected call is not rendered as
+            # executed (see `_TurnState.known_non_approval_names`).
             if (
                 turn.announced_status.get(call.tool_call_id) == 'in_progress'
                 and call.tool_name not in turn.known_non_approval_names
@@ -878,33 +968,19 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                 toolsets.append(cast(AbstractToolset[AgentDepsT], contributed))
         return toolsets
 
-    def _approval_tool_names(self, config: AcpSessionConfig[AgentDepsT]) -> frozenset[str]:
-        """Best-effort pre-run guess at the tools that pause for the client's approval.
+    def _scan_approval_names(self, config: AcpSessionConfig[AgentDepsT]) -> tuple[frozenset[str], frozenset[str]]:
+        """Split the statically visible tools into those that require approval and those that don't.
 
-        Only `FunctionToolset`-held tools expose `requires_approval` without a live run context;
-        tools from other toolset types are treated as not requiring approval. A capability that
-        builds its toolset per run is invisible to this scan, but a call to such a tool pauses
-        anyway (the run reports it in `DeferredToolRequests.approvals`), and `_resolve_approvals`
-        then corrects its announced status to `pending`.
+        Only `FunctionToolset`-held tools expose `requires_approval` without a live run context, so
+        tools from other toolsets appear in neither set.
         """
-        names: set[str] = set()
+        approval: set[str] = set()
+        non_approval: set[str] = set()
         for toolset in self._static_toolsets(config):
             if isinstance(toolset, FunctionToolset):
-                names.update(name for name, tool in toolset.tools.items() if tool.requires_approval)
-        return frozenset(names)
-
-    def _known_non_approval_names(self, config: AcpSessionConfig[AgentDepsT]) -> frozenset[str]:
-        """Names the pre-run scan sees as not requiring approval.
-
-        A call for one of these that pauses anyway must have raised `ApprovalRequired` from its
-        body after starting to execute, so its announced `in_progress` is kept and `_resolve_approvals`
-        corrects only scan-invisible tools.
-        """
-        names: set[str] = set()
-        for toolset in self._static_toolsets(config):
-            if isinstance(toolset, FunctionToolset):
-                names.update(name for name, tool in toolset.tools.items() if not tool.requires_approval)
-        return frozenset(names)
+                for name, tool in toolset.tools.items():
+                    (approval if tool.requires_approval else non_approval).add(name)
+        return frozenset(approval), frozenset(non_approval)
 
     async def _request_permission(
         self, turn: _TurnState, state: SessionState[AgentDepsT], call: ToolCallPart, scope: Hashable
@@ -941,23 +1017,6 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             return True
         return ToolDenied('Rejected by the client.')
 
-    # --- Optional ACP methods not supported by this adapter ------------------------------
-    # The capabilities for these are advertised as off in `initialize`, but the SDK router still
-    # routes the methods here (`acp.Agent` is a Protocol whose inherited stub bodies would answer
-    # success-`null`), so these raises are what a client calling them anyway actually receives.
-
-    async def authenticate(self, method_id: str, **kwargs: object) -> schema.AuthenticateResponse | None:
-        """No authentication is required, so this is a no-op."""
-        return None
-
-    async def list_sessions(
-        self,
-        cwd: str | None = None,
-        cursor: str | None = None,
-        **kwargs: object,
-    ) -> schema.ListSessionsResponse:
-        raise acp.RequestError.method_not_found('session/list')
-
     def _resolve_run_model(self, model_id: str | None) -> Model | str | None:
         """Map an advertised model id to the per-run override, applying `model_resolver` if set.
 
@@ -966,11 +1025,6 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         if model_id is None or self._model_resolver is None:
             return model_id
         return self._model_resolver(model_id)
-
-    async def set_session_mode(
-        self, session_id: str, mode_id: str, **kwargs: object
-    ) -> schema.SetSessionModeResponse | None:
-        raise acp.RequestError.method_not_found('session/set_mode')
 
     async def set_config_option(
         self, config_id: str, session_id: str, value: str | bool, **kwargs: object
@@ -988,6 +1042,28 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         options = self._model_config_options(state.model)
         assert options is not None
         return schema.SetSessionConfigOptionResponse(config_options=options)
+
+    # --- Optional ACP methods not supported by this adapter ------------------------------
+    # The capabilities for these are advertised as off in `initialize`, but the SDK router still
+    # routes the methods here (`acp.Agent` is a Protocol whose inherited stub bodies would answer
+    # success-`null`), so these raises are what a client calling them anyway actually receives.
+
+    async def authenticate(self, method_id: str, **kwargs: object) -> schema.AuthenticateResponse | None:
+        """No authentication is required, so this is a no-op."""
+        return None
+
+    async def list_sessions(
+        self,
+        cwd: str | None = None,
+        cursor: str | None = None,
+        **kwargs: object,
+    ) -> schema.ListSessionsResponse:
+        raise acp.RequestError.method_not_found('session/list')
+
+    async def set_session_mode(
+        self, session_id: str, mode_id: str, **kwargs: object
+    ) -> schema.SetSessionModeResponse | None:
+        raise acp.RequestError.method_not_found('session/set_mode')
 
     async def fork_session(
         self,

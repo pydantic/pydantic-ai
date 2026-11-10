@@ -12,7 +12,7 @@ from pydantic_ai_harness.repo_context._inventory import AgentContextInventory, s
 
 
 class RepoContextToolset(FunctionToolset[AgentDepsT]):
-    """Exposes a single tool that reports where the repo's CE assets live."""
+    """Exposes a single tool that reports where the repo's coding-assistant assets live."""
 
     def __init__(
         self, asset_roots: Sequence[str], tool_name: str, *, workspace_dir: Path | None = None, id: str | None = None
@@ -28,7 +28,7 @@ class RepoContextToolset(FunctionToolset[AgentDepsT]):
 
         Returns the locations of instruction dirs (`.claude`, `.agents`,
         `.codex`, `.grok`) and, within each, the `skills/`, `agents/`, and
-        `settings.json` (hooks) it contains. This locates assets so you can read
-        and translate them; it does not parse their contents.
+        `settings.json` (hooks) it contains. This locates assets for inspection;
+        it does not parse their contents.
         """
         return await scan_assets(ctx.workspace, Path(await ctx.workspace.working_dir()), self._asset_roots)

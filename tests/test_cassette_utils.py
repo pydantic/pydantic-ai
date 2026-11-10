@@ -131,10 +131,13 @@ class TestVerifyWithEmptyBodies:
         return _make_ctx(tmp_path)
 
     def test_verify_contains_no_bodies(self, ctx: CassetteContext) -> None:
-        ctx.verify_contains('anything')
+        """With nothing recorded there is nothing to check, which must fail rather than pass."""
+        with pytest.raises(AssertionError, match='No recorded request bodies to verify for fake_test'):
+            ctx.verify_contains('anything')
 
     def test_verify_ordering_no_bodies(self, ctx: CassetteContext) -> None:
-        ctx.verify_ordering('a', 'b', 'c')
+        with pytest.raises(AssertionError, match='No recorded request bodies to verify for fake_test'):
+            ctx.verify_ordering('a', 'b', 'c')
 
 
 class TestGetXaiCassetteRequestBodies:

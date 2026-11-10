@@ -34,8 +34,9 @@ from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
-pytestmark = pytest.mark.xdist_group(name='harness-temporal')
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal')]
 
 TEMPORAL_PORT = 7259  # avoid conflict with the other Temporal suites
 TASK_QUEUE = 'pydantic-ai-harness-coder-queue'
@@ -149,6 +150,7 @@ async def client() -> AsyncIterator[Client]:
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
         dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        download_dest_dir=temporal_dev_server_cache_dir(),
     ):
         yield await Client.connect(f'localhost:{TEMPORAL_PORT}', plugins=[PydanticAIPlugin()])
 
@@ -228,7 +230,7 @@ def test_workspace_capabilities_register_their_toolsets() -> None:
             FileSystem(),
             Shell(),
             Shell(id='background_shell', tools=['start_command', 'check_command']),
-            RepoContext(),
+            RepoContext(expose_inventory_tool=True),
             ToolOutputLimits(),
             TemporalDurability(activity_config=ACTIVITY_CONFIG),
         ],

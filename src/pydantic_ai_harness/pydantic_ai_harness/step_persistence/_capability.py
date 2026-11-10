@@ -5,13 +5,17 @@ from __future__ import annotations
 import base64
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
 
+import anyio
+from pydantic import ValidationError
+
 from pydantic_ai import CallToolsNode, ModelRequestNode
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler
+from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler, WrapToolExecuteHandler
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, ToolFailedError, ToolRetryError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.run import AgentRunResult
@@ -35,6 +39,10 @@ from pydantic_ai_harness.step_persistence._types import (
 
 def _empty_metadata() -> dict[str, str]:
     return {}
+
+
+def _snapshot_state(messages: list[ModelMessage]) -> SnapshotState:
+    return 'complete' if is_provider_valid(messages) else 'interrupted'
 
 
 def _has_model_response(messages: list[ModelMessage]) -> bool:
@@ -95,31 +103,33 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     agent_name: str | None = None
     """Logical agent name (e.g. `code_librarian`, `reproducer`).
 
-    Used as a stable prefix for the context-derived `run_id` so store
-    inspection identifies both the agent and the durable run.
+    Recorded on the run, its events, and its snapshots. When set, it is also
+    encoded into the context-derived `run_id` so store inspection identifies both
+    the agent and the durable run.
+
+    When unset, the running agent's `name` is recorded instead, but the `run_id`
+    stays `ctx.run_id`: deriving the store key from `Agent.name` would change the
+    key of runs that callers look up by their context run id.
     """
 
     run_id: str | None = None
     """Identifier for this one `Agent.run` call.
 
     `run_id` is per-call, matching `pydantic_ai.RunContext.run_id`. For
-    multi-turn logical grouping use `conversation_id` on `Agent.run(...)` --
-    that is the pyai-native primitive for it.
+    multi-turn grouping use `conversation_id` on `Agent.run(...)`.
 
     Resolution order (materialised in `for_run`):
 
-    1. **Explicit value** → used as-is. Single-shot use cases:
-       deterministic id for testing, replay, debugging. Reusing the
-       capability across multiple `.run()` calls with the same explicit
-       `run_id` raises `ValueError` in `before_run` -- the tool-effect
-       ledger keys on `(run_id, tool_call_id)` and providers reuse
-       deterministic tool-call ids, so a silent collision would erase
-       the `unknown_after_crash` signal. Use `conversation_id=` on
-       `Agent.run` for multi-turn grouping.
-    2. **`agent_name` set, `run_id` unset** -> path-safe encoding of both values.
+    1. Explicit value -> used as-is, for a deterministic id in testing,
+       replay, or debugging. Reusing the capability across multiple `.run()`
+       calls with the same explicit `run_id` raises `ValueError` in
+       `before_run`: the tool-effect ledger keys on `(run_id, tool_call_id)`
+       and providers reuse deterministic tool-call ids, so a collision would
+       erase the `unknown_after_crash` signal.
+    2. `agent_name` set, `run_id` unset -> path-safe encoding of both values.
        Reusing the capability instance yields distinct ids because the agent
        graph assigns each run its own id.
-    3. **Neither set** -> `ctx.run_id` per `.run()`.
+    3. Neither set -> `ctx.run_id` per `.run()`.
     """
 
     parent_run_id: str | None = None
@@ -146,6 +156,8 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     _snapshot_sequence: int = field(default=0, init=False, repr=False)
     _last_snapshot_messages: list[ModelMessage] | None = field(default=None, init=False, repr=False)
     _last_snapshot_step: int | None = field(default=None, init=False, repr=False)
+    _open_tool_calls: set[int] = field(default_factory=set[int], init=False, repr=False)
+    """`id()` of each call whose `started` effect this run wrote and no terminal hook has finished yet."""
 
     @classmethod
     def from_spec(cls, *args: Any, **kwargs: Any) -> StepPersistence[Any]:
@@ -202,7 +214,10 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         """
         inferred_parent = self.parent_run_id if self.parent_run_id is not None else current_run_id.get()
         resolved_run_id = self.run_id or self._derive_run_id(ctx)
-        return replace(self, run_id=resolved_run_id, parent_run_id=inferred_parent)
+        agent_name = self.agent_name
+        if agent_name is None and ctx.agent is not None:
+            agent_name = ctx.agent.name
+        return replace(self, run_id=resolved_run_id, parent_run_id=inferred_parent, agent_name=agent_name)
 
     def _derive_run_id(self, ctx: RunContext[AgentDepsT]) -> str:
         if ctx.run_id is None:
@@ -280,7 +295,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
                 run_id=run_id,
                 kind=kind,
                 step_index=step_index,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 conversation_id=conversation_id,
                 parent_run_id=parent_run_id,
                 agent_name=agent_name,
@@ -340,7 +355,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
                 conversation_id=conversation_id,
                 parent_run_id=parent_run_id,
                 agent_name=agent_name,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 state=state,
                 # The store scopes keys by run id. Within that scope the sequence distinguishes
                 # separate save calls, step_index identifies the graph position, and state keeps
@@ -396,7 +411,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         error: str | None = None,
     ) -> None:
         prior = await self.store.get_tool_effect(run_id=run_id, tool_call_id=tool_call_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         await self.store.record_tool_effect(
             ToolEffectRecord(
                 tool_call_id=tool_call_id,
@@ -485,11 +500,10 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         that rebind happens exactly once, and every later change to
         `ctx.state.message_history` is an in-place mutation (`append` /
         `[:]=` -- the discipline `capture_run_messages` requires, stated in
-        `pydantic_ai._agent_graph`). If core ever rebinds the list mid-run
-        again, this stash silently goes stale and the error-path snapshot
-        persists a pre-failure history while believing it is the at-failure
-        one -- `tests/step_persistence` pins the invariant so that surfaces
-        as a test failure, not silent data loss.
+        `pydantic_ai._agent_graph`). If core rebinds the list mid-run again,
+        this stash goes stale and the error-path snapshot persists a
+        pre-failure history as the at-failure one; `tests/harness/step_persistence`
+        pins the invariant so that surfaces as a test failure.
 
         Re-stashed at every boundary because the first `after_node_run`
         (the `UserPromptNode` boundary) still sees the pre-rebind list; from
@@ -547,14 +561,16 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         tool call is resolved and `interrupted` otherwise. Interrupted
         snapshots stay off the default `latest_snapshot` read path.
         """
-        stashed = live_run_history.get()
-        if stashed is not None:
-            messages, step_index = stashed
-            captured = list(messages)
-            if _has_model_response(captured) or (self.capture_frontier and captured):
-                state: SnapshotState = 'complete' if is_provider_valid(captured) else 'interrupted'
-                await self._save_continuable_snapshot(ctx, captured, step_index, state)
-        await self._record_event(ctx, kind='run_failed', error=repr(error))
+        # Shielded so an `anyio` scope cancelling the run cannot cut these writes. No deadline: under
+        # Temporal, `anyio`'s deadline becomes a durable timer, which breaks replay of earlier histories.
+        with anyio.CancelScope(shield=True):
+            stashed = live_run_history.get()
+            if stashed is not None:
+                messages, step_index = stashed
+                captured = list(messages)
+                if _has_model_response(captured) or (self.capture_frontier and captured):
+                    await self._save_continuable_snapshot(ctx, captured, step_index, _snapshot_state(captured))
+            await self._record_event(ctx, kind='run_failed', error=repr(error))
         raise error
 
     async def before_model_request(
@@ -564,12 +580,8 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     ) -> ModelRequestContext:
         if self.capture_frontier:
             self._stash_live_history(ctx)
-            await self._save_continuable_snapshot(
-                ctx,
-                list(ctx.messages),
-                ctx.run_step,
-                'complete' if is_provider_valid(ctx.messages) else 'interrupted',
-            )
+            messages = list(ctx.messages)
+            await self._save_continuable_snapshot(ctx, messages, ctx.run_step, _snapshot_state(messages))
         await self._record_event(ctx, kind='model_request_started')
         return request_context
 
@@ -610,6 +622,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
     ) -> dict[str, Any]:
         run_id = self._effective_run_id(ctx)
         await self._record_tool_effect(run_id, call.tool_call_id, tool_def.name)
+        self._open_tool_calls.add(id(call))
         await self._record_event(
             ctx,
             kind='tool_call_started',
@@ -627,6 +640,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         result: Any,
     ) -> Any:
+        self._open_tool_calls.discard(id(call))
         run_id = self._effective_run_id(ctx)
         await self._finish_tool_effect(run_id, call.tool_call_id, tool_def.name, 'completed')
         await self._record_event(
@@ -646,6 +660,45 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         error: Exception,
     ) -> Any:
+        self._open_tool_calls.discard(id(call))
+        await self._record_tool_failure(ctx, call, tool_def, error)
+        raise error
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        """Record a call that ends in a retry or a failure as `failed`.
+
+        Core re-raises a retry or failure past `on_tool_execute_error` and `after_tool_execute`:
+        the tool's own `ModelRetry` / `ToolFailed`, wrapped as `ToolRetryError` / `ToolFailedError`
+        or raw for a caller that asks for raw errors (`CodeMode`'s sandbox calls), and a
+        `ModelRetry`, `ToolFailed` or `ValidationError` from another capability's hook. The effect
+        is finished only while the call is open, between this capability's `before_tool_execute`
+        and its terminal hook, so a retry raised after `after_tool_execute` recorded `completed`, or
+        before `started` was written, leaves the ledger as it is.
+        """
+        try:
+            return await handler(args)
+        except (ToolRetryError, ToolFailedError, ModelRetry, ToolFailed, ValidationError) as error:
+            if id(call) in self._open_tool_calls:
+                await self._record_tool_failure(ctx, call, tool_def, error)
+            raise
+        finally:
+            self._open_tool_calls.discard(id(call))
+
+    async def _record_tool_failure(
+        self,
+        ctx: RunContext[AgentDepsT],
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        error: Exception,
+    ) -> None:
         run_id = self._effective_run_id(ctx)
         await self._finish_tool_effect(run_id, call.tool_call_id, tool_def.name, 'failed', repr(error))
         await self._record_event(
@@ -655,7 +708,6 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
             tool_name=tool_def.name,
             error=repr(error),
         )
-        raise error
 
     async def after_node_run(
         self,
@@ -692,27 +744,10 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         self._stash_live_history(ctx)
         messages = list(ctx.messages)
         if self.capture_frontier and isinstance(node, ModelRequestNode):
-            await self._save_continuable_snapshot(
-                ctx, messages, ctx.run_step, 'complete' if is_provider_valid(messages) else 'interrupted'
-            )
+            await self._save_continuable_snapshot(ctx, messages, ctx.run_step, _snapshot_state(messages))
         if isinstance(node, CallToolsNode):
             if isinstance(result, ModelRequestNode):
                 messages = [*messages, result.request]
             if is_provider_valid(messages):
-                await self._save_snapshot(
-                    run_id=self._effective_run_id(ctx),
-                    step_index=ctx.run_step,
-                    messages=messages,
-                    conversation_id=ctx.conversation_id,
-                    parent_run_id=self.parent_run_id,
-                    agent_name=self.agent_name,
-                )
-                await ctx.emit(
-                    SnapshotSaved(
-                        persistence_run_id=self._effective_run_id(ctx),
-                        conversation_id=ctx.conversation_id,
-                        step_index=ctx.run_step,
-                        state='complete',
-                    )
-                )
+                await self._save_continuable_snapshot(ctx, messages, ctx.run_step)
         return result

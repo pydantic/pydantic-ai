@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, TypeVar, cast
 
 from pydantic_ai._utils import replace_no_init
+from pydantic_ai._warnings import suppress_provider_field_warnings
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
@@ -143,8 +144,8 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
 
     # --- Subclass hooks (not abstract — direct use is supported) ---
 
-    def _default_native(self) -> AbstractNativeTool | None:
-        """Create the default native tool instance.
+    def _default_native(self) -> AgentNativeTool[AgentDepsT] | None:
+        """Create the default native tool instance, or a function that creates it for each run.
 
         Override in subclasses. Returns None by default (direct use requires
         passing an explicit `AbstractNativeTool` instance as `native`).
@@ -280,6 +281,15 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         merged.__post_init__()
         return merged
 
+    def _apply_native_overrides(self, tool: _NativeToolT, overrides: dict[str, Any]) -> _NativeToolT:
+        """Return `tool` with capability-level overrides applied."""
+        if not overrides:
+            return tool
+        # TODO(v3): overrides can still name deprecated fields such as `ImageGenerationTool.quality`; once those
+        # are removed, the capabilities should pass them in `provider_settings` and this suppression can go.
+        with suppress_provider_field_warnings():
+            return replace(tool, **overrides)
+
     def _resolve_native_with_overrides(
         self, tool_cls: type[_NativeToolT], overrides: dict[str, Any]
     ) -> _NativeToolT | Callable[[RunContext[AgentDepsT]], Awaitable[_NativeToolT] | _NativeToolT]:
@@ -291,16 +301,17 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         has already resolved it to an instance. A factory that returns `None` raises `UserError`
         rather than substituting a default instance, and anything else raises too.
 
-        Only the `fallback_subagent_model` path reaches here: `__post_init__` calls `_default_local()`, which
-        returns early when `fallback_subagent_model` is unset, so a capability configured without one never
-        runs this check. Validating in `__post_init__` instead would reject configurations that
-        construct fine today for users who never opted into a fallback subagent.
+        Only the `fallback_subagent_model` path reaches here: a subclass builds its subagent tool only
+        when `fallback_subagent_model` is set, so a capability configured without one never runs this
+        check. Validating unconditionally instead would reject configurations that construct fine
+        today for users who never opted into a fallback subagent.
         """
         if isinstance(self.native, tool_cls):
-            return replace(self.native, **overrides) if overrides else self.native
+            return self._apply_native_overrides(self.native, overrides)
 
         if self.native is False:
-            return tool_cls(**overrides)
+            with suppress_provider_field_warnings():
+                return tool_cls(**overrides)
 
         native_factory = self.native
         if not callable(native_factory):
@@ -311,6 +322,6 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
 
         async def resolve_native(ctx: RunContext[AgentDepsT]) -> _NativeToolT:
             native_tool = await resolve_native_tool(tool_cls, native_factory, ctx)
-            return replace(native_tool, **overrides) if overrides else native_tool
+            return self._apply_native_overrides(native_tool, overrides)
 
         return resolve_native

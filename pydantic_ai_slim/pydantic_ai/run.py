@@ -1,15 +1,18 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from copy import deepcopy
+from copy import copy, deepcopy
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
+from functools import cache
+from typing import TYPE_CHECKING, Any, Generic, Literal, NotRequired, Required, cast, overload
 
-from pydantic import model_serializer, model_validator
-from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
-from typing_extensions import NotRequired, TypedDict
+import anyio
+from pydantic import ConfigDict, GetJsonSchemaHandler, TypeAdapter, model_serializer, model_validator, with_config
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
+from pydantic_core.core_schema import IncExCall, SerializationInfo, SerializerFunctionWrapHandler
+from typing_extensions import TypedDict
 
 from pydantic_graph import BaseNode, End, EndMarker, ErrorMarker, GraphRun, GraphRunContext, GraphTaskRequest, JoinItem
 from pydantic_graph.step import NodeStep
@@ -21,15 +24,17 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
-from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._conversation_marks import mark_stored
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
     CustomEventT,
     no_workspace,
 )
 from .capabilities._pending_messages import drain_pending_messages_at_end
+from .conversation import Conversation
 from .output import OutputDataT
-from .tools import AgentDepsT
+from .tools import AgentDepsT, DeferredToolRequests
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
@@ -37,7 +42,12 @@ if TYPE_CHECKING:
     from .workspaces import Workspace
 
 
+@with_config(ConfigDict(title='AgentRunResult'))
 class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
+    """The final result of an agent run."""
+
+    # The serialized shape. Its title and docstring are what the published serialization JSON schema
+    # shows, so they name the public class rather than this one.
     output: NotRequired[OutputDataT]
     messages: list[_messages.ModelMessage]
     new_message_index: NotRequired[int]
@@ -45,11 +55,86 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     usage: NotRequired[_usage.RunUsage]
     run_id: NotRequired[str]
     conversation_id: NotRequired[str]
+    conversation_revision: NotRequired[str | None]
+    conversation_unsaved: NotRequired[list[_messages.ModelMessage]]
+    conversation_unchecked: NotRequired[bool]
+    conversation_saved: NotRequired[bool]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
 
 
-_STATE_KEYS = ('usage', 'run_id', 'conversation_id', 'metadata')
+@with_config(ConfigDict(title='AgentRunResult'))
+class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
+    """The final result of an agent run."""
+
+    # The shape `AgentRunResult` validates, as its published validation JSON schema describes it: the
+    # serialized shape with only `output` required, since `_validate_serialized` fills in a default for
+    # every other key. The legacy private-field shape it also accepts is deliberately not described,
+    # so nothing new is built against it. Title and docstring are what the published schema shows.
+    output: Required[OutputDataT]
+    messages: list[_messages.ModelMessage]
+    new_message_index: int
+    output_tool_name: str | None
+    usage: _usage.RunUsage
+    run_id: str
+    conversation_id: str
+    conversation_revision: str | None
+    conversation_unsaved: list[_messages.ModelMessage]
+    conversation_unchecked: bool
+    conversation_saved: bool
+    metadata: dict[str, Any] | None
+    traceparent: str | None
+
+
+@cache
+def _input_core_schema() -> CoreSchema:
+    """The core schema of `_AgentRunResultInput`, with `output` left as `Any` for each caller to fill in."""
+    return TypeAdapter(_AgentRunResultInput[Any]).core_schema
+
+
+def _with_output_schema(schema: CoreSchema, output_schema: CoreSchema) -> CoreSchema:
+    """Return a copy of the `_AgentRunResultInput` schema whose `output` field validates as `output_schema`."""
+    schema = deepcopy(schema)
+    typed_dict = schema
+    while typed_dict['type'] != 'typed-dict':
+        # Wrapped in `definitions` when any field's type is recursive, as a message history is.
+        typed_dict = cast('CoreSchema', typed_dict['schema'])  # pyright: ignore[reportGeneralTypeIssues,reportTypedDictNotRequiredAccess]
+    # Each parameterization has its own `output`, so it can't share one definition: published under
+    # this schema's own ref, `AgentRunResult[str]` and `AgentRunResult[City]` in one API would both
+    # point at whichever was generated first. Without it, the shape is inlined into the definition of
+    # the `AgentRunResult[...]` it belongs to.
+    typed_dict.pop('ref', None)
+    typed_dict['fields']['output']['schema'] = output_schema
+    return schema
+
+
+def _output_field_schema(schema: CoreSchema) -> CoreSchema:
+    """Find the schema of the dataclass's `output` field, resolved for this parameterization."""
+    while schema['type'] != 'dataclass-args':
+        schema = cast('CoreSchema', schema['schema'])  # pyright: ignore[reportGeneralTypeIssues,reportTypedDictNotRequiredAccess]
+    return next(field['schema'] for field in schema['fields'] if field['name'] == 'output')
+
+
+_STAMPED_FIELDS = ('timestamp', 'instructions', 'run_id', 'conversation_id')
+"""The fields a run fills in on a message it sends, when the message has them but they aren't set yet."""
+
+
+def _rewritten(message: _messages.ModelMessage, original: _messages.ModelMessage) -> bool:
+    """Whether `message` differs from `original` other than by what a run fills in on a request it sends."""
+    filled = {name: getattr(message, name, None) for name in _STAMPED_FIELDS if getattr(original, name, False) is None}
+    return message != dataclasses.replace(original, **filled)
+
+
+_STATE_KEYS = (
+    'usage',
+    'run_id',
+    'conversation_id',
+    'conversation_revision',
+    'conversation_unsaved',
+    'conversation_unchecked',
+    'conversation_saved',
+    'metadata',
+)
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
 
 
@@ -59,10 +144,17 @@ def _filtered_value(value: Any, spec: Any, *, keep: bool) -> Any:
     Filters the container rather than re-serializing it, so the value stays whatever the outer
     schema expects. That bounds what can be applied: a plain set of keys or indices, against a
     mapping or a sequence — `exclude={'metadata': {'api_key'}}` and `exclude={'messages': {0}}`,
-    the forms a caller reaches for to redact an entry or drop a message. A deeper spec, or one
-    aimed at a key whose value is neither (`usage`), would need that value re-serialized against a
-    sub-schema, so it is left alone; see `_filter_serialized`.
+    the forms a caller reaches for to redact an entry or drop a message — or the same keys mapped
+    to `True`, which Pydantic treats as that set. A deeper spec, or one aimed at a key whose value
+    is neither (`usage`), would need that value re-serialized against a sub-schema, so it is left
+    alone; see `_filter_serialized`.
     """
+    if isinstance(spec, Mapping):
+        sub_specs = cast('Mapping[Any, Any]', spec)
+        # An empty mapping names no keys, but `all()` alone would accept it as an empty key set.
+        if not (sub_specs and all(sub_spec is True for sub_spec in sub_specs.values())):
+            return value
+        spec = set(sub_specs)
     if not isinstance(spec, set):
         return value
     if isinstance(value, Mapping):
@@ -98,7 +190,11 @@ def _filter_serialized(data: Mapping[str, Any], info: SerializationInfo) -> dict
             else {key for key, spec in exclude.items() if not isinstance(spec, (set, dict))}
         )
         data = {key: value for key, value in data.items() if key not in dropped}
+    return _apply_nested_specs(data, include, exclude)
 
+
+def _apply_nested_specs(data: Mapping[str, Any], include: IncExCall, exclude: IncExCall) -> dict[str, Any]:
+    """Apply each key's nested `include`/`exclude` spec to the value of a key `data` still has."""
     filtered = dict(data)
     for spec, keep in ((include, True), (exclude, False)):
         if not isinstance(spec, Mapping):
@@ -161,6 +257,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                         cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
                     ),
                     model_name='gpt-5.2',
+                    model_id='openai:gpt-5.2',
                     timestamp=datetime.datetime(...),
                     run_id='...',
                     conversation_id='...',
@@ -182,6 +279,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         _agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[OutputDataT]
     ]
     _result_override: AgentRunResult[OutputDataT] | None = dataclasses.field(default=None, repr=False, init=False)
+    # Cached errors retain step tracebacks. Those completed frames must drop this run and
+    # bound callbacks to avoid a run -> error -> traceback -> run cycle.
     _node_error: BaseException | None = dataclasses.field(default=None, repr=False, init=False)
     """Stores the original exception from node execution, before context manager __aexit__ may transform it."""
     _last_yielded_node: _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]] | None = (
@@ -292,45 +391,49 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Advancing goes through [`next()`][pydantic_ai.run.AgentRun.next], so capability hooks fire
         exactly as they do for [`agent.run()`][pydantic_ai.agent.AbstractAgent.run].
         """
-        if self._result_override is not None:
-            raise StopAsyncIteration
+        try:
+            if self._result_override is not None:
+                raise StopAsyncIteration
 
-        previous = self._last_yielded_node
-        if isinstance(previous, End):
-            # The run already completed; a trailing `__anext__` (e.g. the one `async for` performs
-            # after yielding `End`) must stop cleanly even if `cancel()` was requested as the final
-            # step finished — cancelling an already-finished run is a no-op.
-            raise StopAsyncIteration
+            previous = self._last_yielded_node
+            if isinstance(previous, End):
+                # The run already completed; a trailing `__anext__` (e.g. the one `async for` performs
+                # after yielding `End`) must stop cleanly even if `cancel()` was requested as the final
+                # step finished — cancelling an already-finished run is a no-op.
+                raise StopAsyncIteration
 
-        self.ctx.deps.cancellation.bind()
-        if self.ctx.deps.cancellation.cancel_requested:
-            # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
-            # previous loop body) before yielding another node the caller would go on to run. The
-            # first node is yielded before it runs, so unlike `self.next(previous)` this boundary
-            # has no awaited step to carry the pending `task.cancel()`: yield to the event loop so
-            # it's delivered here on every Python version (`raise_if_cancelling` only re-asserts on
-            # 3.11+, and neither path awaits).
-            await asyncio.sleep(0)
-        _utils.raise_if_cancelling()
+            self.ctx.deps.cancellation.bind()
+            if self.ctx.deps.cancellation.cancel_requested:
+                # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
+                # previous loop body) before yielding another node the caller would go on to run. The
+                # first node is yielded before it runs, so unlike `self.next(previous)` this boundary
+                # has no awaited step to carry the pending `task.cancel()`: yield to the scheduler so
+                # it's delivered here on every Python version (`raise_if_cancelling` only re-asserts on
+                # 3.11+, and neither path awaits).
+                await anyio.lowlevel.checkpoint()
+            _utils.raise_if_cancelling()
 
-        if previous is None:
-            # The first node hasn't run yet: yield it so the caller can inspect (or replace) it,
-            # and run it on the next iteration.
-            node = self.next_node
-        elif (current := self.next_node) is not previous:
-            # The loop body advanced the run itself, e.g. by calling `next()` on the node we just
-            # yielded. Running `previous` again here would execute it — and its hooks — a second
-            # time, so surface where the graph actually is instead.
-            node = current
-        else:
-            try:
-                node = await self.next(previous)
-            except BaseException as exc:
-                self._node_error = exc
-                raise
+            if previous is None:
+                # The first node hasn't run yet: yield it so the caller can inspect (or replace) it,
+                # and run it on the next iteration.
+                node = self.next_node
+            elif (current := self.next_node) is not previous:
+                # The loop body advanced the run itself, e.g. by calling `next()` on the node we just
+                # yielded. Running `previous` again here would execute it — and its hooks — a second
+                # time, so surface where the graph actually is instead.
+                node = current
+            else:
+                try:
+                    node = await self.next(previous)
+                except BaseException as exc:
+                    self._node_error = exc
+                    raise
 
-        self._last_yielded_node = node
-        return node
+            self._last_yielded_node = node
+            return node
+        finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
+            del self
 
     def _task_to_node(
         self, task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTaskRequest]
@@ -356,8 +459,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """Synchronize the graph runner's state to match a hook-modified result.
 
         After a capability hook changes the result (e.g. `on_node_run_error` recovering,
-        or `after_node_run` converting End↔node), the graph runner's internal `_next` must
-        be updated so that `output` and `next_node` reflect the hook's decision.
+        `after_node_run` converting `End` ↔ node, or `wrap_node_run` replacing the handler result),
+        the graph runner's internal `_next` must be updated so that `output` and `next_node`
+        reflect the hook's decision.
         """
         if isinstance(result, End):
             self._graph_run.override_next(EndMarker(result.data))
@@ -381,6 +485,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 ] = node
                 if _agent_graph.is_agent_node(base_node):  # pragma: no branch
                     return base_node
+        # Defensive fallback, like the two guarded branches above: reached only if a wrapper
+        # returns a *node* while the graph holds an `EndMarker`/`ErrorMarker` or an unrecognised
+        # shape — no streamed node's handler can produce that state in the current lifecycle.
         return None
 
     def _graph_reflects(self, result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]) -> bool:
@@ -400,14 +507,18 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         node: _agent_graph.AgentNode[AgentDepsT, Any],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Execute a single graph step without firing capability hooks."""
-        task = [self._node_to_task(node)]
         try:
-            task = await self._graph_run.next(task)
-        except StopAsyncIteration:
-            pass
-        return self._task_to_node(task)
+            task = [self._node_to_task(node)]
+            try:
+                task = await self._graph_run.next(task)
+            except StopAsyncIteration:
+                pass
+            return self._task_to_node(task)
+        finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
+            del self
 
-    async def _wrap_and_advance(
+    async def _wrap_and_advance_streaming(
         self,
         run_context: RunContext[AgentDepsT],
         node: _agent_graph.AgentNode[AgentDepsT, Any],
@@ -416,11 +527,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        """Execute `wrap_node_run(step_fn)` → `on_node_run_error` → `after_node_run`.
+        """Run the post-stream portion of the node lifecycle.
 
-        This is the portion of the hook lifecycle after `before_node_run` has already fired.
-        Used by both `_run_node_with_hooks` and directly by `run_stream()` which calls
-        `before_node_run` separately (before streaming).
+        This is the documented `run_stream()` exception to wrap-outermost ordering:
+        `before_node_run` has already fired before streaming, so `wrap_node_run` encloses only
+        graph advancement, followed by `on_node_run_error` recovery and `after_node_run`.
         """
         self.ctx.deps.cancellation.bind()
         cap = self.ctx.deps.root_capability
@@ -466,23 +577,60 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        """Run a node through the full capability hook lifecycle with a custom step function.
+        """Run the complete node lifecycle inside `wrap_node_run`.
 
-        Fires hooks in order: `before_node_run` → `wrap_node_run(step_fn)` → `after_node_run`,
-        with `on_node_run_error` handling exceptions from `wrap_node_run`.
+        The wrapped handler runs `before_node_run`, the step with `on_node_run_error` recovery,
+        and `after_node_run`.
         """
         # Bind before `before_node_run` awaits: when the run is driven from a different task than
         # the previous step (manual `next()` from another task), the controller must target this
         # driver so `cancel()` interrupts the hook, not the old task. `_wrap_and_advance` re-binds
         # (idempotently) for the `run_stream()` path, which fires `before_node_run` separately.
-        self.ctx.deps.cancellation.bind()
-        run_context = _agent_graph.build_run_context(self.ctx)
-        cap = self.ctx.deps.root_capability
-        node = await cap.before_node_run(run_context, node=node)
-        # A `before_node_run` hook that absorbed an external cancellation must not
-        # let the node itself start.
-        _utils.raise_if_cancelling()
-        return await self._wrap_and_advance(run_context, node, step_fn)
+        try:
+            self.ctx.deps.cancellation.bind()
+            run_context = _agent_graph.build_run_context(self.ctx)
+            cap = self.ctx.deps.root_capability
+
+            async def lifecycle(
+                lifecycle_node: _agent_graph.AgentNode[AgentDepsT, Any],
+            ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+                # Ruff needs explicit shared cells when the outer finally deletes them.
+                nonlocal self, step_fn
+                lifecycle_node = await cap.before_node_run(run_context, node=lifecycle_node)
+                # A `before_node_run` hook that absorbed an external cancellation must not
+                # let the node itself start.
+                _utils.raise_if_cancelling()
+                try:
+                    result = await step_fn(lifecycle_node)
+                except Exception as e:
+                    if not cap._has_on_node_run_error:  # pyright: ignore[reportPrivateUsage]
+                        raise
+                    result = await cap.on_node_run_error(run_context, node=lifecycle_node, error=e)
+                    # The graph runner is in `ErrorMarker` state; update it to match the recovery.
+                    self._sync_graph_state(result)
+                # If the step or recovery absorbed an external cancellation, re-assert it before
+                # `after_node_run` fires; the step's messages are already recorded.
+                _utils.raise_if_cancelling()
+                pre_hook_result = result
+                result = await cap.after_node_run(run_context, node=lifecycle_node, result=result)
+                if result is not pre_hook_result:
+                    self._sync_graph_state(result)
+                _utils.raise_if_cancelling()
+                return result
+
+            if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
+                result = await cap.wrap_node_run(run_context, node=node, handler=lifecycle)
+            else:
+                result = await lifecycle(node)
+            # After every capability hook, `wrap_node_run` included, so a message a hook enqueued while
+            # the run was ending still gets its turn instead of being lost.
+            result = drain_pending_messages_at_end(run_context, result)
+            if not self._graph_reflects(result):
+                self._sync_graph_state(result)
+            return result
+        finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
+            del self, step_fn
 
     async def next(
         self,
@@ -539,6 +687,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                                 cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
                             ),
                             model_name='gpt-5.2',
+                            model_id='openai:gpt-5.2',
                             timestamp=datetime.datetime(...),
                             run_id='...',
                             conversation_id='...',
@@ -561,7 +710,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
-        return await self._run_node_with_hooks(node, self._stream_and_advance)
+        try:
+            return await self._run_node_with_hooks(node, self._stream_and_advance)
+        finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
+            del self
 
     async def _stream_and_advance(
         self,
@@ -573,9 +726,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         streamed, so streaming is enabled for it here the same way `agent.run()` enables it.
         `node.stream()` applies the capability chain itself, so draining it is all that's needed.
         """
-        if self.ctx.deps.root_capability.has_wrap_run_event_stream or self.ctx.deps.root_capability.has_on_event:
-            await _agent_graph.drain_node_event_stream(node, self.ctx)
-        return await self._advance_graph(node)
+        try:
+            if self.ctx.deps.root_capability.has_wrap_run_event_stream or self.ctx.deps.root_capability.has_on_event:
+                await _agent_graph.drain_node_event_stream(node, self.ctx)
+            return await self._advance_graph(node)
+        finally:
+            # See _node_error: cached tracebacks must not retain this run or bound callbacks.
+            del self
 
     @property
     def usage(self) -> _usage.RunUsage:
@@ -601,7 +758,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def pending_messages(self) -> list[PendingMessage]:
         """Internal: live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
 
-        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages.
+        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages,
+        and [`dequeue`][pydantic_ai.run.AgentRun.dequeue] or [`set_enqueue_priority`][pydantic_ai.run.AgentRun.set_enqueue_priority]
+        to change them.
         """
         return self._graph_run.state.pending_messages
 
@@ -681,6 +840,43 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self._graph_run.state.pending_messages.append(pending)
         return pending.enqueue_id
 
+    def dequeue(self, enqueue_id: str) -> bool:
+        """Remove a message queued with [`enqueue`][pydantic_ai.run.AgentRun.enqueue] before it's delivered.
+
+        Works like [`RunContext.dequeue`][pydantic_ai.tools.RunContext.dequeue], and is safe to call
+        from the same places as `enqueue`.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+
+        Returns:
+            `True` if the message was still queued and is now removed, or `False` if it was already
+            delivered, dequeued, or never queued in this run, including once the run has ended.
+        """
+        return self._queue.dequeue(enqueue_id)
+
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        """Change when a message queued with [`enqueue`][pydantic_ai.run.AgentRun.enqueue] is delivered.
+
+        Works like [`RunContext.set_enqueue_priority`][pydantic_ai.tools.RunContext.set_enqueue_priority]: the message
+        keeps its place and its `enqueue_id`.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+            priority: The new priority, with the same meaning as in `enqueue`.
+
+        Returns:
+            `True` if the message was still queued, or `False` if it was already delivered, dequeued,
+            or never queued in this run, including once the run has ended.
+        """
+        return self._queue.set_enqueue_priority(enqueue_id, priority)
+
+    @property
+    def _queue(self) -> PendingMessageQueue:
+        queue = self._graph_run.state.pending_messages
+        assert isinstance(queue, PendingMessageQueue)  # `GraphAgentState.__post_init__` guarantees it
+        return queue
+
     def cancel(self) -> None:
         """Cancel the whole agent run.
 
@@ -718,6 +914,26 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return f'<{type(self).__name__} result={result_repr} usage={self.usage}>'
 
 
+def _from_legacy_shape(data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """The public shape of an `AgentRunResult` serialized with its private fields, `_state` among them.
+
+    Serialized before the public shape existed, when every private field was exposed directly,
+    `GraphAgentState`'s run-local scratch included; that scratch is dropped here. Public keys still
+    win, so a payload carrying both reads as the public one.
+    """
+    restored: dict[str, Any] = {
+        'new_message_index': data.get('_new_message_index', 0),
+        'output_tool_name': data.get('_output_tool_name'),
+        'traceparent': data.get('_traceparent_value'),
+    }
+    if 'message_history' in state:
+        restored['messages'] = state['message_history']
+    for key in _STATE_KEYS:
+        if key in state:
+            restored[key] = state[key]
+    return {**restored, **{key: item for key, item in data.items() if not key.startswith('_')}}
+
+
 @dataclasses.dataclass
 class AgentRunResult(Generic[OutputDataT]):
     """The final result of an agent run."""
@@ -749,6 +965,20 @@ class AgentRunResult(Generic[OutputDataT]):
         state.pop('_workspace', None)
         return state
 
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Publish the shape `_validate_serialized` accepts, not the private dataclass fields.
+
+        The validator replaces the dataclass fields with the public ones, but the JSON schema is
+        generated from the dataclass, so without this an `AgentRunResult` in an API request model
+        advertises `_state` and everything it references. `__get_pydantic_core_schema__` isn't
+        called for a parameterized generic dataclass, so the schema can't be replaced at the core
+        level; this hook is called for both forms, with `output` already resolved.
+        """
+        if handler.mode != 'validation':
+            return handler(core_schema)
+        return handler(_with_output_schema(_input_core_schema(), _output_field_schema(core_schema)))
+
     @model_validator(mode='before')
     @classmethod
     def _validate_serialized(cls, value: Any) -> Any:
@@ -762,21 +992,7 @@ class AgentRunResult(Generic[OutputDataT]):
         data = cast('dict[str, Any]', value)
 
         if isinstance(legacy_state := data.get('_state'), dict):
-            # Serialized before this shape existed, when every private field was exposed directly,
-            # `GraphAgentState`'s run-local scratch included; that scratch is dropped here. Public
-            # keys still win, so a payload carrying both reads as the public one.
-            state = cast('dict[str, Any]', legacy_state)
-            restored: dict[str, Any] = {
-                'new_message_index': data.get('_new_message_index', 0),
-                'output_tool_name': data.get('_output_tool_name'),
-                'traceparent': data.get('_traceparent_value'),
-            }
-            if 'message_history' in state:
-                restored['messages'] = state['message_history']
-            for key in _STATE_KEYS:
-                if key in state:
-                    restored[key] = state[key]
-            data = {**restored, **{key: item for key, item in data.items() if not key.startswith('_')}}
+            data = _from_legacy_shape(data, cast('dict[str, Any]', legacy_state))
 
         state_data: dict[str, Any] = {}
         if 'messages' in data:
@@ -814,6 +1030,15 @@ class AgentRunResult(Generic[OutputDataT]):
             'metadata': self._state.metadata,
             'traceparent': self._traceparent_value,
         }
+        # Only for a run that continued a stored conversation, so other results keep their shape.
+        if self._state.conversation_revision is not None:
+            data['conversation_revision'] = self._state.conversation_revision
+        if self._state.conversation_unsaved is not None:
+            data['conversation_unsaved'] = self._state.conversation_unsaved
+        if self._state.conversation_unchecked:
+            data['conversation_unchecked'] = True
+        if self._state.conversation_saved:
+            data['conversation_saved'] = True
         if 'output' in serialized:
             # Absent when the caller filtered it out: an explicit `exclude={'output'}`, or
             # `exclude_none=True` on a `None` output. The handler applies those filters to the
@@ -929,6 +1154,70 @@ class AgentRunResult(Generic[OutputDataT]):
     def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
+
+    @property
+    def conversation(self) -> Conversation:
+        """This run's [`Conversation`][pydantic_ai.conversation.Conversation], ready to carry into the next one.
+
+        Bundles the messages, usage and conversation ID that a following run — text, streamed, or
+        realtime — needs, so none of them is dropped on the way, and, when this run paused with
+        [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] as its output, the requests
+        it is waiting on. The messages list and the usage are copies, so the returned conversation
+        can be stored, carried into another run, and mutated without touching this result's own
+        accounting.
+
+        Each access builds a new conversation. A
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] advances the
+        [`revision`][pydantic_ai.conversation.Conversation.revision] of the conversation it saves,
+        so keep that one in a variable to carry into the next run or save again.
+
+        When this run continued a conversation that knows which of its messages are stored, its
+        [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index] points at
+        the messages the store doesn't have yet: the ones this run added, and any the conversation
+        hadn't saved before the run.
+        """
+        output = self.output
+        conversation = Conversation(
+            messages=list(self.all_messages()),
+            usage=copy(self.usage),
+            conversation_id=self.conversation_id,
+            deferred_tool_requests=(
+                DeferredToolRequests(
+                    calls=list(output.calls), approvals=list(output.approvals), metadata=dict(output.metadata)
+                )
+                if isinstance(output, DeferredToolRequests)
+                else None
+            ),
+            revision=self._state.conversation_revision,
+        )
+        index = self._conversation_new_message_index()
+        if index is not None and self._state.conversation_unchecked:
+            # Its store compares the messages before the index with the stored ones instead.
+            conversation.new_message_index = index
+        elif index is not None:
+            mark_stored(conversation, conversation.messages[:index])
+        return conversation
+
+    def _conversation_saved(self, revision: str) -> None:
+        """Record that a store saved this result's conversation, so its `conversation` continues from the new revision."""
+        self._state.conversation_revision = revision
+        self._state.conversation_unchecked = False
+        self._state.conversation_saved = True
+
+    def _conversation_new_message_index(self) -> int | None:
+        if self._state.conversation_saved:
+            return len(self._state.message_history)
+        unsaved = self._state.conversation_unsaved
+        if unsaved is None:
+            return None
+        # The unsaved messages the run was given come just before the ones it added, unless a capability rewrote
+        # them, in which case the store compares the whole history instead. Filling in what a request it sends
+        # lacks doesn't count as a rewrite.
+        start = self._new_message_index - len(unsaved)
+        carried = self._state.message_history[start : self._new_message_index] if start >= 0 else []
+        if len(carried) != len(unsaved) or any(map(_rewritten, carried, unsaved)):
+            return None
+        return start
 
     @property
     def timestamp(self) -> datetime:

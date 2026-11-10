@@ -9,12 +9,17 @@ is active.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import TypeAlias, TypeVar, overload
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
+from dataclasses import dataclass
+from typing import Any, TypeAlias, TypeVar, overload
 
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation, WrapperCapability
+from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -28,7 +33,10 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model, infer_model
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
+from pydantic_ai_harness._models import is_request_response_model
 
 try:
     from browser_use.llm.base import BaseChatModel
@@ -42,7 +50,7 @@ try:
         UserMessage,
     )
     from browser_use.llm.views import ChatInvokeCompletion, ChatInvokeUsage
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'browser-use is required for BrowserUse. Install it with: pip install "pydantic-ai-harness[browser-use]"'
     ) from _import_error
@@ -124,7 +132,70 @@ def _map_messages(messages: list[BaseMessage]) -> list[ModelMessage]:
     return mapped
 
 
-def _map_usage(usage: RunUsage) -> ChatInvokeUsage:
+@dataclass
+class _HostBudget:
+    """The host run's usage and limits, shared by every browser model call of one `browse_web` call."""
+
+    usage: RunUsage
+    limits: UsageLimits | None
+    exceeded: UsageLimitExceeded | None = None
+    """The first limit error, kept because browser-use swallows errors from its steps, judge, and extraction."""
+
+    @contextmanager
+    def spend(self) -> Generator[None]:
+        """Refuse a call once the budget is exhausted, and remember the error that exhausts it."""
+        if self.exceeded is not None:
+            # A fresh error each time, so repeated refusals do not pile frames onto one traceback.
+            raise UsageLimitExceeded(str(self.exceeded)) from self.exceeded
+        try:
+            yield
+        except UsageLimitExceeded as error:
+            self.exceeded = error
+            raise
+
+
+_host_budget: ContextVar[_HostBudget | None] = ContextVar('browser_use_host_budget', default=None)
+
+
+@contextmanager
+def host_budget(ctx: RunContext[Any]) -> Generator[_HostBudget]:
+    """Charge the `PydanticAIChatModel` calls made inside this block to the host run.
+
+    A context variable rather than a per-call model, so it reaches every Pydantic AI backed model
+    browser-use calls -- the main, extraction, judge, and fallback models, including ones a custom
+    `BrowserAgentFactory` built -- without rebuilding them per run.
+    """
+    budget = _HostBudget(usage=ctx.usage, limits=ctx.usage_limits)
+    token = _host_budget.set(budget)
+    try:
+        yield budget
+    finally:
+        _host_budget.reset(token)
+
+
+def host_budget_exhausted() -> bool:
+    """Whether a browser model call in this `browse_web` call has hit a host usage limit."""
+    budget = _host_budget.get()
+    return budget is not None and budget.exceeded is not None
+
+
+def _call_usage(result: AgentRunResult[Any]) -> RequestUsage:
+    """The tokens of this call alone; the run's own `usage` is the host total when the budget is shared.
+
+    Includes attempts a `FallbackModel` rejected before a response: they were billed, but are not part
+    of the response's own `usage`.
+    """
+    usage = RequestUsage()
+    for message in result.new_messages():
+        if isinstance(message, ModelResponse):
+            for attempt in message.failed_attempts or ():
+                if attempt.usage is not None:
+                    usage += attempt.usage
+            usage += message.usage
+    return usage
+
+
+def _map_usage(usage: RequestUsage) -> ChatInvokeUsage:
     return ChatInvokeUsage(
         prompt_tokens=usage.input_tokens,
         prompt_cached_tokens=usage.cache_read_tokens or None,
@@ -179,13 +250,50 @@ class PydanticAIChatModel(BaseChatModel):
     async def ainvoke(
         self, messages: list[BaseMessage], output_format: type[T] | None = None, **kwargs: object
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
-        """Run one model turn over the mapped conversation, optionally with structured output."""
+        """Run one model turn over the mapped conversation, optionally with structured output.
+
+        Inside `browse_web`, the turn spends the host run's usage and is bounded by its limits.
+        """
         history = _map_messages(messages)
-        if output_format is None:
-            text_result = await self._agent.run(None, message_history=history)
-            return ChatInvokeCompletion(completion=text_result.output, usage=_map_usage(text_result.usage))
-        result = await self._agent.run(None, output_type=output_format, message_history=history)
-        return ChatInvokeCompletion(completion=result.output, usage=_map_usage(result.usage))
+        budget = _host_budget.get()
+        usage = budget.usage if budget is not None else None
+        usage_limits = budget.limits if budget is not None else None
+        with budget.spend() if budget is not None else nullcontext():
+            if output_format is None:
+                text_result = await self._agent.run(
+                    None, message_history=history, usage=usage, usage_limits=usage_limits
+                )
+                return ChatInvokeCompletion(completion=text_result.output, usage=_map_usage(_call_usage(text_result)))
+            result = await self._agent.run(
+                None, output_type=output_format, message_history=history, usage=usage, usage_limits=usage_limits
+            )
+            return ChatInvokeCompletion(completion=result.output, usage=_map_usage(_call_usage(result)))
+
+
+class RunChatModel(PydanticAIChatModel):
+    """Adapt the host run's model and instrumentation for a capability without an `llm`."""
+
+    def __init__(self, ctx: RunContext[AgentDepsT]) -> None:
+        model = ctx.model
+        if not is_request_response_model(model):
+            raise UserError(
+                "BrowserUse without an `llm` runs the browser agent on the host run's model, but "
+                f'{model.model_id!r} is not a request-response model. Pass `llm` to BrowserUse.'
+            )
+        super().__init__(model)
+        # Without a host `Instrumentation`, stay uninstrumented rather than fall back to global defaults.
+        self._agent.instrument = False
+
+        def select(capability: AbstractCapability[AgentDepsT]) -> None:
+            # The last `Instrumentation` in application order instruments the host run; a resolved
+            # capability function's one is visited inside its wrapper.
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if isinstance(capability, Instrumentation):
+                self._agent.instrument = capability.settings
+
+        if ctx.root_capability is not None:
+            ctx.root_capability.apply(select)
 
 
 def resolve_chat_model(llm: BaseChatModel | Model | KnownModelName | str | None) -> BaseChatModel | None:

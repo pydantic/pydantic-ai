@@ -6,10 +6,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._shared import (
@@ -161,8 +160,14 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
             messages = await tier.compact(messages, ctx)
             # Before the next stop decision, so escalation measures the history it would return.
             messages = reinject_pinned(original, messages)
-            reclaimed = heuristic_baseline - estimate_token_count(messages, self.tokenizer)
-            estimate = max(baseline - reclaimed, 0)
+            after = estimate_token_count(messages, self.tokenizer)
+            reclaimed = heuristic_baseline - after
+            # The two counts are on different bases, and the anchor's can be the smaller one: content a
+            # provider's tokenizer merges costs it far fewer tokens than the heuristic charges it. Crediting
+            # that text's removal against the smaller baseline subtracts more than the anchor ever counted;
+            # flooring the result at 0 would then report the history the tier just rewrote as fitting while
+            # it still holds `after` tokens. Keep the surviving text's own count as the floor instead.
+            estimate = max(baseline - reclaimed, after)
         return messages
 
     async def compact(
@@ -183,7 +188,7 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Escalate through the tiers when the conversation exceeds the target."""
-        messages: list[ModelMessage] = list(request_context.messages)
+        messages: list[ModelMessage] = list(ctx.messages)
         # The tiers get the request's context, not the run's: a tier that resolves a model --
         # a summarizing one, or a `TieredCompaction` nested inside this one -- has to reach the
         # same conclusion this gate did.
@@ -206,10 +211,10 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
             compact=lambda: self._escalate(messages, request_ctx, target, request_context.model_request_parameters),
             tokenizer=self.tokenizer,
         )
+        ctx.messages[:] = compacted
         record_compaction_reclaim(
-            request_context,
+            ctx,
             estimate_token_count(messages, self.tokenizer),
             estimate_token_count(compacted, self.tokenizer),
         )
-        request_context.messages = compacted
-        return request_context
+        return replace(request_context, messages=compacted)

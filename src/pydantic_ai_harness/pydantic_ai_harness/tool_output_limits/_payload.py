@@ -1,8 +1,7 @@
 """Size measurement, stringification, truncation, and binary detection.
 
-Harvested from PR #185 (`ToolOutputManagement`) and adapted: character-based truncation
-strategies, ANSI stripping, and binary detection. Token measurement reuses the compaction
-heuristic via `estimate_token_count` so the two capabilities stay aligned.
+Token measurement reuses the compaction heuristic via `estimate_token_count` so the two
+capabilities stay aligned.
 """
 
 from __future__ import annotations
@@ -12,14 +11,16 @@ from collections.abc import Callable, Mapping, Sequence
 from enum import Enum
 from typing import TypeGuard
 
-from pydantic_core import to_json
+from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai_harness._output import truncate_tail
+from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness.compaction._shared import estimate_token_count
 
 
-class TruncationStrategy(str, Enum):
+# Preserve string formatting of existing public enum members.
+class TruncationStrategy(str, Enum):  # noqa: UP042
     """Which end(s) of an oversized text to keep when truncating."""
 
     head = 'head'
@@ -47,6 +48,19 @@ def is_binary(value: object) -> bool:
     return isinstance(value, (bytes, bytearray, memoryview))
 
 
+def _json(value: object, *, indent: int | None = None, fallback: Callable[[object], object] | None = None) -> bytes:
+    """`to_json`, with every `bytes` leaf in base64 when one of them is not UTF-8.
+
+    `to_json` renders `bytes` as the text they decode to, so binary such as a file read in binary
+    mode or raw command output fails to serialize, and the exception would abort the run from the
+    after-hook. Base64 is how pydantic-ai encodes `bytes` in the tool returns it sends to the model.
+    """
+    try:
+        return to_json(value, indent=indent, fallback=fallback)
+    except PydanticSerializationError:
+        return to_json(value, indent=indent, fallback=fallback, bytes_mode='base64')
+
+
 def to_bytes(value: object) -> bytes:
     """Serialize any tool return value to the bytes that get spilled.
 
@@ -59,7 +73,7 @@ def to_bytes(value: object) -> bytes:
         return value.tobytes()
     if isinstance(value, (bytes, bytearray)):
         return bytes(value)
-    return to_json(value, fallback=repr)
+    return _json(value, fallback=repr)
 
 
 def to_text(value: object) -> str:
@@ -72,7 +86,7 @@ def to_text(value: object) -> str:
     """
     if isinstance(value, str):
         return value
-    return to_json(value, fallback=repr).decode('utf-8', errors='replace')
+    return _json(value, fallback=repr).decode('utf-8', errors='replace')
 
 
 # A serializer callable for structured (non-string, non-binary) tool returns:
@@ -91,7 +105,7 @@ def indented_json(value: object) -> str:
     A spilled payload rendered this way can be paged and `pattern`-filtered by line
     through `read_tool_result`; compact JSON puts the whole value on one line.
     """
-    return to_json(value, indent=2).decode('utf-8', errors='replace').translate(_LINE_SEPARATOR_ESCAPES)
+    return _json(value, indent=2).decode('utf-8', errors='replace').translate(_LINE_SEPARATOR_ESCAPES)
 
 
 def json_lines(value: object) -> str:
@@ -103,7 +117,7 @@ def json_lines(value: object) -> str:
     `indented_json`.
     """
     if _is_text_sequence(value):
-        rendered = '\n'.join(to_json(item).decode('utf-8', errors='replace') for item in value)
+        rendered = '\n'.join(_json(item).decode('utf-8', errors='replace') for item in value)
         return rendered.translate(_LINE_SEPARATOR_ESCAPES)
     return indented_json(value)
 
@@ -119,18 +133,14 @@ def measure(text: str, *, over_tokens: bool, tokenizer: Callable[[str], int] | N
 def json_sketch(value: object) -> str:
     """Build a one-line shape hint for a structured value, or '' for anything else.
 
-    The `_is_*` guards are `TypeGuard`s, so a `Mapping`/`Sequence` value narrows to a known
+    The guards are `TypeGuard`s, so a `Mapping`/`Sequence` value narrows to a known
     element type (`object`) the strict type checker accepts -- no `Any` and no `Unknown`.
     """
-    if _is_mapping(value):
+    if is_mapping(value):
         return _sketch_mapping(value)
     if _is_text_sequence(value):
         return _sketch_sequence(value)
     return ''
-
-
-def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
-    return isinstance(value, Mapping)
 
 
 def _is_text_sequence(value: object) -> TypeGuard[Sequence[object]]:

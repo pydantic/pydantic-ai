@@ -706,9 +706,9 @@ async def test_api_error(allow_model_requests: None, typesafe_api_key: str, capf
                                 'events': [
                                     {
                                         'name': 'exception',
-                                        'exception.type': 'pydantic_ai.exceptions.ModelHTTPError',
+                                        'exception.type': 'pydantic_ai.exceptions.ModelRequestRejectedError',
                                         'exception.message': "status_code: 400, model_name: jev-does-not-exist, body: {'detail': {'error_type': 'api_usage_error', 'message': 'Unknown model: jev-does-not-exist'}}",
-                                        'exception.stacktrace': "pydantic_ai.exceptions.ModelHTTPError: status_code: 400, model_name: jev-does-not-exist, body: {'detail': {'error_type': 'api_usage_error', 'message': 'Unknown model: jev-does-not-exist'}}",
+                                        'exception.stacktrace': "pydantic_ai.exceptions.ModelRequestRejectedError: status_code: 400, model_name: jev-does-not-exist, body: {'detail': {'error_type': 'api_usage_error', 'message': 'Unknown model: jev-does-not-exist'}}",
                                         'exception.escaped': 'False',
                                     }
                                 ],
@@ -967,7 +967,8 @@ async def test_a_route_jev_cannot_fill_is_handed_off(
     """A picked route whose fields Jev cannot express is handed off before any fill request is sent.
 
     The route span records the `UnfillableRoute` with the picked route's label, and the step goes to the model
-    behind Jev, so the `chat` span above it ends without an error.
+    behind Jev, so the `chat` span above it ends without an error. The failed attempt gets its own
+    `model request attempt` span beside the `decide` span.
     """
     agent = Agent(
         FallbackModel(jev, FunctionModel(write_reply, model_name='writer')),
@@ -1067,7 +1068,8 @@ async def test_a_route_jev_cannot_fill_is_handed_off(
                                         'pydantic_ai.decision.route': 'Reply',
                                     }
                                 ],
-                            }
+                            },
+                            {'name': 'model request attempt jev-latest'},
                         ],
                     }
                 ],

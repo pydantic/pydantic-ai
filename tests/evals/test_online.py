@@ -3,8 +3,12 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import importlib.metadata
 import inspect
+import os
 import random
+import subprocess
+import sys
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -660,6 +664,31 @@ async def test_no_sink_still_emits_otel_events(capfire: CaptureLogfire):
     attrs = dict(finished[0].log_record.attributes or {})
     assert attrs['gen_ai.evaluation.name'] == 'AlwaysTrue'
     assert attrs['gen_ai.evaluation.score.label'] == 'pass'
+
+
+@needs_logfire
+async def test_scoring_run_id_shared_within_one_call(capfire: CaptureLogfire):
+    """All events from one target call share a run id, across sink groups; separate calls get separate ids."""
+    config = OnlineEvalConfig(default_sink=Collector())
+
+    @config.evaluate(
+        AlwaysTrue(),
+        OnlineEvaluator(evaluator=AlwaysFalse(), sink=Collector()),  # lands in a separate sink group
+    )
+    async def my_func(x: int) -> int:
+        return x
+
+    await my_func(1)
+    await wait_for_evaluations()
+    await my_func(2)
+    await wait_for_evaluations()
+
+    records = [dict(r.log_record.attributes or {}) for r in capfire.log_exporter.get_finished_logs()]
+    assert len(records) == 4
+    first_call, second_call = records[:2], records[2:]
+    assert len({str(r['logfire.scorer.run_id']) for r in first_call}) == 1
+    assert len({str(r['logfire.scorer.run_id']) for r in second_call}) == 1
+    assert first_call[0]['logfire.scorer.run_id'] != second_call[0]['logfire.scorer.run_id']
 
 
 @needs_logfire
@@ -2446,3 +2475,15 @@ async def test_baggage_disabled_via_config(capfire: CaptureLogfire):
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
     assert 'tenant' not in attrs
+
+
+@pytest.mark.subprocess(reason='needs an interpreter where `sniffio` cannot be imported')
+@pytest.mark.skipif(
+    any(req.startswith('sniffio') for req in importlib.metadata.requires('anyio') or []),
+    reason='AnyIO before 4.12 depends on and imports `sniffio`, so every install has it',
+)
+def test_imports_without_sniffio():
+    """Nothing `pydantic-evals` declares installs `sniffio`, so a clean install has none."""
+    code = "import sys; sys.modules['sniffio'] = None\nimport pydantic_evals.online\n"
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    subprocess.run([sys.executable, '-c', code], check=True, env=env)

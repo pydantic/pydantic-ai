@@ -1,5 +1,11 @@
-"""Auxiliary naming never changes the conversation head or stalls a foreground turn."""
+"""The deprecated Harness copy of session naming keeps working until it is removed.
 
+CLAI owns the maintained copy, tested in `tests/clai2/test_session_naming.py`.
+"""
+
+import importlib
+import sys
+import warnings
 from dataclasses import replace
 from pathlib import Path
 
@@ -9,8 +15,26 @@ from pydantic import ValidationError
 
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-from pydantic_ai_harness.step_persistence.naming import NamingResult, SessionName, SessionNamer, generate_name
+
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore', HarnessDeprecationWarning)
+    from pydantic_ai_harness import step_persistence
+    from pydantic_ai_harness.step_persistence import naming
+    from pydantic_ai_harness.step_persistence.naming import NamingResult, SessionName, SessionNamer, generate_name
+
+
+def test_import_warns_deprecation(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Import a fresh copy so the module-level warning fires, then restore the original so the
+    # classes the other tests imported stay the ones the module uses.
+    monkeypatch.delitem(sys.modules, naming.__name__)
+    monkeypatch.setattr(step_persistence, 'naming', naming)
+    with pytest.warns(
+        HarnessDeprecationWarning, match=r'`pydantic_ai_harness\.step_persistence\.naming` is deprecated'
+    ):
+        fresh = importlib.import_module(naming.__name__)
+    assert fresh is not naming
 
 
 async def test_structured_name_and_auxiliary_usage(anyio_backend: str) -> None:

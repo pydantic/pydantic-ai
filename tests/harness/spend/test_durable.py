@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Generator, Mapping, Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-from tests.conftest import detach_dbos_logging
+from tests.conftest import detach_dbos_logging, without_admin_server
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -31,9 +31,8 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'durable_spend_limits',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
-    instance = DBOS(config=config)
+    instance = DBOS(config=without_admin_server(config))
     DBOS.launch()
     try:
         yield instance
@@ -49,7 +48,7 @@ class AdvancingClock:
         self.calls = 0
 
     def __call__(self) -> datetime:
-        value = datetime(2026, 8, 1, tzinfo=timezone.utc) + timedelta(days=self.calls)
+        value = datetime(2026, 8, 1, tzinfo=UTC) + timedelta(days=self.calls)
         self.calls += 1
         return value
 

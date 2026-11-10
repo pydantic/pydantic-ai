@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from importlib.metadata import version
 from pathlib import Path
 from subprocess import DEVNULL, PIPE
-from typing import cast
+from typing import NoReturn, cast
 
 import anyio
 import anyio.abc
@@ -56,7 +56,7 @@ _OUTPUT_DRAIN_GRACE = 2.0
 # once `anyio>=4.15` is the minimum.
 _ANYIO_WAITS_FOR_PIPES = tuple(int(part) for part in version('anyio').split('.')[:2]) < (4, 15)
 _EXIT_POLL_INTERVAL = 0.005
-_SPAWN_GRACE = 2.0
+_SPAWN_GRACE = 5.0
 _REAP_GRACE = 2.0
 
 
@@ -89,6 +89,46 @@ async def _shielded(awaitable: Awaitable[None], deadline: float) -> None:
         raise error
     if timed_out:
         raise TimeoutError('local workspace subprocess operation exceeded its grace period')
+
+
+def _check_command_form(command: WorkspaceCommand, *, shell: bool) -> None:
+    if isinstance(command, str):
+        if not shell:
+            raise TypeError('a string command requires shell=True; pass an argv sequence otherwise')
+    elif shell:
+        raise TypeError('an argv sequence cannot be combined with shell=True; pass a single command string')
+
+
+def _deadline_passed(absolute_deadline: float | None) -> bool:
+    return absolute_deadline is not None and anyio.current_time() >= absolute_deadline
+
+
+def _startup_timed_out(error: BaseException, absolute_deadline: float | None) -> bool:
+    return isinstance(error, TimeoutError) and _deadline_passed(absolute_deadline)
+
+
+def _raise_command_timeout(
+    timeout: float,
+    stdout_buffer: bytearray,
+    stderr_buffer: bytearray,
+    *,
+    error: TimeoutError,
+    denial: PermissionError | None,
+) -> NoReturn:
+    stdout = stdout_buffer.decode('utf-8', errors='replace')
+    stderr = stderr_buffer.decode('utf-8', errors='replace')
+    if denial is not None:
+        raise WorkspaceTimeoutError(
+            f'command timed out after {timeout:g}s; killing its process group was '
+            'denied, so only the direct child was killed and grandchildren may survive',
+            stdout=stdout,
+            stderr=stderr,
+        ) from denial
+    raise WorkspaceTimeoutError(
+        f'command timed out after {timeout:g}s and was killed',
+        stdout=stdout,
+        stderr=stderr,
+    ) from error
 
 
 @dataclass
@@ -310,11 +350,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     ) -> CommandResult:
         validate_timeout(timeout)
         merged_env = {**self._env, **(env or {})}
-        if isinstance(command, str):
-            if not shell:
-                raise TypeError('a string command requires shell=True; pass an argv sequence otherwise')
-        elif shell:
-            raise TypeError('an argv sequence cannot be combined with shell=True; pass a single command string')
+        _check_command_form(command, shell=shell)
 
         working_dir = await self._get_working_dir()
         # Directory preparation is not command time; process startup still counts, so a
@@ -337,31 +373,19 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             )
 
         try:
-            # Startup has its own finite bound, capped by the command deadline when supplied.
-            spawn_deadline = min(anyio.current_time() + _SPAWN_GRACE, absolute_deadline or float('inf'))
-            await _shielded(spawn(), spawn_deadline)
+            # Startup has its own finite bound, which the command deadline does not shorten: cancelling
+            # asyncio's process creation part-way kills only the direct child and leaks its pipes.
+            await _shielded(spawn(), anyio.current_time() + _SPAWN_GRACE)
+            if _deadline_passed(absolute_deadline):
+                raise TimeoutError
         except (FileNotFoundError, PermissionError) as error:
-            if isinstance(error, FileNotFoundError):
-                # A deleted workspace directory raises `WorkspaceUnavailableError` here.
-                await self._get_working_dir()
-            # Like `sh`, a program that is missing (127) or not executable (126) is a normal result.
-            # Only the program itself: an unusable working directory raises the same error types and must still raise.
-            if isinstance(command, str) or error.filename != command[0]:
+            if (result := await self._program_error_result(command, error)) is None:
                 raise
-            missing = isinstance(error, FileNotFoundError)
-            return CommandResult(
-                exit_code=127 if missing else 126,
-                stdout='',
-                stderr=f'{command[0]}: {"command not found" if missing else "Permission denied"}\n',
-            )
+            return result
         except BaseException as error:
             if process is not None:
                 await self._terminate(process)
-            if (
-                isinstance(error, TimeoutError)
-                and absolute_deadline is not None
-                and anyio.current_time() >= absolute_deadline
-            ):
+            if _startup_timed_out(error, absolute_deadline):
                 raise WorkspaceTimeoutError(f'command timed out after {timeout:g}s during startup') from error
             raise
         running_process = process
@@ -379,20 +403,7 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             denial = await self._terminate(running_process)
             # Without a command timeout, a `TimeoutError` is only a stalled reap's grace period.
             if isinstance(error, TimeoutError) and timeout is not None:
-                stdout = stdout_buffer.decode('utf-8', errors='replace')
-                stderr = stderr_buffer.decode('utf-8', errors='replace')
-                if denial is not None:
-                    raise WorkspaceTimeoutError(
-                        f'command timed out after {timeout:g}s; killing its process group was '
-                        'denied, so only the direct child was killed and grandchildren may survive',
-                        stdout=stdout,
-                        stderr=stderr,
-                    ) from denial
-                raise WorkspaceTimeoutError(
-                    f'command timed out after {timeout:g}s and was killed',
-                    stdout=stdout,
-                    stderr=stderr,
-                ) from error
+                _raise_command_timeout(timeout, stdout_buffer, stderr_buffer, error=error, denial=denial)
             raise
         # A process can still finish after its working directory is deleted; don't report
         # that as an ordinary exit from a live workspace.
@@ -401,6 +412,24 @@ class LocalWorkspaceBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             exit_code=exit_code,
             stdout=stdout_buffer.decode('utf-8', errors='replace'),
             stderr=stderr_buffer.decode('utf-8', errors='replace'),
+        )
+
+    async def _program_error_result(
+        self, command: WorkspaceCommand, error: FileNotFoundError | PermissionError
+    ) -> CommandResult | None:
+        """The result for a program that is missing or not executable, or `None` when `error` isn't about the program."""
+        if isinstance(error, FileNotFoundError):
+            # A deleted workspace directory raises `WorkspaceUnavailableError` here.
+            await self._get_working_dir()
+        # Like `sh`, a program that is missing (127) or not executable (126) is a normal result.
+        # Only the program itself: an unusable working directory raises the same error types and must still raise.
+        if isinstance(command, str) or error.filename != command[0]:
+            return None
+        missing = isinstance(error, FileNotFoundError)
+        return CommandResult(
+            exit_code=127 if missing else 126,
+            stdout='',
+            stderr=f'{command[0]}: {"command not found" if missing else "Permission denied"}\n',
         )
 
     async def _wait_and_collect_output(

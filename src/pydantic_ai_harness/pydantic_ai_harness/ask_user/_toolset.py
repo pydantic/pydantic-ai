@@ -2,43 +2,107 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import overload
 
-from pydantic import AfterValidator, Field
+import anyio
+from typing_extensions import TypeIs
 
+from pydantic_ai.exceptions import CallDeferred
+from pydantic_ai.framing import close_tag, neutralize_tags, open_tag, register_tag
+from pydantic_ai.messages import TextContent, ToolReturn, UserContent
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._callable import takes_context
 from pydantic_ai_harness.ask_user._events import AskUserAnsweredEvent, AskUserRequestedEvent
 from pydantic_ai_harness.ask_user._types import (
-    MAX_QUESTIONS,
+    TOOL_NAME,
     Answerer,
+    AnyAnswerer,
     AskUserRequest,
-    Question,
+    AskUserResponse,
+    AskUserResult,
+    ContextAnswerer,
+    Questions,
     check_response,
-    require_unique_headers,
 )
-
-TOOL_NAME = 'ask_user_question'
 
 DECLINED = 'The user declined to answer. Continue without the answer, or ask differently if it is essential.'
 """The tool result when the answerer reports a cancelled response."""
 
-Questions = Annotated[
-    list[Question],
-    Field(min_length=1, max_length=MAX_QUESTIONS),
-    AfterValidator(require_unique_headers),
-]
+TIMED_OUT = (
+    'The user did not answer in time. Continue without the answer: make a reasonable choice and say which one you made.'
+)
+"""The tool result when the answerer does not return within `AskUser.timeout`."""
+
+
+_ANSWER_NOTE_TAG = register_tag('answer_note')
+"""Frames a user's note accompanying an answer, keyed by the question header."""
+
+# Harness-prefixed origins mark generated data in compaction; these notes are the user's own words.
+_ANSWER_NOTE_ORIGIN = 'user.pydantic-ai-harness.ask_user.answer_note.v1'
+
+
+def ask_user_result(request: AskUserRequest, response: AskUserResponse) -> AskUserResult:
+    """Check `response` against `request` and render it as the `ask_user_question` tool result.
+
+    Without notes, returns the answer dictionary or decline text. With notes, returns a `ToolReturn`
+    whose `return_value` is the same dictionary and whose `content` sends the notes in the user channel,
+    framed by question header. Attachments remain multimodal, in their original order.
+
+    To answer a deferred call, pass this in `DeferredToolResults.calls` under the call's ID.
+    Raises `ValueError` when the response does not fit the request, as `check_response` does.
+    """
+    check_response(request, response)
+    if response.cancelled:
+        return DECLINED
+    answers = {
+        answer.header: [answer.custom_answer] if answer.custom_answer is not None else list(answer.selected)
+        for answer in response.answers
+    }
+    content: list[UserContent] = []
+    for answer in response.answers:
+        if not answer.note:
+            continue
+        metadata = {'origin': _ANSWER_NOTE_ORIGIN, 'request_id': request.id, 'header': answer.header}
+        content.append(TextContent(open_tag(_ANSWER_NOTE_TAG, header=answer.header), metadata=metadata))
+        for item in answer.note:
+            content.append(_note_item_content(item))
+        content.append(TextContent(close_tag(_ANSWER_NOTE_TAG), metadata=metadata))
+    return ToolReturn(return_value=answers, content=content) if content else answers
+
+
+def _note_item_content(item: UserContent) -> UserContent:
+    if isinstance(item, str | TextContent):
+        # Neither a structured value nor user-supplied provenance metadata may bypass this text.
+        text = item if isinstance(item, str) else item.content
+        return neutralize_tags(text)
+    return item
+
+
+def _takes_context(answerer: AnyAnswerer[AgentDepsT]) -> TypeIs[ContextAnswerer[AgentDepsT]]:
+    return takes_context(answerer) is True
 
 
 class AskUserToolset(FunctionToolset[AgentDepsT]):
-    """Registers `ask_user_question` bound to one answerer."""
+    """Registers `ask_user_question` bound to one answerer, or deferring every call when there is none."""
 
-    def __init__(self, *, answerer: Answerer) -> None:
+    @overload
+    def __init__(self, *, answerer: Answerer | None, timeout: float | None = None) -> None: ...
+
+    @overload
+    def __init__(self, *, answerer: ContextAnswerer[AgentDepsT], timeout: float | None = None) -> None: ...
+
+    def __init__(self, *, answerer: AnyAnswerer[AgentDepsT] | None, timeout: float | None = None) -> None:
         super().__init__()
-        self._answerer = answerer
+        self._answerer: ContextAnswerer[AgentDepsT] | None
+        if answerer is None or _takes_context(answerer):
+            self._answerer = answerer
+        else:
+            self._answerer = lambda ctx, request: answerer(request)
+        self._timeout = timeout
         self.add_function(self.ask_user_question, name=TOOL_NAME)
 
-    async def ask_user_question(self, ctx: RunContext[AgentDepsT], questions: Questions) -> dict[str, list[str]] | str:
+    async def ask_user_question(self, ctx: RunContext[AgentDepsT], questions: Questions) -> AskUserResult:
         """Ask the user one or more multiple-choice questions and wait for the answers.
 
         Use it when the task is ambiguous and the answer cannot be found in the workspace.
@@ -51,15 +115,22 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
             questions: One to ten questions, each with a unique `header`, two to six options,
                 and `multi_select` when several answers are allowed.
         """
+        if self._answerer is None:
+            # Keyed by the call (always set inside a tool) so `AskUserRequest.from_tool_call` rebuilds the same request.
+            request = AskUserRequest(questions=tuple(questions), id=ctx.tool_call_id or '')
+            await ctx.emit(AskUserRequestedEvent(request=request))
+            raise CallDeferred
         request = AskUserRequest(questions=tuple(questions))
         await ctx.emit(AskUserRequestedEvent(request=request))
-        response = await self._answerer(request)
+        response = AskUserResponse(cancelled=True)  # What observers see if the answerer times out or fails.
+        try:
+            with anyio.move_on_after(self._timeout) as scope:
+                response = await self._answerer(ctx, request)
+        except Exception:
+            await ctx.emit(AskUserAnsweredEvent(request_id=request.id, response=response, failed=True))
+            raise
         # Observers waiting since the request event are released whether or not the response fits.
-        await ctx.emit(AskUserAnsweredEvent(request_id=request.id, response=response))
-        check_response(request, response)
-        if response.cancelled:
-            return DECLINED
-        return {
-            answer.header: [answer.custom_answer] if answer.custom_answer is not None else list(answer.selected)
-            for answer in response.answers
-        }
+        await ctx.emit(AskUserAnsweredEvent(request_id=request.id, response=response, timed_out=scope.cancelled_caught))
+        if scope.cancelled_caught:
+            return TIMED_OUT
+        return ask_user_result(request, response)

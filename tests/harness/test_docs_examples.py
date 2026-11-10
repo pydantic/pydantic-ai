@@ -11,7 +11,7 @@ import pytest
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._docs_examples import documented_cleanup, python_blocks, run_block
-from .conftest import skip_temporal_sandbox_on_314
+from ._temporal import skip_temporal_sandbox_on_314
 
 _PAGE = """
 ```python
@@ -133,6 +133,8 @@ if __name__ == '__main__':
 """
 
 
+@pytest.mark.temporal
+@pytest.mark.xdist_group(name='harness-temporal')
 @skip_temporal_sandbox_on_314
 def test_temporal_block_runs_its_workflow_against_a_local_dev_server(tmp_path: Path) -> None:
     pytest.importorskip('temporalio')

@@ -15,7 +15,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from threading import Lock
 from typing import Protocol, runtime_checkable
@@ -37,7 +37,7 @@ of it.
 
 def utc_now() -> datetime:
     """Current UTC time. The default clock for windows and expiry."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True, kw_only=True)

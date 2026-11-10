@@ -1,30 +1,36 @@
 from __future__ import annotations as _annotations
 
-from . import ModelProfile
+from . import ModelProfile, merge_profile
+from .decision import DecisionModelProfile, decision_model_profile
+
+_JEV_MAX_CHOICE_OPTIONS = 255
+"""Jev picks from at most this many options in one question; a 256th is a 400 from the API.
+
+https://docs.typesafe.ai/model-jaggedness/jev-1.13
+"""
+
+_JEV_MAX_SCORE_LEVELS = 10
+"""Jev scores against at most this many rubric levels; an 11th is a 400 from the API.
+
+https://docs.typesafe.ai/primitives/score
+"""
 
 
 def typesafe_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a TypeSafe model.
 
-    Jev answers typed questions about a state; it does not generate text, call tools, or read
-    anything but text. Tool-mode structured output is how
-    [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel] fills an `output_type`, and it rides on
-    `supports_tools`, so that stays on. A system prompt anywhere in the history is part of what Jev judges, so it
-    needs no wrapping. Every other capability flag is off, and what no flag covers, such as a file in a prompt,
-    the model refuses itself.
+    Jev is a [decision model][pydantic_ai.models.decision.DecisionModel], so this is the
+    [decision model profile][pydantic_ai.profiles.decision.decision_model_profile] with Jev's caps on options and
+    rubric levels.
     """
-    return ModelProfile(
-        # No `context_window`: it comes from genai-prices, whose Jev entry records the 32k tokens `jev-1.13` takes
-        # for the state plus the longest question. That is the limit a growing conversation hits, since the state
-        # is counted once per request; the 64k for the state and all the questions together only binds when the
-        # questions themselves are very large. https://docs.typesafe.ai/model-jaggedness/jev-1.13
-        supports_tools=True,
-        supports_text_output=False,
-        supports_inline_system_prompts=True,
-        supports_tool_return_schema=False,
-        supports_json_schema_output=False,
-        supports_json_object_output=False,
-        supports_image_output=False,
-        supports_audio_input=False,
-        default_structured_output_mode='tool',
+    # No `context_window`: it comes from genai-prices, whose Jev entry records the 32k tokens `jev-1.13` takes
+    # for the state plus the longest question. That is the limit a growing conversation hits, since the state
+    # is counted once per request; the 64k for the state and all the questions together only binds when the
+    # questions themselves are very large. https://docs.typesafe.ai/model-jaggedness/jev-1.13
+    return merge_profile(
+        decision_model_profile(model_name),
+        DecisionModelProfile(
+            decision_max_choice_options=_JEV_MAX_CHOICE_OPTIONS,
+            decision_max_score_levels=_JEV_MAX_SCORE_LEVELS,
+        ),
     )

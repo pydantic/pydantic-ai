@@ -20,7 +20,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness import MCPReadOnlyNoToolsWarning
 from pydantic_ai_harness.pylon import Pylon
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
 # The MCP SDK leaves a settings annotation unresolved in some supported dependency
 # combinations. Rebuild it before warnings are escalated by the test suite.
@@ -30,7 +32,7 @@ DepsT = TypeVar('DepsT')
 
 
 def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
-    assert isinstance(toolset, MCPToolset)
+    toolset = mcp_connection(toolset)
     transport = toolset.client.transport
     assert isinstance(transport, StreamableHttpTransport)
     return transport
@@ -65,7 +67,10 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 class TestPylon:
     @pytest.mark.parametrize(
         ('read_only', 'expected'),
-        [(False, '{"read":"read","write":"written","unmarked":"unmarked"}'), (True, '{"read":"read"}')],
+        [
+            (False, '{"pylon_read":"read","pylon_write":"written","pylon_unmarked":"unmarked"}'),
+            (True, '{"pylon_read":"read"}'),
+        ],
     )
     async def test_read_only_keeps_only_read_only_tools(self, read_only: bool, expected: str) -> None:
         server = FastMCP('pylon-fake')
@@ -84,6 +89,27 @@ class TestPylon:
 
         agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=read_only)])
         assert (await agent.run('Use the tools')).output == expected
+
+    async def test_read_only_warns_when_it_removes_every_tool(self) -> None:
+        server = FastMCP('pylon-fake')
+
+        @server.tool()
+        def unmarked() -> str:
+            return 'unmarked'
+
+        unfiltered_agent = Agent(TestModel(), capabilities=[Pylon(client=server)])
+        assert (await unfiltered_agent.run('Use the tools')).output == '{"pylon_unmarked":"unmarked"}'
+
+        agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=True)])
+        with pytest.warns(
+            MCPReadOnlyNoToolsWarning, match=r"`read_only=True` removed every tool from MCPToolset 'pylon'"
+        ):
+            await agent.run('Use the tools')
+
+    async def test_read_only_does_not_warn_for_an_empty_server(self) -> None:
+        server = FastMCP('pylon-fake')
+        agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=True)])
+        await agent.run('Use the tools')
 
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
@@ -105,8 +131,7 @@ class TestPylon:
     )
     def test_hosted_connection_forwards_include_instructions(self, capability: Pylon[None], include: bool) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = capability.get_toolset()
-        assert isinstance(toolset, MCPToolset)
+        toolset = mcp_connection(capability.get_toolset())
         assert toolset.include_instructions is include
 
     def test_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -132,6 +157,11 @@ class TestPylon:
         with pytest.raises(UserError, match='`client` owns the connection'):
             Pylon[str | None](client='https://example.com/mcp', auth=auth)
 
+    def test_client_accepts_empty_auth(self) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        toolset = Pylon[None](client='https://example.com/mcp', auth='').get_toolset()
+        assert _http_transport(toolset).url == 'https://example.com/mcp'
+
     @pytest.mark.parametrize(
         'capability',
         [
@@ -142,7 +172,7 @@ class TestPylon:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: Pylon[str | None]) -> None:
-        assert capability.get_toolset().id == 'tenant-pylon'
+        assert only_leaf(capability.get_toolset()).id == 'tenant-pylon'
 
     def test_defer_loading_needs_no_id(self) -> None:
         Agent(TestModel(), capabilities=[Pylon(auth='pylon-token', defer_loading=True)])

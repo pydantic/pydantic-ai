@@ -211,7 +211,7 @@ def test_skill_examples(example: CodeExample, eval_example: EvalExample):
 
     eval_example.config = ExamplesConfig(
         ruff_ignore=['D', 'Q001'],
-        target_version='py310',
+        target_version='py311',
         line_length=line_length,
         isort=True,
         upgrade=True,

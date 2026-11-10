@@ -41,7 +41,7 @@ together when it changed. Pinned in the `[playwright]` extra as
   Re-check: `hasattr(playwright.async_api, 'TargetClosedError')` (expect `False`);
   if it becomes `True`, switch to the public import.
 - Missing-binary detection uses `chromium.executable_path` plus an on-disk
-  `os.path.exists` check; the install command is `python -m playwright install
+  existence check; the install command is `python -m playwright install
   chromium`. Verified 2026-08-18. Source:
   <https://playwright.dev/python/docs/browsers#install-browsers>. Re-check:
   confirm `BrowserType.executable_path` exists and `playwright install chromium`
@@ -103,7 +103,6 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
-import os
 import re
 import socket
 import sys
@@ -111,36 +110,30 @@ import warnings
 from collections import deque
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
+from functools import partial
 from time import monotonic
-from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, get_args
+from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeVar, get_args
 from urllib.parse import urlparse
 
 import anyio
 import idna
 from opentelemetry import trace
-from typing_extensions import Self
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN
 
 try:
-    # Import-time gate (mirrors `pydantic_ai_harness.exa._toolset`): importing the
-    # capability fails fast with an install hint when the optional dep is absent.
-    # `TargetClosedError` is not re-exported from `playwright.async_api`; the
-    # `playwright._impl._errors` module documents its own classes as stable public
-    # API, and a driver-raised instance only carries `.name` (so isinstance is the
-    # reliable discriminator, not the name attribute).
+    # `TargetClosedError` is not re-exported from `playwright.async_api`; see the module docstring.
     from playwright._impl._errors import TargetClosedError as TargetClosedError
     from playwright.async_api import (
-        Error as _PlaywrightError,
+        Error as PlaywrightError,
         TimeoutError as PlaywrightTimeoutError,
         async_playwright as async_playwright,
     )
-
-    PlaywrightError = _PlaywrightError
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'playwright is required for PlaywrightBrowser. '
         'Install it with: pip install "pydantic-ai-harness[playwright]"\n'
@@ -148,7 +141,7 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Coroutine, Sequence
+    from collections.abc import Awaitable, Callable, Coroutine, Iterable, Sequence
 
     from opentelemetry.trace import Span, Tracer
     from playwright.async_api import (
@@ -186,16 +179,15 @@ frames, and an unresponsive one must not consume the action's deadline. Whatever
 was collected before the budget runs out is kept.
 """
 
-_CHARS_PER_TOKEN = 4
-"""Characters-per-token estimate used to turn a token budget into a character cap."""
-
 _PRIVATE_ADDRESS_REASON = 'blocked private or link-local address'
 _UNRESOLVED_REASON = 'host that did not resolve, so the private-address block could not clear it'
 """Why the private-address block refused a URL, shared by the pre-check and the route guard."""
 
 _BLANK_PAGE = 'about:blank'
-_ERROR_PAGE_SCHEME = 'chrome-error://'
 """The blank page a context starts on, and where a disallowed navigation is sent."""
+
+_ERROR_PAGE_SCHEME = 'chrome-error://'
+"""Scheme of Chromium's own error page, where a navigation the browser could not complete lands."""
 
 _MAX_TABS = 8
 """Pages one session keeps open at once.
@@ -315,7 +307,7 @@ class _Page(Protocol):
     ) -> list[str]: ...  # pragma: no cover
 
 
-@dataclass(frozen=True)
+@dataclass
 class _Deadlines:
     """The budget one operation runs under, as time remaining rather than time allowed.
 
@@ -343,6 +335,7 @@ class _Deadlines:
     action_ms: int
     navigation_ms: int
     started: float
+    _first_stage: bool = True
 
     @property
     def action(self) -> int:
@@ -355,12 +348,15 @@ class _Deadlines:
         return self._remaining(self.navigation_ms)
 
     def _remaining(self, budget_ms: int) -> int:
-        """Return `budget_ms` less the time already spent, never reaching zero.
+        """Return the configured budget for the first stage, then what remains.
 
         `0` is Playwright's "no deadline", so a configured `0` stays `0` while
         every other budget keeps at least 1ms: counting down to zero would remove
         the deadline at the exact moment it should expire.
         """
+        if self._first_stage:
+            self._first_stage = False
+            return budget_ms
         if budget_ms == 0:
             return 0
         return max(1, budget_ms - int((monotonic() - self.started) * 1000))
@@ -415,7 +411,7 @@ def is_blocked_address(host: str) -> bool:
     `PlaywrightBrowserSession.decide` resolving it first and passing the answers
     to `refuse`.
     Neither is rebinding-proof, since Chromium resolves the name again before it
-    connects (https://github.com/pydantic/pydantic-ai-harness/issues/415).
+    connects (https://github.com/pydantic/pydantic-ai/issues/9204).
     A trailing dot is stripped so the fully-qualified spelling gets the same
     verdict, and an IPv4-mapped IPv6 literal is classified by its embedded IPv4
     address. The named category flags are checked alongside `is_global` because
@@ -478,7 +474,7 @@ async def _resolve_host(host: str) -> tuple[str, ...] | None:
         return cached[1]
     try:
         addresses = await asyncio.wait_for(_getaddrinfo(host), _RESOLUTION_TIMEOUT_SECONDS)
-    except (OSError, UnicodeError, asyncio.TimeoutError):
+    except (TimeoutError, OSError, UnicodeError):
         return None
     if len(_resolution_cache) >= _RESOLUTION_CACHE_MAX:
         _resolution_cache.clear()
@@ -513,10 +509,12 @@ def _scroll_position(reported: object) -> str:
     has no way to tell that repeating it is pointless.
     """
     if not isinstance(reported, str):
-        return ''  # pragma: no cover -- `evaluate` returns what the expression built
+        return ''
     parts = reported.split('|')
     if len(parts) != 3 or not all(part.lstrip('-').isdigit() for part in parts):
-        return ''  # pragma: no cover -- same
+        # The test pages report whole numbers; a browser with subpixel scrolling can report a
+        # fractional `scrollY`, which this does not parse.
+        return ''  # pragma: no cover
     before, after, furthest = (int(part) for part in parts)
     if furthest == 0:
         return 'The page has nothing to scroll.'
@@ -673,9 +671,13 @@ class EgressPolicy:
             return _PRIVATE_ADDRESS_REASON
         if host is None:
             return None if request.kind in ('data', 'subresource') else 'URL with no host'
+        return self._domain_reason(host, request.kind)
+
+    def _domain_reason(self, host: str, kind: RequestKind) -> str | None:
+        """Why the domain lists refuse `host` for this kind of request, or `None` if they do not."""
         if self._matches(host, self.blocked_domains):
             return 'domain in blocked_domains'
-        if request.kind in self.allowlist_reach and not self._permitted(host):
+        if kind in self.allowlist_reach and not self._permitted(host):
             return 'domain not in allowed_domains'
         return None
 
@@ -699,12 +701,19 @@ class EgressPolicy:
 
         Asked before `refuse` so that `refuse` stays synchronous: an override needs
         no async machinery, and the lookup a name-based private address requires
-        happens outside it. A host that is already an address needs none.
+        happens outside it. A host that is already an address needs none, and
+        neither does one the domain lists refuse, since `refuse` refuses it
+        whatever the host resolves to. That holds only for this
+        class's own `refuse`: an override may permit what the lists refuse, so its
+        hosts are still resolved. An override that refuses some hosts by name should
+        override this too, returning `False` for them, so they are not looked up.
         """
         if not self.block_private_addresses or request.kind not in self.resolved_kinds:
             return False
         host = _url_host(request.url)
-        return host is not None and not _is_ip_literal(host)
+        if host is None or _is_ip_literal(host):
+            return False
+        return type(self).refuse is not EgressPolicy.refuse or self._domain_reason(host, request.kind) is None
 
     def enforced(self) -> bool:
         """Whether anything is restricted, i.e. whether a route guard is worth installing."""
@@ -1262,7 +1271,7 @@ class PlaywrightBrowserSession:
             return await awaitable
         try:
             return await asyncio.wait_for(awaitable, self._launch_timeout_ms / 1000)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             # Raised as a Playwright timeout so the tools map it like any other
             # deadline they already handle.
             raise PlaywrightTimeoutError(f'Timeout {self._launch_timeout_ms}ms exceeded.') from exc
@@ -1286,7 +1295,7 @@ class PlaywrightBrowserSession:
                 return await pw.chromium.connect_over_cdp(self._cdp_url, timeout=self._launch_timeout_ms)
             except PlaywrightError as exc:
                 raise PlaywrightError(_without_endpoint_credentials(str(exc), self._cdp_url)) from exc
-        if os.path.exists(pw.chromium.executable_path):
+        if await anyio.Path(pw.chromium.executable_path).exists():
             return await pw.chromium.launch(
                 headless=self._headless, chromium_sandbox=self._chromium_sandbox, timeout=self._launch_timeout_ms
             )
@@ -1530,32 +1539,40 @@ class PlaywrightBrowserSession:
         on. A `close()` failure still exits the driver, and when the run is
         already unwinding the teardown error is dropped: the exception the caller
         is carrying is the one worth reporting.
+
+        Teardown is shielded, so a run cancelled by an `anyio` scope still closes
+        Chromium and exits the driver before the cancellation propagates: a
+        cancelled wait for an in-flight page-event task would skip both closes and
+        leave the processes running.
         """
         driver_cm = self._driver_cm
         self._driver_cm = None
         self._driver = None
-        if self._event_tasks:
-            for task in self._event_tasks:
-                task.cancel()
-            await asyncio.gather(*self._event_tasks, return_exceptions=True)
-            self._event_tasks.clear()
-        if driver_cm is None:  # pragma: no cover
-            return
-        try:
-            browser = self._browser
-            if browser is not None:
-                self.page = None
-                self.pages = []
-                self._browser = None
-                try:
-                    await browser.close()
-                finally:
+        # No deadline: the deprecated `TemporalAgent` wrapper runs `wrap_run` in the workflow, where
+        # a deadline becomes a durable timer that breaks replay of earlier histories.
+        with anyio.CancelScope(shield=True):
+            if self._event_tasks:
+                for task in self._event_tasks:
+                    task.cancel()
+                await asyncio.gather(*self._event_tasks, return_exceptions=True)
+                self._event_tasks.clear()
+            if driver_cm is None:  # pragma: no cover
+                return
+            try:
+                browser = self._browser
+                if browser is not None:
+                    self.page = None
+                    self.pages = []
+                    self._browser = None
+                    try:
+                        await browser.close()
+                    finally:
+                        await driver_cm.__aexit__(None, None, None)
+                elif self._driver_entered:
                     await driver_cm.__aexit__(None, None, None)
-            elif self._driver_entered:
-                await driver_cm.__aexit__(None, None, None)
-        except Exception:
-            if exc_type is None:
-                raise
+            except Exception:
+                if exc_type is None:
+                    raise
 
 
 class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
@@ -1649,7 +1666,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
 
         try:
             await asyncio.wait_for(sweep(), budget_ms / 1000)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         return texts
 
@@ -1679,7 +1696,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
 
     def _truncate_output(self, text: str) -> str:
         """Apply the configured token budget to a model-facing textual result."""
-        return _truncate(text, self._max_content_tokens * _CHARS_PER_TOKEN)
+        return _truncate(text, self._max_content_tokens * CHARS_PER_TOKEN)
 
     def _error(self, message: str) -> str:
         """Bound an error result and record the failure on the operation's span.
@@ -1701,7 +1718,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         result should do. A note too large for the budget on its own wins the
         whole budget: it carries why the result is missing.
         """
-        budget = self._max_content_tokens * _CHARS_PER_TOKEN
+        budget = self._max_content_tokens * CHARS_PER_TOKEN
         separator = '\n\n'
         room = budget - len(note) - len(separator)
         if room <= 0:
@@ -1755,9 +1772,8 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             return await awaitable
         try:
             return await asyncio.wait_for(awaitable, timeout_ms / 1000)
-        except asyncio.TimeoutError as exc:
-            # asyncio.wait_for raises asyncio.TimeoutError, which is a distinct class
-            # from the builtin TimeoutError on Python 3.10 (aliased only from 3.11).
+        except TimeoutError as exc:
+            # Map the timeout to Playwright's error type so the tool's error handler catches it.
             raise PlaywrightTimeoutError(f'Timeout {timeout_ms}ms exceeded.') from exc
 
     def _timeout_error(self, timeout_ms: int | None) -> str | None:
@@ -2389,22 +2405,28 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             while tasks:
                 done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                 tasks = list(pending)
-                # Every finished wait is read, including when an earlier one in the
-                # same batch already matched: an exception nobody retrieves surfaces
-                # later, out of context, as an unhandled task error.
-                matched = False
-                for task in done:
-                    error = task.exception()
-                    if error is None:
-                        matched = True
-                    else:
-                        failure = error
-                if matched:
+                if (batch_failure := self._finished_waits_failure(done, failure)) is None:
                     return
+                failure = batch_failure
         finally:
             for task in tasks:
                 task.cancel()
         raise failure
+
+    @staticmethod
+    def _finished_waits_failure(done: Iterable[asyncio.Task[object]], failure: BaseException) -> BaseException | None:
+        """`None` when one of the finished waits matched, else the last of their failures, or `failure` if none."""
+        # Every finished wait is read, including when an earlier one in the
+        # same batch already matched: an exception nobody retrieves surfaces
+        # later, out of context, as an unhandled task error.
+        matched = False
+        for task in done:
+            error = task.exception()
+            if error is None:
+                matched = True
+            else:
+                failure = error
+        return None if matched else failure
 
     async def snapshot(self, timeout_ms: int | None = None) -> str:
         """Return the page's accessibility tree with `aria-ref` handles for targeting.
@@ -2453,45 +2475,45 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             return await self._refuse(
                 'tabs', None, f'Error: unknown tabs action {action!r}; use list, select, close or new.'
             )
+        return await self._in_operation('tabs', None, partial(self._tabs_body, action, index))
 
-        async def _tabs(page: _Page, deadlines: _Deadlines) -> str:
-            session = self._session
-            if action == 'list':
-                return self._truncate_output(await self._describe_tabs(session.pages, page, deadlines))
-            if action == 'new':
-                if len(session.pages) >= _MAX_TABS:
-                    return self._error(f'Error: the tab limit of {_MAX_TABS} is reached. Close one first.')
-                # The three tab mutations drive Playwright calls that take no
-                # `timeout` of their own, so the operation's deadline is applied
-                # around them rather than left to the driver.
-                await self._await_with_timeout(session.open_tab(), deadlines.action)
-                return self._truncate_output(
-                    f'Opened blank tab {len(session.pages) - 1} and made it active. Load it with navigate.'
-                )
-            if page not in session.pages:
-                # A page can close itself, and the session moves the active pointer
-                # to whatever is left. Nothing was, so there is no tab to act on.
-                return self._error("Error: the active tab has closed. Open one with tabs('new').")
-            target = session.pages.index(page) if index is None else index
-            if not 0 <= target < len(session.pages):
-                return self._error(f'Error: no tab {target}. {len(session.pages)} open; list them with tabs.')
-            if action == 'close':
-                if len(session.pages) == 1:
-                    return self._error('Error: the last tab cannot be closed.')
-                closing = session.pages[target]
-                await self._await_with_timeout(session.close_tab(closing), deadlines.action)
-                # The session repoints only when the tab that closed was the active
-                # one; otherwise the operation keeps acting on the page it started on.
-                active = page if closing is not page else session.pages[-1]
-                return self._truncate_output(f'Closed tab {target}. Active tab is now {session.pages.index(active)}.')
-            selected = await self._await_with_timeout(session.activate(session.pages[target]), deadlines.action)
-            if (blocked := await self._enforce_navigation_policy(selected, 'tabs', deadlines.navigation)) is not None:
-                return blocked
-            text = await self._page_text(selected, deadlines.action)
-            url = _without_credentials(selected.url)
-            return self._truncate_output(f'Selected tab {target}. URL: {url}\n\n{text}')
-
-        return await self._in_operation('tabs', None, _tabs)
+    async def _tabs_body(self, action: str, index: int | None, page: _Page, deadlines: _Deadlines) -> str:
+        """The `tabs` operation, run by `_in_operation` with `page` the active tab."""
+        session = self._session
+        if action == 'list':
+            return self._truncate_output(await self._describe_tabs(session.pages, page, deadlines))
+        if action == 'new':
+            if len(session.pages) >= _MAX_TABS:
+                return self._error(f'Error: the tab limit of {_MAX_TABS} is reached. Close one first.')
+            # The three tab mutations drive Playwright calls that take no
+            # `timeout` of their own, so the operation's deadline is applied
+            # around them rather than left to the driver.
+            await self._await_with_timeout(session.open_tab(), deadlines.action)
+            return self._truncate_output(
+                f'Opened blank tab {len(session.pages) - 1} and made it active. Load it with navigate.'
+            )
+        if page not in session.pages:
+            # A page can close itself, and the session moves the active pointer
+            # to whatever is left. Nothing was, so there is no tab to act on.
+            return self._error("Error: the active tab has closed. Open one with tabs('new').")
+        target = session.pages.index(page) if index is None else index
+        if not 0 <= target < len(session.pages):
+            return self._error(f'Error: no tab {target}. {len(session.pages)} open; list them with tabs.')
+        if action == 'close':
+            if len(session.pages) == 1:
+                return self._error('Error: the last tab cannot be closed.')
+            closing = session.pages[target]
+            await self._await_with_timeout(session.close_tab(closing), deadlines.action)
+            # The session repoints only when the tab that closed was the active
+            # one; otherwise the operation keeps acting on the page it started on.
+            active = page if closing is not page else session.pages[-1]
+            return self._truncate_output(f'Closed tab {target}. Active tab is now {session.pages.index(active)}.')
+        selected = await self._await_with_timeout(session.activate(session.pages[target]), deadlines.action)
+        if (blocked := await self._enforce_navigation_policy(selected, 'tabs', deadlines.navigation)) is not None:
+            return blocked
+        text = await self._page_text(selected, deadlines.action)
+        url = _without_credentials(selected.url)
+        return self._truncate_output(f'Selected tab {target}. URL: {url}\n\n{text}')
 
     async def _describe_tabs(self, pages: list[_Page], active: _Page, deadlines: _Deadlines) -> str:
         """Render one line per open tab, marking the active one.
@@ -2607,7 +2629,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         if not events:
             return self._truncate_output(f'No {label} recorded.')
         lines = [event.describe() for event in events]
-        budget = self._max_content_tokens * _CHARS_PER_TOKEN
+        budget = self._max_content_tokens * CHARS_PER_TOKEN
         kept: list[str] = []
         used = 0
         for line in reversed(lines):

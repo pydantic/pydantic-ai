@@ -1,20 +1,21 @@
-import cProfile
+import gc
 import json
 import os
 import re
 import subprocess
 import sys
 import warnings
-from collections.abc import Sequence
-from dataclasses import replace
-from datetime import datetime, timezone
+from collections.abc import Callable, Sequence
+from dataclasses import fields, replace
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
+from types import FrameType
 from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
-from pydantic_core import to_json, to_jsonable_python
+from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -23,15 +24,19 @@ from pydantic_ai import (
     BinaryAudio,
     BinaryContent,
     BinaryImage,
+    Citation,
+    ContentCitationAnchor,
     DeferredToolRequests,
     DeferredToolRequestsEvent,
     DeferredToolResults,
     DeferredToolResultsEvent,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     ImageUrl,
     InstructionPart,
     InstrumentationSettings,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -42,11 +47,14 @@ from pydantic_ai import (
     NativeToolReturnPart,
     PartDeltaEvent,
     RequestUsage,
-    RetryPromptPart,
+    RunUsage,
     SpeechPart,
     SpeechPartDelta,
+    SpeechTimestamp,
+    StructuredContent,
     TextContent,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
     ToolApproved,
@@ -60,20 +68,25 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
 )
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
+    _FILE_ITEM_KEYS,  # pyright: ignore[reportPrivateUsage]
     _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
     _USER_CONTENT_TYPES,  # pyright: ignore[reportPrivateUsage]
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
+    BaseToolReturnPart,
     CachePoint,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     FileUrl,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     RealtimeSessionErrorEvent,
     ToolReturnContent,
+    _file_digest,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
     narrow_message_parts,
     post_compaction_window,
@@ -83,7 +96,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsNow, IsStr, message, message_part, try_import
+from .conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
 
 with try_import() as openai_import_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -182,6 +195,169 @@ def test_text_content():
     assert text_content.metadata == {'foo': 'bar'}
 
 
+class _UIState(BaseModel):
+    url: str
+    cart_total: float
+
+
+@pytest.mark.parametrize(
+    'item, expected',
+    [
+        pytest.param(StructuredContent({'url': '/p/42', 'n': [1, None]}), '{"url":"/p/42","n":[1,null]}', id='json'),
+        pytest.param(
+            StructuredContent({'note': '</ui_state> & more'}, tag='ui_state'),
+            r'<ui_state>{"note":"\u003c/ui_state\u003e \u0026 more"}</ui_state>',
+            id='json-tag-escaped',
+        ),
+        pytest.param(
+            StructuredContent(_UIState(url='/p/42', cart_total=949.0), format='xml', tag='ui_state'),
+            '<ui_state>\n  <url>/p/42</url>\n  <cart_total>949.0</cart_total>\n</ui_state>',
+            id='xml',
+        ),
+        pytest.param(
+            StructuredContent([1, 2], tag='ids', description='The ids the user selected.'),
+            'The ids the user selected.\n<ids>[1,2]</ids>',
+            id='description',
+        ),
+        pytest.param(
+            StructuredContent([1, 2], format=lambda value: f'{len(value)} ids', tag='ids', description='Unused.'),
+            '2 ids',
+            id='function',
+        ),
+        pytest.param(StructuredContent({'a': 1}, content='given'), 'given', id='given-content'),
+    ],
+)
+def test_structured_content_renders_once(item: StructuredContent, expected: str):
+    """The text sent to text models is rendered when the item is created, and kept as given when it is passed in."""
+    assert item.content == expected
+
+
+def test_structured_content_subclass_renders_its_own_way():
+    """A subclass carries its rendering, so it doesn't have to be passed each time the item is created."""
+
+    class UIStateContent(StructuredContent):
+        value: _UIState
+
+        def render(self) -> str:
+            return f'<ui_state url="{self.value.url}" />'
+
+    assert UIStateContent(_UIState(url='/p/42', cart_total=1)).content == '<ui_state url="/p/42" />'
+
+
+@pytest.mark.parametrize(
+    'item',
+    [
+        pytest.param(lambda: StructuredContent({}, format='xml'), id='xml-without-tag'),
+        pytest.param(lambda: StructuredContent([1], format=lambda value: ''), id='function'),
+    ],
+)
+def test_structured_content_rejects_empty_text(item: Callable[[], StructuredContent]):
+    """An empty `content` is re-rendered on load, so storing one would change the text a reloaded history sends."""
+    with pytest.raises(ValueError, match='`StructuredContent` rendered to empty text'):
+        item()
+
+
+def test_structured_content_renders_again_when_replaced_without_content():
+    """Changing the value keeps the stored text, so replacing it renders again only when `content` is cleared."""
+    item = StructuredContent({'a': 1}, tag='t')
+    assert replace(item, value={'a': 2}).content == '<t>{"a":1}</t>'
+    assert replace(item, value={'a': 2}, content='').content == '<t>{"a":2}</t>'
+    # `format` isn't stored, so a non-default one has to be passed again.
+    xml = StructuredContent({'a': 1}, tag='t', format='xml')
+    assert replace(xml, value={'a': 2}, content='', format='xml').content == '<t>\n  <a>2</a>\n</t>'
+
+
+@pytest.mark.parametrize('tag', ['ui state', 'ui-state', 'UIState', 'System', '1st', 'x></ui_state><system'])
+def test_structured_content_rejects_a_tag_outside_the_vocabulary(tag: str):
+    """Tags are lowercase snake_case, so no casing of a framework tag (`<SYSTEM>`) gets through either."""
+    with pytest.raises(ValueError, match=r'`StructuredContent\.tag` must be lowercase letters, digits and `_`'):
+        StructuredContent({}, tag=tag)
+
+
+@pytest.mark.parametrize('tag', ['system', 'tool_result', 'context', 'retry_feedback'])
+def test_structured_content_rejects_a_framing_tag(tag: str):
+    """User content can't wear a tag the framework frames its own text in, such as its `<system>` voice."""
+    with pytest.raises(ValueError, match=rf"`StructuredContent\.tag` cannot be '{tag}', a tag the framework frames"):
+        StructuredContent({}, tag=tag)
+
+
+def test_structured_content_with_its_text_skips_the_tag_check():
+    """An item whose text is already fixed, as a stored one is, loads whatever its tag.
+
+    Otherwise a history stored with `tag='memory'` would stop loading once a later release frames its own text in
+    `<memory>`. The tag only matters when the text is rendered.
+    """
+    stored = {'kind': 'structured-content', 'value': {'a': 1}, 'content': '<system>{"a":1}</system>', 'tag': 'system'}
+    loaded = TypeAdapter[UserContent](UserContent).validate_python(stored)
+    assert isinstance(loaded, StructuredContent)
+    assert (loaded.tag, loaded.content) == ('system', '<system>{"a":1}</system>')
+
+
+def test_structured_content_round_trips_through_json():
+    """The stored text comes back byte-for-byte, so a reloaded history is sent exactly as before, and the value as JSON data.
+
+    The subclass and its `render` don't survive the round-trip; the text they produced does.
+    """
+
+    class UIStateContent(StructuredContent):
+        def render(self) -> str:
+            return 'custom'
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        StructuredContent(_UIState(url='/p/42', cart_total=949.0), tag='ui_state'),
+                        UIStateContent({'a': 1}, metadata={'source': 'app'}),
+                        TextContent('plain'),
+                        'Why did the total jump?',
+                    ]
+                )
+            ]
+        )
+    ]
+    dumped = ModelMessagesTypeAdapter.dump_python(messages, mode='json')
+    assert dumped[0]['parts'][0]['content'] == snapshot(
+        [
+            {
+                'content': '<ui_state>{"url":"/p/42","cart_total":949.0}</ui_state>',
+                'metadata': None,
+                'kind': 'structured-content',
+                'value': {'url': '/p/42', 'cart_total': 949.0},
+                'tag': 'ui_state',
+                'description': None,
+            },
+            {
+                'content': 'custom',
+                'metadata': {'source': 'app'},
+                'kind': 'structured-content',
+                'value': {'a': 1},
+                'tag': None,
+                'description': None,
+            },
+            {'content': 'plain', 'metadata': None, 'kind': 'text-content'},
+            'Why did the total jump?',
+        ]
+    )
+    [request] = ModelMessagesTypeAdapter.validate_python(dumped)
+    assert isinstance(request, ModelRequest)
+    [part] = request.parts
+    assert isinstance(part, UserPromptPart)
+    assert part.content == snapshot(
+        [
+            StructuredContent(
+                content='<ui_state>{"url":"/p/42","cart_total":949.0}</ui_state>',
+                value={'url': '/p/42', 'cart_total': 949.0},
+                tag='ui_state',
+            ),
+            StructuredContent(content='custom', value={'a': 1}, metadata={'source': 'app'}),
+            TextContent(content='plain'),
+            'Why did the total jump?',
+        ]
+    )
+
+
 @pytest.mark.parametrize(
     'media_type, format',
     [
@@ -261,6 +437,11 @@ def test_binary_content_video(media_type: str, format: str):
         ('text/html', 'html'),
         ('text/markdown', 'md'),
         ('application/vnd.ms-excel', 'xls'),
+        ('application/vnd.openxmlformats-officedocument.presentationml.presentation', 'pptx'),
+        ('application/vnd.oasis.opendocument.text', 'odt'),
+        # Known only to `mimetypes`
+        ('application/zip', 'zip'),
+        ('application/octet-stream', 'bin'),
     ],
 )
 def test_binary_content_document(media_type: str, format: str):
@@ -333,6 +514,17 @@ _url_formats = [
     ),
     pytest.param(DocumentUrl('foobar.html'), 'text/html', 'html', id='html'),
     pytest.param(DocumentUrl('foobar.xls'), 'application/vnd.ms-excel', 'xls', id='xls'),
+    pytest.param(
+        DocumentUrl('foobar.pptx'),
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'pptx',
+        id='pptx',
+    ),
+    pytest.param(DocumentUrl('foobar.ods'), 'application/vnd.oasis.opendocument.spreadsheet', 'ods', id='ods'),
+    pytest.param(DocumentUrl('foobar.odp'), 'application/vnd.oasis.opendocument.presentation', 'odp', id='odp'),
+    # Known only to `mimetypes`
+    pytest.param(DocumentUrl('foobar.py'), 'text/x-python', 'py', id='py'),
+    pytest.param(DocumentUrl('foobar.xml'), 'application/xml', 'xml', id='xml'),
 ]
 if sys.version_info > (3, 11):  # pragma: no branch
     # This solves an issue with MIMEType on MacOS + python < 3.12. mimetypes.py added the text/markdown in 3.12, but on
@@ -351,14 +543,27 @@ def test_document_url_invalid():
     with pytest.raises(ValueError, match=re.escape('Could not infer media type from document URL: foobar.potato')):
         DocumentUrl('foobar.potato').media_type
 
-    with pytest.raises(ValueError, match='Unknown document media type: text/x-python'):
-        DocumentUrl('foobar.py').format
+    with pytest.raises(ValueError, match='Unknown document media type: application/custom'):
+        DocumentUrl('foobar', media_type='application/custom').format
 
 
 def test_binary_content_unknown_media_type():
+    binary_content = BinaryContent(data=b'Hello, world!', media_type='application/custom')
+    # No extension is known for it, so it is no document: the model adapter refuses it as it did before
+    assert binary_content.is_document is False
     with pytest.raises(ValueError, match='Unknown media type: application/custom'):
-        binary_content = BinaryContent(data=b'Hello, world!', media_type='application/custom')
         binary_content.format
+
+
+def test_binary_content_text_like_is_not_a_document():
+    """Text-like content outside the known document types is left to the model adapter, which inlines it as text."""
+    json_content = BinaryContent(data=b'{}', media_type='application/json')
+    assert json_content.is_document is False
+    assert json_content.format == 'json'
+    xml_content = BinaryContent(data=b'<a/>', media_type='application/xml')
+    assert xml_content.is_document is False
+    # `mimetypes` lists `xsl` first for XML; the extension spelling the subtype wins
+    assert xml_content.format == 'xml'
 
 
 def test_binary_content_is_methods():
@@ -429,9 +634,33 @@ def test_from_data_uri_base64():
     assert bc.media_type == 'image/png'
 
 
+def test_from_data_uri_parameterized_media_type_round_trip():
+    bc = BinaryContent.from_data_uri('data:application/json;charset=utf-8;base64,eyJhIjogMX0=')
+    # The media type is stored verbatim, parameters included.
+    assert bc.media_type == 'application/json;charset=utf-8'
+    assert bc.data == b'{"a": 1}'
+    assert bc.data_uri == 'data:application/json;charset=utf-8;base64,eyJhIjogMX0='
+
+
 def test_from_data_uri_non_base64():
     with pytest.raises(ValueError, match='must be base64-encoded'):
         BinaryContent.from_data_uri('data:text/plain,Hello%20World')
+
+
+def test_from_data_uri_percent_encoded_base64():
+    raw = BinaryContent.from_data_uri('data:image/png;base64,/w==')
+    assert raw.data == b'\xff'
+
+    assert BinaryContent.from_data_uri('data:image/png;base64,%2Fw==').data == raw.data
+    assert BinaryContent.from_data_uri('data:image/png;base64,/w%3D%3D').data == raw.data
+
+
+def test_from_data_uri_escaped_plus_and_alnum():
+    content = BinaryContent.from_data_uri('data:application/octet-stream;base64,AB+C')
+    assert content.data == b'\x00\x1f\x82'
+
+    escaped = BinaryContent.from_data_uri('data:application/octet-stream;base64,A%42%2BC')
+    assert escaped.data == content.data
 
 
 @pytest.mark.xdist_group(name='url_formats')
@@ -459,7 +688,7 @@ def test_video_url_invalid():
 
 
 @pytest.mark.skipif(
-    sys.version_info < (3, 11), reason="'Python 3.10's mimetypes module does not support query parameters'"
+    sys.version_info < (3, 12), reason='`mimetypes` does not support URL query parameters on Python 3.11'
 )
 def test_url_with_query_parameters() -> None:
     """Test that Url types correctly infer media type from URLs with query parameters"""
@@ -589,7 +818,7 @@ def test_pre_usage_refactor_messages_deserializable():
             'parts': [
                 {
                     'content': 'What is the capital of Mexico?',
-                    'timestamp': datetime.now(tz=timezone.utc),
+                    'timestamp': datetime.now(tz=UTC),
                     'part_kind': 'user-prompt',
                 }
             ],
@@ -606,7 +835,7 @@ def test_pre_usage_refactor_messages_deserializable():
                 'details': None,
             },
             'model_name': 'gpt-5-2025-08-07',
-            'timestamp': datetime.now(tz=timezone.utc),
+            'timestamp': datetime.now(tz=UTC),
             'kind': 'response',
             'vendor_details': {
                 'finish_reason': 'STOP',
@@ -621,7 +850,7 @@ def test_pre_usage_refactor_messages_deserializable():
                 parts=[
                     UserPromptPart(
                         content='What is the capital of Mexico?',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
             ),
@@ -633,7 +862,7 @@ def test_pre_usage_refactor_messages_deserializable():
                     details={},
                 ),
                 model_name='gpt-5-2025-08-07',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='chatcmpl-CBpEXeCfDAW4HRcKQwbqsRDn7u7C5',
             ),
@@ -643,8 +872,10 @@ def test_pre_usage_refactor_messages_deserializable():
         {
             'input_tokens': 13,
             'cache_write_tokens': 0,
+            'cache_write_1h_tokens': 0,
             'cache_read_tokens': 0,
             'output_tokens': 76,
+            'output_reasoning_tokens': 0,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
@@ -689,8 +920,10 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
         {
             'input_tokens': 5,
             'cache_write_tokens': 0,
+            'cache_write_1h_tokens': 0,
             'cache_read_tokens': 0,
             'output_tokens': 0,
+            'output_reasoning_tokens': 0,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
@@ -712,6 +945,33 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
     assert isinstance(loaded, ModelResponse)
     assert loaded.usage == usage
     assert loaded.usage.__dict__['future_tokens'] == 42
+
+
+def test_usage_reasoning_and_one_hour_cache_fields_load_from_older_payloads():
+    """Usage stored before `output_reasoning_tokens` and `cache_write_1h_tokens` were declared loads with them.
+
+    genai-prices already set both as attributes, so older payloads have them as extra keys when they were
+    non-zero and leave them out otherwise. Either way they now read as typed fields, and an absent count
+    equals an explicit zero.
+    """
+    with_counts, without_counts = ModelMessagesTypeAdapter.validate_python(
+        [
+            {
+                'parts': [],
+                'usage': {'output_tokens': 8, 'output_reasoning_tokens': 3, 'cache_write_1h_tokens': 4},
+                'kind': 'response',
+            },
+            {'parts': [], 'usage': {'output_tokens': 8}, 'kind': 'response'},
+        ]
+    )
+    assert isinstance(with_counts, ModelResponse)
+    assert isinstance(without_counts, ModelResponse)
+    assert (with_counts.usage.output_reasoning_tokens, with_counts.usage.cache_write_1h_tokens) == (3, 4)
+    assert (without_counts.usage.output_reasoning_tokens, without_counts.usage.cache_write_1h_tokens) == (0, 0)
+    assert getattr(without_counts.usage, 'cache_write_1h_tokens', 0) == 0
+
+    assert RunUsage(input_tokens=16) == RunUsage(input_tokens=16, output_reasoning_tokens=0)
+    assert {'output_reasoning_tokens', 'cache_write_1h_tokens'} <= {f.name for f in fields(RequestUsage)}
 
 
 async def test_legacy_vendor_message_history_replays_through_agent():
@@ -814,6 +1074,98 @@ def test_builtin_tool_call_part_has_content_empty(args: dict[str, object] | str 
     assert not part.has_content()
 
 
+def test_citation_message_history_round_trip() -> None:
+    """Citations survive a dump and load of message history, and dump to the documented wire format."""
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Paris is the capital of France. [1]',
+                    citations=[
+                        Citation(
+                            sources=[
+                                WebCitationSource(
+                                    url='https://example.com/paris',
+                                    title='Paris',
+                                    excerpts=["Paris is France's capital city."],
+                                )
+                            ],
+                            anchor=MarkerCitationAnchor(start=32, end=35),
+                        ),
+                        Citation(
+                            sources=[
+                                DocumentCitationSource(
+                                    document_id='file-123',
+                                    title='report.pdf',
+                                    excerpts=['The report identifies Paris as the capital.'],
+                                )
+                            ]
+                        ),
+                    ],
+                )
+            ]
+        )
+    ]
+
+    serialized = ModelMessagesTypeAdapter.dump_python(messages)
+
+    assert ModelMessagesTypeAdapter.validate_python(serialized) == messages
+    assert serialized[0]['parts'][0]['citations'] == snapshot(
+        [
+            {
+                'sources': [
+                    {
+                        'kind': 'web',
+                        'url': 'https://example.com/paris',
+                        'title': 'Paris',
+                        'excerpts': ["Paris is France's capital city."],
+                    }
+                ],
+                'anchor': {'start': 32, 'end': 35, 'kind': 'marker'},
+            },
+            {
+                'sources': [
+                    {
+                        'kind': 'document',
+                        'document_id': 'file-123',
+                        'title': 'report.pdf',
+                        'excerpts': ['The report identifies Paris as the capital.'],
+                    }
+                ],
+                'anchor': None,
+            },
+        ]
+    )
+
+
+def test_text_part_delta_replaces_citations() -> None:
+    """A citations delta replaces the part's citations, as it replaces their raw entries in `provider_details`."""
+    first = Citation(sources=[WebCitationSource(url='https://example.com/paris')])
+    second = Citation(sources=[DocumentCitationSource(document_id='file-123', title='report.pdf')])
+    part = TextPart('Answer', citations=[first], provider_details={'citations': ['first']})
+
+    delta = TextPartDelta(content_delta='', citations_delta=[second], provider_details={'citations': ['second']})
+
+    part = delta.apply(part)
+
+    assert part == TextPart('Answer', citations=[second], provider_details={'citations': ['second']})
+
+
+@pytest.mark.parametrize(
+    'build, match',
+    [
+        pytest.param(lambda: ContentCitationAnchor(start=-1, end=0), '0 <= start < end', id='negative-start'),
+        pytest.param(lambda: MarkerCitationAnchor(start=2, end=1), '0 <= start < end', id='end-before-start'),
+        pytest.param(lambda: ContentCitationAnchor(start=1, end=1), '0 <= start < end', id='empty-range'),
+        pytest.param(lambda: Citation(sources=[]), 'at least one source', id='no-sources'),
+        pytest.param(lambda: DocumentCitationSource(), 'at least one source field', id='empty-document-source'),
+    ],
+)
+def test_citation_invariants(build: Callable[[], object], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        build()
+
+
 def test_file_part_serialization_roundtrip():
     # Verify that a serialized BinaryImage doesn't come back as a BinaryContent.
     messages: list[ModelMessage] = [
@@ -841,8 +1193,10 @@ def test_file_part_serialization_roundtrip():
                 'usage': {
                     'input_tokens': 0,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -851,10 +1205,12 @@ def test_file_part_serialization_roundtrip():
                     'cost': None,
                 },
                 'model_name': None,
+                'model_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': None,
                 'provider_url': None,
+                'canonical_system': None,
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
@@ -862,6 +1218,8 @@ def test_file_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'history_digest': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             }
         ]
@@ -873,7 +1231,7 @@ def test_file_part_serialization_roundtrip():
 def test_model_messages_type_adapter_preserves_run_id():
     messages: list[ModelMessage] = [
         ModelRequest(
-            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
+            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=UTC))],
             run_id='run-123',
             metadata={'key': 'value'},
         ),
@@ -889,7 +1247,7 @@ def test_model_messages_type_adapter_preserves_run_id():
 def test_model_messages_type_adapter_preserves_conversation_id():
     messages: list[ModelMessage] = [
         ModelRequest(
-            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=timezone.utc))],
+            parts=[UserPromptPart(content='Hi there', timestamp=datetime.now(tz=UTC))],
             conversation_id='conv-abc',
         ),
         ModelResponse(parts=[TextPart(content='Hello!')], conversation_id='conv-abc'),
@@ -925,7 +1283,7 @@ def test_model_messages_type_adapter_preserves_user_text_prompt_metadata():
             parts=[
                 UserPromptPart(
                     content=[TextContent(content='What is the weather like today?', metadata={'foo': 'bar'})],
-                    timestamp=datetime.now(tz=timezone.utc),
+                    timestamp=datetime.now(tz=UTC),
                 )
             ],
             run_id='run-123',
@@ -1028,6 +1386,7 @@ def test_deferred_tool_events_serialization_roundtrip():
                         'metadata': {'foo': 'bar'},
                         'tools': None,
                         'kind': 'tool-return',
+                        'content_file_digests': [],
                     },
                     'call_3': {'message': 'Try again', 'kind': 'model-retry'},
                 },
@@ -1631,51 +1990,39 @@ def test_tool_return_content_nested_multimodal():
             id='empty-media-type',
         ),
         pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report', 'media_type': None},
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report', 'media_type': None}),
+            snapshot({'url': 'https://example.com/report', 'kind': 'image-url', 'media_type': None}),
+            id='null-media-type',
+        ),
+        pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': None},
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': None}),
+            snapshot({'url': 'https://example.com/report.png', 'kind': 'image-url', 'media_type': None}),
+            id='null-media-type-inferable-url',
+        ),
+        pytest.param(
             {'kind': 'uploaded-file', 'file_id': 'file-1', 'provider_name': 'openai'},
-            snapshot(UploadedFile(file_id='file-1', provider_name='openai')),
-            snapshot(
-                {
-                    'file_id': 'file-1',
-                    'provider_name': 'openai',
-                    'vendor_metadata': None,
-                    'kind': 'uploaded-file',
-                    'media_type': 'application/octet-stream',
-                    'identifier': 'c86d26',
-                }
-            ),
+            snapshot({'kind': 'uploaded-file', 'file_id': 'file-1', 'provider_name': 'openai'}),
+            snapshot({'file_id': 'file-1', 'provider_name': 'openai', 'kind': 'uploaded-file'}),
             id='uploaded-file-without-media-type',
         ),
         pytest.param(
             {'kind': 'image-url', 'url': 'https://example.com/report', 'media_type': 'image/png'},
-            snapshot(ImageUrl(url='https://example.com/report', media_type='image/png')),
-            snapshot(
-                {
-                    'url': 'https://example.com/report',
-                    'force_download': False,
-                    'vendor_metadata': None,
-                    'kind': 'image-url',
-                    'media_type': 'image/png',
-                    'identifier': '43ecae',
-                }
-            ),
+            snapshot({'kind': 'image-url', 'url': 'https://example.com/report', 'media_type': 'image/png'}),
+            snapshot({'url': 'https://example.com/report', 'kind': 'image-url', 'media_type': 'image/png'}),
             id='shape-we-dump',
         ),
     ],
 )
-def test_tool_return_url_items_rehydrate_only_with_media_type(
-    content: dict[str, Any], expected: Any, expected_dump: Any
-):
-    """A tool return reconstructs a URL item only from a mapping naming a media type, and it always dumps.
+def test_tool_return_file_shaped_mappings_stay_mappings(content: dict[str, Any], expected: Any, expected_dump: Any):
+    """A mapping a tool built stays that mapping across a round trip, whatever file it resembles, and it dumps.
 
-    `FileUrl` infers its media type from the URL when it was given none, and a URL with no usable
-    extension raises `Could not infer media type` on the *dump*, long after the load that built the
-    object ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)) — so the dump is
-    asserted for every case, because that is the leg the requirement buys. An empty `media_type` is
-    not one: `FileUrl` infers whenever it is falsy.
-
-    The requirement stops at the URL kinds. `UploadedFile` falls back to `application/octet-stream`
-    instead of raising and `BinaryContent.media_type` is a required field, so both keep rehydrating
-    from the fields they declare.
+    A tool result rebuilds only the file items it recorded when it was serialized, so neither a partial shape
+    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)) nor one spelled out exactly like a
+    default dump of ours, `media_type` included, comes back as a file. History saved before records existed
+    is covered by `test_tool_return_saved_before_records_rebuilds_only_sanitized_http_files`. The dump is
+    asserted for every case, so a mapping is proven to dump again.
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
@@ -1686,6 +2033,452 @@ def test_tool_return_url_items_rehydrate_only_with_media_type(
     assert message_part(loaded, ToolReturnPart).content == expected
     assert json.loads(ModelMessagesTypeAdapter.dump_json(loaded))[0]['parts'][0]['content'] == expected_dump
     assert ModelMessagesTypeAdapter.dump_python(loaded)[0]['parts'][0]['content'] == expected_dump
+
+
+def _dumped_file(item: FileUrl | UploadedFile) -> dict[str, Any]:
+    """The mapping a tool result serializes `item` to, which a tool could also return as data."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolReturnPart(tool_name='t', content=item, tool_call_id='c')])]
+    return json.loads(ModelMessagesTypeAdapter.dump_json(messages))[0]['parts'][0]['content']
+
+
+def _round_trip(content: Any, mode: Literal['json', 'python']) -> Any:
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])
+    ]
+    if mode == 'json':
+        loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    else:
+        loaded = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python(messages))
+    return message_part(loaded, ToolReturnPart).content
+
+
+@pytest.mark.parametrize('mode', ['json', 'python'])
+def test_tool_return_rebuilds_only_the_files_it_recorded(mode: Literal['json', 'python']):
+    """A mapping a tool returns in the serialized form of a file stays a mapping across a round trip.
+
+    The model saw that mapping as data when the tool returned it, so it has to stay data after a reload.
+    The files the tool really returned keep every field.
+    """
+    local = DocumentUrl('https://example.com/report.txt', force_download='allow-local')
+    bucket = DocumentUrl('s3://bucket/report.pdf')
+    uploaded = UploadedFile('file-1', 'openai')
+    lookalikes = [
+        _dumped_file(DocumentUrl('https://example.com/other.txt', force_download='allow-local')),
+        _dumped_file(DocumentUrl('s3://bucket/other.pdf')),
+        _dumped_file(UploadedFile('file-2', 'openai')),
+    ]
+    content = {'files': [local, bucket, uploaded], 'rows': lookalikes, 'nested': {'row': lookalikes[0]}}
+
+    reloaded = _round_trip(content, mode)
+
+    assert reloaded == {'files': [local, bucket, uploaded], 'rows': lookalikes, 'nested': {'row': lookalikes[0]}}
+    assert reloaded['files'][0].force_download == 'allow-local'
+    assert all(type(row) is dict for row in reloaded['rows'])
+
+
+def test_tool_return_file_record_lives_outside_the_content():
+    """A tool can't record a mapping as a file by putting the record key in its own data."""
+    lookalike = _dumped_file(UploadedFile('file-2', 'openai'))
+    content = {'content_file_digests': [_file_digest(lookalike)], 'row': lookalike}
+
+    assert _round_trip(content, 'json') == content
+
+
+@pytest.mark.parametrize('mode', ['json', 'python'])
+def test_tool_return_without_files_keeps_file_shaped_mappings(mode: Literal['json', 'python']):
+    """A tool result holding no file still records that, so a mapping shaped like one stays the mapping.
+
+    The record is written, empty, for any content that isn't a scalar, so only history saved before
+    records existed falls back to rebuilding files from their shape. Keys a file type doesn't declare
+    survive too.
+    """
+    content = [
+        {**_dumped_file(ImageUrl('https://example.com/a.png')), 'extra': 'kept'},
+        _dumped_file(DocumentUrl('https://example.com/report.txt', force_download='allow-local')),
+    ]
+
+    assert _round_trip(content, mode) == content
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content='text', tool_call_id='c')])
+    ]
+    assert 'content_file_digests' not in json.loads(ModelMessagesTypeAdapter.dump_json(messages))[0]['parts'][0]
+
+
+def test_tool_return_saved_before_records_rebuilds_only_sanitized_http_files():
+    """History saved before records existed can't tell its files from mappings shaped like them.
+
+    A mapping is rebuilt only into what `sanitize_messages` would let a client submit: an HTTP(S) URL with
+    `force_download` reset. A non-HTTP URL or an uploaded file stays a mapping, even one a tool returned.
+    """
+    items: list[FileUrl | UploadedFile] = [
+        DocumentUrl('https://example.com/report.txt', force_download='allow-local'),
+        ImageUrl('https://example.com/chart.png', force_download=True),
+        DocumentUrl('s3://bucket/report.pdf'),
+        UploadedFile('file-1', 'openai'),
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=items, tool_call_id='c')])
+    ]
+    stored = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+    del stored[0]['parts'][0]['content_file_digests']
+    dumped = stored[0]['parts'][0]['content']
+
+    reloaded = message_part(ModelMessagesTypeAdapter.validate_json(json.dumps(stored)), ToolReturnPart).content
+
+    assert reloaded == snapshot(
+        [
+            DocumentUrl(url='https://example.com/report.txt', _media_type='text/plain', _identifier='ae60bb'),
+            ImageUrl(url='https://example.com/chart.png', _media_type='image/png', _identifier='7a6d9b'),
+            dumped[2],
+            dumped[3],
+        ]
+    )
+
+
+@pytest.mark.parametrize('mode', ['json', 'python'])
+def test_tool_return_saved_before_records_rebuilds_its_files_on_request(mode: Literal['json', 'python']):
+    """History the caller trusts loads its files as before, and keeps them once saved again."""
+    items: list[FileUrl | UploadedFile] = [
+        DocumentUrl('https://example.com/report.txt', force_download='allow-local'),
+        DocumentUrl('s3://bucket/report.pdf'),
+        UploadedFile('file-1', 'openai'),
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=items, tool_call_id='c')])
+    ]
+    stored = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+    del stored[0]['parts'][0]['content_file_digests']
+    context = {'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}
+
+    if mode == 'json':
+        loaded = ModelMessagesTypeAdapter.validate_json(json.dumps(stored), context=context)
+    else:
+        loaded = ModelMessagesTypeAdapter.validate_python(stored, context=context)
+
+    assert message_part(loaded, ToolReturnPart).content == items
+    resaved = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(loaded))
+    assert message_part(resaved, ToolReturnPart).content == items
+
+
+@pytest.mark.parametrize(
+    'context', [None, {}, {'pydantic_ai': {}}, {'pydantic_ai': {'rebuild_unrecorded_tool_files': 'yes'}}]
+)
+def test_tool_return_rebuild_unrecorded_tool_files_needs_the_exact_flag(context: Any):
+    """Only `{'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}` loads history saved before records as before."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='t', content=[UploadedFile('file-1', 'openai')], tool_call_id='c')]
+        )
+    ]
+    stored = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+    del stored[0]['parts'][0]['content_file_digests']
+
+    loaded = ModelMessagesTypeAdapter.validate_python(stored, context=context)
+
+    assert message_part(loaded, ToolReturnPart).content == [stored[0]['parts'][0]['content'][0]]
+
+
+@pytest.mark.parametrize('digests', [[['nested']], [1], [None]])
+def test_tool_return_rejects_a_malformed_file_record(digests: list[Any]):
+    """A record that isn't a list of strings fails validation rather than raising a raw error."""
+    stored = [
+        {
+            'kind': 'request',
+            'parts': [
+                {
+                    'part_kind': 'tool-return',
+                    'tool_name': 't',
+                    'tool_call_id': 'c',
+                    'content': [],
+                    'content_file_digests': digests,
+                }
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match='`content_file_digests` must be a list of strings'):
+        ModelMessagesTypeAdapter.validate_python(stored)
+
+
+def test_tool_return_inferred_serialization_keeps_its_files():
+    """History serialized by inference, as `to_json` and Temporal's converter do, keeps the file record.
+
+    A plain dataclass serialized by inference would skip its serializer decorators and lose the record,
+    and its files would load as mappings.
+    """
+    uploaded = UploadedFile('file-1', 'openai')
+    lookalike = _dumped_file(UploadedFile('file-2', 'openai'))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=[uploaded, lookalike], tool_call_id='c')]),
+        ModelResponse(parts=[NativeToolReturnPart(tool_name='n', content=[uploaded], tool_call_id='n')]),
+    ]
+
+    assert to_json(messages) == ModelMessagesTypeAdapter.dump_json(messages)
+    for loaded in (
+        ModelMessagesTypeAdapter.validate_json(to_json(messages)),
+        ModelMessagesTypeAdapter.validate_python(to_jsonable_python(messages)),
+    ):
+        tool_return, native_return = (
+            cast(BaseToolReturnPart[Any], part) for message in loaded for part in message.parts
+        )
+        assert (tool_return.content, native_return.content) == ([uploaded, lookalike], [uploaded])
+        assert type(cast(list[Any], tool_return.content)[1]) is dict
+
+
+def test_file_item_keys_match_their_dumps():
+    """The keys a recorded file item may carry are exactly those its dump writes."""
+    items: list[FileUrl | UploadedFile] = [
+        ImageUrl('https://example.com/a.png'),
+        AudioUrl('https://example.com/a.mp3'),
+        DocumentUrl('https://example.com/a.pdf'),
+        VideoUrl('https://example.com/a.mp4'),
+        UploadedFile('file-1', 'openai'),
+    ]
+    dumps = [_dumped_file(item) for item in items]
+    assert {dump['kind']: frozenset(dump) for dump in dumps} == _FILE_ITEM_KEYS
+
+
+def test_tool_return_nested_in_content_counts_toward_its_parent():
+    """A result held in another result's content is part of that content, and so are its files."""
+    uploaded = UploadedFile('file-1', 'openai')
+    content = {'nested': ToolReturnPart(tool_name='inner', content=[uploaded], tool_call_id='i')}
+
+    reloaded = _round_trip(content, 'json')
+
+    assert reloaded['nested']['content'] == [uploaded]
+
+
+def test_tool_return_file_shaped_data_is_not_hashed_without_a_matching_shape(monkeypatch: pytest.MonkeyPatch):
+    """Mappings that can't be a recorded item are told apart without digesting them, at any depth."""
+    import pydantic_ai.messages as messages_module
+
+    digested: list[Any] = []
+
+    nested: dict[str, Any] = {
+        'kind': 'document-url',
+        'url': 'https://example.com/a.pdf',
+        'media_type': 'application/pdf',
+    }
+    for _ in range(50):
+        nested = {**nested, 'child': nested}
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=[nested], tool_call_id='c')])
+    ]
+    payload = ModelMessagesTypeAdapter.dump_json(messages)
+
+    monkeypatch.setattr(messages_module, '_file_digest', digested.append)
+    loaded = ModelMessagesTypeAdapter.validate_json(payload)
+
+    assert message_part(loaded, ToolReturnPart).content == [nested]
+    assert digested == []
+
+
+def test_tool_return_inferred_serialization_encodes_bytes_like_the_adapter():
+    """Serialized by inference, a tool result's bytes are base64, as `ModelMessagesTypeAdapter` writes them."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content={'raw': b'\xff\x00'}, tool_call_id='c')])
+    ]
+
+    assert to_json(messages) == ModelMessagesTypeAdapter.dump_json(messages)
+
+
+def test_tool_return_records_only_the_files_in_its_content():
+    """A file the application keeps in `metadata`, or sends as `ToolReturn.content`, doesn't count toward the result's record."""
+    uploaded = UploadedFile('file-1', 'openai')
+    lookalike = _dumped_file(uploaded)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=lookalike, tool_call_id='c', metadata=uploaded)])
+    ]
+    loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    assert message_part(loaded, ToolReturnPart).content == lookalike
+
+    adapter = TypeAdapter(ToolReturn)
+    tool_return = ToolReturn(return_value=lookalike, content=[uploaded])
+    assert adapter.validate_json(adapter.dump_json(tool_return)) == tool_return
+
+
+def test_tool_return_file_without_a_json_form_still_dumps():
+    """A file whose `vendor_metadata` has no JSON form can't be recorded, so it reloads as its mapping.
+
+    Dumping must not fail over it.
+    """
+    for metadata in ({'raw': b'\xff'}, {'object': object()}):
+        uploaded = UploadedFile('file-1', 'openai', vendor_metadata=metadata)
+        reloaded = _round_trip(uploaded, 'python')
+        assert type(reloaded) is dict
+        assert reloaded['file_id'] == 'file-1'
+
+
+def test_tool_return_python_dump_encoded_as_json_keeps_its_files():
+    """A history dumped in python mode and encoded to JSON separately keeps its files on load."""
+    image = ImageUrl('https://example.com/a.png', vendor_metadata={'raw': b'abc'})
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolReturnPart(tool_name='t', content=image, tool_call_id='c')])
+    ]
+
+    loaded = ModelMessagesTypeAdapter.validate_json(to_json(ModelMessagesTypeAdapter.dump_python(messages)))
+
+    assert message_part(loaded, ToolReturnPart).content == ImageUrl(
+        'https://example.com/a.png', vendor_metadata={'raw': 'abc'}
+    )
+
+
+@pytest.mark.parametrize('url_type', [ImageUrl, AudioUrl, VideoUrl, DocumentUrl])
+def test_extensionless_url_media_type_serializes_null_and_round_trips(
+    url_type: type[ImageUrl | AudioUrl | VideoUrl | DocumentUrl],
+) -> None:
+    """A URL whose media type can't be inferred serializes `media_type: null` and round-trips.
+
+    A provider that forwards an image URL as it is, as OpenAI Chat and Responses do, never reads its media
+    type, so a history that ran there has to dump, and dump to something that loads back into the same
+    part, in a user prompt as in a tool return ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+    """
+    item = url_type(url='https://example.com/file')
+    with pytest.raises(ValueError, match='Could not infer media type'):
+        _ = item.media_type  # Reading it where a provider would still raises.
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=[item]),
+                ToolReturnPart(tool_name='t', content={'files': [item]}, tool_call_id='c'),
+            ]
+        )
+    ]
+    dumped = json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+    assert dumped[0]['parts'][0]['content'][0]['media_type'] is None
+    assert dumped[0]['parts'][1]['content']['files'][0]['media_type'] is None
+
+    reloaded = ModelMessagesTypeAdapter.validate_python(dumped)
+    assert reloaded == messages  # A URL part compares unequal to the mapping it would have stayed.
+    assert json.loads(ModelMessagesTypeAdapter.dump_json(reloaded)) == dumped
+
+
+@pytest.mark.parametrize(
+    'kwargs,expected_inferable,expected_uninferable',
+    [
+        pytest.param(
+            {},
+            snapshot(
+                '{"url":"https://example.com/image.png","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/png","identifier":"01a7df"}'
+            ),
+            snapshot(
+                '{"url":"https://example.com/image","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":null,"identifier":"abab9a"}'
+            ),
+            id='default',
+        ),
+        pytest.param(
+            {'by_alias': False},
+            snapshot(
+                '{"url":"https://example.com/image.png","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/png","identifier":"01a7df"}'
+            ),
+            snapshot(
+                '{"url":"https://example.com/image","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":null,"identifier":"abab9a"}'
+            ),
+            id='by-alias-false',
+        ),
+        pytest.param(
+            {'round_trip': True},
+            snapshot(
+                '{"url":"https://example.com/image.png","force_download":false,"vendor_metadata":null,"kind":"image-url"}'
+            ),
+            snapshot(
+                '{"url":"https://example.com/image","force_download":false,"vendor_metadata":null,"kind":"image-url"}'
+            ),
+            id='round-trip',
+        ),
+        pytest.param(
+            {'exclude_computed_fields': True},
+            snapshot(
+                '{"url":"https://example.com/image.png","force_download":false,"vendor_metadata":null,"kind":"image-url"}'
+            ),
+            snapshot(
+                '{"url":"https://example.com/image","force_download":false,"vendor_metadata":null,"kind":"image-url"}'
+            ),
+            id='exclude-computed-fields',
+        ),
+        pytest.param(
+            {'exclude_none': True},
+            snapshot(
+                '{"url":"https://example.com/image.png","force_download":false,"kind":"image-url","media_type":"image/png","identifier":"01a7df"}'
+            ),
+            snapshot(
+                '{"url":"https://example.com/image","force_download":false,"kind":"image-url","identifier":"abab9a"}'
+            ),
+            id='exclude-none',
+        ),
+        pytest.param(
+            {'include': {'url', 'media_type'}},
+            snapshot('{"url":"https://example.com/image.png","media_type":"image/png"}'),
+            snapshot('{"url":"https://example.com/image","media_type":null}'),
+            id='include',
+        ),
+        pytest.param(
+            {'exclude': {'media_type'}},
+            snapshot(
+                '{"url":"https://example.com/image.png","force_download":false,"vendor_metadata":null,"kind":"image-url","identifier":"01a7df"}'
+            ),
+            snapshot(
+                '{"url":"https://example.com/image","force_download":false,"vendor_metadata":null,"kind":"image-url","identifier":"abab9a"}'
+            ),
+            id='exclude',
+        ),
+    ],
+)
+def test_url_media_type_under_dump_arguments(
+    kwargs: dict[str, Any], expected_inferable: str, expected_uninferable: str
+) -> None:
+    """A URL with a media type dumps exactly as it always has, and one without writes `null` in its place.
+
+    The `null` takes the key's usual position and follows `exclude_none`, `include` and `exclude` like
+    any other value ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+    """
+    ta = TypeAdapter(ImageUrl)
+    assert ta.dump_json(ImageUrl(url='https://example.com/image.png'), **kwargs).decode() == expected_inferable
+    assert ta.dump_json(ImageUrl(url='https://example.com/image'), **kwargs).decode() == expected_uninferable
+
+
+def test_url_media_type_under_nested_include_and_exclude() -> None:
+    """`include` and `exclude` nested down to a URL item treat an uninferable `media_type` like any other."""
+
+    # An `include` nested through a history's part union makes pydantic-core 2.41, the lowest supported, warn.
+    class Stored(BaseModel):
+        files: list[ImageUrl]
+
+    stored = Stored(files=[ImageUrl(url='https://example.com/image.png'), ImageUrl(url='https://example.com/image')])
+    assert stored.model_dump_json(include={'files': {'__all__': {'media_type'}}}) == snapshot(
+        '{"files":[{"media_type":"image/png"},{"media_type":null}]}'
+    )
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=stored.files)])]
+    media_types = {0: {'parts': {0: {'content': {'__all__': {'media_type'}}}}}}
+    dumped = json.loads(ModelMessagesTypeAdapter.dump_json(messages, exclude=media_types))
+    assert dumped[0]['parts'][0]['content'] == snapshot(
+        [
+            {
+                'url': 'https://example.com/image.png',
+                'force_download': False,
+                'vendor_metadata': None,
+                'kind': 'image-url',
+                'identifier': '01a7df',
+            },
+            {
+                'url': 'https://example.com/image',
+                'force_download': False,
+                'vendor_metadata': None,
+                'kind': 'image-url',
+                'identifier': 'abab9a',
+            },
+        ]
+    )
+
+
+@pytest.mark.parametrize('url', ['https://example.com/image.png', 'https://example.com/image'])
+def test_url_serialization_error_unrelated_to_media_type_still_raises(url: str) -> None:
+    """Only a missing media type is dumped as `null`: any other serialization error still raises."""
+    item = ImageUrl(url=url, vendor_metadata={'unserializable': object()})
+    with pytest.raises(PydanticSerializationError, match='Unable to serialize unknown type'):
+        TypeAdapter(ImageUrl).dump_json(item)
 
 
 def test_tool_return_mapping_spelling_out_a_multimodal_item_becomes_one():
@@ -1743,6 +2536,25 @@ def test_message_json_schema_keeps_the_multimodal_definitions_intact():
     assert sorted(name for name in defs if 'ImageUrl' in name) == snapshot(['ImageUrl'])
 
 
+@pytest.mark.parametrize('mode', ['validation', 'serialization'])
+def test_message_json_schema_discriminator_mappings_are_references(mode: Literal['validation', 'serialization']):
+    """OpenAPI requires every discriminator `mapping` value to be a reference, so FastAPI can publish `ModelMessage`."""
+    mapping = ModelMessagesTypeAdapter.json_schema(mode=mode)['$defs']['ToolReturnContent']['anyOf'][1][
+        'discriminator'
+    ]['mapping']
+
+    assert mapping == snapshot(
+        {
+            'audio-url': '#/$defs/AudioUrl',
+            'binary': '#/$defs/BinaryContent',
+            'document-url': '#/$defs/DocumentUrl',
+            'image-url': '#/$defs/ImageUrl',
+            'uploaded-file': '#/$defs/UploadedFile',
+            'video-url': '#/$defs/VideoUrl',
+        }
+    )
+
+
 # Run out-of-process because `PYDANTIC_DISABLE_PLUGINS` is read once, when pydantic is imported.
 _GATE_WITHOUT_PYDANTIC_PLUGINS = """
 from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -1767,6 +2579,7 @@ assert type(content) is dict, content
 """
 
 
+@pytest.mark.subprocess(reason='needs an interpreter where no pydantic plugin has been registered')
 def test_tool_return_gate_holds_without_a_pydantic_plugin():
     """The gate must not depend on whether anything registered a pydantic plugin.
 
@@ -2007,15 +2820,14 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
     thousands of Rust→Python crossings, paid on every message-history load, UI adapter round-trip, and
     Temporal activity resolution and replay.
 
-    Counting Python calls rather than timing is what makes this pin usable in CI: the count is far
-    steadier than a wall-clock threshold, which would either flake on a noisy runner or be loose
-    enough to catch nothing. It is not perfectly machine-independent, though — the delta is 0 on a
-    developer machine but around 110 on some CI runners, from something ambient that has never been
-    tracked down — so the bound has to clear that. The gap it separates is enormous: a per-node
-    Python call costs ~2,770 extra calls here, one per JSON value node in the larger payload, so a
-    bound of 1,000 sits an order of magnitude above the noise and well under the regression. `cProfile` rather than a `sys.setprofile` callback
-    because the interpreter does not trace the callback's own body, leaving it unmeasurable by
-    coverage.
+    Counting Python calls rather than timing is what makes this pin usable in CI: a slow or loaded
+    runner changes how long the calls take, not how many there are. Only the (de)serializer's own
+    calls may count, though. The count comes from a `sys.setprofile` hook because that sees only
+    this thread, whereas `cProfile` also counts other threads' calls on Python 3.12+. Garbage
+    collection is held off during the measurement because a collection runs `gc.callbacks` (Hypothesis
+    installs one) and the finalizers of garbage that earlier tests left behind, all on this thread.
+    A per-node Python call costs over 2,000 extra calls here, about one per JSON value node in the
+    larger payload, so a bound of 1,000 catches it with headroom for anything ambient.
 
     `dump_json` is pinned alongside `validate_json` because it is the leg that notices the two ways
     the `_StrPassthrough` arm can be lost: `pydantic.InstanceOf[str]` builds the same validator but
@@ -2039,18 +2851,26 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
         messages = ModelMessagesTypeAdapter.validate_json(raw)  # build the (de)serializer outside the measurement
         ModelMessagesTypeAdapter.dump_json(messages)
 
-        profiler = cProfile.Profile()
-        profiler.enable()
+        calls = 0
+
+        def count_call(frame: FrameType, event: str, arg: object) -> None:
+            nonlocal calls
+            # The interpreter never traces a profile function, so coverage can't see this line.
+            calls += event == 'call'  # pragma: no cover
+
+        gc.disable()
+        sys.setprofile(count_call)
         try:
             if dump:
                 ModelMessagesTypeAdapter.dump_json(messages)
             else:
                 ModelMessagesTypeAdapter.validate_json(raw)
         finally:
-            profiler.disable()
-        return sum(entry.callcount for entry in profiler.getstats())
+            sys.setprofile(None)
+            gc.enable()
+        return calls
 
-    # 100x the nodes: a per-node Python call turns a handful of calls into tens of thousands.
+    # 100x the nodes: a per-node Python call adds thousands of calls.
     for dump in (False, True):
         small, large = python_calls(payload(2), dump), python_calls(payload(200), dump)
         direction = 'dump_json' if dump else 'validate_json'
@@ -2129,7 +2949,7 @@ def test_tool_return_mapping_with_non_str_key_stays_mapping():
     assert stringified_key['1'] == ImageUrl(url='https://example.com/x.png')
 
 
-class _Flavour(str, Enum):
+class _Flavour(str, Enum):  # noqa: UP042
     """A `str` subclass of the kind a tool might legitimately return."""
 
     VANILLA = 'vanilla'
@@ -2438,10 +3258,15 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
-def test_args_as_json_str_valid_json_verbatim():
-    """args_as_json_str should return valid object JSON verbatim, preserving key order and whitespace."""
-    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": 2}')
-    assert part.args_as_json_str() == '{"b":  1, "a": 2}'
+def test_args_as_json_str_valid_json_canonical():
+    """args_as_json_str should render valid object JSON compactly, the same as the equivalent dict args.
+
+    Key order is preserved and non-ASCII text stays unescaped, so only insignificant whitespace (and
+    number spelling) changes.
+    """
+    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": [2, 3.50], "c": "Z\\u00fcrich ☕"}')
+    assert part.args_as_json_str() == snapshot('{"b":1,"a":[2,3.5],"c":"Zürich ☕"}')
+    assert part.args_as_json_str() == ToolCallPart(tool_name='test_tool', args=part.args_as_dict()).args_as_json_str()
 
 
 def test_args_as_json_str_dict_args():
@@ -2525,7 +3350,7 @@ class TestInstructionParts:
 
 def test_retry_prompt_strips_input_from_top_level_errors():
     """Top-level validation errors should not include `input` in model_response() since it duplicates the entire generated output."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('required_field',), 'msg': 'Field required', 'input': {'wrong_field': 'value'}},
         ],
@@ -2537,7 +3362,7 @@ def test_retry_prompt_strips_input_from_top_level_errors():
 
 def test_retry_prompt_keeps_input_for_nested_errors():
     """Nested validation errors should keep `input` in model_response() to help the model locate the invalid part."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('items', 0, 'sub_field'), 'msg': 'Field required', 'input': {'other': 'val'}},
         ],
@@ -2549,7 +3374,7 @@ def test_retry_prompt_keeps_input_for_nested_errors():
 
 def test_retry_prompt_mixed_top_level_and_nested_errors():
     """When both top-level and nested errors exist, only top-level input should be stripped."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('root_field',), 'msg': 'Field required', 'input': {'root_key': 'root_val'}},
             {
@@ -2569,7 +3394,7 @@ def test_retry_prompt_mixed_top_level_and_nested_errors():
 
 def test_retry_prompt_strips_input_from_top_level_type_errors():
     """Top-level type/value errors also have input stripped, even though it's a small scalar value."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {
                 'type': 'int_parsing',
@@ -2586,7 +3411,7 @@ def test_retry_prompt_strips_input_from_top_level_type_errors():
 
 def test_retry_prompt_tool_call_keeps_input_at_top_level():
     """Tool-call retries (`tool_name` set) must preserve `input` so the model sees what args it sent."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         tool_name='evaluate_content',
         content=[
             {'type': 'missing', 'loc': ('content',), 'msg': 'Field required', 'input': {}},
@@ -2599,7 +3424,7 @@ def test_retry_prompt_tool_call_keeps_input_at_top_level():
 
 def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     """Tool-call retries preserve `input` for nested errors too, matching the existing NativeOutput nested behavior."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         tool_name='evaluate_content',
         content=[
             {
@@ -2618,7 +3443,7 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
 def test_retry_prompt_otel_message_parts_include_content():
     """Retry prompt parts honor `include_content` like every other message part, in both the
     tool-call and non-tool branches."""
-    non_tool = RetryPromptPart(
+    non_tool = legacy_retry_prompt_part(
         content=[
             {
                 'type': 'string_type',
@@ -2628,7 +3453,7 @@ def test_retry_prompt_otel_message_parts_include_content():
             },
         ],
     )
-    tool = RetryPromptPart(tool_name='my_tool', tool_call_id='call_1', content='Try again')
+    tool = legacy_retry_prompt_part(tool_name='my_tool', tool_call_id='call_1', content='Try again')
 
     with_content = InstrumentationSettings(include_content=True)
     assert non_tool.otel_message_parts(with_content) == snapshot(
@@ -2856,6 +3681,7 @@ def test_speech_part_serialization_roundtrip():
                             'identifier': '0ca623',
                         },
                         'interrupted_at_ms': None,
+                        'timestamps': None,
                         'id': 'item-1',
                         'provider_name': 'openai',
                         'provider_details': None,
@@ -2877,6 +3703,7 @@ def test_speech_part_serialization_roundtrip():
                         'transcript': 'Hi!',
                         'audio': None,
                         'interrupted_at_ms': 420,
+                        'timestamps': None,
                         'id': None,
                         'provider_name': None,
                         'provider_details': None,
@@ -2886,8 +3713,10 @@ def test_speech_part_serialization_roundtrip():
                 'usage': {
                     'input_tokens': 0,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -2896,10 +3725,12 @@ def test_speech_part_serialization_roundtrip():
                     'cost': None,
                 },
                 'model_name': None,
+                'model_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'provider_name': None,
                 'provider_url': None,
+                'canonical_system': None,
                 'provider_details': None,
                 'provider_response_id': None,
                 'finish_reason': None,
@@ -2907,6 +3738,8 @@ def test_speech_part_serialization_roundtrip():
                 'conversation_id': None,
                 'metadata': None,
                 'workspace_ref': None,
+                'history_digest': None,
+                'failed_attempts': None,
                 'state': 'complete',
             },
         ]
@@ -2952,6 +3785,26 @@ def test_speech_part_delta_apply_not_retaining_audio():
     assert applied == SpeechPart(speaker='assistant', transcript='Hi')
 
 
+def test_speech_part_timestamps_accumulate_round_trip_and_stay_out_of_model_requests():
+    """Timestamps add up on the part, survive serialization, and never reach a standard model."""
+    part = SpeechPartDelta(timestamps=[SpeechTimestamp(text='Hi', start_ms=50, duration_ms=200)]).apply(
+        SpeechPart(speaker='assistant', transcript='Hi there.')
+    )
+    part = SpeechPartDelta(
+        timestamps=[SpeechTimestamp(text='there.', start_ms=300, duration_ms=400, granularity='segment')]
+    ).apply(part)
+    part = SpeechPartDelta(transcript_delta='').apply(part)
+    assert part.timestamps == snapshot(
+        [
+            SpeechTimestamp(text='Hi', start_ms=50, duration_ms=200),
+            SpeechTimestamp(text='there.', start_ms=300, duration_ms=400, granularity='segment'),
+        ]
+    )
+    history: list[ModelMessage] = [ModelResponse(parts=[part])]
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history)) == history
+    assert TestModel().prepare_messages(history)[0].parts == [TextPart(content='Hi there.')]
+
+
 def test_speech_part_delta_apply_wrong_part_type():
     with pytest.raises(ValueError, match='Cannot apply SpeechPartDeltas to non-SpeechParts'):
         SpeechPartDelta(transcript_delta='Hello').apply(TextPart(content='Hi'))
@@ -2987,7 +3840,7 @@ def test_prepare_messages_converts_speech_parts():
     # The default profile doesn't support audio input, so the transcript is used.
     prepared = TestModel().prepare_messages(history)
     assert message(prepared, ModelRequest, index=0).parts == [
-        UserPromptPart(content='What time is it?', timestamp=IsNow(tz=timezone.utc))
+        UserPromptPart(content='What time is it?', timestamp=IsNow(tz=UTC))
     ]
     assert message(prepared, ModelResponse, index=1).parts == [
         TextPart(content='It is noon.'),
@@ -2996,9 +3849,7 @@ def test_prepare_messages_converts_speech_parts():
 
     # A model that supports audio input receives the retained audio instead of the transcript.
     prepared = TestModel(profile={'supports_audio_input': True}).prepare_messages(history)
-    assert message(prepared, ModelRequest, index=0).parts == [
-        UserPromptPart(content=[audio], timestamp=IsNow(tz=timezone.utc))
-    ]
+    assert message(prepared, ModelRequest, index=0).parts == [UserPromptPart(content=[audio], timestamp=IsNow(tz=UTC))]
 
 
 @pytest.mark.parametrize(
@@ -3203,6 +4054,36 @@ def test_tool_availability_delta_otel_message_uses_system_role():
     )
 
 
+def test_capability_load_delta_otel_message_names_the_capability():
+    """A capability loaded from code is named in traces, in the system role like a tool reveal."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open')])
+    ]
+
+    assert InstrumentationSettings().messages_to_otel_messages(messages) == snapshot(
+        [{'role': 'system', 'parts': [{'type': 'text', 'content': 'Loaded capabilities changed: +refunds'}]}]
+    )
+
+
+def test_capability_load_delta_round_trips_and_leaves_tool_deltas_unchanged():
+    """The part survives serialization under its own `part_kind`, and a tool reveal serializes as before."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open'),
+                ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='open'),
+            ]
+        )
+    ]
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
+    assert ModelMessagesTypeAdapter.dump_python(messages, mode='json')[0]['parts'] == snapshot(
+        [
+            {'loaded': ['refunds'], 'tool_call_id': 'open', 'part_kind': 'capability-load-delta'},
+            {'tools_added': ['refund_status'], 'tool_call_id': 'open', 'part_kind': 'tool-availability-delta'},
+        ]
+    )
+
+
 def test_post_compaction_window_returns_history_unchanged_without_compaction():
     """No boundary: the whole history comes back (as a new list, input untouched)."""
     messages: list[ModelMessage] = [
@@ -3242,6 +4123,20 @@ def test_post_compaction_window_slices_at_the_latest_compaction_part():
         TextPart(content='after the block'),
     ]
     assert window[1] is messages[-1]
+
+
+def test_post_compaction_window_opens_at_the_turn_of_a_request_side_summary():
+    """A summary in a request opens the window at the start of its run of consecutive requests, which history
+    normalization merges into one and reorders, so the window is the same before and after."""
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('old context'),
+        ModelResponse(parts=[TextPart(content='old answer')]),
+        ModelRequest.user_text_prompt('kept context'),
+        ModelRequest(parts=[CompactionPart(content='summary')]),
+        ModelRequest.user_text_prompt('tail'),
+    ]
+
+    assert post_compaction_window(messages) == messages[2:]
 
 
 def test_post_compaction_window_accepts_a_minimal_sequence():
@@ -3351,7 +4246,9 @@ def test_user_prompt_part_content_items_must_be_user_content():
     assert UserPromptPart([image]).content == [image]
 
     # Every member of the union is accepted, so adding one cannot be forgotten here.
-    assert UserPromptPart(['hello', TextContent(content='hi'), ImageUrl('https://example.com/i.png'), CachePoint()])
+    assert UserPromptPart(
+        ['hello', StructuredContent({}), TextContent(content='hi'), ImageUrl('https://example.com/i.png'), CachePoint()]
+    )
 
 
 def test_user_content_types_matches_union():

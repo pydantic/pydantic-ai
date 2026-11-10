@@ -30,6 +30,15 @@ class HarnessDeprecationWarning(UserWarning):
     """
 
 
+class MCPReadOnlyNoToolsWarning(UserWarning):
+    """`read_only=True` removed every tool from a hosted MCP server, so the agent gets none of its tools.
+
+    The filter keeps only tools the server annotates with `readOnlyHint: true`, and some servers
+    publish no annotations at all. Disable `read_only`, or filter this category when an empty
+    toolset is intended.
+    """
+
+
 def warn_module_renamed(old: str, new: str) -> None:
     """Emit a `HarnessDeprecationWarning` that `pydantic_ai_harness.<old>` is now `pydantic_ai_harness.<new>`.
 
@@ -44,7 +53,9 @@ def warn_module_renamed(old: str, new: str) -> None:
     )
 
 
-def warn_default_changed(*, owner: str, option: str, old: str, new: str, impact: str, stacklevel: int = 4) -> None:
+def warn_default_changed(
+    *, owner: str, option: str, old: object, new: object, impact: str, stacklevel: int = 4
+) -> None:
     """Emit a `HarnessDeprecationWarning` that `<owner>`'s `<option>` default changed.
 
     For an option whose default moved to a value that changes behavior rather than breaking

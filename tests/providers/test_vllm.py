@@ -12,7 +12,10 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    _GptOssJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
@@ -121,7 +124,7 @@ def test_vllm_provider_openai_client_is_exclusive() -> None:
         ('deepseek-ai/DeepSeek-V4-Pro', OpenAIJsonSchemaTransformer, True),
         ('mistralai/Magistral-Small-2509', OpenAIJsonSchemaTransformer, True),
         ('CohereLabs/command-a-reasoning-08-2025', OpenAIJsonSchemaTransformer, True),
-        ('openai/gpt-oss-20b', OpenAIJsonSchemaTransformer, False),
+        ('openai/gpt-oss-20b', _GptOssJsonSchemaTransformer, False),
         ('zai-org/GLM-4.7', OpenAIJsonSchemaTransformer, True),
         ('zai-org/GLM-4-9B', OpenAIJsonSchemaTransformer, False),
         ('unknown-model', OpenAIJsonSchemaTransformer, False),
@@ -162,11 +165,11 @@ def test_vllm_provider_family_tool_flags() -> None:
 
     harmony_profile = provider.model_profile('gpt-oss-20b')
     assert harmony_profile is not None
-    assert harmony_profile.get('openai_supports_tool_choice_required', True) is False
+    assert harmony_profile.get('supports_forced_tool_choice', True) is False
 
     qwen_coder_profile = provider.model_profile('Qwen/Qwen3-Coder-480B-A35B-Instruct')
     assert qwen_coder_profile is not None
-    assert qwen_coder_profile.get('openai_supports_tool_choice_required', False) is True
+    assert qwen_coder_profile.get('supports_forced_tool_choice', False) is True
     assert qwen_coder_profile.get('openai_supports_strict_tool_definition', False) is True
     assert qwen_coder_profile.get('supports_thinking', False) is False
 
@@ -313,6 +316,7 @@ async def test_vllm_provider_no_duplicate_thinking_parts(allow_model_requests: N
         ('Qwen/Qwen3-235B-A22B-Thinking-2507', False, None),
         ('Qwen/Qwen3-Coder-480B-A35B-Instruct', 'high', None),
         ('Qwen/Qwen3.8-27B', 'high', None),
+        ('deepseek-flash', 'high', None),
         ('unknown-model', 'high', None),
     ],
 )

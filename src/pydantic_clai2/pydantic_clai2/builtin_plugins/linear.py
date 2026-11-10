@@ -1,0 +1,283 @@
+"""Use Linear, with its key kept in /keys.
+
+The built-in `linear` plugin: harness `Linear`, set up in a settings menu, with its key named in `/keys`.
+
+The settings menu (`/plugins configure linear`, also opened on `/plugins add`, `/plugins enable`, Space or `c` in
+`/plugins`, and the web UI's plugins panel) edits every setting harness `Linear` takes from a user: how to sign in,
+which `/keys` entry to use, read-only access, and whether to pass the server's instructions. Edits are saved as they
+are made. Plugin settings are plaintext SQLite, so they carry no credential: the menu's key row picks a saved key or
+saves a new one under `LINEAR_API_KEY`, and only that name is stored. Each run resolves the name, so replacing the
+key in `/keys` reaches Linear on the next run and a deleted key fails the run instead of connecting without it.
+
+The browser sign-in runs only from that menu or `/linear login`, never while loading or in a prompt; see
+`pydantic_clai2.plugins.sign_in`. Its tokens are kept in the keyring under `mcp-linear_plugin`.
+"""
+
+from collections.abc import Sequence
+from functools import partial
+from typing import Generic, Literal
+
+from anyio import to_thread
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+
+from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.tools import RunContext
+from pydantic_ai_harness.linear import Linear
+from pydantic_clai2.commands import Command
+from pydantic_clai2.config.api_keys import KeyReference, SavedKey, forget_connection, load_keys, save_key_connection
+from pydantic_clai2.config.credential_store import load_codex_credentials
+from pydantic_clai2.mcp import OAuthSignIn
+from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
+from pydantic_clai2.plugins.keys import choose_key
+from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
+from pydantic_clai2.plugins.sign_in import sign_in_command, sign_in_now, warn_if_signed_out
+from pydantic_clai2.runtime.session import WorkspacelessCapability
+from pydantic_clai2.ui.menus.field_menu import shown
+from pydantic_clai2.ui.rendering import theme
+
+KEY_NAME = 'LINEAR_API_KEY'
+"""The `/keys` label a new Linear key is saved under, and the one used until the menu picks another."""
+ACCOUNT = 'linear'
+"""Credential-store account holding the chosen key's name. `api_keys.key_users` checks it before a rename."""
+TOKEN_ACCOUNT = 'linear_plugin'
+"""`TokenStore` name for OAuth tokens. `/mcp` server names cannot contain `_`, so no `/mcp` server shares it."""
+# The endpoints harness `Linear` connects to; with `client`, the plugin picks the URL itself.
+_URL = 'https://mcp.linear.app/mcp'
+_READ_ONLY_URL = 'https://mcp.linear.app/mcp/readonly'
+_RECONFIGURE = '/plugins configure linear'
+
+
+def sign_in(read_only: bool) -> OAuthSignIn:
+    """The browser sign-in for the endpoint `read_only` picks: the URL carries `read_only`.
+
+    `Linear`'s own `read_only` with a `client` filters on tool annotations instead, which would be a second,
+    different boundary.
+    """
+    url = _READ_ONLY_URL if read_only else _URL
+    return OAuthSignIn(name=TOKEN_ACCOUNT, service='Linear', setup='/linear login', url=url)
+
+
+class LinearSettings(BaseModel):
+    """The JSON a `linear` declaration may carry. Credentials live in `/keys` or the keyring, never here.
+
+    These are the harness `Linear` fields a user chooses. Linear's hosted server has one URL (plus its read-only
+    variant) and takes the workspace from the signed-in account, so there is no base URL or workspace field.
+    """
+
+    model_config = ConfigDict(extra='forbid', frozen=True, strict=True)
+    auth: Literal['api_key', 'oauth'] = Field(
+        default='api_key', description='An API key from /keys, or browser sign-in with tokens kept in the keyring.'
+    )
+    read_only: bool = Field(default=True, description="Connect to Linear's read-only endpoint.")
+    include_instructions: bool = Field(default=True, description="Pass the server's own instructions to the agent.")
+
+
+class _Connection(BaseModel):
+    """The saved choice: a key name, in the shape `api_keys.key_users` reads."""
+
+    token: KeyReference
+
+
+class LinearPlugin(Plugin[LinearSettings, DepsT]):
+    """`Linear` and its settings menu; a missing key is reported on load and fails each run until one is chosen."""
+
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        settings = self.settings
+        if settings.auth == 'oauth':
+            return (WorkspacelessCapability[DepsT](self.for_run),)
+
+        def token(ctx: RunContext[DepsT]) -> str:
+            return saved_key()(ctx)
+
+        return (
+            Linear[DepsT](
+                defer_loading=True,
+                auth=token,
+                read_only=settings.read_only,
+                include_instructions=settings.include_instructions,
+            ),
+        )
+
+    def get_commands(self) -> Sequence[Command]:
+        if self.settings.auth != 'oauth':
+            return ()
+        return (sign_in_command('linear', sign_in(self.settings.read_only)),)
+
+    async def for_run(self, ctx: RunContext[DepsT]) -> Linear[DepsT] | None:
+        """The browser sign-in's `Linear`, or nothing until one is stored. Checked per run, so no reload is needed."""
+        method = sign_in(self.settings.read_only)
+        if not await to_thread.run_sync(method.signed_in, abandon_on_cancel=True):
+            return None
+        # A new client per run: FastMCP keeps tokens in memory once connected, so `/linear logout` would
+        # otherwise leave this session signed in.
+        return Linear[DepsT](
+            defer_loading=True, client=method.client(), include_instructions=self.settings.include_instructions
+        )
+
+    def settings_menu(self) -> SettingsMenu:
+        source = _Settings(self.host)
+        return SettingsMenu(
+            source=source,
+            actions={
+                'auth': partial(source.choose, key='auth'),
+                'api_key': pick_key,
+                'read_only': partial(source.choose, key='read_only'),
+            },
+        )
+
+    async def on_session_start(self, event: SessionStart) -> None:
+        if self.settings.auth == 'oauth':
+            await warn_if_signed_out(sign_in(self.settings.read_only), self.host.console)
+            return
+        try:
+            await to_thread.run_sync(lambda: saved_key()(None))
+        except UserError as exc:
+            self.host.console.print(f'Linear: {exc}', style=theme.color(theme.WARNING), markup=False)
+
+
+class _Settings(Generic[DepsT]):
+    """The rows of the Linear settings menu; a `plugins.menus.FieldSource`."""
+
+    title = 'Linear settings'
+
+    def __init__(self, host: PluginHost[DepsT]) -> None:
+        self._host = host
+
+    def rows(self) -> list[FieldRow]:
+        saved = self._saved()
+        rows = [
+            FieldRow(
+                key='auth',
+                label='Sign-in',
+                description=LinearSettings.model_fields['auth'].description or '',
+                default='api_key',
+                choices=('api_key', 'oauth'),
+                choice_labels={'api_key': 'API key from /keys', 'oauth': 'Browser sign-in (OAuth)'},
+                allow_custom=False,
+            )
+        ]
+        if saved.auth == 'api_key':
+            rows.append(
+                FieldRow(
+                    key='api_key',
+                    label='API key',
+                    description=(
+                        'Enter picks a saved /keys entry or enters a new key, masked. Only the name is stored; '
+                        f'R goes back to {KEY_NAME}. Several plugins can share one entry.'
+                    ),
+                    default=KEY_NAME,
+                    note=self._key_note(),
+                )
+            )
+        rows += [
+            FieldRow(
+                key='read_only',
+                label='Access',
+                description=LinearSettings.model_fields['read_only'].description or '',
+                default='true',
+                choices=('true', 'false'),
+                choice_labels={'true': 'Read-only', 'false': 'Read and write'},
+                allow_custom=False,
+            ),
+            FieldRow(
+                key='include_instructions',
+                label='Server instructions',
+                description=LinearSettings.model_fields['include_instructions'].description or '',
+                default='true',
+                choices=('true', 'false'),
+                choice_labels={'true': 'Include', 'false': 'Leave out'},
+                allow_custom=False,
+            ),
+        ]
+        return rows
+
+    def current(self, row: FieldRow) -> str:
+        if row.key == 'api_key':
+            try:
+                return reference().name
+            except UserError:
+                return '(invalid choice)'
+        return shown(self._saved().model_dump()[row.key])
+
+    def problem(self, row: FieldRow, text: str) -> str | None:  # pragma: no cover -- no row opens a text editor.
+        """Nothing here is typed: every row is a fixed choice or the `/keys` picker."""
+        return None
+
+    def apply(self, row: FieldRow, raw: str) -> str:
+        self._host.save_settings(self._validated(row, raw))
+        return f'Linear {row.label}: {row.display(raw)}.'
+
+    def reset(self, row: FieldRow) -> str:
+        if row.key == 'api_key':
+            forget_connection(account=ACCOUNT)
+            return f'Linear uses {KEY_NAME} from /keys from the next run.'
+        self._host.save_settings(self._validated(row, row.default))
+        return f'Linear {row.label}: {row.display(row.default)} (default).'
+
+    async def choose(self, dialogs: Dialogs, *, key: str) -> list[str]:
+        """Pick the Sign-in or Access row's value, then sign in when browser sign-in has none for its endpoint.
+
+        Both rows are actions, not plain choices, because the endpoint, and so the sign-in, follows both.
+        """
+        [row] = [row for row in await to_thread.run_sync(self.rows) if row.key == key]
+        picked = await dialogs.choose(
+            title=f'Choose {row.label}',
+            options=[Option(value=choice, label=row.display(choice)) for choice in row.choices],
+            current=await to_thread.run_sync(self.current, row),
+            description=row.description,
+        )
+        if picked is None:
+            return []
+        messages = [await to_thread.run_sync(self.apply, row, picked)]
+        settings = await to_thread.run_sync(self._saved)
+        if settings.auth == 'oauth':
+            method = sign_in(settings.read_only)
+            if not await to_thread.run_sync(method.signed_in, abandon_on_cancel=True):
+                messages.append(await sign_in_now(method, dialogs))
+        return messages
+
+    def _saved(self) -> LinearSettings:
+        # Settings that fail validation fail the load, so the menu of a loaded plugin never sees them.
+        return self._host.settings(LinearSettings)
+
+    def _validated(self, row: FieldRow, text: str) -> LinearSettings:
+        settings: dict[str, JsonValue] = self._saved().model_dump()
+        settings[row.key] = text == 'true' if isinstance(settings[row.key], bool) else text
+        return LinearSettings.model_validate(settings)
+
+    def _key_note(self) -> str:
+        try:
+            name = reference().name
+        except UserError as exc:
+            return str(exc)
+        return '' if name in load_keys() else f'{name} is missing from /keys'
+
+
+def reference() -> KeyReference:
+    """The key Linear uses: the one chosen in the settings menu, else `LINEAR_API_KEY`."""
+    raw = load_codex_credentials(account=ACCOUNT)
+    if raw is None:
+        return KeyReference(name=KEY_NAME)
+    try:
+        return _Connection.model_validate_json(raw).token
+    except ValidationError:
+        raise UserError(f'The saved Linear key choice is invalid. Choose again with {_RECONFIGURE}.') from None
+
+
+def saved_key() -> SavedKey:
+    """The chosen key, read again on each call so a new choice in the menu reaches the next run."""
+    return SavedKey(name=reference().name, setup=f'Restore it in /keys or reconfigure through {_RECONFIGURE}.')
+
+
+async def pick_key(dialogs: Dialogs) -> list[str]:
+    """Pick a `/keys` entry or enter a new key masked; save the name, and the value only in `/keys`."""
+    key = await choose_key(name=KEY_NAME, label='Linear API key', dialogs=dialogs)
+    if key is None:
+        return ['Linear key unchanged.']
+    value = _Connection(token=key).model_dump_json()
+    try:
+        await to_thread.run_sync(partial(save_key_connection, account=ACCOUNT, token=key, value=value))
+    except UserError as exc:  # Deleted from `/keys` since it was picked.
+        return [str(exc)]
+    return [f'Linear uses {key.name} from /keys from the next run.']

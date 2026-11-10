@@ -4,8 +4,11 @@ import asyncio
 import importlib
 import inspect
 import json
+import os
+import shlex
 import signal
 import sys
+import threading
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -24,17 +27,20 @@ from sprites.exceptions import (
     PermissionError_,
     SpriteError,
 )
+from sprites.websocket import WSCommand
 from websockets.datastructures import Headers
 from websockets.exceptions import InvalidMessage, InvalidStatus
 from websockets.http11 import Response
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    CommandResult,
     SupportsCommands,
     Workspace,
     WorkspaceError,
@@ -47,7 +53,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend, _backend
 
 from .conftest import live_token
-from .fake_sprites import SpriteTransport
+from .fake_sprites import FakeExecSocket, SpriteTransport
 
 
 def context(conversation: str = 'chat') -> RunContext[None]:
@@ -61,6 +67,19 @@ def _caused_by(error: Exception, cause: Exception) -> Exception:
 
 def _handshake(status: int) -> InvalidStatus:
     return InvalidStatus(Response(status, 'status', Headers()))
+
+
+async def test_fake_exec_close_without_stdin_eof_closes_the_pipe(transport: SpriteTransport) -> None:
+    """The fake owns the host pipe even when the SDK never sends EOF; no live request can test this."""
+    transport.names.add('remote')
+    socket = await transport.connect('wss://api.sprites.dev/v1/sprites/remote/exec?cmd=cat')
+    await socket.close()
+    assert socket.process.wait(timeout=1) == -signal.SIGKILL
+    assert socket.process.stdin is not None
+    try:
+        assert socket.process.stdin.closed
+    finally:
+        socket.process.stdin.close()
 
 
 class TestSpritesSandbox:
@@ -189,6 +208,13 @@ class TestSpritesSandbox:
             await SpritesSandbox[None]().destroy(WorkspaceRef(provider='sprites', id='target'))
         assert transport.clients == []
 
+    async def test_destroy_with_a_caller_client_leaves_it_open(self, transport: SpriteTransport) -> None:
+        client = transport.client('test-token')
+        transport.names.add('target')
+        await SpritesSandbox[None](client=client).destroy(WorkspaceRef(provider='sprites', id='target'))
+        assert 'target' not in transport.names
+        assert transport.close_calls == 0
+
     async def test_native_handle_conflict_and_identity(self, transport: SpriteTransport) -> None:
         seed = SpritesSandboxBackend()
         native = await seed.get_sandbox()
@@ -249,12 +275,13 @@ class TestSpritesSandbox:
         await backend.write_bytes(note, b'hi')
         assert await backend.read_bytes(note) == b'hi'
         assert (await backend.run(['true'])).exit_code == 0
-        # Each operation closed its own client, and none looked up the Sprite this process just created.
-        assert (len(transport.clients), transport.close_calls, transport.gets) == (4, 3, 0)
+        # Each operation closed its own client, and none looked the Sprite up through the cache;
+        # the only lookups are each command's post-run deletion check.
+        assert (len(transport.clients), transport.close_calls, transport.gets) == (4, 3, 3)
 
         # The public handle is always a fetched one.
         assert (await backend.get_sandbox()).name == native.name
-        assert transport.gets == 1
+        assert transport.gets == 4
 
         await native.delete()
         with pytest.raises(WorkspaceUnavailableError):
@@ -262,7 +289,7 @@ class TestSpritesSandbox:
         # A Sprite reported unavailable is looked up again before the next operation.
         with pytest.raises(WorkspaceUnavailableError, match='no longer exists'):
             await backend.exists(note)
-        assert transport.gets == 2
+        assert transport.gets == 5
 
     async def test_backends_for_one_sprite_share_its_lookup(self, transport: SpriteTransport) -> None:
         transport.names.add('shared')
@@ -274,12 +301,12 @@ class TestSpritesSandbox:
             assert isinstance(backend, SpritesSandboxBackend)
             assert await backend.working_dir() == str(transport.root.resolve())
             assert (await backend.run(['true'])).exit_code == 0
-        # One lookup, then each backend's own `pwd -P` and command.
-        assert (transport.gets, len(transport.execs)) == (1, 4)
+        # One lookup, then each backend's own `pwd -P`, its command, and each command's deletion check.
+        assert (transport.gets, len(transport.execs)) == (5, 4)
         # Other credentials may not see the Sprite, so they look it up themselves.
         other = SpritesSandboxBackend(client=transport.client('other-token'), ref=ref)
         assert (await other.run(['true'])).exit_code == 0
-        assert transport.gets == 2
+        assert transport.gets == 7
         # Deleted outside this process: the cached lookup must not hide it from `working_dir()`.
         transport.names.discard('shared')
         backend = capability.get_workspace(context(), ref=ref)
@@ -297,19 +324,20 @@ class TestSpritesSandbox:
         backend = capability.get_workspace(context(), ref=ref)
         assert isinstance(backend, SpritesSandboxBackend)
         await backend.run(['true'])
-        assert transport.gets == 1
+        # The initial lookup plus the run's deletion check.
+        assert transport.gets == 2
         if end == 'destroyed':
             await capability.destroy(ref)
         else:
             transport.names.discard('ending')
-            # Found gone by an operation of a backend that trusted the cache.
+            # Found gone by an operation of a backend that trusted the cache; the failed exec reaches no deletion check.
             with pytest.raises(WorkspaceUnavailableError):
                 await capability.backend(ref).run(['true'])
-            assert transport.gets == 1
+            assert transport.gets == 2
         # Recreated under the same name, as only a fresh lookup would notice.
         transport.names.add('ending')
         await capability.backend(ref).run(['true'])
-        assert transport.gets == 2
+        assert transport.gets == 4
 
     async def test_an_expired_lookup_is_repeated(self, transport: SpriteTransport) -> None:
         now = [0.0]
@@ -319,11 +347,11 @@ class TestSpritesSandbox:
         await SpritesSandboxBackend(ref=ref).working_dir()
         now[0] = 59.0
         await SpritesSandboxBackend(ref=ref).working_dir()
-        # Each backend runs its own `pwd -P`; only the lookup is shared.
-        assert (transport.gets, len(transport.execs)) == (1, 2)
+        # Each backend runs its own `pwd -P` and deletion check; only the lookup is shared.
+        assert (transport.gets, len(transport.execs)) == (3, 2)
         now[0] = 61.0
         await SpritesSandboxBackend(ref=ref).working_dir()
-        assert (transport.gets, len(transport.execs)) == (2, 3)
+        assert (transport.gets, len(transport.execs)) == (5, 3)
 
     async def test_a_failed_lookup_is_not_cached(self, transport: SpriteTransport) -> None:
         transport.names.add('flaky')
@@ -332,7 +360,8 @@ class TestSpritesSandbox:
         with pytest.raises(NetworkError):
             await SpritesSandboxBackend(ref=ref).run(['true'])
         await SpritesSandboxBackend(ref=ref).run(['true'])
-        assert transport.gets == 2
+        # The retried lookup plus the retrying run's deletion check.
+        assert transport.gets == 3
 
     async def test_an_operation_during_the_last_close_opens_its_own_client(self, transport: SpriteTransport) -> None:
         backend = SpritesSandbox[None]().get_workspace(context(), ref=None)
@@ -524,6 +553,10 @@ class TestSpritesSandbox:
             await backend.get_sandbox()
         [name] = transport.created
         assert backend.ref == WorkspaceRef(provider='sprites', id=name)
+        # A 404 while the created Sprite becomes visible is a transport failure, not a missing Sprite.
+        transport.get_error_once = NotFoundError('still not visible')
+        with pytest.raises(NetworkError, match='may still be becoming visible'):
+            await backend.get_sandbox()
         assert (await backend.get_sandbox()).name == name
         assert transport.created == [name]
 
@@ -649,6 +682,29 @@ class TestSpritesSandbox:
                 transport.release_stdin_eof.set()
         assert str(caught[0]) == 'Command timed out after 0.5 seconds'
         assert caught[0].stdout == f'chdir to `{directory}`: No such file or directory\n'
+
+    async def test_a_working_directory_found_by_the_check_leaves_the_failure_to_the_command(
+        self, transport: SpriteTransport
+    ) -> None:
+        transport.names.add('remote')
+        directory = transport.root / 'late'
+        backend = SpritesSandboxBackend(ref=WorkspaceRef(provider='sprites', id='remote'), working_dir=str(directory))
+        transport.release_stdin_eof = asyncio.Event()
+        results: list[CommandResult] = []
+
+        async def run() -> None:
+            results.append(await backend.run(['touch', 'ran']))
+
+        with anyio.fail_after(30):  # Hang guard only.
+            async with anyio.create_task_group() as group:
+                group.start_soon(run)
+                await transport.exec_started.wait()
+                # The command already failed to enter the directory, which exists by the time `test -d` runs.
+                directory.mkdir()
+                transport.release_stdin_eof.set()
+        assert (results[0].exit_code, results[0].stdout) == (1, f'chdir to `{directory}`: No such file or directory\n')
+        _, check = transport.execs
+        assert check.query['cmd'][-3:] == ['test', '-d', str(directory)]
 
     async def test_a_command_in_an_existing_working_directory_is_one_exec(self, transport: SpriteTransport) -> None:
         """No `test -d` runs before or after a command, whether it succeeds or fails."""
@@ -785,6 +841,33 @@ class TestSpritesSandbox:
         with pytest.raises(WorkspaceUnavailableError, match=sprite.name):
             await backend.run(['true'])
 
+    async def test_destroyed_sprite_with_normal_exit_raises_unavailable(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        sprite = await backend.get_sandbox()
+        transport.delete_on_exit = True
+        with pytest.raises(WorkspaceUnavailableError, match=sprite.name):
+            await backend.run(['echo', 'ok'])
+
+    async def test_deletion_check_ends_by_the_command_deadline(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Longer than the command's timeout, so only the command's deadline can bound the lookup.
+        monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._DELETION_CHECK_TIMEOUT', 3600)
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        deadlines: list[float] = []
+        get = transport.get
+
+        async def observed_get(*args: Any, **kwargs: Any) -> Any:
+            deadlines.append(anyio.current_effective_deadline())
+            return await get(*args, **kwargs)
+
+        monkeypatch.setattr(transport, 'get', observed_get)
+
+        assert (await backend.run(['echo', 'ok'], timeout=60)).stdout == 'ok\n'
+        assert len(deadlines) == 1
+        assert deadlines[0] < anyio.current_time() + 60
+
     async def test_sigkill_with_live_sprite_returns_exit(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
         transport.exit_override = 137
@@ -819,6 +902,25 @@ class TestSpritesSandbox:
         result = await backend.run(['echo', 'ok'])
         assert result.stdout == 'ok\n'
         assert (transport.connects, len(transport.execs)) == (3, 1)
+
+    async def test_a_handshake_failure_after_the_socket_opened_is_not_retried(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # In sprites-py 0.7 nothing in `start` after the socket opens raises these errors; the patch
+        # stands in for a handshake step that fails once the command may have started.
+        start = WSCommand.start
+
+        async def start_then_fail(command: WSCommand) -> None:
+            await start(command)
+            raise TimeoutError('session setup stalled')
+
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        monkeypatch.setattr(WSCommand, 'start', start_then_fail)
+        with pytest.raises(WorkspaceUnavailableError, match='command may have run'):
+            await backend.run(['true'])
+        # One handshake for the command and one to read its stderr capture back; neither is retried.
+        assert transport.connects == 2
 
     async def test_lost_exit_after_side_effect_is_not_retryable(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
@@ -971,31 +1073,98 @@ class TestSpritesSandbox:
         assert transport.execs[0].process.wait(timeout=1) == -signal.SIGKILL
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
 
-    async def test_timeout_keeps_partial_stderr_and_removes_capture(self, transport: SpriteTransport) -> None:
+    async def test_timeout_keeps_partial_stderr_and_removes_capture(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         backend = SpritesSandboxBackend()
         await backend.get_sandbox()
-        with pytest.raises(WorkspaceTimeoutError) as caught:
-            await backend.run('printf ready >&2; exec sleep 5', shell=True, timeout=0.3)
-        assert caught.value.stderr == 'ready'
+        # The deadline reads the event loop's clock, which only passes it once the command has written its stderr.
+        loop = asyncio.get_running_loop()
+        real_loop_time = loop.time
+        skipped = 0.0
+        monkeypatch.setattr(loop, 'time', lambda: real_loop_time() + skipped)
+
+        async def run() -> None:
+            with pytest.raises(WorkspaceTimeoutError) as caught:
+                await backend.run('printf ready >&2; exec sleep 7200', shell=True, timeout=3600)
+            assert caught.value.stderr == 'ready'
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(run)
+            await transport.exec_started.wait()
+            capture = Path(transport.execs[0].query['cmd'][4])
+            with anyio.fail_after(300):
+                while not capture.exists() or capture.read_text(encoding='utf-8') != 'ready':
+                    await anyio.sleep(0.01)
+            skipped = 3600.0
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
 
-    async def test_timeout_reads_stderr_back_over_a_slow_exec(self, transport: SpriteTransport) -> None:
+    async def test_timeout_reads_stderr_back_over_a_slow_exec(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        # Deadlines read the event loop's clock, which only this test moves: a slow runner cannot make the
+        # command's deadline pass before its stderr reaches the capture.
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        monkeypatch.setattr(loop, 'time', lambda: now)
+        connect = transport.connect
+
+        async def slow_connect(url: str, **kwargs: object) -> FakeExecSocket:
+            nonlocal now
+            if transport.execs:
+                # Only the exec that reads the capture back pays the handshake time of a live Sprite.
+                now += 1.5
+            return await connect(url, **kwargs)
+
+        monkeypatch.setattr('sprites.websocket.connect', slow_connect)
+        printed = tmp_path / 'printed'
+        os.mkfifo(printed)
+        caught: list[WorkspaceTimeoutError] = []
+
+        async def run() -> None:
+            with pytest.raises(WorkspaceTimeoutError) as error:
+                await backend.run(
+                    f'printf ready >&2; : > {shlex.quote(str(printed))}; exec sleep 5', shell=True, timeout=0.5
+                )
+            caught.append(error.value)
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(run)
+            # Opening the FIFO returns once the command opens it too, after it has printed. The frozen clock
+            # cannot bound that wait, so the event's own timeout does, in real time. Hang guard only.
+            read = threading.Event()
+
+            def read_fifo() -> None:
+                printed.read_bytes()
+                read.set()
+
+            threading.Thread(target=read_fifo, daemon=True).start()
+            assert await anyio.to_thread.run_sync(read.wait, 120, abandon_on_cancel=True)
+            now += 0.5
+        assert caught[0].stderr == 'ready'
+        assert not Path(transport.execs[0].query['cmd'][4]).exists()
+
+    async def test_timeout_keeps_the_output_when_the_stderr_capture_cannot_be_read(
+        self, transport: SpriteTransport, caplog: pytest.LogCaptureFixture
+    ) -> None:
         backend = SpritesSandboxBackend()
         await backend.get_sandbox()
         caught: list[WorkspaceTimeoutError] = []
 
         async def run() -> None:
             with pytest.raises(WorkspaceTimeoutError) as error:
-                await backend.run('printf ready >&2; exec sleep 5', shell=True, timeout=0.5)
+                await backend.run('printf ready; printf lost >&2; exec sleep 5', shell=True, timeout=0.5)
             caught.append(error.value)
 
         async with anyio.create_task_group() as group:
             group.start_soon(run)
             await transport.exec_started.wait()
-            # Only the exec that reads the capture back pays the handshake time of a live Sprite.
-            transport.exec_latency = 1.5
-        assert caught[0].stderr == 'ready'
-        assert not Path(transport.execs[0].query['cmd'][4]).exists()
+            # The exec that would read the stderr capture back cannot connect.
+            transport.connect_error = InvalidMessage('bad handshake')
+        assert (caught[0].stdout, caught[0].stderr) == ('ready', '')
+        assert 'Could not retrieve Sprite stderr capture' in caplog.text
 
     async def test_cancellation_closes_the_socket(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
@@ -1021,10 +1190,10 @@ class TestSpritesSandbox:
         assert not Path(socket.query['cmd'][4]).exists()
         assert (await backend.run('echo oops >&2', shell=True)).stderr == 'oops\n'
 
-    @pytest.mark.parametrize('timeout', [0, -1, float('inf')])
-    async def test_invalid_timeout(self, transport: SpriteTransport, timeout: float) -> None:
-        with pytest.raises(ValueError, match='timeout'):
-            await SpritesSandboxBackend().run(['true'], timeout=timeout)
+    @pytest.mark.parametrize('timeout', [0, -1, float('inf'), '5'])
+    async def test_invalid_timeout(self, transport: SpriteTransport, timeout: object) -> None:
+        with pytest.raises(ValueError, match=r'^timeout must be a positive finite number or None, got '):
+            await SpritesSandboxBackend().run(['true'], timeout=timeout)  # pyright: ignore[reportArgumentType]
 
     def test_run_signature_matches_the_protocol(self) -> None:
         assert inspect.signature(SpritesSandboxBackend.run) == inspect.signature(SupportsCommands.run)
@@ -1079,3 +1248,26 @@ async def test_trio_is_refused_before_any_sprites_call(transport: SpriteTranspor
     await backend.aclose()
     assert transport.clients == []
     assert transport.created == []
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    definitions = AgentSpec.model_json_schema_with_capabilities([SpritesSandbox])['$defs']
+    assert sorted(definitions['spec_params_SpritesSandbox']['properties']) == [
+        'defer_loading',
+        'description',
+        'env',
+        'id',
+        'runtime',
+        'working_dir',
+    ]
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    spec_fields: dict[str, Any] = {
+        'id': 'sandbox',
+        'description': 'a sandbox',
+        'working_dir': '/work',
+        'env': {'FOO': 'bar'},
+        'runtime': 'python',
+    }
+    assert SpritesSandbox[None].from_spec(**spec_fields) == SpritesSandbox[None](**spec_fields)

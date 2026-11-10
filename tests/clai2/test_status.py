@@ -3,18 +3,45 @@
 import asyncio
 import io
 import re
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
+import anyio
 import pytest
 from rich.console import Console
 
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
-from pydantic_ai.messages import NativeToolCallPart, TextPart, ToolCallPart, ToolCallPartDelta, ToolReturnPart
-from pydantic_clai2._app import _reset_status  # pyright: ignore[reportPrivateUsage]
-from pydantic_clai2.status import Status, StatusLine
-from pydantic_clai2.theme import MUTED, WARNING, sgr
+from pydantic_ai import (
+    Agent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelRequestContext,
+    PartDeltaEvent,
+    PartStartEvent,
+    RunContext,
+)
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    NativeToolCallPart,
+    TextPart,
+    ToolCallPart,
+    ToolCallPartDelta,
+    ToolReturnPart,
+)
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RequestUsage
+from pydantic_clai2.commands import Command
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime.session_runtime import create_shell
+from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.status import Status, StatusLine
+from pydantic_clai2.ui.rendering.theme import LITHIUM, MUTED, THINKING, WARNING, sgr
+from tests.clai2.test_app_edges import inputs
 
 
 def test_estimate_includes_tool_argument_deltas() -> None:
@@ -25,8 +52,128 @@ def test_estimate_includes_tool_argument_deltas() -> None:
     assert 'context: ?' in status.text()
     status.context_tokens = 1000
     status.output_tokens = 20
-    assert 'context: 1,000 tokens' in status.text()
+    assert 'context: 1k/? tokens' in status.text()
     assert '20 output tokens' in status.text()
+
+
+@pytest.mark.parametrize(
+    ('used', 'window', 'expected'),
+    [
+        (None, None, '?/?'),
+        (None, 1_000_000, '?/1m'),
+        (127_846, None, '128k/?'),
+        (0, 1_000_000, '0/1m'),
+        (999, 1_000, '999/1k'),
+        (1_000, 200_000, '1k/200k'),
+        (127_846, 1_000_000, '128k/1m'),
+        (128_000, 1_048_576, '128k/1m'),
+        (999_499, 1_000_000, '999k/1m'),
+        (999_500, 1_000_000, '1m/1m'),
+        (1_500_000, 2_000_000, '1.5m/2m'),
+        (250_000, 200_000, '250k/200k'),
+    ],
+)
+def test_compact_context_usage(used: int | None, window: int | None, expected: str) -> None:
+    status = Status(context_tokens=used, context_window=window)
+    assert f'context: {expected} tokens' in status.text()
+    assert ''.join(text for _, text in status.toolbar()) == status.text()
+
+
+def test_status_marks_lower_bound_cost_and_keeps_default_unchanged() -> None:
+    status = Status(model='m', cost=Decimal('0.0100'))
+    assert '$0.0100' in status.text()
+    assert '$0.0100' in status.toolbar()[4][1]
+    status.cost_is_lower_bound = True
+    assert '>=$0.0100' in status.text()
+    assert '>=$0.0100' in status.toolbar()[4][1]
+    status.cost = None
+    assert '$' not in status.text()
+
+
+async def test_retained_cost_lower_bound_survives_measured_turn_and_resets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class OmitFirstUsage(AbstractCapability[None]):
+        responses: int = 0
+
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            self.responses += 1
+            response.usage.cost = Decimal('0.01')
+            if self.responses == 1:
+                response.usage.unmeasured_requests = 1
+            return response
+
+    inputs(monkeypatch, ['one', '/capture', 'two', '/capture', '/new', '/capture', 'three', '/capture', '/exit'])
+    shell = create_shell(
+        Agent(TestModel(custom_output_text='answer'), deps_type=type(None), capabilities=[OmitFirstUsage()]),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+    readings: list[tuple[Decimal | None, bool]] = []
+
+    def capture(args: list[str]) -> str:
+        readings.append((shell.status.cost, shell.status.cost_is_lower_bound))
+        return ''
+
+    shell.commands.register(Command(name='capture', description='Read cost status', handler=capture))
+    await shell.run()
+    assert readings == [
+        (Decimal('0.01'), True),
+        (Decimal('0.02'), True),
+        (None, False),
+        (Decimal('0.01'), False),
+    ]
+
+
+async def test_cost_updates_after_each_model_response_within_a_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class PriceResponses(AbstractCapability[None]):
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            response.usage.cost = Decimal('0.01')
+            return response
+
+    inputs(monkeypatch, ['one', '/exit'])
+    agent = Agent(TestModel(custom_output_text='answer'), deps_type=type(None), capabilities=[PriceResponses()])
+    readings: list[tuple[Decimal | None, bool]] = []
+
+    @agent.tool_plain
+    def probe() -> str:
+        readings.append((shell.status.cost, shell.status.cost_is_lower_bound))
+        return 'ok'
+
+    shell = create_shell(
+        agent,
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+    await shell.run()
+    # The tool runs between the turn's two model responses; the first one's cost is already shown.
+    assert readings == [(Decimal('0.01'), False)]
+    assert shell.status.cost == Decimal('0.02')
+
+
+def test_an_estimated_context_figure_is_marked() -> None:
+    status = Status(model='m', context_tokens=13_416, context_window=1_000_000, context_estimated=True)
+    assert 'context: ~13k/1m tokens' in status.text()
+    assert status.toolbar()[1] == (MUTED, '~13k/1m')
+    assert ''.join(text for _, text in status.toolbar()) == status.text()
 
 
 def test_workspace_follows_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -55,15 +202,22 @@ def test_workspace_without_a_home_directory_is_shown_whole(monkeypatch: pytest.M
 
 
 def test_toolbar_paints_the_context_figure_on_alert() -> None:
-    status = Status(model='m', context_tokens=90, context_alert=True)
-    assert status.toolbar() == [('', 'm | context: '), (WARNING, '90'), ('', ' tokens | ~0 streamed tokens | ready')]
+    status = Status(model='m', context_tokens=90, context_window=100, context_alert=True)
+    assert status.toolbar() == [
+        (MUTED, 'm | context: '),
+        (WARNING, '90/100'),
+        (MUTED, ' tokens | '),
+        (LITHIUM, '~0'),
+        (MUTED, ' streamed tokens | '),
+        (MUTED, 'ready'),
+    ]
     status.context_alert = False
-    assert status.toolbar()[1] == ('', '90')
+    assert status.toolbar()[1] == (MUTED, '90/100')
     assert ''.join(text for _, text in status.toolbar()) == status.text()
     status.cost = Decimal('0.0123')
     status.context_alert = True
-    assert status.toolbar()[1] == (WARNING, '90')
-    assert '$0.0123' in status.toolbar()[2][1]
+    assert status.toolbar()[1] == (WARNING, '90/100')
+    assert '$0.0123' in status.toolbar()[4][1]
     assert ''.join(text for _, text in status.toolbar()) == status.text()
 
 
@@ -77,14 +231,207 @@ async def test_footer_paints_the_context_figure_on_alert(monkeypatch: pytest.Mon
     assert f'{sgr(WARNING)}9{sgr(WARNING)}0' in painted and f'{sgr(WARNING)}m' not in painted
 
 
-@pytest.mark.parametrize('command', ['/new', '/clear'])
-def test_new_resets_the_figures_whatever_follows_it(command: str) -> None:
-    status = Status(context_tokens=90, context_alert=True, output_tokens=5, streamed_chars=8)
-    _reset_status(f'{command} please', status)
+def test_clearing_the_conversation_resets_its_figures() -> None:
+    status = Status(
+        context_tokens=90,
+        context_estimated=True,
+        context_window=100,
+        context_alert=True,
+        output_tokens=5,
+        cost=Decimal('0.01'),
+        cost_is_lower_bound=True,
+        streamed_chars=8,
+    )
+    status.clear_conversation()
     assert status == Status()
-    status.context_alert = True
-    _reset_status(f'{command}er', status)
-    assert status.context_alert
+
+
+async def test_model_change_clears_the_previous_context_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    inputs(monkeypatch, ['/inspect', '/set model test', '/inspect', '/exit'])
+    shell = create_shell(
+        Agent(TestModel(model_name='original')),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+    shell.status.model = 'original'
+    shell.status.context_window = 1_000_000
+    shell.status.context_alert = True
+    readings: list[tuple[int | None, bool]] = []
+
+    def inspect(args: list[str]) -> str:
+        readings.append((shell.status.context_window, shell.status.context_alert))
+        return ''
+
+    shell.commands.register(Command(name='inspect', description='Read status', handler=inspect))
+    await shell.run()
+    assert readings == [(1_000_000, True), (None, False)]
+
+
+async def _context_readings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    script: list[str],
+    capabilities: Sequence[AbstractCapability[None]] = (),
+    message_history: Sequence[ModelMessage] = (),
+) -> list[str]:
+    """The status row's `context` figure at each `/inspect` of `script`, on a model with a 1m window.
+
+    Loads a `claude-test:` plugin provider whose `settings_from` is `anthropic`, so plugin-prefixed
+    models show their `settings_from` provider's window. `/unresolve` acts as a gauge that could not
+    resolve the window; `/default` goes back to the agent's model.
+    """
+    inputs(monkeypatch, [*script, '/exit'])
+    store = SettingsStore(tmp_path / 'config.db')
+    store.plugins_dir.mkdir(parents=True, exist_ok=True)
+    (store.plugins_dir / 'claude.py').write_text(
+        'from pydantic_ai.models.test import TestModel\n\n'
+        'from pydantic_clai2.plugins import ModelProvider, Plugin\n\n\n'
+        'class Claude(Plugin):\n'
+        '    def get_model_providers(self):\n'
+        "        return [ModelProvider(prefix='claude-test', resolve=lambda name: TestModel(), settings_from='anthropic')]\n"
+    )
+    shell = create_shell(
+        Agent(
+            TestModel(model_name='original', profile={'context_window': 1_000_000}),
+            deps_type=type(None),
+            capabilities=capabilities,
+        ),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=store,
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        message_history=message_history,
+    )
+    readings: list[str] = []
+
+    def unresolve(args: list[str]) -> str:
+        shell.status.context_window = None
+        return ''
+
+    def default(args: list[str]) -> str:
+        shell.session.model = None
+        return ''
+
+    def inspect(args: list[str]) -> str:
+        readings.append(re.sub(r'.*context: (\S+) tokens.*', r'\1', shell.status.text()))
+        return ''
+
+    shell.commands.register(Command(name='unresolve', description='Act as an unresolved gauge', handler=unresolve))
+    shell.commands.register(Command(name='default', description='Use the agent model', handler=default))
+    shell.commands.register(Command(name='inspect', description='Read status', handler=inspect))
+    await shell.loader.load_all()
+    await shell.run()
+    return readings
+
+
+async def test_the_shell_shows_the_known_window_before_the_first_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new conversation reads `0/WINDOW` at once, and a model change shows the new model's window."""
+    script = ['/inspect', '/set model anthropic:claude-sonnet-4-5', '/inspect', '/set model test', '/inspect']
+    assert await _context_readings(tmp_path, monkeypatch, script) == ['0/1m', '0/200k', '0/?']
+
+
+async def test_a_plugin_model_shows_the_window_of_its_settings_from_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plugin prefix such as `claude-code:` runs the `settings_from` provider's model, so it knows that window."""
+    script = ['/set model claude-test:claude-sonnet-4-5', '/inspect', '/set model claude-test@work:claude-sonnet-4-5']
+    assert await _context_readings(tmp_path, monkeypatch, [*script, '/inspect']) == ['0/200k', '0/200k']
+
+
+async def test_a_resumed_conversation_shows_its_last_responses_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A saved conversation opened cold reads its last response's context before any new turn measures one."""
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Reply with just the word OK'),
+        ModelResponse(parts=[TextPart('OK')], usage=RequestUsage(input_tokens=84_000, output_tokens=2)),
+        ModelRequest.user_text_prompt('Thanks'),
+    ]
+    readings = await _context_readings(tmp_path, monkeypatch, ['/inspect', '/new', '/inspect'], message_history=history)
+    assert readings == ['84k/1m', '0/1m']
+    # Without a response, nothing measured the conversation yet.
+    unanswered = await _context_readings(
+        tmp_path / 'unanswered', monkeypatch, ['/inspect'], message_history=history[:1]
+    )
+    assert unanswered == ['?/1m']
+
+
+async def test_a_window_a_turn_left_unresolved_stays_unknown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Once a turn ran, only its requests' window shows; a new conversation or model shows the model's again."""
+    script = ['hello', '/unresolve', '/inspect', '/new', '/inspect', 'hello', '/set model test', '/default', '/inspect']
+    readings = await _context_readings(tmp_path, monkeypatch, script)
+    assert [reading.partition('/')[2] for reading in readings] == ['?', '1m', '1m']
+    assert readings[1] == '0/1m'
+
+
+async def test_a_turn_failing_before_its_request_keeps_the_known_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Unavailable(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            raise RuntimeError('provider down')
+
+    readings = await _context_readings(tmp_path, monkeypatch, ['hello', '/inspect'], capabilities=[Unavailable()])
+    assert readings == ['0/1m']
+
+
+@pytest.mark.parametrize(
+    ('model_window', 'measured', 'expected'),
+    [(1_000_000, None, 1_000_000), (None, None, None), (1_000_000, 200_000, 200_000)],
+)
+async def test_the_shell_shows_the_model_window_without_compaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    model_window: int | None,
+    measured: int | None,
+    expected: int | None,
+) -> None:
+    """`coder` keeps `compaction` and its gauge off, so the shell reads the request model's window itself.
+
+    A window the gauge already measured, such as its `context_window` override, is kept.
+    """
+    inputs(monkeypatch, ['/measure', 'hello', '/inspect', '/exit'])
+    shell = create_shell(
+        Agent(TestModel(profile={'context_window': model_window})),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+    readings: list[str] = []
+
+    def measure(args: list[str]) -> str:
+        shell.status.context_window = measured
+        return ''
+
+    def inspect(args: list[str]) -> str:
+        readings.append(shell.status.text())
+        return ''
+
+    shell.commands.register(Command(name='measure', description='Act as the gauge', handler=measure))
+    shell.commands.register(Command(name='inspect', description='Read status', handler=inspect))
+    await shell.run()
+    assert shell.status.context_window == expected
+    assert re.search(r'context: \d+/', readings[0])
+    assert shell.session.on_context_window is None
 
 
 def test_tool_status_transitions() -> None:
@@ -101,11 +448,11 @@ def test_tool_status_transitions() -> None:
 
 
 @pytest.mark.parametrize('truecolor', [False, True])
-async def test_shimmer_without_spinner(monkeypatch: pytest.MonkeyPatch, truecolor: bool) -> None:
+async def test_stable_status_colors_without_spinner(monkeypatch: pytest.MonkeyPatch, truecolor: bool) -> None:
     monkeypatch.setenv('COLORTERM', 'truecolor' if truecolor else '')
     output = io.StringIO()
     frames: list[str] = []
-    original_sleep = asyncio.sleep
+    original_sleep = anyio.sleep
     now = [0.0]
 
     async def tick(delay: float) -> None:
@@ -115,7 +462,7 @@ async def test_shimmer_without_spinner(monkeypatch: pytest.MonkeyPatch, truecolo
             raise asyncio.CancelledError
         await original_sleep(0)
 
-    monkeypatch.setattr('pydantic_clai2.status.asyncio.sleep', tick)
+    monkeypatch.setattr('pydantic_clai2.ui.rendering.status.anyio.sleep', tick)
     async with StatusLine(
         Console(file=output, force_terminal=True, width=40, height=24),
         Status(model='test\x1b\n'),
@@ -127,11 +474,38 @@ async def test_shimmer_without_spinner(monkeypatch: pytest.MonkeyPatch, truecolo
     assert plain[0].startswith('test?? | context:')
     assert all(frame == plain[0] for frame in plain)
     assert all(len(frame) == 39 for frame in plain)
-    assert frames[0] != frames[10]
+    assert frames[0] == frames[10]
     assert ('38;2;' in frames[0]) == truecolor
-    assert ('\x1b[38;2;155;119;255m' if truecolor else '\x1b[35m') in frames[0]
+    assert sgr(LITHIUM) in frames[0]
+    assert sgr(MUTED) in frames[0]
     assert ('\x1b[38;2;0;255;235m' if truecolor else '\x1b[96m') not in output.getvalue()
     assert '\n' not in output.getvalue()
+
+
+@pytest.mark.parametrize('palette', ['default', 'tokyo_night'])
+@pytest.mark.parametrize('truecolor', [False, True])
+@pytest.mark.parametrize('activity', ['tool: shell | special', 'running: shell', 'thinking', 'ready'])
+async def test_status_accents_follow_the_theme(
+    monkeypatch: pytest.MonkeyPatch, palette: str, truecolor: bool, activity: str
+) -> None:
+    monkeypatch.setenv('COLORTERM', 'truecolor' if truecolor else '')
+    status = Status(
+        model='m', output_tokens=1234, activity=activity, context_alert=True, status_segments=(lambda: 'plugin',)
+    )
+    output = io.StringIO()
+    with theme.use(lambda: palette):
+        fragments = status.toolbar()
+        assert (LITHIUM, '1,234') in fragments
+        if activity.startswith(('tool: ', 'running: ')):
+            assert (THINKING, activity.partition(': ')[2]) in fragments
+        else:
+            assert (MUTED, activity) in fragments
+        assert ''.join(text for _, text in fragments) == status.text()
+        async with StatusLine(Console(file=output, force_terminal=True, width=160, height=24), status):
+            pass
+        painted = output.getvalue().partition('\x1b[24;1H\x1b[2K')[2].partition('\x1b8')[0]
+        expected = ''.join(sgr(role) + char for role, text in fragments for char in text)
+        assert painted == expected + '\x1b[0m'
 
 
 async def test_row_reserved_before_margins_and_again_on_resize() -> None:
@@ -275,5 +649,6 @@ async def test_a_fragment_wider_than_the_terminal_still_mutes_only_itself() -> N
     async with StatusLine(Console(file=output, force_terminal=True, width=60, height=24), status):
         pass
     painted = output.getvalue()
-    assert f'{sgr(MUTED)}m' not in painted
+    assert f'{sgr(MUTED)}m' in painted
+    assert f'{sgr(LITHIUM)}~' in painted
     assert f'{sgr(MUTED)}x' in painted

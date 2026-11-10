@@ -14,15 +14,18 @@ import pytest
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelResponse,
     TextPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    ToolSearchReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import AbstractModel
@@ -31,6 +34,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.tool_output_limits import (
+    READ_TOOL_RESULT_KIND,
     Band,
     LocalFileStore,
     Passthrough,
@@ -92,6 +96,9 @@ def _make_ctx(
         model: Any = dataclasses.field(default_factory=_FakeModel)
         deps: None = None
         conversation_id: str | None = None
+
+        def tool_name_for_kind(self, kind: object) -> str | None:
+            return None
 
     ctx = _FakeCtx(usage=RunUsage(), run_id=run_id, retry=retry, usage_limits=usage_limits)
     if model is not None:
@@ -172,6 +179,11 @@ class TestPayloadHelpers:
     def test_json_lines_empty_list(self):
         assert json_lines([]) == ''
 
+    def test_presets_render_bytes_that_are_not_utf8_as_base64(self):
+        assert indented_json({'text': b'hi'}) == '{\n  "text": "hi"\n}'
+        assert indented_json({'blob': b'\xff', 'text': b'hi'}) == '{\n  "blob": "_w==",\n  "text": "aGk="\n}'
+        assert json_lines([{'text': b'hi'}, {'blob': b'\xff'}]) == '{"text":"hi"}\n{"blob":"_w=="}'
+
     def test_presets_escape_line_separator_chars(self):
         rendered = json_lines([{'text': 'a\N{LINE SEPARATOR}b'}, {'ok': True}])
         assert rendered.splitlines() == ['{"text":"a\\u2028b"}', '{"ok":true}']
@@ -216,7 +228,72 @@ class TestStore:
 
     def test_default_root(self):
         store = LocalFileStore()
-        assert store._root.name == 'pyai_harness_overflow'  # pyright: ignore[reportPrivateUsage]
+        assert store._root.name.startswith('pyai_harness_overflow')  # pyright: ignore[reportPrivateUsage]
+
+    def test_default_root_is_per_user(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(os, 'geteuid', lambda: 1001, raising=False)
+        first = LocalFileStore()._root  # pyright: ignore[reportPrivateUsage]
+        monkeypatch.setattr(os, 'geteuid', lambda: 1002, raising=False)
+        second = LocalFileStore()._root  # pyright: ignore[reportPrivateUsage]
+        assert first.name == 'pyai_harness_overflow-1001'
+        assert second.name == 'pyai_harness_overflow-1002'
+
+    def test_default_root_without_uid(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delattr(os, 'geteuid', raising=False)
+        assert LocalFileStore()._root.name == 'pyai_harness_overflow'  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.skipif(not hasattr(os, 'geteuid'), reason='POSIX ownership check')
+    async def test_new_root_created_0700_regardless_of_umask(self, tmp_path: Path):
+        root = tmp_path / 'store'
+        store = LocalFileStore(base_dir=root)
+        old_umask = os.umask(0)
+        try:
+            with patch.object(Path, 'chmod', side_effect=AssertionError('root was not created 0700')):
+                await store.write('run/c.0', b'x')
+        finally:
+            os.umask(old_umask)
+        assert oct(root.stat().st_mode & 0o777) == '0o700'
+
+    @pytest.mark.skipif(not hasattr(os, 'geteuid'), reason='POSIX ownership check')
+    async def test_preexisting_open_root_is_tightened(self, tmp_path: Path):
+        root = tmp_path / 'store'
+        root.mkdir()
+        root.chmod(0o777)
+        store = LocalFileStore(base_dir=root)
+        await store.write('run/c.0', b'x')
+        assert oct(root.stat().st_mode & 0o777) == '0o700'
+
+    @pytest.mark.skipif(not hasattr(os, 'geteuid'), reason='POSIX ownership check')
+    async def test_root_owned_by_another_user_is_refused(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        root = tmp_path / 'store'
+        root.mkdir()
+        root.chmod(0o777)
+        other_uid = root.stat().st_uid + 1
+        monkeypatch.setattr(os, 'geteuid', lambda: other_uid)
+        store = LocalFileStore(base_dir=root)
+        with pytest.raises(PermissionError, match='not owned by the current user'):
+            await store.write('run/c.0', b'secret')
+        assert list(root.iterdir()) == []
+
+    async def test_symlink_root_is_refused_for_write_and_read(self, tmp_path: Path):
+        target = tmp_path / 'target'
+        target.mkdir()
+        (target / 'secret').write_bytes(b'secret')
+        root = tmp_path / 'store'
+        root.symlink_to(target, target_is_directory=True)
+        store = LocalFileStore(base_dir=root)
+
+        with pytest.raises(PermissionError, match='is a symbolic link'):
+            await store.write('run/c.0', b'spilled')
+        with pytest.raises(PermissionError, match='is a symbolic link'):
+            await store.read('secret')
+        assert list(target.iterdir()) == [target / 'secret']
+
+    async def test_root_check_skipped_without_uid(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delattr(os, 'geteuid', raising=False)
+        store = LocalFileStore(base_dir=tmp_path / 'store')
+        handle = await store.write('run/c.0', b'x')
+        assert await store.read(handle) == b'x'
 
     async def test_write_read_roundtrip(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path / 'store')
@@ -279,6 +356,22 @@ class TestCleanup:
 
         assert not old.exists()
         assert new.exists()
+
+    def test_prune_refuses_symlink_root(self, tmp_path: Path):
+        target = tmp_path / 'target'
+        target.mkdir()
+        old = target / 'old.bin'
+        old.write_bytes(b'x')
+        past = time.time() - 100
+        os.utime(old, (past, past))
+        root = tmp_path / 'store'
+        root.symlink_to(target, target_is_directory=True)
+        store = LocalFileStore(base_dir=root, cleanup_after=timedelta(seconds=1))
+
+        with pytest.raises(PermissionError, match='is a symbolic link'):
+            store._prune_sync()  # pyright: ignore[reportPrivateUsage]
+
+        assert old.exists()
 
     def test_run_prune_swallows_errors(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         store = LocalFileStore(base_dir=tmp_path, cleanup_after=timedelta(seconds=1))
@@ -343,16 +436,58 @@ class TestConstruction:
         assert 'read_file' in cap._per_tool  # pyright: ignore[reportPrivateUsage]
 
 
+class TestCombine:
+    async def test_merged_bands_run_largest_threshold_first(self):
+        merged = ToolOutputLimits[object].combine(
+            [
+                ToolOutputLimits(bands=[Band(over=100, action=Truncate())]),
+                ToolOutputLimits(bands=[Band(over=1000, action=Summarize(model=_fixed_model('summary')))]),
+            ]
+        )
+        assert isinstance(merged, ToolOutputLimits)
+        assert [b.over for b in merged._bands] == [1000, 100]  # pyright: ignore[reportPrivateUsage]
+        assert await _run(merged, 'x' * 1500) == 'summary'
+
+    def test_later_band_wins_a_shared_threshold(self):
+        later = Truncate(max_chars=20)
+        merged = ToolOutputLimits[object].combine(
+            [
+                ToolOutputLimits(bands=[Band(over=100, action=Truncate(max_chars=10)), Band(over=500, action=Spill())]),
+                ToolOutputLimits(bands=[Band(over=100, action=later)]),
+            ]
+        )
+        assert isinstance(merged, ToolOutputLimits)
+        assert [(b.over, b.action) for b in merged._bands] == [(500, Spill()), (100, later)]  # pyright: ignore[reportPrivateUsage]
+        assert _select_action(merged._bands, 150) is later  # pyright: ignore[reportPrivateUsage]
+
+    def test_stated_store_survives_the_merge(self, tmp_path: Path):
+        store = LocalFileStore(base_dir=tmp_path)
+        merged = ToolOutputLimits[object].combine([ToolOutputLimits(store=store), ToolOutputLimits()])
+        assert isinstance(merged, ToolOutputLimits)
+        assert merged._store is store  # pyright: ignore[reportPrivateUsage]
+
+
 # ---------------------------------------------------------------------------
 # Passthrough / filtering / guards
 # ---------------------------------------------------------------------------
 
 
 class TestPassthrough:
-    async def test_read_tool_exempt(self):
+    async def test_read_tool_exempt_by_kind(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=1, action=Truncate(max_chars=2))])
+        out = await cap.after_tool_execute(
+            _make_ctx(),
+            call=_call('renamed_reader'),
+            tool_def=ToolDefinition(name='renamed_reader', tool_kind=READ_TOOL_RESULT_KIND),
+            args={},
+            result='x' * 100,
+        )
+        assert out == 'x' * 100
+
+    async def test_read_tool_name_alone_is_not_exempt(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=1, action=Truncate(max_chars=2))])
         out = await _run(cap, 'x' * 100, tool_name=READ_TOOL_NAME)
-        assert out == 'x' * 100
+        assert out != 'x' * 100
 
     async def test_tool_filter_skips_unmatched(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
@@ -623,6 +758,19 @@ class TestSpill:
         )
         out = await _run(cap, 'a' * 100)
         assert isinstance(out, str) and 'truncated' in out
+
+    async def test_spill_failure_logs_warning(self, caplog: pytest.LogCaptureFixture):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=10, action=Spill(then=Truncate(max_chars=95)))], store=_BrokenStore()
+        )
+        with caplog.at_level('WARNING', logger='pydantic_ai_harness.tool_output_limits'):
+            out = await _run(cap, 'a' * 100)
+        assert isinstance(out, str) and 'truncated' in out
+        [record] = caplog.records
+        assert record.levelname == 'WARNING'
+        assert 'OSError' in record.getMessage()
+        assert 'big_tool' in record.getMessage()
+        assert record.exc_info is not None
 
     async def test_spill_failure_no_fallback_returns_original(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Spill())], store=_BrokenStore())
@@ -909,6 +1057,20 @@ class TestSummarize:
         out = await _run(cap, 'a' * 100)
         assert isinstance(out, str) and 'truncated' in out
 
+    async def test_summarize_failure_logs_warning(self, caplog: pytest.LogCaptureFixture):
+        def boom(name: str, text: str) -> str:
+            raise RuntimeError('model down')
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=5, action=Summarize(summarize=boom, then=Truncate(max_chars=95)))]
+        )
+        with caplog.at_level('WARNING', logger='pydantic_ai_harness.tool_output_limits'):
+            await _run(cap, 'a' * 100)
+        [record] = caplog.records
+        assert 'RuntimeError' in record.getMessage()
+        assert 'big_tool' in record.getMessage()
+        assert record.exc_info is not None
+
     async def test_nested_per_tool_model_summarizer(self):
         summarize = Summarize(model=_fixed_model('NESTED SUMMARY'))
         cap: ToolOutputLimits[object] = ToolOutputLimits(
@@ -982,7 +1144,7 @@ class TestInternals:
 
     def test_build_spill_preview_tokens_unit(self):
         unit = _Unit(binary=False, text='x' * 100, data=b'x' * 100, value='x' * 100, suffix='')
-        assert 'tokens' in _build_spill_preview('h/1.0', unit, 20, over_tokens=True)
+        assert 'tokens' in _build_spill_preview('h/1.0', unit, 20, over_tokens=True, read_hint='')
 
 
 # ---------------------------------------------------------------------------
@@ -1106,6 +1268,25 @@ class TestAgentIntegration:
         assert part.metadata['original_metadata'] == 'app-request-id-123'
         assert 'overflow_handle' in part.metadata
 
+    async def test_structured_return_with_bytes_that_are_not_utf8(self, anyio_backend: str):
+        """Binary in a structured return is measured as base64 rather than failing the run."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[_call('read_blob')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=1000))])
+        agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+        @agent.tool_plain
+        def read_blob() -> dict[str, bytes]:
+            return {'blob': b'\xff' * 3}
+
+        result = await agent.run('go')
+        returns = [p.content for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert returns == ['{"blob":"____"}']
+
     async def test_small_output_untouched(self, tmp_path: Path, anyio_backend: str):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=10_000, action=Spill())], store=LocalFileStore(base_dir=tmp_path)
@@ -1120,3 +1301,52 @@ class TestAgentIntegration:
         returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
         small = [p for p in returns if p.tool_name == 'small_tool']
         assert small and small[0].content == 'tiny'
+
+    async def test_capability_load_is_not_reduced(self, anyio_backend: str):
+        """A reduced `load_capability` return would not count as a load, leaving the capability's tools locked."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'refunds'})])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('refund_status', {'order_id': 'A1'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        refunds = Capability[object](id='refunds', description='Refunds.', defer_loading=True)
+
+        @refunds.tool_plain
+        def refund_status(order_id: str) -> str:
+            return f'Order {order_id}: refunded'
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=20))])
+        agent = Agent(FunctionModel(respond), capabilities=[refunds, cap])
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert [type(p) for p in returns] == [LoadCapabilityReturnPart, ToolReturnPart]
+        assert returns[0].content == {'message': "Capability 'refunds' loaded. Its instructions, if any, follow."}
+        assert returns[1].content == 'Order A1: refunded'
+
+    async def test_tool_search_is_not_reduced(self, anyio_backend: str):
+        """A reduced `search_tools` return would not reveal the tools it found."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('search_tools', {'queries': ['refund']})])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('refund_status', {'order_id': 'A1'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=20))])
+        agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+        @agent.tool_plain(defer_loading=True)
+        def refund_status(order_id: str) -> str:
+            """Look up a refund."""
+            return f'Order {order_id}: refunded'
+
+        result = await agent.run('go')
+        returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert [type(p) for p in returns] == [ToolSearchReturnPart, ToolReturnPart]
+        assert returns[0].content == {'discovered_tools': [{'name': 'refund_status'}]}
+        assert returns[1].content == 'Order A1: refunded'

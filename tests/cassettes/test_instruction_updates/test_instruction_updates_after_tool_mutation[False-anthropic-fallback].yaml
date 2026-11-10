@@ -1,0 +1,219 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "652"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Process the todo.
+            type: text
+        model: claude-sonnet-5
+        stream: true
+        system:
+        - type: text
+          text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        - type: text
+          text: |-
+            <context id="capability:todos:state">
+            Todo status: pending.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        tool_choice:
+          type: auto
+        tools:
+        - name: finish_todo
+          description: Finish the pending todo.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=114
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ed9b51ba9804b26a9214e5a9f0a9a2cf-15816c5dfd18f847-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPK3318q6ThYTjams7Xo","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":513,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}             }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EuQDCsoCCBMYAipAfX3rlP+KW8rQunYEpVGdrPmluIDIL8V16VQpYQGofOh9YpoJtvR1xb+4bC7X2FUHAhLvHs+lC2LACPaa4eN/3zIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGaAREKD2NsYXVkZS1zb25uZXQtNagB8Or41gbCAUAIBhAAGhIBxPYB+FECkfoDTzcFIrgEJq0gAzIEEnHPJToEZdvLdUIEuaSmGkoE7GfGXlABWgTZBeFWYAJoAXAC2gFgChZwcmVmaXhfYmVmb3JlX2Jsb2NrX3YxEiBG+gZ/asUiLo6FFr6c+x8Kuuf2BF/2nQ7R4cEe6Vp33CIAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxk14PUcj1sHrhFlEQaDJvvoKr8631e9CUu9yIwdiWLtJQe1bMeDjN26mpWRArr6C4jgyeX/e/gAVDmQoltF2PCISLEwpC85rrbUXjKKkfl1gIqd8/Zwk6OJB44GHLvNfH1S7dzDs6BVq6zVyOHNmw00W0E3FdRWulX23XrI1EGkN2ZisQ2dx0QrQlMJP3DARfVe4SFkBgB"} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01VEhEZCba7C43GvzWEyUs5P","name":"finish_todo","input":{},"caller":{"type":"direct"}}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1           }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":513,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":50,"output_tokens_details":{"thinking_tokens":20}}          }
+
+        event: message_stop
+        data: {"type":"message_stop"    }
+
+  recorded_at: 2026-10-25T16:59:28.490240+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1749"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Process the todo.
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              EuQDCsoCCBMYAipAfX3rlP+KW8rQunYEpVGdrPmluIDIL8V16VQpYQGofOh9YpoJtvR1xb+4bC7X2FUHAhLvHs+lC2LACPaa4eN/3zIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiRmMDIyNDhmOC1jZWJhLTRlNmMtYmU3MC0yMGZkNzI5ZWM4YTGaAREKD2NsYXVkZS1zb25uZXQtNagB8Or41gbCAUAIBhAAGhIBxPYB+FECkfoDTzcFIrgEJq0gAzIEEnHPJToEZdvLdUIEuaSmGkoE7GfGXlABWgTZBeFWYAJoAXAC2gFgChZwcmVmaXhfYmVmb3JlX2Jsb2NrX3YxEiBG+gZ/asUiLo6FFr6c+x8Kuuf2BF/2nQ7R4cEe6Vp33CIAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxk14PUcj1sHrhFlEQaDJvvoKr8631e9CUu9yIwdiWLtJQe1bMeDjN26mpWRArr6C4jgyeX/e/gAVDmQoltF2PCISLEwpC85rrbUXjKKkfl1gIqd8/Zwk6OJB44GHLvNfH1S7dzDs6BVq6zVyOHNmw00W0E3FdRWulX23XrI1EGkN2ZisQ2dx0QrQlMJP3DARfVe4SFkBgB
+            type: thinking
+          - id: toolu_01VEhEZCba7C43GvzWEyUs5P
+            type: tool_use
+            name: finish_todo
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_01VEhEZCba7C43GvzWEyUs5P
+            type: tool_result
+            content:
+            - text: Saved.
+              type: text
+            is_error: false
+          - text: |-
+              <system><context id="capability:todos:state">
+              Todo status: done.
+              </context></system>
+            type: text
+        model: claude-sonnet-5
+        stream: true
+        system:
+        - type: text
+          text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        - type: text
+          text: |-
+            <context id="capability:todos:state">
+            Todo status: pending.
+            </context>
+            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        tool_choice:
+          type: auto
+        tools:
+        - name: finish_todo
+          description: Finish the pending todo.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=95
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-8c1d658a7b375401aeaeb1bcbbcd9da8-a07095844852917d-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CgPK37gQeo215RBCmog5f","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":601,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}         }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"DONE"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0            }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":601,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5,"output_tokens_details":{"thinking_tokens":0}}   }
+
+        event: message_stop
+        data: {"type":"message_stop"               }
+
+  recorded_at: 2026-10-25T16:59:29.432321+00:00

@@ -1,0 +1,178 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "666"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        - role: system
+          content: |-
+            <context id="capability:todos:state">
+            Todo status: pending.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: Process the todo.
+        model: deepseek/deepseek-chat
+        stream: true
+        stream_options:
+          include_usage: true
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: finish_todo
+            description: Finish the pending todo.
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"gen-1790727153-x9cjaFFupHnDq9FwRylZ","object":"chat.completion.chunk","created":1790727153,"model":"deepseek/deepseek-chat","provider":"StreamLake","choices":[{"index":0,"delta":{"content":null,"role":"assistant","tool_calls":[{"index":0,"id":"call_84af209dca9945de85d24c55","type":"function","function":{"name":"finish_todo","arguments":""}}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1790727153-x9cjaFFupHnDq9FwRylZ","object":"chat.completion.chunk","created":1790727153,"model":"deepseek/deepseek-chat","provider":"StreamLake","choices":[{"index":0,"delta":{"content":null,"role":"assistant","tool_calls":[{"index":0,"function":{"arguments":""}}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1790727153-x9cjaFFupHnDq9FwRylZ","object":"chat.completion.chunk","created":1790727153,"model":"deepseek/deepseek-chat","provider":"StreamLake","choices":[{"index":0,"delta":{"content":null,"role":"assistant","tool_calls":[{"index":0,"function":{"arguments":"{}"}}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1790727153-x9cjaFFupHnDq9FwRylZ","object":"chat.completion.chunk","created":1790727153,"model":"deepseek/deepseek-chat","provider":"StreamLake","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"tool_calls","native_finish_reason":"tool_calls"}]}
+
+        data: {"id":"gen-1790727153-x9cjaFFupHnDq9FwRylZ","object":"chat.completion.chunk","created":1790727153,"model":"deepseek/deepseek-chat","provider":"StreamLake","service_tier":null,"choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"tool_calls","native_finish_reason":"tool_calls"}],"usage":{"prompt_tokens":210,"completion_tokens":17,"total_tokens":227,"cost":0.0000715419,"is_byok":false,"prompt_tokens_details":{"cached_tokens":192,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.0000715419,"upstream_inference_prompt_cost":0.000054054,"upstream_inference_completions_cost":0.0000174879},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-09-30T00:12:38.953161+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1024"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: When the todo is pending, call finish_todo once. When it is done, reply DONE.
+        - role: system
+          content: |-
+            <context id="capability:todos:state">
+            Todo status: pending.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: Process the todo.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_84af209dca9945de85d24c55
+            type: function
+            function:
+              name: finish_todo
+              arguments: "{}"
+        - role: tool
+          tool_call_id: call_84af209dca9945de85d24c55
+          content: Saved.
+        - role: user
+          content: |-
+            <system><context id="capability:todos:state">
+            Todo status: done.
+            </context></system>
+        model: deepseek/deepseek-chat
+        stream: true
+        stream_options:
+          include_usage: true
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: finish_todo
+            description: Finish the pending todo.
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"gen-1790727158-a0RhvAsuaZLEBOg3fPTO","object":"chat.completion.chunk","created":1790727158,"model":"deepseek/deepseek-chat","provider":"StreamLake","choices":[{"index":0,"delta":{"content":"D","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1790727158-a0RhvAsuaZLEBOg3fPTO","object":"chat.completion.chunk","created":1790727158,"model":"deepseek/deepseek-chat","provider":"StreamLake","choices":[{"index":0,"delta":{"content":"ONE","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1790727158-a0RhvAsuaZLEBOg3fPTO","object":"chat.completion.chunk","created":1790727158,"model":"deepseek/deepseek-chat","provider":"StreamLake","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}]}
+
+        data: {"id":"gen-1790727158-a0RhvAsuaZLEBOg3fPTO","object":"chat.completion.chunk","created":1790727158,"model":"deepseek/deepseek-chat","provider":"StreamLake","service_tier":null,"choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":275,"completion_tokens":3,"total_tokens":278,"cost":0.0000738711,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.0000738711,"upstream_inference_prompt_cost":0.000070785,"upstream_inference_completions_cost":0.0000030861},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-09-30T00:12:40.755508+00:00

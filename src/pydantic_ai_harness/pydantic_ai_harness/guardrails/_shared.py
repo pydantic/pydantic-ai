@@ -8,15 +8,22 @@ record the non-`allow` outcomes as spans.
 
 from __future__ import annotations
 
+import functools
 import inspect
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
-from typing import Literal
+import warnings
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass, field
+from typing import Annotated, Any, Literal, assert_never
 
-from typing_extensions import TypeIs, assert_never
+from pydantic import Field, GetCoreSchemaHandler, TypeAdapter
+from pydantic_core import core_schema
+from typing_extensions import TypeIs
 
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._callable import takes_context
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.guardrails._exceptions import GuardrailError, InputBlocked, OutputBlocked, ToolBlocked
 
 
 class _Unset:
@@ -29,6 +36,13 @@ class _Unset:
 
     def __repr__(self) -> str:
         return '<unset>'
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        """Let a JSON schema of `GuardrailResult`, as a durable operation result, carry the default."""
+        return core_schema.is_instance_schema(
+            cls, serialization=core_schema.plain_serializer_function_ser_schema(lambda _: None)
+        )
 
 
 _UNSET = _Unset()
@@ -56,7 +70,7 @@ class GuardrailResult:
     message: str | None = None
     """For `block`, the refusal text. For `retry`, the instruction sent back to the model."""
 
-    replacement: object = _UNSET
+    replacement: Annotated[object, Field(exclude_if=lambda value: value is _UNSET)] = _UNSET
     """For `replace`, the value substituted for the inspected one.
 
     Defaults to a private sentinel rather than `None`, so `replace(None)` is a
@@ -66,12 +80,9 @@ class GuardrailResult:
     def __post_init__(self) -> None:
         """Reject field combinations the outcome contract does not allow."""
         match self.action:
-            case 'allow':
+            case 'allow' | 'approve':
                 if self.message is not None or self.replacement is not _UNSET:
-                    raise UserError("GuardrailResult(action='allow') must not set `message` or `replacement`.")
-            case 'approve':
-                if self.message is not None or self.replacement is not _UNSET:
-                    raise UserError("GuardrailResult(action='approve') must not set `message` or `replacement`.")
+                    raise UserError(f'GuardrailResult(action={self.action!r}) must not set `message` or `replacement`.')
             case 'replace':
                 if self.replacement is _UNSET:
                     raise UserError("GuardrailResult(action='replace') requires a `replacement` value.")
@@ -135,32 +146,64 @@ class GuardrailResult:
         return cls(action='approve')
 
 
+TextDetector = Callable[[str], GuardrailResult]
+"""A check over text. Adapt one with `for_text` or `for_tool_result_text` at non-text guard boundaries."""
+
+
 GuardOutcome = bool | GuardrailResult
 """What a guard callable returns: a bare `bool` (`True` = allow), or a `GuardrailResult`."""
 
 
 GuardCallable = Callable[..., object]
-"""A guard as the helpers below handle it. `evaluate` normalizes whatever it returns.
+"""A guard as the helpers below handle it.
 
-The public `*GuardrailFunc` aliases pin down what a guard may return; by the time
-one reaches here it has already been checked against that field type.
+Deliberately loose: whether a guard takes `RunContext` is decided from its signature at call
+time, which no static callable type can express, and `evaluate` checks what it returns at
+runtime. The public `*GuardrailFunc` aliases carry the precise types for users.
 """
 
 
 def takes_ctx(func: Callable[..., object]) -> bool:
     """Return `True` when `func` declares a leading `RunContext` parameter.
 
-    Detected by parameter count, not annotation: a guard always takes the
-    guarded value, so a second parameter means it also wants the run context.
-    This matches pydantic-ai's own optional-`ctx` convention for output
-    validators. A callable whose signature cannot be introspected is treated
-    as taking the value only.
+    Detected from the positional parameters: a guard always takes the guarded
+    value, so a second required positional parameter means it also wants the
+    run context, whether or not it is annotated, as does a `*args` parameter
+    alongside another parameter.
+    Keyword-only parameters are the guard's own options and never count on their own. A
+    second positional parameter with a default is read from the first
+    parameter's annotation: `RunContext` (also in a union or `Annotated`)
+    means the run context, and any other type means the guarded value. A first
+    parameter with no annotation, `Any`, `object`, or a type that cannot be
+    resolved still gets the run context, as it always has, with a
+    `HarnessDeprecationWarning`, unless the unresolved annotation names
+    `RunContext`, which needs no warning. A callable whose signature cannot be
+    introspected is treated as taking the value only.
     """
     try:
-        parameters = inspect.signature(func).parameters
+        parameters = tuple(inspect.signature(func).parameters.values())
     except ValueError:  # pragma: no cover - callable without an introspectable signature
         return False
-    return len(parameters) > 1
+    positional = [
+        parameter
+        for parameter in parameters
+        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    if len(positional) < 2:
+        has_args = any(parameter.kind is inspect.Parameter.VAR_POSITIONAL for parameter in parameters)
+        return has_args and len(parameters) > 1
+    decision = takes_context(func, parameters=parameters)
+    if decision is None:
+        warnings.warn(
+            f'Guard {_guard_name(func)} has a second positional parameter with a default and a first parameter '
+            'that is unannotated, `Any`, `object` or unresolvable, so it is passed the RunContext first, as before. '
+            "Annotate the first parameter, with `RunContext[...]` or with the guarded value's type: a future "
+            'release will pass the guarded value to it.',
+            HarnessDeprecationWarning,
+            stacklevel=2,
+        )
+        return True
+    return decision
 
 
 async def evaluate(
@@ -174,7 +217,24 @@ async def evaluate(
         outcome = await outcome
     if isinstance(outcome, GuardrailResult):
         return outcome
+    if not isinstance(outcome, bool):
+        # Still read for truthiness, as before, but flagged: a classifier label such as `'unsafe'`
+        # is truthy and lets the value through.
+        warnings.warn(
+            f'A guard should return True, False, or a GuardrailResult; {_guard_name(guard)} returned '
+            f"{type(outcome).__name__}, which is read for truthiness, so a truthy label such as 'unsafe' "
+            'allows the value. A future release will raise UserError instead. Return bool(...) or a '
+            'GuardrailResult.',
+            HarnessDeprecationWarning,
+            stacklevel=2,
+        )
     return GuardrailResult.allow() if outcome else GuardrailResult.block()
+
+
+def _guard_name(guard: GuardCallable) -> str:
+    """A guard's name for a message, without its `repr`, which can show bound arguments such as keys."""
+    target: object = guard.func if isinstance(guard, functools.partial) else guard
+    return getattr(target, '__qualname__', None) or type(target).__name__
 
 
 def is_guard_chain(guard: object) -> TypeIs[Sequence[GuardCallable]]:
@@ -224,7 +284,7 @@ async def evaluate_all(
     ctx: RunContext[AgentDepsT],
     value: object,
     *,
-    check_replacement: Callable[[object, int], None] | None = None,
+    check_replacement: Callable[[object, int], object] | None = None,
 ) -> tuple[GuardrailResult, int]:
     """Run each guard in order over the value, threading replacements through.
 
@@ -254,6 +314,98 @@ async def evaluate_all(
             continue
         return verdict, position
     return (GuardrailResult.replace(value) if replaced else GuardrailResult.allow()), len(guards) - 1
+
+
+_JSON_TYPES = (str, int, float, bool, type(None), dict, list)
+_CARRIED_ERRORS: dict[str, type[Exception]] = {
+    cls.__name__: cls
+    for cls in (GuardrailError, InputBlocked, OutputBlocked, ToolBlocked, ApprovalRequired, ModelRetry)
+}
+
+
+@dataclass
+class RaisedGuardError:
+    """A control-flow exception a guard raised inside a durable operation, carried out as data.
+
+    A durable engine would otherwise fail, and may retry, the operation instead of passing the
+    exception to the run. Only the exact types in `_CARRIED_ERRORS` are carried.
+    """
+
+    kind: str
+    args: list[Any] = field(default_factory=list[Any])
+    metadata: dict[str, Any] | None = None
+    live: Annotated[object, Field(exclude=True)] = field(default=None, repr=False, compare=False)
+    """The exception itself, kept in-process only: it is neither serialized nor pickled."""
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Drop the live exception, so an unpickled record rebuilds it from its fields."""
+        return {**self.__dict__, 'live': None}
+
+    @classmethod
+    def carry(cls, error: Exception) -> RaisedGuardError | None:
+        """Describe `error` as data, or return `None` for a type that is not carried."""
+        if type(error) is ToolBlocked:
+            raised = cls('ToolBlocked', [error.tool_name, error.reason])
+        elif type(error) is ApprovalRequired:
+            raised = cls('ApprovalRequired', metadata=error.metadata)
+        elif _CARRIED_ERRORS.get(type(error).__name__) is type(error):
+            raised = cls(type(error).__name__, list(error.args))
+        else:
+            return None
+        raised.live = error
+        return raised
+
+    def error(self) -> Exception:
+        """The exception the guard raised: the original in-process, a rebuilt one after a durable boundary."""
+        if isinstance(self.live, Exception):
+            return self.live
+        if self.kind == 'ApprovalRequired':
+            return ApprovalRequired(metadata=self.metadata)
+        return _CARRIED_ERRORS[self.kind](*self.args)
+
+
+@dataclass
+class RecordedVerdict:
+    """What a guard chain's durable operation records: its verdict, or the exception it raised.
+
+    `replacement_type` names a replacement's type when it is not plain JSON data, so a replacement
+    a JSON transport flattened is rebuilt as the value it replaces, and only then.
+    """
+
+    verdict: GuardrailResult | None = None
+    position: int = 0
+    replacement_type: str | None = None
+    raised: RaisedGuardError | None = None
+
+
+async def record_verdict(evaluation: Awaitable[tuple[GuardrailResult, int]]) -> RecordedVerdict:
+    """Await a guard chain inside its durable operation, returning a carried exception as data."""
+    try:
+        verdict, position = await evaluation
+    except Exception as error:
+        if (raised := RaisedGuardError.carry(error)) is None:
+            raise
+        return RecordedVerdict(raised=raised)
+    replacement_type = None
+    if verdict.action == 'replace' and not isinstance(verdict.replacement, _JSON_TYPES):
+        replacement_type = _type_name(type(verdict.replacement))
+    return RecordedVerdict(verdict, position, replacement_type=replacement_type)
+
+
+def _type_name(cls: type) -> str:
+    return f'{cls.__module__}.{cls.__qualname__}'
+
+
+def replay_verdict(recorded: RecordedVerdict, original: object) -> tuple[GuardrailResult, int]:
+    """Raise the exception a guard chain raised, or return its verdict with a flattened replacement rebuilt."""
+    if recorded.raised is not None:
+        raise recorded.raised.error()
+    verdict = recorded.verdict
+    assert verdict is not None
+    original_type = type(original)
+    if recorded.replacement_type == _type_name(original_type) and not isinstance(verdict.replacement, original_type):
+        verdict = GuardrailResult.replace(TypeAdapter(original_type).validate_python(verdict.replacement))
+    return verdict, recorded.position
 
 
 def direction_attributes(direction: str, action: str, tool_name: str | None) -> dict[str, str]:
@@ -287,19 +439,18 @@ def trace_redaction(
     ctx: RunContext[AgentDepsT],
     *,
     direction: str,
-    original: object,
     replacement: object,
     tool_name: str | None = None,
 ) -> None:
     """Record a zero-duration span marking a guardrail redaction.
 
-    The original and replacement values are attached only when
-    `ctx.trace_include_content` is set, since a redacted value is often the
-    sensitive content the guard exists to keep out of traces.
+    The replacement value is attached only when `ctx.trace_include_content` is
+    set. The original value never is: it is the content the guard removed, and
+    recording it would put a redacted secret into the trace that core's own
+    spans, which see the rewritten value, keep out.
     """
     attributes = direction_attributes(direction, 'replace', tool_name)
     if ctx.trace_include_content:
-        attributes['guardrail.original'] = str(original)
         attributes['guardrail.replacement'] = str(replacement)
     ctx.tracer.start_span(f'guardrail redacted {direction}', attributes=attributes).end()
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import sys
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -11,8 +10,14 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import pytest
 
 import pydantic_ai.models
+import pydantic_ai_harness.planning  # pyright: ignore[reportUnusedImport] # noqa: F401
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+
+# `Planning` registers its `plan_reminder` framing tag when its module is first imported, and the
+# harness imports it lazily. A registration after any test has escaped framing text emits a
+# `UserWarning`, which fails the test that first imports `Planning`. Pytest imports this conftest
+# during collection, before any test runs, so the import above registers the tag first.
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -41,18 +46,36 @@ __all__ = (
     'IsPartialDict',
     'IsStr',
     'agent_run_names',
-    'skip_temporal_sandbox_on_314',
 )
 
-skip_temporal_sandbox_on_314 = pytest.mark.skipif(
-    sys.version_info >= (3, 14),
-    reason='temporalio sandbox is incompatible with Python 3.14 '
-    '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
-)
-"""Same gate as core's Temporal suite: the sandbox fails with late-import errors on 3.14."""
+# Temporal markers live in `tests/harness/_temporal.py`: modules defining workflows must not import
+# this file, because the workflow sandbox would re-import it along with `dirty_equals`.
 
 # Prevent accidental real model requests during tests.
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Fail collection when a `temporal` test lives in a module `test-durable-exec` wouldn't select.
+
+    That job only runs harness modules mentioning Temporal, and every other job deselects `temporal` tests, so such a
+    test would otherwise silently never run.
+    """
+    for module in {item.path for item in items if item.get_closest_marker('temporal')}:
+        # `test-durable-exec` selects `test_*.py` files that mention Temporal; pytest also collects `*_test.py`.
+        if not module.name.startswith('test_') or 'temporal' not in module.read_text().lower():  # pragma: no cover
+            raise pytest.UsageError(
+                f'{module} has `temporal` tests but `test-durable-exec` only runs `test_*.py` modules that mention '
+                'Temporal.'
+            )
+
+
+@pytest.fixture(scope='session', autouse=True)
+def pixeltable_home(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Keep Pixeltable's catalog out of `~/.pixeltable`; it reads the variable once per process."""
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv('PIXELTABLE_HOME', str(tmp_path_factory.mktemp('pixeltable')))
+        yield
 
 
 @pytest.fixture(scope='session')
@@ -63,13 +86,6 @@ def anyio_backend() -> str:
     Session-scoped like the root override so module-scoped async fixtures (`temporal_env`, Modal `session`)
     can depend on it."""
     return 'asyncio'
-
-
-@pytest.fixture
-def blockbuster_enabled() -> bool:
-    """Not yet: the suite predates the detector, and inside a Temporal workflow it turns Code Mode's portal
-    startup failure into a hang. https://github.com/pydantic/pydantic-ai/issues/8821"""
-    return False
 
 
 @pytest.fixture

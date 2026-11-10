@@ -3,7 +3,7 @@
 `rg` is invoked with `--null`, so every file path it prints ends in a NUL byte
 and cannot be confused with the `:`/`-` separators of the match text that
 follows it. The workspace returns a command's output whole, so the output is
-cut inside the workspace at `_MAX_OUTPUT_BYTES` (`head -c`) and records are then
+cut inside the workspace at `MAX_OUTPUT_BYTES` (`head -c`) and records are then
 streamed through the caller's `accept` filter until `limit` accepted records
 have been collected; only kept records count towards the cap.
 """
@@ -17,22 +17,15 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.workspaces import Workspace
+from pydantic_ai.workspaces import CommandResult, Workspace
+
+from ._workspace_search import MAX_OUTPUT_BYTES, MAX_RECORD_BYTES, SEARCH_TIMEOUT
 
 _SEPARATOR = '--\n'
 """What `rg` prints between non-adjacent context groups; carries no path and is dropped."""
 
-_MAX_RECORD_BYTES = 1 << 20
-"""Longest record kept while waiting for its terminator; `rg`'s own `--max-columns` keeps lines far shorter."""
-
 _PREPARE_BATCH = 500
 """Records handed to `prepare` at once."""
-
-_MAX_OUTPUT_BYTES = 8 << 20
-"""Bytes of `rg` output brought back from the workspace; a search that prints more is reported as truncated."""
-
-_TIMEOUT = 120.0
-"""Deadline in seconds for one search, so a search over a huge tree cannot hang the tool call."""
 
 _STATUS_PREFIX = '__harness_rg_status='
 """Prefix of the last stderr line, which carries `rg`'s own exit status past the `head` pipe."""
@@ -95,37 +88,15 @@ async def run_ripgrep(
     script = (
         f'cd {shlex.quote(cwd)} || exit\n'
         f'command -v rg > /dev/null 2>&1 || exit {_MISSING}\n'
-        f'{{ {command}; echo "{_STATUS_PREFIX}$?" >&2; }} | head -c {_MAX_OUTPUT_BYTES}'
+        f'{{ {command}; echo "{_STATUS_PREFIX}$?" >&2; }} | head -c {MAX_OUTPUT_BYTES}'
     )
-    result = await workspace.run(script, shell=True, timeout=_TIMEOUT)
-    stderr_lines = result.stderr.rstrip('\n').split('\n')
-    status_line = stderr_lines[-1] if stderr_lines else ''
-    detail = '\n'.join(stderr_lines[:-1]).strip()
-    if result.exit_code == _MISSING or not status_line.startswith(_STATUS_PREFIX):
-        if result.exit_code == _MISSING or 'not found' in result.stderr:
-            raise RipgrepMissing
-        raise ModelRetry(f'ripgrep failed: {result.stderr.strip() or f"exit code {result.exit_code}"}')
-    status = status_line.removeprefix(_STATUS_PREFIX)
+    result = await workspace.run(script, shell=True, timeout=SEARCH_TIMEOUT)
+    status, detail = _exit_status(result)
 
     output = result.stdout
-    output_cut = len(output.encode('utf-8', errors='surrogateescape')) >= _MAX_OUTPUT_BYTES
+    output_cut = len(output.encode('utf-8', errors='surrogateescape')) >= MAX_OUTPUT_BYTES
     results: list[_T] = []
-    records: list[Record] = []
-    truncated = False
-    terminator = '\0' if listing else '\n'
-    start = 0
-    while (end := output.find(terminator, start)) >= 0:
-        line, start = output[start : end + 1], end + 1
-        if len(line) > _MAX_RECORD_BYTES:
-            truncated = True
-            break
-        if line == _SEPARATOR:
-            continue
-        records.append(_record(line, listing=listing))
-    else:
-        # Anything left is a record without its terminator: cut off by the output cap, or one
-        # too long to keep, which a well-formed `rg` listing never prints.
-        truncated = output_cut or len(output) - start > _MAX_RECORD_BYTES
+    records, truncated = _split_records(output, listing=listing, output_cut=output_cut)
     # Prepared a batch at a time, so a capped search stops preparing once it has enough.
     for offset in range(0, len(records), _PREPARE_BATCH):
         batch = records[offset : offset + _PREPARE_BATCH]
@@ -143,6 +114,39 @@ async def run_ripgrep(
     if not truncated and not output_cut and status not in ('0', '1') and not partial:
         raise ModelRetry(f'ripgrep failed: {detail or f"exit code {status}"}')
     return results, truncated, unreadable
+
+
+def _exit_status(result: CommandResult) -> tuple[str, str]:
+    """`rg`'s own exit status, from the last stderr line, and the stderr lines before it.
+
+    Raises `RipgrepMissing` when `rg` is not on the workspace's PATH, and `ModelRetry` when the
+    script ended before `rg` could report its status.
+    """
+    stderr_lines = result.stderr.rstrip('\n').split('\n')
+    status_line = stderr_lines[-1] if stderr_lines else ''
+    detail = '\n'.join(stderr_lines[:-1]).strip()
+    if result.exit_code == _MISSING or not status_line.startswith(_STATUS_PREFIX):
+        if result.exit_code == _MISSING or 'not found' in result.stderr:
+            raise RipgrepMissing
+        raise ModelRetry(f'ripgrep failed: {result.stderr.strip() or f"exit code {result.exit_code}"}')
+    return status_line.removeprefix(_STATUS_PREFIX), detail
+
+
+def _split_records(output: str, *, listing: bool, output_cut: bool) -> tuple[list[Record], bool]:
+    """The records in `rg` output, without the separators between context groups, and whether any were cut."""
+    records: list[Record] = []
+    terminator = '\0' if listing else '\n'
+    start = 0
+    while (end := output.find(terminator, start)) >= 0:
+        line, start = output[start : end + 1], end + 1
+        if len(line) > MAX_RECORD_BYTES:
+            return records, True
+        if line == _SEPARATOR:
+            continue
+        records.append(_record(line, listing=listing))
+    # Anything left is a record without its terminator: cut off by the output cap, or one
+    # too long to keep, which a well-formed `rg` listing never prints.
+    return records, output_cut or len(output) - start > MAX_RECORD_BYTES
 
 
 def _collect(batch: list[Record], accept: Callable[[Record], _T | None], results: list[_T], limit: int) -> bool:

@@ -1,5 +1,6 @@
 import os
 import re
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import patch
@@ -17,6 +18,7 @@ from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from google.genai import Client
+    from opentelemetry.sdk.trace import TracerProvider
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -215,6 +217,45 @@ async def test_init_with_http_client_replaces_existing_gateway_hook():
         assert request.headers['Authorization'] == 'Bearer second'
 
 
+@pytest.mark.vcr(ignore_hosts=['*'])
+@pytest.mark.parametrize('provider_name', ['openai', 'google-cloud', 'anthropic'])
+async def test_gateway_hook_only_changes_requests_to_the_gateway(
+    provider_name: Literal['openai', 'google-cloud', 'anthropic'],
+):
+    # Not a cassette test: a caller's client can also send requests to other hosts, and follow a Gateway redirect
+    # to one, which cassette playback of Gateway traffic would never exercise. `ignore_hosts` lets the requests
+    # reach the mock transport instead of the module's cassette.
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        if request.url.path == '/proxy/redirect':
+            return httpx2.Response(307, headers={'Location': 'https://elsewhere.example.com/landing'})
+        return httpx2.Response(200)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler), follow_redirects=True) as http_client:
+        gateway_provider(provider_name, http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL)
+        with TracerProvider().get_tracer(__name__).start_as_current_span('caller'):
+            await http_client.get('https://example.com/data')
+            await http_client.get('http://gateway.pydantic.dev/proxy')
+            await http_client.get('https://gateway.pydantic.dev:8443/proxy')
+            await http_client.get('https://GATEWAY.pydantic.dev:443/proxy/openai/models')
+            await http_client.get(f'{GATEWAY_BASE_URL}/redirect')
+
+    # The redirect keeps the Gateway request's `traceparent` because HTTPX copies every header onto a
+    # redirect except `Authorization`, which it drops when the scheme, host or port changes.
+    assert [(str(r.url), r.headers.get('Authorization'), 'traceparent' in r.headers) for r in requests] == snapshot(
+        [
+            ('https://example.com/data', None, False),
+            ('http://gateway.pydantic.dev/proxy', None, False),
+            ('https://gateway.pydantic.dev:8443/proxy', None, False),
+            ('https://gateway.pydantic.dev/proxy/openai/models', 'Bearer gw-key', True),
+            ('https://gateway.pydantic.dev/proxy/redirect', 'Bearer gw-key', True),
+            ('https://elsewhere.example.com/landing', None, True),
+        ]
+    )
+
+
 @pytest.mark.parametrize('provider_name', ['openai', 'google-cloud'])
 async def test_gateway_provider_hooks_a_caller_owned_legacy_http_client(
     provider_name: Literal['openai', 'google-cloud'],
@@ -340,6 +381,7 @@ async def test_gateway_provider_with_openai(allow_model_requests: None, gateway_
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('Paris.')
+    assert result.usage.cost == snapshot(Decimal('0.00012625'))
 
 
 async def test_gateway_provider_with_openai_responses(allow_model_requests: None, gateway_api_key: str):
@@ -349,6 +391,7 @@ async def test_gateway_provider_with_openai_responses(allow_model_requests: None
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('Paris.')
+    assert result.usage.cost == snapshot(Decimal('9.625000000000001E-5'))
 
 
 async def test_gateway_provider_with_groq(allow_model_requests: None, gateway_api_key: str):
@@ -358,27 +401,37 @@ async def test_gateway_provider_with_groq(allow_model_requests: None, gateway_ap
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+    assert result.usage.cost == snapshot(Decimal('0.0000311'))
 
 
 async def test_gateway_provider_with_google_cloud(allow_model_requests: None, gateway_api_key: str):
+    """The recording only has the deprecated `pydantic-ai-gateway-price-estimate` header, which isn't read, so the
+    cost is the genai-prices estimate."""
     provider = gateway_provider('google-cloud', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = GoogleModel('gemini-2.5-flash', provider=provider)
     agent = Agent(model)
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is **Paris**.')
+    assert result.usage.cost == snapshot(Decimal('0.0001546'))
 
 
 async def test_gateway_provider_with_anthropic(allow_model_requests: None, gateway_api_key: str):
+    """The asserted cost carries the gateway's float artifacts (`...199999999999998`), which a clean
+    client-side genai-prices estimate can't produce, proving the reported cost took precedence."""
     provider = gateway_provider('anthropic', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = AnthropicModel('claude-sonnet-4-5', provider=provider)
-    agent = Agent(model)
+    # Pinned below the SDK's non-streaming limit so the request matches the local-gateway recording.
+    agent = Agent(model, model_settings={'max_tokens': 4096})
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+    assert result.usage.cost == snapshot(Decimal('0.00019199999999999998'))
 
 
 async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway_api_key: str):
+    """The recording only has the deprecated `pydantic-ai-gateway-price-estimate` header, which isn't read, so the
+    cost is the genai-prices estimate."""
     provider = gateway_provider('bedrock', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=provider)
     agent = Agent(model)
@@ -387,6 +440,7 @@ async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway
     assert result.output == snapshot(
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. The city is known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées, among many other attractions.'
     )
+    assert result.usage.cost == snapshot(Decimal('0.000011165'))
 
 
 @patch.dict(

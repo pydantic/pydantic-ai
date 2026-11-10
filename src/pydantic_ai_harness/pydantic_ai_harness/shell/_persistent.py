@@ -18,6 +18,7 @@ import anyio
 
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness.shell._events import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, POLL_MAX, POLL_MIN, Job
@@ -65,20 +66,48 @@ async def _output_tail(job: Job) -> str:
 class _CommandOutput(Generic[AgentDepsT]):
     """Emit at most `_OUTPUT_TAIL_BYTES` of the log as events, decoded incrementally."""
 
-    def __init__(self, job: Job, ctx: RunContext[AgentDepsT] | None) -> None:
+    def __init__(self, job: Job, ctx: RunContext[AgentDepsT] | None, *, log_limited: bool) -> None:
         self.job = job
         # `None` where events cannot reach the run's event stream: then nothing is read or emitted.
         self.ctx = ctx
+        self.log_limited = log_limited
+        """Whether `max_log_bytes` can empty the log, so its clears are checked."""
         self.offset = 0
+        """Position in the log, which goes back to 0 when `max_log_bytes` empties it."""
+        self.emitted = 0
+        self.clears = 0
+        """The `log_clears` count the last emitted chunk was read under: two per clear."""
         self.decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
 
-    async def emit(self) -> bool:
-        if self.ctx is None or self.offset >= _OUTPUT_TAIL_BYTES:
-            return False
-        chunk = await self.job.read(
-            self.job.output_path, self.offset, min(_EVENT_CHUNK_BYTES, _OUTPUT_TAIL_BYTES - self.offset)
+    async def _clears(self) -> int:
+        return await self.job.size(self.job.clears_path) if self.log_limited else 0
+
+    async def _read(self) -> bytes:
+        return await self.job.read(
+            self.job.output_path, self.offset, min(_EVENT_CHUNK_BYTES, _OUTPUT_TAIL_BYTES - self.emitted)
         )
+
+    async def emit(self) -> bool:
+        """Emit the next chunk of the log, returning whether there was one."""
+        if self.ctx is None or self.emitted >= _OUTPUT_TAIL_BYTES:
+            return False
+        chunk = await self._read()
+        # Checked after the read: a chunk read since a clear began may come from the emptied log, at the
+        # wrong position, so it is dropped. The watcher counts each clear before and after it, so an odd count
+        # means it is under way: the log is read again at the next poll. Once it is done, the log is read again
+        # from its start, in this call so that every chunk emitted counts against `_OUTPUT_TAIL_BYTES`.
+        if (clears := await self._clears()) != self.clears:
+            if clears % 2:
+                return False
+            self.clears = clears
+            self.offset = 0
+            self.decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+            chunk = await self._read()
+            if await self._clears() != clears:
+                # Another clear began during that read too: start again at the next poll.
+                return False
         self.offset += len(chunk)
+        self.emitted += len(chunk)
         if chunk:
             await self.ctx.emit(CommandOutputEvent(text=self.decoder.decode(chunk)))
         return bool(chunk)
@@ -93,14 +122,20 @@ class _CommandOutput(Generic[AgentDepsT]):
         tail = self.decoder.decode(b'', final=True)
         if tail:
             await self.ctx.emit(CommandOutputEvent(text=tail))
+        clears = await self._clears()
+        size = await self.job.size(self.job.output_path)
+        total_lines = None if clears else await _count_lines(self.job)
+        # Counted again afterwards: a clear that began meanwhile leaves a size and count from two different logs.
+        cleared = clears > 0 or await self._clears() != clears
         await self.ctx.emit(
             CommandFinishedEvent(
                 pid=self.job.pid,
                 output_path=self.job.output_path,
                 status_path=self.job.status_path,
                 exit_code=(await self.job.status())[1],
-                truncated=await self.job.size(self.job.output_path) > self.offset,
-                total_lines=await _count_lines(self.job),
+                truncated=cleared or size > self.offset,
+                # An emptied log no longer holds the earlier lines, so their count is unknown.
+                total_lines=None if cleared else total_lines,
             )
         )
 
@@ -110,33 +145,43 @@ async def run_persistent_command(
     command: str,
     *,
     base: str,
+    job_id: str | None,
     cwd: str,
     env: Mapping[str, str] | None,
     mode: CommandMode,
     timeout: float,
+    log_limit: int | None = None,
 ) -> str:
     """Start `command` as a detached job and return its PID, output log, and status file.
 
     Foreground waits up to `timeout` for the exit status, polling with a backoff from 50 ms to
     1 s, then returns the handles either way; background returns them immediately.
+
+    The wait is counted in the time slept between polls, not read from a clock: each poll is a
+    workspace call, which a durable engine records, so a replayed call makes the same polls
+    however long each one took the first time. A poll's own round trip adds to the wait.
     """
     if not 0 < timeout <= MAX_FOREGROUND_WAIT:
         raise ModelRetry(f'timeout must be greater than zero and at most {MAX_FOREGROUND_WAIT:g} seconds.')
     # Before launching: a toolset used outside its capability fails here, and must not leave a job running.
     events = event_ctx(ctx, 'Shell')
-    job = await Job.launch(ctx.workspace, command, base=base, cwd=cwd, env=env, combined=True)
-    output = _CommandOutput(job, events)
+    job = await Job.launch(
+        ctx.workspace, command, base=base, cwd=cwd, env=env, combined=True, log_limit=log_limit, job_id=job_id
+    )
+    output = _CommandOutput(job, events, log_limited=log_limit is not None)
 
     try:
         if output.ctx is not None:
             await output.ctx.emit(CommandStartedEvent(tool_call_id=ctx.tool_call_id, command=command, pid=job.pid))
         if mode == 'foreground':
             interval = POLL_MIN
-            with anyio.move_on_after(timeout):
-                while (await job.status())[0]:
-                    emitted = await output.emit()
-                    await anyio.sleep(interval)
-                    interval = POLL_MIN if emitted else min(interval * 2, POLL_MAX)
+            waited = 0.0
+            while waited < timeout and (await job.status())[0]:
+                emitted = await output.emit()
+                pause = min(interval, timeout - waited)
+                await anyio.sleep(pause)
+                waited += pause
+                interval = POLL_MIN if emitted else min(interval * 2, POLL_MAX)
             await output.drain()
         await output.finish()
 
@@ -153,10 +198,22 @@ async def run_persistent_command(
         )
         if (status := await job.status_text()) is not None:
             result += f'\n{status}'
-    except BaseException:
-        # A cancelled or failed call cannot hand back its handles, so nothing is left running.
-        with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
-            await job.kill()
-            await job.cleanup()
+    except BaseException as error:
+        # A cancelled or failed call cannot hand back its handles, so it stops the job it started.
+        await _stop_failed_call(job, error)
         raise
     return result
+
+
+async def _stop_failed_call(job: Job, error: BaseException) -> None:
+    """Stop and remove the job of a call that is raising `error`.
+
+    A stop or removal that fails too is noted on `error` rather than replacing it; a failed stop leaves the job's
+    directory.
+    """
+    with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
+        try:
+            await job.kill()
+            await job.cleanup()
+        except (WorkspaceError, OSError) as cleanup_error:
+            error.add_note(f'Cleaning up the command also failed: {cleanup_error}')

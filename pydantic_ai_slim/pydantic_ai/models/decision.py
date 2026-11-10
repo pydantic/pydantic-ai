@@ -3,51 +3,64 @@ from __future__ import annotations as _annotations
 import dataclasses
 import json
 from abc import abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Collection, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from decimal import Decimal
 from functools import cached_property
-from typing import Any, ClassVar, Literal, TypeAlias, cast
+from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
 
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind
 from opentelemetry.util.types import AttributeValue
 from pydantic import JsonValue
-from typing_extensions import assert_never, deprecated
+from pydantic_core import to_jsonable_python
+from typing_extensions import deprecated
 
 from .. import _utils, usage
-from .._deferred_capabilities import parse_loaded_capabilities
-from .._instructions import DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME
+from .._deferred_capabilities import DEFERRED_CAPABILITY_CATALOG_ID
 from .._instrumentation import model_attributes, open_request_policy, record_uncaught_errors, safe_to_json
+from .._json_schema import InlinedValues
 from .._output import DEFAULT_OUTPUT_TOOL_DESCRIPTION, DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from ..messages import (
     BaseToolReturnPart,
+    BinaryContent,
     CachePoint,
+    CapabilityInstructionSource,
     CompactionPart,
     FilePart,
+    ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
+    InstructionId,
     InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponseStreamEvent,
+    MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
+    is_multi_modal_content,
 )
 from ..profiles import ModelProfile, merge_profile
+from ..profiles.decision import DecisionModelProfile
 from ..providers import InterfaceClient
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -58,8 +71,11 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
+    download_item,
 )
 
 __all__ = (
@@ -188,6 +204,18 @@ class DecisionRequest:
     """The text or JSON value to decide about."""
     questions: dict[str, DecisionQuestion]
     """Named questions to answer about the state."""
+    images: tuple[BinaryContent, ...] = ()
+    """Image evidence, in the order of the `<image N>` references in `state`.
+
+    Only image media types are supported. Backends that do not support images must reject a nonempty tuple,
+    including when `decide` is called directly.
+    """
+    messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    """The conversation `state` was built from, for a backend that takes a conversation natively.
+
+    Empty when `decide` is called directly with only a `state`. Its images are the ones in `images`, resolved and in
+    the same order: the order they appear in, message by message and part by part.
+    """
 
 
 @dataclass(kw_only=True)
@@ -228,6 +256,57 @@ def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
     return wire
 
 
+def _half_unit(value: Decimal, float_tolerance: Decimal) -> Decimal:
+    """How far a displayed value may be from the one it stands for.
+
+    Half a unit of its last decimal place, using at least two, as a value rounded for display may be off by. An
+    unrounded float prints all of its digits, which would make that interval far narrower than the error its own
+    arithmetic carries, so it is never narrower than `float_tolerance`.
+    """
+    return max(Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2, float_tolerance)
+
+
+def _probability_bounds(  # pyright: ignore[reportUnusedFunction]
+    probabilities: Collection[float], *, float_tolerance: Decimal = Decimal(0)
+) -> tuple[list[Decimal], list[Decimal]]:
+    """The bounded rounding intervals of the displayed probabilities, using at least two decimal places.
+
+    Each interval is at least `float_tolerance` either side of its probability, for a backend that sends unrounded
+    floats.
+    """
+    values: list[Decimal] = [Decimal(str(probability)) for probability in probabilities]
+    half_units: list[Decimal] = [_half_unit(value, float_tolerance) for value in values]
+    lower: list[Decimal] = [max(Decimal(0), value - half_unit) for value, half_unit in zip(values, half_units)]
+    upper: list[Decimal] = [min(Decimal(1), value + half_unit) for value, half_unit in zip(values, half_units)]
+    return lower, upper
+
+
+def _score_fits(  # pyright: ignore[reportUnusedFunction]
+    lower: Sequence[Decimal], upper: Sequence[Decimal], score: float, *, float_tolerance: Decimal = Decimal(0)
+) -> bool:
+    """Whether rounded probabilities can sum to one and produce the displayed score.
+
+    The score's own interval is at least `float_tolerance` either side of it, for a backend that sends unrounded
+    floats.
+    """
+    remaining = Decimal(1) - sum(lower, Decimal(0))
+    valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
+    if valid:
+        bounds: list[Decimal] = []
+        for levels in (range(len(lower)), reversed(range(len(lower)))):
+            rest = remaining
+            mean = sum((level * low for level, low in enumerate(lower)), Decimal(0))
+            for level in levels:
+                taken = min(rest, upper[level] - lower[level])
+                mean += level * taken
+                rest -= taken
+            bounds.append(mean)
+        displayed_score = Decimal(str(score))
+        score_half_unit = _half_unit(displayed_score, float_tolerance)
+        valid = displayed_score + score_half_unit >= bounds[0] and displayed_score - score_half_unit <= bounds[1]
+    return valid
+
+
 _UNSUPPORTED_FIELD_HINT = (
     'Use `bool`, a `Literal` or `Enum` of two or more strings or whole numbers, a `float` bounded with `ge=0` and '
     '`le=1`, a `list` of a `Literal` or `Enum`, a rubric of whole numbers from 0 with a description per level in its '
@@ -240,6 +319,10 @@ _ASKS_NOTHING = (
     'a description, or the agent `instructions`, and leave the prompt to the material the question is about. '
     'A `system_prompt` will not do: a decision model is told what was said, not what to ask.'
 )
+
+# What a pick-one, a rubric, or a yes/no with described answers asks when nothing else does, on a backend that
+# `requires_instructions`: its options say the rest, worded like the route question's `Which of these ...`.
+_DEFAULT_QUESTION = 'Which of these applies?'
 
 
 class DecisionModelSettings(ModelSettings, total=False):
@@ -297,6 +380,9 @@ class DecisionHandOff(ModelAPIError):
         self.route = route
         self.probability = probability
         super().__init__(model_name, message)
+
+    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
+        return self.__class__, (self.model_name, self.route, self.probability, self.message)
 
 
 class UnfillableRoute(DecisionHandOff):
@@ -365,18 +451,23 @@ class UnsureRoute(DecisionHandOff):
 class _Limits:
     """How many options a pick-one and how many levels a rubric can have on this model, `None` for no limit.
 
-    Read from the model's `max_choice_options` and `max_score_levels` once per request, so that turning fields into
+    Read once per request from the profile's `decision_max_choice_options` and `decision_max_score_levels`, or the
+    model's `max_choice_options` and `max_score_levels` where the profile leaves them out, so that turning fields into
     questions can refuse a pick-one the backend would reject before anything is sent, and ask whole numbers with
-    more levels than a rubric can have as a pick-one instead.
+    more levels than a rubric can have as a pick-one instead. Also whether the model needs `instructions` on every
+    question, from the profile's `decision_requires_instructions` or the model's `requires_instructions`.
+    The backend's per-request question cap bounds speculation independently of those model-specific limits.
     """
 
     choice_options: int | None
     score_levels: int | None
+    requires_instructions: bool
+    questions: int | None
 
 
 @dataclass(init=False)
 class DecisionModel(Model[InterfaceClient]):
-    """Base class for decision models: models that answer typed questions about a text rather than write text.
+    """Base class for decision models: models that answer typed questions about evidence rather than write text.
 
     A decision model is sent a *state*, the text or JSON value to judge, and a set of named questions of three
     kinds: a yes/no ([`NoulQuestion`][pydantic_ai.models.decision.NoulQuestion]), a pick-one
@@ -393,11 +484,11 @@ class DecisionModel(Model[InterfaceClient]):
     - The field's description is the question, the output type's docstring its goal, and the agent's
       `instructions` framing shared by every question; a nested field's question also carries what it sits in.
       The latest user prompt is the text to judge, the message history before it goes along beside it, and once a
-      tool has returned, what was done since goes along apart from both.
+      tool has returned or a retry was sent, what was done since goes along apart from both.
     - With tools attached, or a union of output types, one more pick-one asks which route the text calls for, and
       the likeliest is taken. The fields of every route the model can fill are asked beside it, each on the premise
-      of its route, and only the taken route's answers are read; past a size cutoff, a picked route with fields is
-      filled in a second request instead. A route whose fields the model cannot express, a single output type's
+      of its route, and only the taken route's answers are read; past a size or question-count cutoff, a picked
+      route with fields is filled in a second request instead. A route whose fields the model cannot express, a single output type's
       included, is raised as [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute], for a
       [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] to hand to a language model. A pick below
       `decision_route_threshold`, when set, is raised as [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute]
@@ -411,34 +502,115 @@ class DecisionModel(Model[InterfaceClient]):
     The answers arrive in one piece, so a streamed run gets the whole answer as one event.
 
     To support a backend, subclass this, implement [`decide`][pydantic_ai.models.decision.DecisionModel.decide]
-    along with `model_name`, `system` and `base_url`, and set `max_choice_options` and `max_score_levels` to the
-    backend's limits. See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for the full rules
-    and an example.
+    along with `model_name`, `system` and `base_url`, set `max_choice_options` and `max_score_levels` to the
+    backend's limits, and `requires_instructions` if it refuses a question without `instructions`, or have its
+    provider set these per model in a [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile].
+    Set `supports_image_input` if the backend accepts images, and `max_images` and `max_questions` to its
+    per-request transport limits. These caps describe the endpoint, so profiles do not override them.
+    See [Decision models](../../models/decision.md#implementing-a-decision-model) for the full rules and an example.
+    """
+
+    # A decision model writes no text and makes at most one tool call, so `max_tokens`, `stop_sequences` and
+    # `parallel_tool_calls` hold without being sent and are not listed.
+    unsupported_settings = frozenset(
+        {'frequency_penalty', 'logit_bias', 'presence_penalty', 'seed', 'service_tier', 'temperature', 'top_k', 'top_p'}
+    )
+
+    supports_image_input: ClassVar[bool] = False
+    """Whether the backend can receive image evidence in `DecisionRequest.images`.
+
+    Set this on a backend that supports images. The shared history mapper then labels images in the state
+    and resolves image URLs before calling `decide`. This is a transport capability, not a profile default.
+    """
+
+    max_images: ClassVar[int | None] = None
+    """The most images the endpoint accepts in one request, or `None` for no limit.
+
+    This is a transport limit, independent of the selected model, so profiles do not override it.
+
+    An oversized request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] before image URLs
+    are downloaded, so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] can take over.
+    """
+
+    max_questions: ClassVar[int | None] = None
+    """The most questions the endpoint accepts in one request, or `None` for no limit.
+
+    This is a transport limit, independent of the selected model, so profiles do not override it.
+    Speculative route fields that do not fit are filled in a separate request after the route is selected.
+
+    An oversized request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] before image URLs
+    are downloaded.
     """
 
     max_choice_options: ClassVar[int | None] = None
     """The most options the backend accepts in one pick-one question, or `None` for no limit.
 
-    A pick-one field with more options, or more routes than this on the route question, is a
+    The profile's `decision_max_choice_options` takes precedence where it is set. A pick-one field with more options, or more routes than this on the route question, is a
     [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent.
     """
 
     max_score_levels: ClassVar[int | None] = None
     """The most levels the backend accepts in one rubric, or `None` for no limit.
 
-    Whole numbers from 0 with more levels than this are not a rubric, so a field of them is asked as a pick-one
+    The profile's `decision_max_score_levels` takes precedence where it is set. Whole numbers from 0 with more levels than this are not a rubric, so a field of them is asked as a pick-one
     instead, and counts against `max_choice_options`.
     """
 
+    requires_instructions: ClassVar[bool] = False
+    """Whether the backend refuses a question without `instructions`.
+
+    The profile's `decision_requires_instructions` takes precedence where it is set. A pick-one, a rubric, or a
+    yes/no with described answers can say what it asks through its options alone, so with no field description,
+    output type docstring or agent `instructions` to send, such a question goes without `instructions`. A backend
+    that requires them is sent a generic question instead, which leaves the options to carry the meaning, as they do
+    without it.
+    """
+
+    # Retry feedback is a step taken for the prompt, so it goes along as a `retry` entry: translated, a validation
+    # error would become the user text judged as the request, and a `ModelRetry` message a system prompt.
+    _renders_retry_feedback = True
+
     @cached_property
     def profile(self) -> ModelProfile:
-        """The model profile, with text output off whatever the provider or `profile=` says.
+        """The model profile: text output off, inline system prompts on, and file input as the class takes it.
 
         A decision model answers questions and has no way to write text, so this is a fact about the class
         rather than a default to override: with text output left on, an `output_type` like `[Ticket, str]`
         would pass the shared request preparation and have its `str` branch silently never taken.
+
+        It also judges a system prompt rather than asking it, so a system prompt partway through the conversation
+        stays a `system` entry: without inline system prompts, the shared request preparation would fold it into
+        the user text, where it would be judged as the request.
+
+        Images are read only when the class sets
+        [`supports_image_input`][pydantic_ai.models.decision.DecisionModel.supports_image_input], and documents,
+        audio and video never are, so [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] describes
+        those files instead of letting them be refused, and a tool's file is otherwise replaced by a note.
         """
-        return merge_profile(super().profile, ModelProfile(supports_text_output=False))
+        return merge_profile(
+            super().profile,
+            ModelProfile(
+                supports_text_output=False,
+                supports_inline_system_prompts=True,
+                supports_image_input=self.supports_image_input,
+                supports_document_input=False,
+                supports_audio_file_input=False,
+                supports_video_input=False,
+            ),
+        )
+
+    def prepare_messages(
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters | None = None,
+    ) -> list[ModelMessage]:
+        """Pre-process the history as [`Model.prepare_messages`][pydantic_ai.models.Model.prepare_messages] does.
+
+        Changes to the deferred capability catalog are left out first: the capabilities are offered as routes of
+        their own, so a catalog that changed since the conversation began, such as one with a capability added
+        between runs, would otherwise reach the state as a system message repeating every description.
+        """
+        return super().prepare_messages(_without_catalog_changes(messages), model_request_parameters)
 
     @abstractmethod
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
@@ -447,6 +619,10 @@ class DecisionModel(Model[InterfaceClient]):
         This is called once per request the model makes: once per step, or twice when a route is picked in one
         request and, past the size cutoff for asking every route's fields up front, filled in a second. Every
         question in `request.questions` needs an answer of the matching kind under the same name.
+        Image-capable backends serialize `request.images` as evidence alongside `request.state`; other
+        backends must reject a nonempty tuple, including when this method is called directly. Backend request
+        limits also apply to direct calls. A backend that takes a conversation natively sends `request.messages`
+        when there are any, in place of `request.state`.
 
         Raise [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] or
         [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] when the backend fails, so a
@@ -532,55 +708,36 @@ class DecisionModel(Model[InterfaceClient]):
                 tool
                 for tool in model_request_parameters.function_tools
                 if model_request_parameters.visibility_of(tool.name) != 'withheld'
-            ],
-            messages,
+            ]
         )
         offered = [*hand_offs, *function_tools]
         tools, done = _tools_left(messages, offered)
         routes = _route_labels(output_tools, tools, output_name)
-        # The one route left once the others have returned this turn, or a lone capability to load: loading it
-        # is the only thing to do, and there is no other route to ask about.
-        forced_tool = (
-            tools[0]
-            if not output_tools and len(tools) == 1 and (len(offered) > 1 or _capability_id(tools[0]) is not None)
-            else None
-        )
-        if forced_tool is not None and _fixed_args(forced_tool) is not None:
+        forced_tool = _forced_tool(output_tools, tools, offered)
+        if forced_tool is not None and not _has_fields(forced_tool):
             # Preserve the no-request path: there is no state or question to build when no arguments need filling.
             return self._forced(forced_tool, next(iter(routes)))
-        state = _map_messages(messages, turn=done)
-        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
-        instructions = '\n\n'.join(part.content for part in instruction_parts if not _catalog(part)) or None
+        instructions = self._instruction_text(messages, model_request_parameters)
         settings = cast(DecisionModelSettings, model_settings or {})
         # The bars are read before anything is sent: a setting outside 0 to 1 is a coding error, and finding
         # out from a rejected answer would mean paying for the request that carried the prompt and history.
         # An unset route bar is 0, which no probability is below, so every pick is taken.
         route_threshold = _threshold(settings, 'decision_route_threshold', 0.0)
         boolean_threshold = _threshold(settings, 'decision_boolean_threshold', _DEFAULT_BOOLEAN_THRESHOLD)
-        limits = _Limits(choice_options=self.max_choice_options, score_levels=self.max_score_levels)
+        # The model behind the URL sets its own limits through the profile, and the class's are the fallback.
+        profile = cast(DecisionModelProfile, self.profile)
+        limits = _Limits(
+            choice_options=profile.get('decision_max_choice_options', self.max_choice_options),
+            score_levels=profile.get('decision_max_score_levels', self.max_score_levels),
+            requires_instructions=profile.get('decision_requires_instructions', self.requires_instructions),
+            questions=self.max_questions,
+        )
         if forced_tool is not None:
             # Every other route has returned this turn, so the one left is taken without a choice question.
             return await self._forced_with_arguments(
-                forced_tool, next(iter(routes)), state, instructions, settings, boolean_threshold, limits
+                forced_tool, next(iter(routes)), messages, instructions, settings, boolean_threshold, limits, turn=done
             )
-        fillable = [tool for tool in output_tools if _expressible(tool, instructions, limits)]
-        if (
-            output_tools
-            and not fillable
-            and not any(_fixed_args(tool) is not None or _expressible(tool, instructions, limits) for tool in offered)
-        ):
-            # A route the model cannot fill is a hand-off, but only while some other route is a real alternative:
-            # an output type it can fill, a route with nothing to fill, or a tool whose arguments it can. With
-            # none of them the choice is decided before it is asked: every answer hands off, so the request that
-            # asks it buys nothing, and every run pays for the decision model on top of the model behind it.
-            if len(output_tools) == 1:
-                # Alone, the output type's own unsupported field is the error, as it names what to change.
-                _Ask.about(output_tools[0], instructions, limits, label=None)
-            raise UserError(
-                'None of the output types can be filled by this model, so every answer would be handed off and '
-                'the request asking which would be wasted. Give the agent an `output_type` it can fill, or drop '
-                'it from this model.'
-            )
+        fillable = _fillable_outputs(output_tools, offered, instructions, limits)
         if not tools and len(output_tools) == 1:
             # One output type and nothing else on offer: there is no route to pick, only fields to fill.
             output_tool = output_tools[0]
@@ -589,7 +746,9 @@ class DecisionModel(Model[InterfaceClient]):
                 # a choice question, like the last tool left, and handing it off needs no request either.
                 raise UnfillableRoute(self.model_name, next(iter(routes)), 1.0)
             ask = _Ask.about(output_tool, instructions, limits, label=None)
-            async with self._decide(DecisionRequest(state=state, questions=ask.questions), settings, fields=True) as (
+            state, image_inputs = self._map_decision_input(messages, turn=done)
+            request = await self._prepare_decision_request(state, image_inputs, ask.questions, settings, messages)
+            async with self._decide(request, settings, fields=True) as (
                 response,
                 span,
             ):
@@ -597,15 +756,18 @@ class DecisionModel(Model[InterfaceClient]):
                 _record_outcome(span, confidence)
             return self._response(output_tool, args, response.usage, response.model_name, provider_details)
 
+        route_questions: dict[str, DecisionQuestion] = {}
+        route_key = _route_question(route_questions, routes, output_tools, tools, instructions, limits)
+        state, image_inputs = self._map_decision_input(messages, turn=done)
         speculation = _Speculation.about(routes, output_tools, state, instructions, limits)
         questions = speculation.questions()
-        route_key = _route_question(questions, routes, output_tools, tools, instructions, limits)
+        questions.update(route_questions)
+        request_template = await self._prepare_decision_request(state, image_inputs, questions, settings, messages)
 
-        # A picked route whose fields are asked in a second request, past the size cutoff: the route, its label and
-        # its questions.
-        to_fill: tuple[ToolDefinition, str, _Ask] | None = None
+        # The questions of a picked route whose fields are asked in a second request, past the size cutoff.
+        to_fill: _Ask | None = None
         async with self._decide(
-            DecisionRequest(state=state, questions=questions),
+            request_template,
             settings,
             fields=bool(speculation.asks),
             route_question=route_key,
@@ -625,23 +787,15 @@ class DecisionModel(Model[InterfaceClient]):
                 # The fields were asked beside the route question, speculatively, and only the taken route's answers
                 # are read: answers to a route not taken describe nothing in this response.
                 args, provider_details, confidence = speculation.answers(label, response, boolean_threshold)
-            elif (fixed := _fixed_args(route)) is None:
-                fill = _Ask.to_fill(route, instructions, limits, label=label)
-                if fill is None:
-                    # A route whose fields the model cannot express is handed off before a request to fill it.
-                    raise UnfillableRoute(self.model_name, label, probability)
-                # Filled below, once this request's span has closed: the fill is its sibling, not its child.
-                to_fill = route, label, fill
-                args, provider_details = {}, {}
             else:
-                # Nothing to write, so the call is made on the pick alone, and no answer built it.
-                args, provider_details = fixed, _unanswered()
+                args, provider_details, to_fill = self._unasked_route(route, label, probability, instructions, limits)
             _record_outcome(span, confidence)
         response_usage = response.usage
 
         if to_fill is not None:
-            route, label, fill = to_fill
-            response, args, provider_details = await self._fill(label, fill, state, settings, boolean_threshold)
+            response, args, provider_details = await self._fill(
+                label, to_fill, request_template, settings, boolean_threshold
+            )
             response_usage += response.usage
             # `RequestUsage.requests` is fixed at 1, so usage cannot say that this turn asked twice: the
             # choice and the fill are two requests inside one step. The count is reported here, and only
@@ -649,6 +803,30 @@ class DecisionModel(Model[InterfaceClient]):
             provider_details['requests'] = 2
         provider_details['route'] = route_details
         return self._response(route, args, response_usage, response.model_name, provider_details)
+
+    def _instruction_text(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> str | None:
+        """The agent's instructions as one text, which the questions carry, or `None` without any."""
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
+        return '\n\n'.join(part.content for part in instruction_parts if not _catalog(part)) or None
+
+    def _unasked_route(
+        self, route: ToolDefinition, label: str, probability: float, instructions: str | None, limits: _Limits
+    ) -> tuple[dict[str, Any], dict[str, Any], _Ask | None]:
+        """The arguments, details and fill questions of a picked route whose fields were not asked beside the pick.
+
+        A route with fields gets empty arguments and details, and the questions a second request fills it with.
+        """
+        if not _has_fields(route):
+            # Nothing to write, so the call is made on the pick alone, and no answer built it.
+            return _route_args(route), _unanswered(), None
+        fill = _Ask.to_fill(route, instructions, limits, label=label)
+        if fill is None:
+            # A route whose fields the model cannot express is handed off before a request to fill it.
+            raise UnfillableRoute(self.model_name, label, probability)
+        # Filled once the picking request's span has closed: the fill is its sibling, not its child.
+        return {}, {}, fill
 
     def _response(
         self,
@@ -669,11 +847,51 @@ class DecisionModel(Model[InterfaceClient]):
             finish_reason='tool_call',
         )
 
+    def _map_decision_input(
+        self, messages: list[ModelMessage], *, turn: bool
+    ) -> tuple[JsonValue, list[BinaryContent | ImageUrl]]:
+        """Map history once, keeping image URLs unresolved until the request passes preflight."""
+        image_inputs: list[BinaryContent | ImageUrl] = []
+        state = _map_messages(messages, turn=turn, images=image_inputs if self.supports_image_input else None)
+        return state, image_inputs
+
+    def _check_request_limits(self, *, image_count: int = 0, question_count: int = 0) -> None:
+        for kind, count, limit in (
+            ('images', image_count, self.max_images),
+            ('questions', question_count, self.max_questions),
+        ):
+            if limit is not None and count > limit:
+                raise ModelAPIError(self.model_name, f'{self.model_name} accepts at most {limit} {kind}; got {count}.')
+
+    async def _prepare_decision_request(
+        self,
+        state: JsonValue,
+        image_inputs: list[BinaryContent | ImageUrl],
+        questions: dict[str, DecisionQuestion],
+        model_settings: DecisionModelSettings,
+        messages: list[ModelMessage],
+    ) -> DecisionRequest:
+        """Validate a complete request before resolving its image URLs."""
+        self._check_request_limits(image_count=len(image_inputs), question_count=len(questions))
+        images: list[BinaryContent] = []
+        for item in image_inputs:
+            if isinstance(item, BinaryContent):
+                images.append(item)
+            else:
+                downloaded = await download_item(item, data_format='bytes')
+                image = BinaryContent(
+                    downloaded['data'], media_type=downloaded['data_type'], vendor_metadata=item.vendor_metadata
+                )
+                if not image.is_image:
+                    raise UserError(f'Image URL {item.url!r} returned content that is not an image.')
+                images.append(image)
+        return DecisionRequest(state=state, questions=questions, images=tuple(images), messages=messages)
+
     async def _fill(
         self,
         label: str,
         ask: _Ask,
-        state: JsonValue,
+        request_template: DecisionRequest,
         settings: DecisionModelSettings,
         boolean_threshold: float,
     ) -> tuple[DecisionResponse, dict[str, Any], dict[str, Any]]:
@@ -691,7 +909,7 @@ class DecisionModel(Model[InterfaceClient]):
         """
         try:
             async with self._decide(
-                DecisionRequest(state=state, questions=ask.questions),
+                dataclasses.replace(request_template, questions=ask.questions),
                 settings,
                 route=label,
                 fields=True,
@@ -710,27 +928,29 @@ class DecisionModel(Model[InterfaceClient]):
         self,
         tool: ToolDefinition,
         label: str,
-        state: JsonValue,
+        messages: list[ModelMessage],
         instructions: str | None,
         settings: DecisionModelSettings,
         boolean_threshold: float,
         limits: _Limits,
+        *,
+        turn: bool,
     ) -> ModelResponse:
         """Fill the arguments of the one route left, without a choice request."""
         fill = _Ask.to_fill(tool, instructions, limits, label=label)
         if fill is None:
             raise UnfillableRoute(self.model_name, label, 1.0)
-        response, args, details = await self._fill(label, fill, state, settings, boolean_threshold)
+        state, image_inputs = self._map_decision_input(messages, turn=turn)
+        request_template = await self._prepare_decision_request(state, image_inputs, fill.questions, settings, messages)
+        response, args, details = await self._fill(label, fill, request_template, settings, boolean_threshold)
         details['route'] = _forced_route(label)
         return self._response(tool, args, response.usage, response.model_name, details)
 
     def _forced(self, tool: ToolDefinition, label: str) -> ModelResponse:
         """Call the one argumentless route left, without asking the model."""
         details = {**_unanswered(), 'route': _forced_route(label)}
-        args = _fixed_args(tool)
-        assert args is not None  # `request` only forces a route this way when there is nothing to fill
         return ModelResponse(
-            parts=[ToolCallPart(tool.name, args, _utils.generate_tool_call_id())],
+            parts=[ToolCallPart(tool.name, _route_args(tool), _utils.generate_tool_call_id())],
             usage=usage.RequestUsage(),
             model_name=self.model_name,
             provider_name=self.system,
@@ -865,7 +1085,8 @@ def _decide_span_attributes(
         attributes['pydantic_ai.decision.route_questions'] = safe_to_json(route_questions).decode()
         json_attributes.append('pydantic_ai.decision.route_questions')
     if include_content:
-        # The state is text or JSON, as it is on the wire, and only JSON is declared as such.
+        # The state is text or JSON, as a backend that sends it puts it on the wire, and only JSON is declared as such.
+        # A backend that sends `request.messages` instead puts the conversation the model request span records.
         if isinstance(request.state, str):
             attributes['pydantic_ai.decision.state'] = request.state
         else:
@@ -940,16 +1161,9 @@ def _answer_attribute(
     """
     if include_content:
         return _wire(answer)
-    attribute: dict[str, Any] = {'type': answer.type}
     if offered is not None and isinstance(answer, ChoiceAnswer):
-        if answer.choice in offered:
-            attribute['choice'] = answer.choice
-        if _is_number(answer.confidence):
-            attribute['confidence'] = answer.confidence
-        attribute['probabilities'] = {
-            label: p for label, p in answer.probabilities.items() if label in offered and _is_number(p)
-        }
-        return attribute
+        return _route_answer_attribute(answer, offered)
+    attribute: dict[str, Any] = {'type': answer.type}
     for name in _NUMERIC_ANSWER_FIELDS.get(answer.type, ()):
         value = getattr(answer, name, None)
         if name == 'probabilities' and isinstance(value, Mapping):
@@ -960,6 +1174,19 @@ def _answer_attribute(
             }
         elif _is_number(value):
             attribute[name] = value
+    return attribute
+
+
+def _route_answer_attribute(answer: ChoiceAnswer, offered: frozenset[str]) -> dict[str, Any]:
+    """The route question's answer as a `decide` span records it without content, keeping only `offered` labels."""
+    attribute: dict[str, Any] = {'type': answer.type}
+    if answer.choice in offered:
+        attribute['choice'] = answer.choice
+    if _is_number(answer.confidence):
+        attribute['confidence'] = answer.confidence
+    attribute['probabilities'] = {
+        label: p for label, p in answer.probabilities.items() if label in offered and _is_number(p)
+    }
     return attribute
 
 
@@ -1040,67 +1267,114 @@ def _answers(
     Also each question's confidence, keyed like the questions: `provider_details['confidence']` is keyed by field,
     and gives a field that fans out the least sure of its options, where this keeps each option's own.
     """
-    args: dict[str, Any] = {}
-    confidence: dict[str, float] = {}
-    by_question: dict[str, float] = {}
-    probabilities: dict[str, dict[str, float]] = {}
-    scores: dict[str, float] = {}
+    read = _ReadAnswers()
     for name, prop in properties.items():
         prop, none_option = _optional(prop)
         if keys := _mapping_options(prop):
-            # A mapping keeps every option with the answer it got, unlike a list.
-            verdicts, labelled = _fanned_in(name, keys, answers, boolean_threshold)
-            _set(args, name, {key: chosen for key, (chosen, _) in verdicts.items()})
-            confidence[name] = min(sureness for _, sureness in verdicts.values())
-            by_question.update({f'{name}.{option}': sureness for option, (_, sureness) in verdicts.items()})
-            probabilities[name] = labelled
+            _read_mapping(read, name, keys, answers, boolean_threshold)
             continue
         if prop.get('type') == 'array':
-            # A list is the options that came back yes, in their order.
-            verdicts, labelled = _fanned_in(name, _options(prop['items']) or {}, answers, boolean_threshold)
-            _set(args, name, [option for option, (chosen, _) in verdicts.items() if chosen])
-            confidence[name] = min(sureness for _, sureness in verdicts.values())
-            by_question.update({f'{name}.{option}': sureness for option, (_, sureness) in verdicts.items()})
-            probabilities[name] = labelled
+            _read_list(read, name, prop, answers, boolean_threshold)
             continue
         answer = answers.get(name)
-        if isinstance(questions[name], NoulQuestion) and isinstance(answer, NoulAnswer):
-            if (bound := _bounded(prop)) is not None:
-                # The probability is the answer, so there is no separate confidence to report: a field
-                # that asks for the number would otherwise get it back twice under two names. The bound is
-                # the units it is asked in, so the same answer comes back as 0.42 or as 42.
-                _set(args, name, answer.noul * bound)
-            else:
-                chosen, sureness = _verdict(answer.noul, boolean_threshold)
-                _set(args, name, chosen)
-                confidence[name] = by_question[name] = sureness
-        elif isinstance(questions[name], ChoiceQuestion) and isinstance(answer, ChoiceAnswer):
-            if answer.choice not in none_option:
-                # The option itself is written back, looked up by its label rather than parsed out of it: `1`
-                # and `'1'` are two options, and only the lookup knows which one the label stood for.
-                labelled = _labelled(_options(prop) or {})
-                _set(args, name, labelled.get(answer.choice, answer.choice))
-            elif 'default' in properties[name]:
-                # "None of these" is the absence of an answer, and a default says what to use when there is
-                # none, so the field is left out for Pydantic to fill in. The model it belongs to is still put
-                # in place, to apply the default in, unless that model has a default of its own to apply instead.
-                _slot(args, name)
-            else:
-                _set(args, name, None)
-            confidence[name] = by_question[name] = answer.confidence
-            probabilities[name] = answer.probabilities
-        elif isinstance(questions[name], ScoreQuestion) and isinstance(answer, ScoreAnswer):
-            # `score` is a position along the rubric and falls between levels. The answer has to be one of them,
-            # so it is rounded to the nearest; the likeliest level would throw away the ordering that makes a
-            # rubric a rubric. A half goes up, unlike `round`.
-            _set(args, name, min(int(answer.score + 0.5), max(answer.probabilities)))
-            confidence[name] = by_question[name] = answer.confidence
-            probabilities[name] = {str(level): p for level, p in answer.probabilities.items()}
-            scores[name] = answer.score
-        else:
-            raise UnexpectedModelBehavior(f'Unexpected answer from the model for output field {name!r}: {answer!r}')
-    _leave_out_unanswered(args, properties, defaulted)
-    return args, {'confidence': confidence, 'probabilities': probabilities, 'scores': scores}, by_question
+        match questions[name], answer:
+            case NoulQuestion(), NoulAnswer():
+                _read_noul(read, name, prop, answer, boolean_threshold)
+            case ChoiceQuestion(), ChoiceAnswer():
+                _read_choice(read, name, prop, properties[name], none_option, answer)
+            case ScoreQuestion(), ScoreAnswer():
+                _read_score(read, name, answer)
+            case _:
+                raise UnexpectedModelBehavior(f'Unexpected answer from the model for output field {name!r}: {answer!r}')
+    _leave_out_unanswered(read.args, properties, defaulted)
+    details = {'confidence': read.confidence, 'probabilities': read.probabilities, 'scores': read.scores}
+    return read.args, details, read.by_question
+
+
+@dataclass
+class _ReadAnswers:
+    """What `_answers` reads back from the answers to the field questions, field by field."""
+
+    args: dict[str, Any] = field(default_factory=dict[str, Any])
+    confidence: dict[str, float] = field(default_factory=dict[str, float])
+    by_question: dict[str, float] = field(default_factory=dict[str, float])
+    probabilities: dict[str, dict[str, float]] = field(default_factory=dict[str, dict[str, float]])
+    scores: dict[str, float] = field(default_factory=dict[str, float])
+
+
+def _read_mapping(
+    read: _ReadAnswers, name: str, keys: dict[Any, str | None], answers: Mapping[str, object], boolean_threshold: float
+) -> None:
+    # A mapping keeps every option with the answer it got, unlike a list.
+    verdicts, labelled = _fanned_in(name, keys, answers, boolean_threshold)
+    _set(read.args, name, {key: chosen for key, (chosen, _) in verdicts.items()})
+    _read_verdicts(read, name, verdicts, labelled)
+
+
+def _read_list(
+    read: _ReadAnswers, name: str, prop: dict[str, Any], answers: Mapping[str, object], boolean_threshold: float
+) -> None:
+    # A list is the options that came back yes, in their order.
+    verdicts, labelled = _fanned_in(name, _options(prop['items']) or {}, answers, boolean_threshold)
+    _set(read.args, name, [option for option, (chosen, _) in verdicts.items() if chosen])
+    _read_verdicts(read, name, verdicts, labelled)
+
+
+def _read_verdicts(
+    read: _ReadAnswers, name: str, verdicts: dict[str, tuple[bool, float]], labelled: dict[str, float]
+) -> None:
+    """The confidence and probabilities of a field that fans out, from its options' verdicts."""
+    read.confidence[name] = min(sureness for _, sureness in verdicts.values())
+    read.by_question.update({f'{name}.{option}': sureness for option, (_, sureness) in verdicts.items()})
+    read.probabilities[name] = labelled
+
+
+def _read_noul(
+    read: _ReadAnswers, name: str, prop: dict[str, Any], answer: NoulAnswer, boolean_threshold: float
+) -> None:
+    if (bound := _bounded(prop)) is not None:
+        # The probability is the answer, so there is no separate confidence to report: a field
+        # that asks for the number would otherwise get it back twice under two names. The bound is
+        # the units it is asked in, so the same answer comes back as 0.42 or as 42.
+        _set(read.args, name, answer.noul * bound)
+    else:
+        chosen, sureness = _verdict(answer.noul, boolean_threshold)
+        _set(read.args, name, chosen)
+        read.confidence[name] = read.by_question[name] = sureness
+
+
+def _read_choice(
+    read: _ReadAnswers,
+    name: str,
+    prop: dict[str, Any],
+    declared: dict[str, Any],
+    none_option: dict[str, str],
+    answer: ChoiceAnswer,
+) -> None:
+    if answer.choice not in none_option:
+        # The option itself is written back, looked up by its label rather than parsed out of it: `1`
+        # and `'1'` are two options, and only the lookup knows which one the label stood for.
+        labelled = _labelled(_options(prop) or {})
+        _set(read.args, name, labelled.get(answer.choice, answer.choice))
+    elif 'default' in declared:
+        # "None of these" is the absence of an answer, and a default says what to use when there is
+        # none, so the field is left out for Pydantic to fill in. The model it belongs to is still put
+        # in place, to apply the default in, unless that model has a default of its own to apply instead.
+        _slot(read.args, name)
+    else:
+        _set(read.args, name, None)
+    read.confidence[name] = read.by_question[name] = answer.confidence
+    read.probabilities[name] = answer.probabilities
+
+
+def _read_score(read: _ReadAnswers, name: str, answer: ScoreAnswer) -> None:
+    # `score` is a position along the rubric and falls between levels. The answer has to be one of them,
+    # so it is rounded to the nearest; the likeliest level would throw away the ordering that makes a
+    # rubric a rubric. A half goes up, unlike `round`.
+    _set(read.args, name, min(int(answer.score + 0.5), max(answer.probabilities)))
+    read.confidence[name] = read.by_question[name] = answer.confidence
+    read.probabilities[name] = {str(level): p for level, p in answer.probabilities.items()}
+    read.scores[name] = answer.score
 
 
 def _route_picked(answer: object, routes: dict[str, ToolDefinition]) -> dict[str, Any]:
@@ -1138,6 +1412,47 @@ def _expressible(tool: ToolDefinition, instructions: str | None, limits: _Limits
     except UserError:
         return False
     return True
+
+
+def _fillable_outputs(
+    output_tools: list[ToolDefinition], offered: list[ToolDefinition], instructions: str | None, limits: _Limits
+) -> list[ToolDefinition]:
+    """The output tools whose fields the model can fill, or a `UserError` if every route would be handed off."""
+    fillable = [tool for tool in output_tools if _expressible(tool, instructions, limits)]
+    if (
+        output_tools
+        and not fillable
+        and not any(
+            _none_route(tool) or _capability_id(tool) is not None or _expressible(tool, instructions, limits)
+            for tool in offered
+        )
+    ):
+        # A route the model cannot fill is a hand-off, but only while some other route is a real alternative:
+        # an output type it can fill, a route with nothing to fill, or a tool whose arguments it can. With
+        # none of them the choice is decided before it is asked: every answer hands off, so the request that
+        # asks it buys nothing, and every run pays for the decision model on top of the model behind it.
+        if len(output_tools) == 1:
+            # Alone, the output type's own unsupported field is the error, as it names what to change.
+            _Ask.about(output_tools[0], instructions, limits, label=None)
+        raise UserError(
+            'None of the output types can be filled by this model, so every answer would be handed off and '
+            'the request asking which would be wasted. Give the agent an `output_type` it can fill, or drop '
+            'it from this model.'
+        )
+    return fillable
+
+
+def _forced_tool(
+    output_tools: list[ToolDefinition], tools: list[ToolDefinition], offered: list[ToolDefinition]
+) -> ToolDefinition | None:
+    """The one tool left to take without a choice question.
+
+    That is the route left once every other route on offer has returned, or a lone capability to load: loading it
+    is the only thing to do, and there is no other route to ask about.
+    """
+    if output_tools or len(tools) != 1:
+        return None
+    return tools[0] if len(offered) > 1 or _capability_id(tools[0]) is not None else None
 
 
 _REQUEST_TOKENS = 260
@@ -1197,36 +1512,26 @@ class _Speculation:
         instructions: str | None,
         limits: _Limits,
     ) -> _Speculation:
-        asks: dict[str, _Ask] = {}
-        for label, route in routes.items():
-            if _fixed_args(route) is None:
-                try:
-                    asks[label] = _Ask.about(route, instructions, limits, label=label)
-                except UserError:
-                    # Picking a route the model cannot fill hands the step off, a single output type's included,
-                    # so there is nothing to ask about it; it still counts as a route that could be taken.
-                    continue
+        asks = _fillable_asks(routes, instructions, limits)
         sizes = {label: _question_tokens(ask.questions) for label, ask in asks.items()}
         state_tokens = _state_tokens(state)
         # The route taken is not known yet, so the questions thrown away are all but the smallest route's, at most,
         # and all of them when the route taken could be one with nothing asked about it.
         smallest = min(sizes.values()) if len(sizes) == len(routes) else 0
         unpicked = sum(sizes.values()) - smallest
-        if unpicked > _REQUEST_TOKENS + state_tokens or state_tokens + sum(sizes.values()) > _SPECULATION_TOKENS:
+        if (
+            unpicked > _REQUEST_TOKENS + state_tokens
+            or state_tokens + sum(sizes.values()) > _SPECULATION_TOKENS
+            or (
+                limits.questions is not None and 1 + sum(len(ask.questions) for ask in asks.values()) > limits.questions
+            )
+        ):
             asks = {
                 label: ask for label, ask in asks.items() if routes[label] in output_tools and len(output_tools) == 1
             }
-        keys: dict[str, dict[str, str]] = {}
-        taken: set[str] = set()
-        for label, ask in asks.items():
-            keys[label] = {}
-            for key in ask.questions:
-                scoped = f'{label}.{key}'
-                while scoped in taken:
-                    scoped += '_'
-                taken.add(scoped)
-                keys[label][scoped] = key
-        return cls(asks, keys)
+        if limits.questions is not None and 1 + sum(len(ask.questions) for ask in asks.values()) > limits.questions:
+            asks = {}
+        return cls(asks, _scoped_keys(asks))
 
     def questions(self) -> dict[str, DecisionQuestion]:
         """Every speculated route's questions, under their scoped keys."""
@@ -1247,6 +1552,35 @@ class _Speculation:
         # A question of a field that fans out gets its option's key appended, so the scoped key is found the same way.
         scoped_by_key = {key: scoped for scoped, key in keys.items()}
         return args, details, {scoped_by_key[key]: value for key, value in confidence.items()}
+
+
+def _fillable_asks(routes: dict[str, ToolDefinition], instructions: str | None, limits: _Limits) -> dict[str, _Ask]:
+    """The questions of each route with fields to fill that the model can fill, by route label."""
+    asks: dict[str, _Ask] = {}
+    for label, route in routes.items():
+        if _has_fields(route):
+            try:
+                asks[label] = _Ask.about(route, instructions, limits, label=label)
+            except UserError:
+                # Picking a route the model cannot fill hands the step off, a single output type's included,
+                # so there is nothing to ask about it; it still counts as a route that could be taken.
+                continue
+    return asks
+
+
+def _scoped_keys(asks: dict[str, _Ask]) -> dict[str, dict[str, str]]:
+    """Per route label, each of its question keys by the key it is asked under, `'<label>.<key>'` made unique."""
+    keys: dict[str, dict[str, str]] = {}
+    taken: set[str] = set()
+    for label, ask in asks.items():
+        keys[label] = {}
+        for key in ask.questions:
+            scoped = f'{label}.{key}'
+            while scoped in taken:
+                scoped += '_'
+            taken.add(scoped)
+            keys[label][scoped] = key
+    return keys
 
 
 _NONE_OF_THESE = 'None of these.'
@@ -1273,34 +1607,39 @@ def _none_route(tool: ToolDefinition) -> bool:
     return tool.kind == 'output' and len(properties) == 1 and _null(properties[0])
 
 
-def _fixed_args(tool: ToolDefinition) -> dict[str, Any] | None:
-    """The arguments of a route taken on the pick alone, or `None` when the route has fields to fill.
+def _has_fields(tool: ToolDefinition) -> bool:
+    """Whether a route has fields for the model to fill.
 
-    That is a route with no arguments, a `None` route with the `None` it wraps, or a capability to load, whose
-    `id` is fixed by `_capability_routes`.
+    It is not the `None` route or a capability to load, whose `id` `_capability_routes` fixed, and its schema has
+    properties.
     """
-    properties = _properties(tool.parameters_json_schema)
-    if _none_route(tool):
-        return {name: None for name in properties}
+    return not _none_route(tool) and _capability_id(tool) is None and bool(_properties(tool.parameters_json_schema))
+
+
+def _route_args(tool: ToolDefinition) -> dict[str, Any]:
+    """The arguments to call a route with when nothing is filled.
+
+    None, the `None` a `None` route wraps, or the `id` of the capability a capability route loads.
+    """
     if (capability_id := _capability_id(tool)) is not None:
         return {'id': capability_id}
-    return None if properties else {}
+    return {name: None for name in _properties(tool.parameters_json_schema)} if _none_route(tool) else {}
 
 
-def _capability_routes(tools: list[ToolDefinition], messages: list[ModelMessage]) -> list[ToolDefinition]:
+def _capability_routes(tools: list[ToolDefinition]) -> list[ToolDefinition]:
     """The tools on offer, with `load_capability` as one route per capability it can still load.
 
     `load_capability` takes a plain string `id`, which a decision model cannot fill, so offered as it is the tool
     could only hand off. Its `metadata` carries the ids it can load and what each is for, and each becomes a route
     of its own, described by the capability's description and taken on the pick alone. The route question then
     weighs each capability against the tools and output types directly, instead of a generic "load a capability"
-    followed by a second request asking which. A capability already loaded, as the history shows, is not offered
-    again, since loading it twice is refused. A language model's `load_capability` is unchanged: the ids stay out of
-    its schema so the tools it is sent, and the prompt cache behind them, do not depend on what can be loaded.
+    followed by a second request asking which. A capability already active, whether the model or code loaded it, is
+    left out of the `metadata` and so not offered again, since loading it twice is refused. A language model's
+    `load_capability` is unchanged: the ids stay out of its schema so the tools it is sent, and the prompt cache behind
+    them, do not depend on what can be loaded.
     """
     if not any(tool.tool_kind == 'capability-load' for tool in tools):
         return tools
-    loaded = parse_loaded_capabilities(messages)
     routes: list[ToolDefinition] = []
     for tool in tools:
         catalog = (tool.metadata or {}).get(LOAD_CAPABILITY_CATALOG_METADATA_KEY)
@@ -1318,7 +1657,6 @@ def _capability_routes(tools: list[ToolDefinition], messages: list[ModelMessage]
                 },
             )
             for capability_id, description in cast('dict[str, str | None]', catalog).items()
-            if capability_id not in loaded
         )
     return routes
 
@@ -1335,10 +1673,28 @@ def _catalog(part: InstructionPart) -> bool:
     """Whether an instruction part is the deferred capability catalog, which `_capability_routes` offers as routes.
 
     Sent as shared framing, it would repeat every capability's description on every question, fields included,
-    whatever route is being asked about. The part has no `id`, since the loader that contributes it has none; its
-    name, which no other part may take, is how it is told apart.
+    whatever route is being asked about.
     """
-    return part.name == DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME
+    return part.id == _CATALOG_INSTRUCTION_ID
+
+
+def _without_catalog_changes(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """`messages` without the catalog's appended changes, which `_catalog` leaves out of the framing likewise."""
+    result: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest) and any(
+            isinstance(part, InstructionDeltaPart) and part.id == _CATALOG_INSTRUCTION_ID for part in message.parts
+        ):
+            message = replace(
+                message,
+                parts=[
+                    part
+                    for part in message.parts
+                    if not (isinstance(part, InstructionDeltaPart) and part.id == _CATALOG_INSTRUCTION_ID)
+                ],
+            )
+        result.append(message)
+    return result
 
 
 def _wrapped(tool: ToolDefinition) -> dict[str, Any] | None:
@@ -1394,7 +1750,7 @@ def _output_tools(
     with_fields: list[ToolDefinition] = []
     hand_offs: list[ToolDefinition] = []
     for tool in model_request_parameters.output_tools:
-        (hand_offs if _none_route(tool) or not _properties(tool.parameters_json_schema) else with_fields).append(tool)
+        (with_fields if _has_fields(tool) else hand_offs).append(tool)
     return with_fields, hand_offs
 
 
@@ -1495,24 +1851,40 @@ def _fields(output_tool: ToolDefinition) -> _Fields:
     docstring as a last entry.
     """
     schema = output_tool.parameters_json_schema
-    defs: dict[str, Any] = schema.get('$defs', {})
-    context: dict[str, list[str]] = {}
+    # Resolving a `$ref` inlines its definition into the field, so each one counts as an inlined copy.
+    walk = _FieldWalk(
+        schema.get('$defs', {}), InlinedValues(f'The JSON schema of {output_tool.kind} tool {output_tool.name!r}')
+    )
+    properties = walk.flatten(_properties(schema), '', frozenset(), [])
+    return _Fields(properties, frozenset(walk.defaulted), walk.context)
 
-    def resolve(prop: dict[str, Any] | bool) -> dict[str, Any]:
+
+@dataclass
+class _FieldWalk:
+    """The walk `_fields` flattens a route's schema with, and what it collects along the way."""
+
+    defs: dict[str, Any]
+    inlined: InlinedValues
+    context: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    defaulted: set[str] = field(default_factory=set[str])
+
+    def resolve(self, prop: dict[str, Any] | bool) -> dict[str, Any]:
         prop = _schema(prop)
         if ref := prop.get('$ref'):
-            prop = {**resolve(defs[ref.removeprefix('#/$defs/')]), **{k: v for k, v in prop.items() if k != '$ref'}}
+            definition = self.defs[ref.removeprefix('#/$defs/')]
+            self.inlined.add_copy(definition)
+            prop = {**self.resolve(definition), **{k: v for k, v in prop.items() if k != '$ref'}}
         if 'items' in prop:
-            prop = {**prop, 'items': resolve(prop['items'])}
+            prop = {**prop, 'items': self.resolve(prop['items'])}
         if 'anyOf' in prop:
-            prop = {**prop, 'anyOf': [resolve(option) for option in prop['anyOf']]}
+            prop = {**prop, 'anyOf': [self.resolve(option) for option in prop['anyOf']]}
         if 'propertyNames' in prop:
             # How an `Enum`-keyed mapping names its keys, as a `$ref` to the enum's own schema.
-            prop = {**prop, 'propertyNames': resolve(prop['propertyNames'])}
+            prop = {**prop, 'propertyNames': self.resolve(prop['propertyNames'])}
         return prop
 
     def flatten(
-        properties: dict[str, Any], prefix: str, seen: frozenset[str], chain: list[str]
+        self, properties: dict[str, Any], prefix: str, seen: frozenset[str], chain: list[str]
     ) -> dict[str, dict[str, Any]]:
         fields: dict[str, dict[str, Any]] = {}
         for name, prop in properties.items():
@@ -1523,33 +1895,44 @@ def _fields(output_tool: ToolDefinition) -> _Fields:
                 )
             raw = _schema(prop)
             ref = raw.get('$ref')
-            prop = resolve(prop)
+            prop = self.resolve(prop)
             if prop.get('type') == 'object' and prop.get('properties'):
-                if ref is not None and ref in seen:
-                    # A model that contains itself with no way out is infinitely many questions, so there is no
-                    # depth at which to stop asking. An optional or list self-reference is refused on the field
-                    # itself before the walk gets here.
-                    raise UserError(
-                        f'Output field {prefix + name!r} is not supported by this model: a model that contains '
-                        'itself has no end to fill, and every question is asked up front. Give the field a type '
-                        'that does not contain itself.'
-                    )
-                if 'default' in prop:
-                    defaulted.add(f'{prefix}{name}')
-                ancestors = [*chain, *_ancestor(f'{prefix}{name}', raw, defs)]
-                fields.update(flatten(prop['properties'], f'{prefix}{name}.', seen | {ref} if ref else seen, ancestors))
+                fields.update(self._flatten_model(f'{prefix}{name}', raw, ref, prop, seen, chain))
             else:
                 fields[f'{prefix}{name}'] = prop
-                leaf_context = [*chain]
-                if enum := _enum_description(raw, defs):
-                    leaf_context.append(enum)
-                if leaf_context:
-                    context[f'{prefix}{name}'] = leaf_context
+                self._add_leaf_context(f'{prefix}{name}', raw, chain)
         return fields
 
-    defaulted: set[str] = set()
-    properties = flatten(_properties(schema), '', frozenset(), [])
-    return _Fields(properties, frozenset(defaulted), context)
+    def _flatten_model(
+        self,
+        path: str,
+        raw: dict[str, Any],
+        ref: str | None,
+        prop: dict[str, Any],
+        seen: frozenset[str],
+        chain: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """A nested model field's leaves, named under `path`."""
+        if ref is not None and ref in seen:
+            # A model that contains itself with no way out is infinitely many questions, so there is no
+            # depth at which to stop asking. An optional or list self-reference is refused on the field
+            # itself before the walk gets here.
+            raise UserError(
+                f'Output field {path!r} is not supported by this model: a model that contains '
+                'itself has no end to fill, and every question is asked up front. Give the field a type '
+                'that does not contain itself.'
+            )
+        if 'default' in prop:
+            self.defaulted.add(path)
+        ancestors = [*chain, *_ancestor(path, raw, self.defs)]
+        return self.flatten(prop['properties'], f'{path}.', seen | {ref} if ref else seen, ancestors)
+
+    def _add_leaf_context(self, path: str, raw: dict[str, Any], chain: list[str]) -> None:
+        leaf_context = [*chain]
+        if enum := _enum_description(raw, self.defs):
+            leaf_context.append(enum)
+        if leaf_context:
+            self.context[path] = leaf_context
 
 
 def _set(args: dict[str, Any], name: str, value: Any) -> None:
@@ -1845,13 +2228,17 @@ class _Ask:
     def to_fill(cls, tool: ToolDefinition, instructions: str | None, limits: _Limits, *, label: str) -> _Ask | None:
         """The questions a picked route's fields become in the request that fills them, or `None` to hand it off.
 
-        `None` means the model cannot express one of the fields, so the route is raised as
-        [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute] before anything is sent to fill it.
+        `None` means the model cannot express one of the fields or their questions exceed the request cap,
+        so the route is raised as [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute]
+        before anything is sent to fill it.
         """
         try:
-            return cls.about(tool, instructions, limits, label=label)
+            ask = cls.about(tool, instructions, limits, label=label)
         except UserError:
             return None
+        if limits.questions is not None and len(ask.questions) > limits.questions:
+            return None
+        return ask
 
     def answers(
         self, response: DecisionResponse, boolean_threshold: float
@@ -1876,63 +2263,87 @@ def _questions(
     questions: dict[str, DecisionQuestion] = {}
     for name, prop in fields.properties.items():
         ask = _ask(name, prop, output_tool, instructions, label=label, context=fields.context.get(name, []))
-        prop, none_option = _optional(prop)
-        options = _options(prop)
-        if options and all(isinstance(option, bool) for option in options) and not any(options.values()):
-            # `Literal[True, False]` spells out the two values a `bool` already has and says nothing about
-            # either, so there is nothing to pick between that a yes/no does not ask, and the schema says
-            # `boolean` too. Two booleans that *are* described are that same yes/no with criteria, below.
-            options = None
-        if none_option:
-            options = _with_none(name, options, none_option, limits)
-
-        # A single value needs no label, so it is sent bare; the object form earns its keys only once there is
-        # more than one thing in it.
-        asked: JsonValue | None = next(iter(ask.values())) if len(ask) == 1 else (ask or None)
-
-        if prop.get('type') == 'array':
-            # Several options at once is one yes/no per option, all in the same request: does this option apply,
-            # asked with the field's question and the option's description.
-            questions.update(_fan_out(name, ask, _list_options(name, prop)))
-        elif options is not None:
-            if (criteria := _rubric(options, limits)) is not None:
-                questions[name] = ScoreQuestion(instructions=asked, criteria=cast('list[JsonValue]', criteria))
-            elif len(options) == 2 and all(isinstance(option, bool) for option in options):
-                # `True` and `False` are the two options a yes/no already has, so an `Enum` or `Literal` of
-                # exactly those is that same question, with somewhere to say what each answer means.
-                questions[name] = _noul_question(cast('dict[bool, str | None]', options), asked)
-            elif len(options) < 2 or not _pickable(options):
-                raise UserError(
-                    f'Output field {name!r} is not supported by this model: its options are not two or more strings '
-                    f'or whole numbers. {_UNSUPPORTED_FIELD_HINT}'
-                )
-            elif limits.choice_options is not None and len(options) > limits.choice_options:
-                raise UserError(
-                    f'Output field {name!r} is not supported by this model: it picks from at most '
-                    f'{limits.choice_options} options, and this one has {len(options)}.'
-                )
-            else:
-                questions[name] = ChoiceQuestion(
-                    instructions=asked,
-                    criteria={label: options[option] for label, option in _labelled(options).items()},
-                )
-        elif keys := _mapping_options(prop):
-            # A mapping from options to yes/no asks the same thing per option a list of them does; what
-            # differs is the answer, which keeps every option rather than only the ones that came back yes.
-            if len(keys) < 2:
-                # A key of a JSON object is a string by construction, so only how many there are is in doubt.
-                raise UserError(
-                    f'Output field {name!r} is not supported by this model: a mapping must be keyed by two or '
-                    f'more options. {_UNSUPPORTED_FIELD_HINT}'
-                )
-            questions.update(_fan_out(name, ask, keys))
-        elif prop.get('type') == 'boolean' or _bounded(prop) is not None:
-            if not ask:
-                raise UserError(_ASKS_NOTHING.format(name=name))
-            questions[name] = NoulQuestion(instructions=asked)
-        else:
-            raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
+        questions.update(_field_questions(name, prop, ask, limits))
     return questions
+
+
+def _field_questions(
+    name: str, prop: dict[str, Any], ask: dict[str, JsonValue], limits: _Limits
+) -> Mapping[str, DecisionQuestion]:
+    """The questions one output field becomes, keyed as `_questions` returns them."""
+    prop, none_option = _optional(prop)
+    options = _field_options(name, prop, none_option, limits)
+
+    # A single value needs no label, so it is sent bare; the object form earns its keys only once there is
+    # more than one thing in it.
+    asked: JsonValue | None = next(iter(ask.values())) if len(ask) == 1 else (ask or None)
+    if asked is None and limits.requires_instructions:
+        # Only a question whose options say what it asks gets this far without anything to ask: a plain yes/no
+        # is refused below, and a field that fans out asks about each option by name.
+        asked = _DEFAULT_QUESTION
+
+    if prop.get('type') == 'array':
+        # Several options at once is one yes/no per option, all in the same request: does this option apply,
+        # asked with the field's question and the option's description.
+        return _fan_out(name, ask, _list_options(name, prop))
+    if options is not None:
+        return {name: _option_question(name, options, asked, limits)}
+    if keys := _mapping_options(prop):
+        # A mapping from options to yes/no asks the same thing per option a list of them does; what
+        # differs is the answer, which keeps every option rather than only the ones that came back yes.
+        if len(keys) < 2:
+            # A key of a JSON object is a string by construction, so only how many there are is in doubt.
+            raise UserError(
+                f'Output field {name!r} is not supported by this model: a mapping must be keyed by two or '
+                f'more options. {_UNSUPPORTED_FIELD_HINT}'
+            )
+        return _fan_out(name, ask, keys)
+    if prop.get('type') == 'boolean' or _bounded(prop) is not None:
+        if not ask:
+            raise UserError(_ASKS_NOTHING.format(name=name))
+        return {name: NoulQuestion(instructions=asked)}
+    raise UserError(f'Output field {name!r} is not supported by this model. {_UNSUPPORTED_FIELD_HINT}')
+
+
+def _field_options(
+    name: str, prop: dict[str, Any], none_option: dict[str, str], limits: _Limits
+) -> dict[Any, str | None] | None:
+    """The options a field picks from, with "none of these" for an optional one, or `None` if it has none."""
+    options = _options(prop)
+    if options and all(isinstance(option, bool) for option in options) and not any(options.values()):
+        # `Literal[True, False]` spells out the two values a `bool` already has and says nothing about
+        # either, so there is nothing to pick between that a yes/no does not ask, and the schema says
+        # `boolean` too. Two booleans that *are* described are that same yes/no with criteria, below.
+        options = None
+    if none_option:
+        options = _with_none(name, options, none_option, limits)
+    return options
+
+
+def _option_question(
+    name: str, options: dict[Any, str | None], asked: JsonValue | None, limits: _Limits
+) -> DecisionQuestion:
+    """The question a field with options becomes: a rubric to score, a yes/no, or a choice."""
+    if (criteria := _rubric(options, limits)) is not None:
+        return ScoreQuestion(instructions=asked, criteria=cast('list[JsonValue]', criteria))
+    if len(options) == 2 and all(isinstance(option, bool) for option in options):
+        # `True` and `False` are the two options a yes/no already has, so an `Enum` or `Literal` of
+        # exactly those is that same question, with somewhere to say what each answer means.
+        return _noul_question(cast('dict[bool, str | None]', options), asked)
+    if len(options) < 2 or not _pickable(options):
+        raise UserError(
+            f'Output field {name!r} is not supported by this model: its options are not two or more strings '
+            f'or whole numbers. {_UNSUPPORTED_FIELD_HINT}'
+        )
+    if limits.choice_options is not None and len(options) > limits.choice_options:
+        raise UserError(
+            f'Output field {name!r} is not supported by this model: it picks from at most '
+            f'{limits.choice_options} options, and this one has {len(options)}.'
+        )
+    return ChoiceQuestion(
+        instructions=asked,
+        criteria={label: options[option] for label, option in _labelled(options).items()},
+    )
 
 
 _OUTPUT_ROUTE_LABEL = 'output'
@@ -1941,6 +2352,9 @@ _OUTPUT_ROUTE_LABEL = 'output'
 _OUTPUT_LABEL_SUFFIX = ' (output)'
 
 _CAPABILITY_LABEL_SUFFIX = ' (capability)'
+
+_CATALOG_INSTRUCTION_ID = InstructionId(CapabilityInstructionSource(DEFERRED_CAPABILITY_CATALOG_ID))
+"""The id of the deferred capability catalog's instruction part, which the loader keys so its changes are appended."""
 
 
 def _output_route_label(tool: ToolDefinition, output_name: str | None) -> str:
@@ -2013,20 +2427,21 @@ def _described(tool: ToolDefinition) -> str | None:
 
 
 def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tuple[list[ToolDefinition], bool]:
-    """The tools still on offer, and whether any tool has returned this turn.
+    """The tools still on offer, and whether the agent loop has acted this turn: a tool returned or a retry was sent.
 
     A tool whose result is already in the turn is not offered again. A decision model judges the text in front of it
     and has no notion of having made a call: with a call and its result in view, the text still calls for the tool, so
     left on offer it is picked again until the usage limit, even with the result set apart under `done`. That goes for
-    a call made by a model behind this one too, since this model would propose it again on the same text. A call that
-    produced no result, because the tool asked for a retry, leaves the tool on offer. The turn is everything since the
+    a call made by a model behind this one too, since this model would propose it again on the same text. A call whose
+    result asked for a retry (`outcome='retried'`) leaves the tool on offer. The turn is everything since the
     last user prompt, which is the nearest thing to a run boundary the history has: a result from an earlier turn does
     not withhold the tool, but a judged history that ends in another agent's call to a tool of the same name does.
 
-    A capability to load is exempt: `_capability_routes` already leaves out the ones the history shows loaded, and
+    A capability to load is exempt: `_capability_routes` already leaves out the active ones, and
     loading one is no reason to withhold the others.
     """
     returned: set[str] = set()
+    retried = False
     for message in messages:
         if not isinstance(message, ModelRequest):
             continue
@@ -2035,9 +2450,15 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
                 # A new prompt starts a turn, and a result that arrived before it in the same request is the
                 # previous turn's.
                 returned.clear()
-            elif isinstance(part, ToolReturnPart):
+                retried = False
+            elif isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                 returned.add(part.tool_name)
-    return [tool for tool in tools if tool.name not in returned or _capability_id(tool) is not None], bool(returned)
+            elif isinstance(part, ToolReturnPart | RetryFeedbackPart):
+                retried = True
+    return (
+        [tool for tool in tools if tool.name not in returned or _capability_id(tool) is not None],
+        bool(returned) or retried,
+    )
 
 
 _ROUTE_QUESTION = 'Which of these does this call for?'
@@ -2115,7 +2536,28 @@ def _noul_question(options: dict[bool, str | None], asked: JsonValue | None) -> 
     )
 
 
-def _prompt_text(part: UserPromptPart) -> str:
+def _image_label(item: MultiModalContent, images: list[BinaryContent | ImageUrl], context: str) -> str:
+    if not isinstance(item, (BinaryContent, ImageUrl)) or (isinstance(item, BinaryContent) and not item.is_image):
+        raise UserError(f'{context} contains an unsupported file: this model accepts text and images only.')
+    images.append(item)
+    return f'<image {len(images)}>'
+
+
+def _structured_prompt(parts: Sequence[UserPromptPart]) -> StructuredContent | None:
+    """The structured item a prompt consists of, when it has nothing else, to be judged as the value it holds.
+
+    A prompt that mixes it with text or other items is judged as the text it renders to, like any other text.
+    """
+    items = [
+        item
+        for part in parts
+        for item in ([part.content] if isinstance(part.content, str) else part.content)
+        if not isinstance(item, CachePoint)
+    ]
+    return items[0] if len(items) == 1 and isinstance(items[0], StructuredContent) else None
+
+
+def _prompt_text(part: UserPromptPart, images: list[BinaryContent | ImageUrl] | None) -> str:
     texts: list[str] = []
     for item in [part.content] if isinstance(part.content, str) else part.content:
         if isinstance(item, str):
@@ -2124,6 +2566,8 @@ def _prompt_text(part: UserPromptPart) -> str:
             texts.append(item.content)
         elif isinstance(item, CachePoint):
             pass  # A marker for models that cache a prompt prefix; there is nothing in it to send.
+        elif images is not None and is_multi_modal_content(item):
+            texts.append(_image_label(item, images, 'A user prompt'))
         else:
             raise UserError(
                 'Files are not supported by this model: it judges text, so images, audio, video and documents '
@@ -2132,27 +2576,42 @@ def _prompt_text(part: UserPromptPart) -> str:
     return '\n\n'.join(texts)
 
 
-def _tool_return_entry(part: BaseToolReturnPart) -> JsonValue:
-    """A tool result as history, or a `UserError` when it carries a file: `model_response_str` would leave it out."""
+def _tool_return_entry(part: BaseToolReturnPart, images: list[BinaryContent | ImageUrl] | None) -> JsonValue:
+    """A tool result as history, preserving file positions and failed-result wrapping."""
     if part.files:
-        raise UserError('Files are not supported by this model: a file in a tool result cannot be sent to it.')
+        if images is None:
+            raise UserError('Files are not supported by this model: a file in a tool result cannot be sent to it.')
+        content: list[str] = []
+        for item in part.content_items(mode='str', wrap_if_error=False):
+            content.append(item if isinstance(item, str) else _image_label(item, images, 'A tool result'))
+        part = dataclasses.replace(part, content=content)
     return {'tool_return': {'name': part.tool_name, 'content': part.model_response_str()}}
 
 
-def _request_entry(part: ModelRequestPart) -> JsonValue:
+def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl] | None) -> JsonValue:
     """A request part as a history entry: a user prompt as what the user said, the rest as what they are."""
     if isinstance(part, SystemPromptPart):
         # Whoever wrote it, a system prompt is something that was said in the conversation, so it is
         # material to judge and not a question to ask. What the model is asked comes from `instructions`.
         return {'system': part.content}
     elif isinstance(part, UserPromptPart):
-        return {'user': _prompt_text(part)}
+        structured = _structured_prompt([part])
+        return {'user': _prompt_text(part, images) if structured is None else to_jsonable_python(structured.value)}
     elif isinstance(part, ToolReturnPart):
-        return _tool_return_entry(part)
-    elif isinstance(part, RetryPromptPart):
+        return _tool_return_entry(part, images)
+    elif isinstance(part, RetryFeedbackPart):
         return {'retry': part.model_response()}
-    elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-        raise _unsynthesized_tool_availability_delta_error()
+    # TODO(v3): remove `RetryPromptPart`
+    elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        # A direct `request()` skips `prepare_messages`; judge the deprecated part as what it always meant.
+        return _request_entry(_translate_legacy_retry_part(part), images)
+    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
+        raise _unprojected_instruction_delta_error()
+    elif isinstance(part, CompactionPart):
+        # A summary standing in for earlier turns: the same entry a response-side summary gets.
+        return {'summary': part.content or ''}
+    elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+        raise _unprepared_part_error(part)
     elif isinstance(part, SpeechPart):  # pragma: no cover
         # `Model.prepare_messages` turns realtime speech into `UserPromptPart`s before this runs.
         raise _unconverted_speech_part_error()
@@ -2160,64 +2619,66 @@ def _request_entry(part: ModelRequestPart) -> JsonValue:
         assert_never(part)
 
 
-def _response_entries(message: ModelResponse) -> list[JsonValue]:
+def _response_entries(message: ModelResponse, images: list[BinaryContent | ImageUrl] | None) -> list[JsonValue]:
     """Map a response to history entries, in the order the model produced them."""
     entries: list[JsonValue] = []
     for part in message.parts:
-        if isinstance(part, TextPart):
-            entries.append({'assistant': part.content})
-        elif isinstance(part, ThinkingPart):
-            # What a model thought is part of what it did: a judgment can be about the reasoning itself, and a
-            # conversation continued from the history should see it as the model that wrote it would.
-            # Thinking a provider only returned encrypted, as a `signature` with no text, has nothing to show.
-            if part.content:
-                entries.append({'thinking': part.content})
-        elif isinstance(part, ToolCallPart | NativeToolCallPart):
-            entries.append({'tool_call': {'name': part.tool_name, 'args': part.args_as_dict()}})
-        elif isinstance(part, NativeToolReturnPart):
-            entries.append(_tool_return_entry(part))
-        elif isinstance(part, CompactionPart):
-            if part.content:
-                entries.append({'summary': part.content})
-        elif isinstance(part, FilePart):
-            raise UserError(
-                'Files are not supported by this model: a file in the message history cannot be sent to it.'
-            )
-        elif isinstance(part, SpeechPart):  # pragma: no cover
-            raise _unconverted_speech_part_error()
-        else:
-            assert_never(part)
+        match part:
+            case TextPart():
+                entries.append({'assistant': part.content})
+            case ThinkingPart():
+                # What a model thought is part of what it did: a judgment can be about the reasoning itself, and a
+                # conversation continued from the history should see it as the model that wrote it would.
+                # Thinking a provider only returned encrypted, as a `signature` with no text, has nothing to show.
+                if part.content:
+                    entries.append({'thinking': part.content})
+            case ToolCallPart() | NativeToolCallPart():
+                entries.append({'tool_call': {'name': part.tool_name, 'args': part.args_as_dict()}})
+            case NativeToolReturnPart():
+                entries.append(_tool_return_entry(part, images))
+            case CompactionPart():
+                if part.content:
+                    entries.append({'summary': part.content})
+            case FilePart():
+                entries.append(_file_part_entry(part, images))
+            case SpeechPart():  # pragma: no cover
+                raise _unconverted_speech_part_error()
+            case _:
+                assert_never(part)
     return entries
 
 
-def _map_messages(messages: list[ModelMessage], *, turn: bool) -> JsonValue:
+def _file_part_entry(part: FilePart, images: list[BinaryContent | ImageUrl] | None) -> JsonValue:
+    """Map a file the model produced to a history entry."""
+    if images is None:
+        raise UserError('Files are not supported by this model: a file in the message history cannot be sent to it.')
+    return {'assistant': _image_label(part.content, images, 'An assistant response')}
+
+
+def _map_messages(
+    messages: list[ModelMessage], *, turn: bool, images: list[BinaryContent | ImageUrl] | None
+) -> JsonValue:
     """The state to judge.
 
     The latest user text on its own is the whole state, sent as the plain text it is. With a conversation behind
     it there are two parts to keep apart, so they get named: the text under judgement and the `history` before it.
 
-    With `turn`, a tool has returned since the latest user prompt, and the state splits at that prompt into three:
-    the `history` before it, the prompt itself as `text`, and what has been done since under `done` — the calls, their
-    results, and anything else in the turn — so the request stays the text being judged while the steps taken for it
-    are told apart from it. Every entry lands in exactly one of the three, however the messages arrived: a run's own,
-    or a `message_history` passed in that ends partway through a turn.
+    With `turn`, a tool has returned or a retry was sent since the latest user prompt, and the state splits at that
+    prompt into three: the `history` before it, the prompt itself as `text`, and what has been done since under `done`
+    — the calls, their results, the retries, and anything else in the turn — so the request stays the text being
+    judged while the steps taken for it are told apart from it. Every entry lands in exactly one of the three,
+    however the messages arrived: a run's own, or a `message_history` passed in that ends partway through a turn.
+
+    A prompt that is a single `StructuredContent` is judged as the value it holds, in place of text: the whole state
+    on its own, otherwise under `state` where the text would be under `text`, and as the `user` entry in `history`.
     """
     if turn and any(isinstance(part, UserPromptPart) for message in messages for part in message.parts):
-        return _map_turn(messages)
-    history: list[JsonValue] = []
-    prompt_parts: list[str] = []
-    for message in messages:
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if isinstance(part, UserPromptPart) and message is messages[-1]:
-                    prompt_parts.append(_prompt_text(part))
-                else:
-                    history.append(_request_entry(part))
-        elif isinstance(message, ModelResponse):
-            history.extend(_response_entries(message))
-        else:
-            assert_never(message)
+        return _map_turn(messages, images)
+    history, prompts, prompt_parts = _history_and_prompts(messages, images)
 
+    if (structured := _structured_prompt(prompts)) is not None:
+        value = to_jsonable_python(structured.value)
+        return {'history': history, 'state': value} if history else value
     text = '\n\n'.join(prompt_parts)
     if not (text or history):
         raise UserError('A request without user text is not supported by this model: it needs text to judge.')
@@ -2229,31 +2690,81 @@ def _map_messages(messages: list[ModelMessage], *, turn: bool) -> JsonValue:
     return state
 
 
-def _map_turn(messages: list[ModelMessage]) -> JsonValue:
+def _history_and_prompts(
+    messages: list[ModelMessage], images: list[BinaryContent | ImageUrl] | None
+) -> tuple[list[JsonValue], list[UserPromptPart], list[str]]:
+    """The history entries, and the last message's user prompts with their text, for `_map_messages`."""
+    history: list[JsonValue] = []
+    prompts: list[UserPromptPart] = []
+    prompt_parts: list[str] = []
+    for message in messages:
+        match message:
+            case ModelRequest():
+                for part in message.parts:
+                    if isinstance(part, UserPromptPart) and message is messages[-1]:
+                        prompts.append(part)
+                        prompt_parts.append(_prompt_text(part, images))
+                    else:
+                        history.append(_request_entry(part, images))
+            case ModelResponse():
+                history.extend(_response_entries(message, images))
+            case _:
+                assert_never(message)
+    return history, prompts, prompt_parts
+
+
+def _map_turn(messages: list[ModelMessage], images: list[BinaryContent | ImageUrl] | None) -> JsonValue:
     """The state split at the latest user prompt, for `_map_messages`."""
     latest = max(
         index
         for index, message in enumerate(messages)
         if isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
     )
-    history: list[JsonValue] = []
-    prompt_parts: list[str] = []
-    done: list[JsonValue] = []
-    for index, message in enumerate(messages):
+    request = messages[latest]
+    assert isinstance(request, ModelRequest)
+    history = _message_entries(messages[:latest], images)
+    earlier, prompts, prompt_parts, later = _split_at_last_prompt(request, images)
+    history.extend(earlier)
+    done = [*later, *_message_entries(messages[latest + 1 :], images)]
+    state: dict[str, JsonValue] = {'history': history} if history else {}
+    if (structured := _structured_prompt(prompts)) is not None:
+        state['state'] = to_jsonable_python(structured.value)
+    else:
+        state['text'] = '\n\n'.join(prompt_parts)
+    return {**state, 'done': done}
+
+
+def _message_entries(
+    messages: Sequence[ModelMessage], images: list[BinaryContent | ImageUrl] | None
+) -> list[JsonValue]:
+    """Whole messages as history entries, in order, for `_map_turn`."""
+    entries: list[JsonValue] = []
+    for message in messages:
         if isinstance(message, ModelResponse):
-            (history if index < latest else done).extend(_response_entries(message))
+            entries.extend(_response_entries(message, images))
             continue
         assert isinstance(message, ModelRequest)
-        if index != latest:
-            (history if index < latest else done).extend(_request_entry(part) for part in message.parts)
-            continue
-        # The request holding the latest prompt: what came before its last prompt is the previous turn's, and what
-        # came after it is this one's. Its prompts are the text, as they are when it is the last message.
-        last_prompt = max(i for i, part in enumerate(message.parts) if isinstance(part, UserPromptPart))
-        for i, part in enumerate(message.parts):
-            if isinstance(part, UserPromptPart):
-                prompt_parts.append(_prompt_text(part))
-            else:
-                (history if i < last_prompt else done).append(_request_entry(part))
-    state: dict[str, JsonValue] = {'history': history} if history else {}
-    return {**state, 'text': '\n\n'.join(prompt_parts), 'done': done}
+        entries.extend(_request_entry(part, images) for part in message.parts)
+    return entries
+
+
+def _split_at_last_prompt(
+    request: ModelRequest, images: list[BinaryContent | ImageUrl] | None
+) -> tuple[list[JsonValue], list[UserPromptPart], list[str], list[JsonValue]]:
+    """The request holding the latest prompt, split at its last prompt, for `_map_turn`.
+
+    What came before its last prompt is the previous turn's, and what came after it is this one's. Its prompts are
+    the text, as they are when it is the last message.
+    """
+    last_prompt = max(i for i, part in enumerate(request.parts) if isinstance(part, UserPromptPart))
+    earlier: list[JsonValue] = []
+    prompts: list[UserPromptPart] = []
+    prompt_parts: list[str] = []
+    later: list[JsonValue] = []
+    for i, part in enumerate(request.parts):
+        if isinstance(part, UserPromptPart):
+            prompts.append(part)
+            prompt_parts.append(_prompt_text(part, images))
+        else:
+            (earlier if i < last_prompt else later).append(_request_entry(part, images))
+    return earlier, prompts, prompt_parts, later

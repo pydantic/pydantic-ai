@@ -8,11 +8,12 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
+from rich.text import Text
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
 
 
 async def test_completion_control_bytes_are_not_executed_by_preview_or_echo(tmp_path: Path) -> None:
@@ -31,13 +32,15 @@ async def test_completion_control_bytes_are_not_executed_by_preview_or_echo(tmp_
     store.plugins_dir.mkdir()
     (store.plugins_dir / 'unsafe_completion.py').write_text(
         'from pydantic_clai2.commands import Command\n'
-        'def activate(host):\n'
-        f'    payload = {payload!r}\n'
-        '    def handle(args):\n'
-        '        assert args == [payload]\n'
-        "        return 'SAFE_COMMAND_HANDLED'\n"
-        "    host.commands.register(Command(name='unsafe', description='Completion test', "
-        'handler=handle, complete=lambda args: [payload]))\n'
+        'from pydantic_clai2.plugins import Plugin\n'
+        f'payload = {payload!r}\n'
+        'def handle(args):\n'
+        '    assert args == [payload]\n'
+        "    return 'SAFE_COMMAND_HANDLED'\n"
+        'class Unsafe(Plugin):\n'
+        '    def get_commands(self):\n'
+        "        return [Command(name='unsafe', description='Completion test', "
+        'handler=handle, complete=lambda args: [payload])]\n'
     )
     output = Output()
     done = anyio.Event()
@@ -59,4 +62,4 @@ async def test_completion_control_bytes_are_not_executed_by_preview_or_echo(tmp_
             await done.wait()
     assert '\x1b]52;' not in output.getvalue()
     assert '\x07' not in output.getvalue()
-    assert r'> /unsafe file\x1b]52;c;YQ==\x07' in output.getvalue()
+    assert r'> /unsafe file\x1b]52;c;YQ==\x07' in Text.from_ansi(output.getvalue()).plain
