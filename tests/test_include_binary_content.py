@@ -387,6 +387,7 @@ CASES = [
                 ],
                 'approvals': [],
                 'metadata': IsSingleEntryDict({'img': REDACTED_IMAGE}),
+                'kinds': {},
             }
         ),
     ),
