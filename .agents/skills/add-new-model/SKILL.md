@@ -24,7 +24,7 @@ The model-name `Literal` aliases (`KnownModelName`, each provider's `*ModelName`
 advisor aliases) list the models a user would pick. They are not catalogs. Apply this rule to every id you add:
 
 - A **line** is a tier name: GPT `sol`/`terra`/`luna`/`astra`, Claude `opus`/`sonnet`/`haiku`/`fable`, Gemini
-  `pro`/`flash`/`flash-lite`, and the Gemini 4 element names `argon`/`carbon`.
+  `pro`/`flash`/`flash-lite`, and the Gemini 4 element names `argon`/`carbon`/`hydrogen`.
 - A **generation** is the major version, counted per provider.
 - Per line, list the newest id of the newest generation and the newest id of the previous generation. Remove
   the older id the new one replaces, in the provider alias and in `KnownModelName`.

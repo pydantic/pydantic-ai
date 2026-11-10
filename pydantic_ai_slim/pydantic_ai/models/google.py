@@ -177,6 +177,7 @@ _NATIVE_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TY
 LatestGoogleModelNames = Literal[
     'gemini-4-carbon',
     'gemini-4-argon',
+    'gemini-4-hydrogen',
     'gemini-3.1-pro-preview',
     'gemini-3.8-flash',
     'gemini-3.5-flash-lite',

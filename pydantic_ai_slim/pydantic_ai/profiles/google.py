@@ -229,6 +229,11 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
     # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
     ('gemini-4-carbon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+    # Verified live 2026-11-10 against the Gemini API: `LOW`, `MEDIUM` and `HIGH` are accepted, `MINIMAL` returns
+    # 400 `Thinking level MINIMAL is not supported for this model`. Vertex is not probed; its thinking table says
+    # `MINIMAL` is "Not supported on Gemini 4 models":
+    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+    ('gemini-4-hydrogen', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
 )
 """Model name prefixes mapped to their documented thinking levels."""
 
