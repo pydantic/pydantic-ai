@@ -300,7 +300,7 @@ class TestWebSearch:
         output = await _toolset(client).web_search('q')
         assert output.metadata == {'sources': [{'url': 'https://a.dev', 'title': 'First'}]}
 
-    async def test_num_results_enforced_on_oversized_response(self) -> None:
+    async def test_max_results_enforced_on_oversized_response(self) -> None:
         client = _FakeExaClient(
             search_response=_response(
                 _result('https://a.dev', title='A'),

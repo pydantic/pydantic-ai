@@ -132,7 +132,7 @@ class YouSearch(AbstractCapability[AgentDepsT]):
     id: str | None = 'you_search'
     """Stable identity for durable execution, which records each You.com request under it."""
 
-    num_results: int | None = field(default=None, kw_only=True)
+    num_results: int | None = None
     """Deprecated: renamed to `max_results`."""
 
     def __post_init__(self) -> None:
