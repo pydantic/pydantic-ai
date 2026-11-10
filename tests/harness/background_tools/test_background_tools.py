@@ -8,7 +8,7 @@ import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import anyio
 import pytest
@@ -93,10 +93,10 @@ def _plain(value: object) -> object:
     if isinstance(value, TextContent):
         return TextContent(value.content, metadata=_without_mark(value.metadata))
     if isinstance(value, list):
-        items: list[object] = value
+        items = cast('list[object]', value)
         return [_plain(item) for item in items]
     if isinstance(value, dict):
-        metadata: dict[str, object] = value
+        metadata = cast('dict[str, object]', value)
         return _without_mark(metadata)
     return value
 

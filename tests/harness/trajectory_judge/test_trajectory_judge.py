@@ -6,7 +6,7 @@ import asyncio
 import re
 import secrets
 from dataclasses import dataclass, is_dataclass
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -124,11 +124,11 @@ def _plain(value: object) -> object:
     if isinstance(value, TextContent):
         return TextContent(value.content, metadata=_without_mark(value.metadata))
     if isinstance(value, list):
-        items: list[object] = value
+        items = cast('list[object]', value)
         return [_plain(item) for item in items]
     # The rest is a `TextContent`'s metadata.
     assert isinstance(value, dict)
-    metadata: dict[str, object] = value
+    metadata = cast('dict[str, object]', value)
     return _without_mark(metadata)
 
 
