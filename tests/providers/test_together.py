@@ -102,3 +102,21 @@ def test_together_provider_model_profile(mocker: MockerFixture):
     no_slash_profile = provider.model_profile('gpt-4o-mini')
     assert no_slash_profile is not None
     assert no_slash_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+
+def test_together_provider_model_profile_v4_point_release_spellings():
+    provider = TogetherProvider(api_key='test')
+    for model_name in (
+        'deepseek-ai/DeepSeek-V4-Flash-0731',
+        'deepseek-ai/DeepSeek-V4.1-Flash',
+        'deepseek-ai/DeepSeek-V4p1-Flash',
+        'deepseek-ai/DeepSeek-V4-1-Flash-1017',
+    ):
+        profile = provider.model_profile(model_name)
+        assert profile is not None
+        assert profile.get('supports_forced_tool_choice') is False
+
+    # Pre-V4 ids keep forced tool choice available.
+    v3_2 = provider.model_profile('deepseek-ai/DeepSeek-V3.2')
+    assert v3_2 is not None
+    assert v3_2.get('supports_forced_tool_choice') is not False
