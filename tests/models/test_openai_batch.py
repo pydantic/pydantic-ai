@@ -40,6 +40,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.tools import ToolDefinition
 from tests.batch_utils import UNRUN_MESSAGES
 from tests.conftest import try_import
+from tests.models.mock_openai import with_history_digests
 
 with try_import() as imports_successful:
     import httpx2
@@ -278,11 +279,13 @@ async def test_batch_encode_continues_a_stored_response() -> None:
     model = _model()
     request = BatchRequest(
         custom_id='item',
-        messages=[
-            ModelRequest(parts=[UserPromptPart('Hello')]),
-            ModelResponse(parts=[TextPart('Hi')], provider_name='openai', provider_response_id='resp_123'),
-            ModelRequest(parts=[UserPromptPart('Again')]),
-        ],
+        messages=with_history_digests(
+            [
+                ModelRequest(parts=[UserPromptPart('Hello')]),
+                ModelResponse(parts=[TextPart('Hi')], provider_name='openai', provider_response_id='resp_123'),
+                ModelRequest(parts=[UserPromptPart('Again')]),
+            ]
+        ),
         model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
     )
     body = json.loads((await model.batch_encode(request)).body)
@@ -870,7 +873,7 @@ async def test_batch_error_suggests_a_known_model_for_an_unknown_one(allow_model
     """A batch whose model OpenAI doesn't know suggests a close known model, as a request on its own does."""
     api = _FakeBatchAPI(batch=_batch_json('validating'))
     model = OpenAIResponsesModel(
-        'gpt-4.1-nan',
+        'gpt-5.6-lun',
         provider=OpenAIProvider(
             openai_client=AsyncOpenAI(
                 api_key='k', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(api.handle))
@@ -879,12 +882,12 @@ async def test_batch_error_suggests_a_known_model_for_an_unknown_one(allow_model
     )
     request = _request()
     batch = await model.batch_create([await model.batch_encode(request)])
-    error = {'code': 'model_not_found', 'message': "The provided model 'gpt-4.1-nan' is not supported.", 'line': 1}
+    error = {'code': 'model_not_found', 'message': "The provided model 'gpt-5.6-lun' is not supported.", 'line': 1}
     api.batch = _batch_json('failed', errors={'object': 'list', 'data': [error]})
     [result] = await model.batch_results(await model.batch_status(batch))
     with pytest.raises(ModelHTTPError) as exc_info:
         model.batch_decode(result, request)
-    assert exc_info.value.suggested_model_id == 'openai:gpt-4.1-nano'
+    assert exc_info.value.suggested_model_id == 'openai:gpt-5.6-luna'
 
 
 async def test_batch_status_of_an_unknown_status_keeps_waiting(allow_model_requests: None) -> None:

@@ -1,5 +1,0 @@
-{
-  "against": "v2.65.0",
-  "reason": "Adds the per-kind `supported_image_media_types`, `supported_audio_media_types` and `supported_video_media_types` defaults to `DEFAULT_PROFILE` (#12054). The existing keys keep their values; `supported_document_media_types` is now typed `frozenset[str]` instead of `frozenset[DocumentMediaType]`.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12419"
-}

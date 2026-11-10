@@ -21,7 +21,7 @@ concurrency:
   group: weekly-ce-audit
   cancel-in-progress: false
 tools:
-  bash: ['git *', 'python3 .github/scripts/weekly_ce_audit.py prepare-review *']
+  bash: ['*']
   github:
     mode: gh-proxy
     toolsets: [default]
@@ -29,6 +29,7 @@ safe-outputs:
   footer: false
   activation-comments: false
   report-failure-as-issue: false
+  report-failed-jobs: false
   noop:
     report-as-issue: false
   missing-tool:
@@ -37,17 +38,33 @@ safe-outputs:
     create-issue: false
   report-incomplete:
     create-issue: false
-  github-app:
-    client-id: ${{ vars.DOCS_CLIENT_ID }}
-    private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
-    owner: pydantic
-    repositories: [pydantic-ai]
   steps:
     - name: Require successful coverage and edit validation before publication
       env:
         AGENT_RESULT: ${{ needs.agent.result }}
       run: test "$AGENT_RESULT" = success
+    - name: Download the validated audit evidence
+      if: contains(needs.agent.outputs.output_types, 'create_pull_request')
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: weekly-ce-audit
+        path: ${{ runner.temp }}/weekly-ce-audit-evidence
+    - name: Require the independently reviewed proposal for publication
+      if: contains(needs.agent.outputs.output_types, 'create_pull_request')
+      env:
+        SOURCE: ${{ github.sha }}
+        GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
+      run: |
+        python3 .github/scripts/weekly_ce_audit.py check-publication --source "$SOURCE" \
+          --agent-output "$GH_AW_AGENT_OUTPUT" --directory "$RUNNER_TEMP/weekly-ce-audit-evidence"
   create-pull-request:
+    # Scoped to publication: gh-aw 1.2.1's completion job always asks a global App for `actions: read`,
+    # which the Docs App does not hold. That job uses `GITHUB_TOKEN` instead.
+    github-app:
+      client-id: ${{ vars.DOCS_CLIENT_ID }}
+      private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
+      owner: pydantic
+      repositories: [pydantic-ai]
     max: 1
     draft: false
     allowed-branches: ['gh-aw/weekly-ce-audit-*']
@@ -73,6 +90,8 @@ timeout-minutes: 30
 env:
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: '30'
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
+engine:
+  model: anthropic/${{ vars.GH_AW_MODEL }}
 max-daily-ai-credits: -1
 imports:
   - shared/network-vendor-domains.md
@@ -80,7 +99,6 @@ imports:
   - shared/checkout.md
   - shared/engine-zai.md
   - shared/provider-health.md
-  - shared/pre-steps.md
   - shared/pre-agent-steps.md
 pre-agent-steps:
   - name: Inventory tracked CE and skip an existing workflow PR before inference
@@ -123,8 +141,7 @@ post-steps:
       SOURCE: ${{ github.sha }}
     run: |
       python3 "$RUNNER_TEMP/weekly-ce-audit/validate.py" validate --source "$SOURCE" \
-        --agent-output /tmp/gh-aw/agent_output.json --agent-log /tmp/gh-aw/agent-stdio.log \
-        --issue-evidence "$RUNNER_TEMP/weekly-ce-audit/issue"
+        --agent-session /tmp/gh-aw/agent-session.jsonl --issue-evidence "$RUNNER_TEMP/weekly-ce-audit/issue"
   - name: Publish audit coverage
     if: always()
     run: |
@@ -140,6 +157,7 @@ post-steps:
         .ce-audit/manifest.json
         .ce-audit/receipt.json
         .ce-audit/summary.md
+        .ce-audit/publication.json
         .ce-audit/issue*.json
         .ce-audit/review/
       include-hidden-files: true

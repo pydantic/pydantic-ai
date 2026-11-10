@@ -117,7 +117,7 @@ print(WebSearchTool in profile.get('supported_native_tools', frozenset()))
 #> True
 ```
 
-The profile also says which files the model accepts: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input], [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input] for each kind of file, narrowed to particular media types by [`supported_image_media_types`][pydantic_ai.profiles.ModelProfile.supported_image_media_types], [`supported_document_media_types`][pydantic_ai.profiles.ModelProfile.supported_document_media_types], [`supported_audio_media_types`][pydantic_ai.profiles.ModelProfile.supported_audio_media_types] and [`supported_video_media_types`][pydantic_ai.profiles.ModelProfile.supported_video_media_types]. Each set defaults to the media types Pydantic AI knows for that kind, such as JPEG, PNG, GIF and WebP for images, and a file of a media type outside it counts as one the model can't read: Gemini's profile adds HEIC, HEIF, AVIF and BMP images, for example, while Grok's leaves out GIF, which the xAI API rejects. Each model class turns off what its API can't take, whatever the profile says: [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], for example, reads neither audio nor video, and only PDF and plain-text documents, and OpenAI Chat Completions takes only WAV and MP3 audio. A file a tool returns that the model can't take is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance), and the [File Understanding](../capabilities/file-understanding.md) capability reads the same flags to decide which files to describe in text first.
+The profile also says which files the model accepts: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input], [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input], [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input] for each kind of file, narrowed to particular media types by [`supported_image_media_types`][pydantic_ai.profiles.ModelProfile.supported_image_media_types], [`supported_document_media_types`][pydantic_ai.profiles.ModelProfile.supported_document_media_types], [`supported_audio_media_types`][pydantic_ai.profiles.ModelProfile.supported_audio_media_types] and [`supported_video_media_types`][pydantic_ai.profiles.ModelProfile.supported_video_media_types]. The image, audio and video sets are unset by default, so a file of those kinds is judged by its kind alone; where a profile sets one, a file of a media type outside it counts as one the model can't read. Claude's and OpenAI's profiles list JPEG, PNG, GIF and WebP images, for example, Gemini's adds HEIC, HEIF, AVIF and BMP, and Grok's leaves out GIF, which xAI rejects. Each model class turns off what its API can't take, whatever the profile says: [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel], for example, reads neither audio nor video, and only PDF and plain-text documents, and OpenAI Chat Completions takes only WAV and MP3 audio. A file a tool returns that the model can't take is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance), and the [File Understanding](../capabilities/file-understanding.md) capability reads the same flags to decide which files to describe in text first.
 
 `model.profile` is usually the fully *resolved* profile: keys from [`DEFAULT_PROFILE`][pydantic_ai.profiles.DEFAULT_PROFILE] are merged with the provider's defaults, so `profile.get('supports_tools')` returns a value. If you supply `profile=` as a callable (or otherwise have a partial profile dict), pass the default as the fallback, `profile.get('supports_tools', DEFAULT_PROFILE['supports_tools'])` (after importing `DEFAULT_PROFILE`), to tolerate missing keys.
 Individual model adapters expose their resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is different: it has no single profile because its candidate models may have different capabilities. Inspect the profile of each model in `fallback_model.models` instead. With the [`ModelFallback`](../capabilities/model-fallback.md) capability, each attempt is made with a model of its own, so a capability hook reads the profile of the model serving the attempt from `request_context.model`. Don't confuse profiles with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
@@ -299,11 +299,12 @@ these categories, whichever provider it came from:
 | [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] | The provider couldn't find the model, deployment or other resource the request names, e.g. an HTTP 404. A subclass of `ModelRequestRejectedError`. |
 
 A provider's own signal decides between categories that share a status code: a 429 is a rate limit unless the
-provider says the quota is exhausted, and a 503 is only unavailable unless the provider says it's overloaded. A 400 is
-a `ModelRequestRejectedError`, or one of its subclasses when the provider says why: a `ModelContextWindowExceededError`,
-a `ModelNotFoundError` (OpenAI's Responses API sends `model_not_found` as a 400), or a `ModelAuthenticationError` (the
-Gemini API sends `API_KEY_INVALID` as a 400). Exhausted credits are a `ModelQuotaExceededError` instead, even when the
-provider sends them as a 400, as Anthropic does.
+provider says the quota is exhausted (the Gemini API names the exceeded quotas in its `RESOURCE_EXHAUSTED` error, so
+its daily quota is a `ModelQuotaExceededError`), and a 503 is only unavailable unless the provider says it's
+overloaded. A 400 is a `ModelRequestRejectedError`, or one of its subclasses when the provider says why: a
+`ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAuthenticationError` (the Gemini API sends
+`API_KEY_INVALID` as a 400). Exhausted credits or disabled billing are a `ModelQuotaExceededError` instead, even when
+the provider sends them as a 400, as Anthropic and the Gemini API do.
 
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message
@@ -744,10 +745,12 @@ print(result.output)
     the token limit mid-thinking), and an empty or thinking-only response with a `'content_filter'` finish
     reason raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
     responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
-    regardless of finish reason — a tool call truncated mid-arguments is re-prompted like any other
+    regardless of finish reason: a tool call truncated mid-arguments is re-prompted like any other
     invalid-arguments failure, and only once its retry budget is exhausted does it surface as
     [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
-    `UnexpectedModelBehavior`).
+    `UnexpectedModelBehavior`). The exception is [`NativeOutput`][pydantic_ai.output.NativeOutput] or
+    [`PromptedOutput`][pydantic_ai.output.PromptedOutput] text cut off at `'length'` into JSON that doesn't parse,
+    which raises `UnexpectedModelBehavior` right away.
 
     All of these are raised from the agent loop, after `model.request()` has already returned
     successfully, so an exception-based `fallback_on` can't catch them: not the default

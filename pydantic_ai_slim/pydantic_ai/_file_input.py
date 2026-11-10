@@ -25,13 +25,13 @@ FileInputKind = Literal['image', 'document', 'audio', 'video']
 """The kinds of file the profile's file-input flags cover."""
 
 KNOWN_IMAGE_MEDIA_TYPES: frozenset[str] = frozenset(get_args(ImageMediaType))
-"""Every `ImageMediaType`: the default for `ModelProfile.supported_image_media_types`."""
+"""Every `ImageMediaType`: JPEG, PNG, GIF and WebP, which every provider that reads images reads."""
 
 KNOWN_AUDIO_MEDIA_TYPES: frozenset[str] = frozenset(get_args(AudioMediaType))
-"""Every `AudioMediaType`: the default for `ModelProfile.supported_audio_media_types`."""
+"""Every `AudioMediaType`."""
 
 KNOWN_VIDEO_MEDIA_TYPES: frozenset[str] = frozenset(get_args(VideoMediaType))
-"""Every `VideoMediaType`: the default for `ModelProfile.supported_video_media_types`."""
+"""Every `VideoMediaType`."""
 
 KNOWN_DOCUMENT_MEDIA_TYPES: frozenset[DocumentMediaType] = frozenset(get_args(DocumentMediaType))
 """Every `DocumentMediaType`: the default for `ModelProfile.supported_document_media_types`."""
@@ -52,44 +52,47 @@ _MEDIA_TYPE_ALIASES = {'image/jpg': 'image/jpeg', 'audio/mp3': 'audio/mpeg', 'au
 def unsupported_file_input(item: SendableFile, profile: ModelProfile) -> str | None:
     """What `item` is that the model cannot read, such as `'audio files'` or `'image/heic files'`, or `None`.
 
-    A file is judged by its kind's flag, then by its media type against the kind's `supported_*_media_types`,
-    as given apart from a few common aliases such as `image/jpg`: adapters send a media type under the spelling
-    they're given, which the provider may not take. A URL whose media type can't be inferred, or is of another
-    kind, is judged by kind alone. A document of a text media type that `DocumentMediaType` doesn't list, such
-    as `text/x-python`, is judged as `text/plain`, which is how adapters send it. Binary content that is
-    neither an image, audio, video nor a document is left to the model adapter.
+    A file is judged by its kind's flag, then by its media type when the profile lists the media types it reads
+    for that kind (`supported_image_media_types` and the others): one outside the set can't be read. Without a
+    set, a file is judged by its kind alone. Documents are judged by media type only for the types
+    `DocumentMediaType` lists. A few common aliases, such as `image/jpg`, count as their registered media type.
+    A URL whose media type can't be inferred, or is of another kind, is judged by kind alone. Binary content
+    that is neither an image, audio, video nor a document is left to the model adapter.
     """
+    supported: frozenset[str] | None
     match item:
         case ImageUrl() | BinaryContent(is_image=True):
             if not profile.get('supports_image_input', True):
                 return 'images'
-            supported = profile.get('supported_image_media_types', KNOWN_IMAGE_MEDIA_TYPES)
-            kind = 'image'
+            supported, kind = profile.get('supported_image_media_types'), 'image'
         case AudioUrl() | BinaryContent(is_audio=True):
             if not profile.get('supports_audio_file_input', True):
                 return 'audio files'
-            supported = profile.get('supported_audio_media_types', KNOWN_AUDIO_MEDIA_TYPES)
-            kind = 'audio'
+            supported, kind = profile.get('supported_audio_media_types'), 'audio'
         case VideoUrl() | BinaryContent(is_video=True):
             if not profile.get('supports_video_input', True):
                 return 'video'
-            supported = profile.get('supported_video_media_types', KNOWN_VIDEO_MEDIA_TYPES)
-            kind = 'video'
+            supported, kind = profile.get('supported_video_media_types'), 'video'
         case DocumentUrl() | BinaryContent(is_document=True):
             if not profile.get('supports_document_input', True):
                 return 'documents'
-            supported = profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES)
-            kind = 'document'
+            supported, kind = profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES), 'document'
         case _:
             return None
     media_type = inferred_media_type(item)
-    if media_type is None or (kind != 'document' and not media_type.startswith(f'{kind}/')):
-        # No media type to judge, or one of another kind, such as an `ImageUrl` given as a PDF, which the
-        # adapter sends by the media type it downloads as.
+    if supported is None or media_type is None:
         return None
+    return _unsupported_media_type(media_type, kind, supported)
+
+
+def _unsupported_media_type(media_type: str, kind: FileInputKind, supported: frozenset[str]) -> str | None:
     judged_as = _MEDIA_TYPE_ALIASES.get(media_type, media_type)
-    if kind == 'document' and media_type not in KNOWN_DOCUMENT_MEDIA_TYPES and is_text_like_media_type(media_type):
-        judged_as = 'text/plain'
+    if kind == 'document':
+        if judged_as not in KNOWN_DOCUMENT_MEDIA_TYPES:
+            return None
+    elif not judged_as.startswith(f'{kind}/'):
+        # Of another kind, such as an `ImageUrl` given as a PDF, which the adapter sends as what it downloads as.
+        return None
     return None if judged_as in supported else f'{media_type} files'
 
 

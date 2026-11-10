@@ -18,6 +18,7 @@ import anyio
 
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness.shell._events import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, POLL_MAX, POLL_MIN, Job
@@ -155,6 +156,10 @@ async def run_persistent_command(
 
     Foreground waits up to `timeout` for the exit status, polling with a backoff from 50 ms to
     1 s, then returns the handles either way; background returns them immediately.
+
+    The wait is counted in the time slept between polls, not read from a clock: each poll is a
+    workspace call, which a durable engine records, so a replayed call makes the same polls
+    however long each one took the first time. A poll's own round trip adds to the wait.
     """
     if not 0 < timeout <= MAX_FOREGROUND_WAIT:
         raise ModelRetry(f'timeout must be greater than zero and at most {MAX_FOREGROUND_WAIT:g} seconds.')
@@ -170,11 +175,13 @@ async def run_persistent_command(
             await output.ctx.emit(CommandStartedEvent(tool_call_id=ctx.tool_call_id, command=command, pid=job.pid))
         if mode == 'foreground':
             interval = POLL_MIN
-            with anyio.move_on_after(timeout):
-                while (await job.status())[0]:
-                    emitted = await output.emit()
-                    await anyio.sleep(interval)
-                    interval = POLL_MIN if emitted else min(interval * 2, POLL_MAX)
+            waited = 0.0
+            while waited < timeout and (await job.status())[0]:
+                emitted = await output.emit()
+                pause = min(interval, timeout - waited)
+                await anyio.sleep(pause)
+                waited += pause
+                interval = POLL_MIN if emitted else min(interval * 2, POLL_MAX)
             await output.drain()
         await output.finish()
 
@@ -191,10 +198,22 @@ async def run_persistent_command(
         )
         if (status := await job.status_text()) is not None:
             result += f'\n{status}'
-    except BaseException:
-        # A cancelled or failed call cannot hand back its handles, so nothing is left running.
-        with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
-            await job.kill()
-            await job.cleanup()
+    except BaseException as error:
+        # A cancelled or failed call cannot hand back its handles, so it stops the job it started.
+        await _stop_failed_call(job, error)
         raise
     return result
+
+
+async def _stop_failed_call(job: Job, error: BaseException) -> None:
+    """Stop and remove the job of a call that is raising `error`.
+
+    A stop or removal that fails too is noted on `error` rather than replacing it; a failed stop leaves the job's
+    directory.
+    """
+    with anyio.move_on_after(CONTROL_TIMEOUT, shield=True):
+        try:
+            await job.kill()
+            await job.cleanup()
+        except (WorkspaceError, OSError) as cleanup_error:
+            error.add_note(f'Cleaning up the command also failed: {cleanup_error}')

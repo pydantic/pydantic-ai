@@ -4,11 +4,12 @@ import hashlib
 import re
 from collections.abc import Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Generic, Literal, TypeVar
 
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 from durabletask import task
+from durabletask.grpc_options import GrpcChannelOptions
 from durabletask.worker import TaskHubGrpcWorker
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from pydantic_core import PydanticSerializationError
@@ -195,6 +196,19 @@ class AzureDurableTaskOperationBackend(RegisteredOperationBackend[task.RetryPoli
         """
         if self._portal is not None:
             raise UserError('These Azure Durable Task activities are already registered with an active worker.')
+        # The SDK creates its channel lazily at start; in-memory workers may not configure a channel.
+        if hasattr(worker, '_channel_options'):
+            # The SDK has no public setter for channel options after construction.
+            channel_options = worker._channel_options or GrpcChannelOptions()  # pyright: ignore[reportPrivateUsage]
+            raw_options = list(channel_options.raw_options)
+            for index, (key, value) in enumerate(raw_options):
+                if key == 'grpc.primary_user_agent':
+                    if 'pydantic-ai' not in value.split():
+                        raw_options[index] = (key, f'{value} pydantic-ai'.strip())
+                    break
+            else:
+                raw_options.append(('grpc.primary_user_agent', 'pydantic-ai'))
+            worker._channel_options = replace(channel_options, raw_options=raw_options)  # pyright: ignore[reportPrivateUsage]
         with start_blocking_portal(name='pydantic-ai-durabletask') as portal:
             self._portal = portal
             try:

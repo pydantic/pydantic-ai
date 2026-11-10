@@ -8,12 +8,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from typing_extensions import TypedDict
 
-from .._file_input import (
-    KNOWN_AUDIO_MEDIA_TYPES,
-    KNOWN_DOCUMENT_MEDIA_TYPES,
-    KNOWN_IMAGE_MEDIA_TYPES,
-    KNOWN_VIDEO_MEDIA_TYPES,
-)
+from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from ..exceptions import PydanticAIDeprecationWarning
 from ..messages import CachePoint, ModelRequest, ModelResponse, UserPromptPart
@@ -128,11 +123,13 @@ class ModelProfile(TypedDict, total=False):
     """
 
     supported_image_media_types: frozenset[str]
-    """The image media types the model accepts, when it accepts images at all. Default: every media type
-    in `ImageMediaType` (JPEG, PNG, GIF and WebP).
+    """The image media types the model accepts, when it accepts images at all. Default: unset, so images are
+    judged by `supports_image_input` alone.
 
-    An image of any other media type, such as `image/heic`, counts as one the model can't read unless
-    this set lists it. See `supports_image_input` for how the file-input flags are used.
+    When set, an image of any other media type, such as `image/heic`, counts as one the model can't read.
+    Profiles set it where a provider was seen to reject other types: Anthropic and OpenAI read JPEG, PNG, GIF
+    and WebP, for example, while Gemini also reads HEIC. See `supports_image_input` for how the file-input
+    flags are used.
     """
 
     supports_document_input: bool
@@ -146,10 +143,9 @@ class ModelProfile(TypedDict, total=False):
     """The document media types the model accepts, when it accepts documents at all. Default: every
     media type in `DocumentMediaType`.
 
-    A document of any other media type counts as one the model can't read unless this set lists it,
-    except a text media type `DocumentMediaType` doesn't list, such as `text/x-python`, which is judged as
-    `text/plain`. Anthropic, for example, reads PDFs and plain text but not Word or Excel files. See
-    `supports_image_input` for how the file-input flags are used.
+    Only narrows those known types: a document with any other media type is judged by
+    `supports_document_input` alone. Anthropic, for example, reads PDFs and plain text but not Word or
+    Excel files. See `supports_image_input` for how the file-input flags are used.
     """
 
     supports_audio_file_input: bool
@@ -161,11 +157,11 @@ class ModelProfile(TypedDict, total=False):
     """
 
     supported_audio_media_types: frozenset[str]
-    """The audio media types the model accepts, when it accepts audio files at all. Default: every media
-    type in `AudioMediaType`.
+    """The audio media types the model accepts, when it accepts audio files at all. Default: unset, so audio
+    is judged by `supports_audio_file_input` alone.
 
-    Audio of any other media type, such as `audio/mp4`, counts as audio the model can't read unless this
-    set lists it. See `supports_image_input` for how the file-input flags are used.
+    When set, audio of any other media type, such as `audio/flac` on OpenAI Chat Completions, counts as audio
+    the model can't read. See `supports_image_input` for how the file-input flags are used.
     """
 
     supports_video_input: bool
@@ -175,11 +171,11 @@ class ModelProfile(TypedDict, total=False):
     """
 
     supported_video_media_types: frozenset[str]
-    """The video media types the model accepts, when it accepts video at all. Default: every media type in
-    `VideoMediaType`.
+    """The video media types the model accepts, when it accepts video at all. Default: unset, so video is
+    judged by `supports_video_input` alone.
 
-    Video of any other media type counts as video the model can't read unless this set lists it. See
-    `supports_image_input` for how the file-input flags are used.
+    When set, video of any other media type counts as video the model can't read. See `supports_image_input`
+    for how the file-input flags are used.
     """
 
     supports_inline_system_prompts: bool
@@ -327,10 +323,10 @@ class ModelProfile(TypedDict, total=False):
     supports_forced_tool_choice: bool
     """Whether the model accepts a forced tool choice: `tool_choice='required'` or a specific tool. Default: `True`.
 
-    Some models reject forcing on every request, such as Claude Opus 5.5, Claude Fable 5.1 and Claude Mythos 5.1,
-    as do some OpenAI-compatible providers, such as Moonshot AI. When False, a forced tool choice that Pydantic AI
-    resolved itself (such as an output tool's) falls back to `'auto'`, with the tools filtered to the requested
-    ones where the API can't restrict the choice. An explicit forcing
+    Some models reject forcing on every request, such as Claude Opus 5.5, Claude Fable 5.1 and 5.2 and Claude
+    Mythos 5.1 and 5.2, as do some OpenAI-compatible providers, such as Moonshot AI. When False, a forced tool
+    choice that Pydantic AI resolved itself (such as an output tool's) falls back to `'auto'`, with the tools
+    filtered to the requested ones where the API can't restrict the choice. An explicit forcing
     [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] raises a `UserError`.
     """
 
@@ -354,6 +350,20 @@ class ModelProfile(TypedDict, total=False):
 
     thinking_tags: tuple[str, str]
     """The tags used to indicate thinking parts in the model's output. Default: [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS]."""
+
+    may_tokenize_special_tokens_in_content: bool
+    """Whether this route may encode chat-template special tokens found in message content as real control tokens. Default: `False`.
+
+    Many hosts of open-weight models do, so a literal `<|im_start|>` in a tool result opens a real turn in the role it
+    names. When `True`, `Model.prepare_messages` puts a zero-width joiner inside each such token in user prompts, tool
+    results, inlined text files and replayed model output, on the outgoing copy only, and the joiner is removed again
+    from the tokens in each response's text and tool call arguments. Text without one is unchanged.
+
+    The host decides this, not the model family, so a provider sets it from `model_profile`, through the one table in
+    `profiles/_special_tokens.py`. An application that has pinned a route known to treat these tokens as text, or that
+    needs them sent as written, can turn it off with `profile=`.
+    See [Special tokens in content](../message-history.md#special-tokens-in-content).
+    """
 
     mimics_assistant_message_formatting: bool
     """Whether the model reproduces markup it finds in prior assistant messages in its own visible output. Default: `False`.
@@ -515,13 +525,10 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_image_output': False,
     'supports_audio_input': False,
     'supports_image_input': True,
-    'supported_image_media_types': KNOWN_IMAGE_MEDIA_TYPES,
     'supports_document_input': True,
     'supported_document_media_types': KNOWN_DOCUMENT_MEDIA_TYPES,
     'supports_audio_file_input': True,
-    'supported_audio_media_types': KNOWN_AUDIO_MEDIA_TYPES,
     'supports_video_input': True,
-    'supported_video_media_types': KNOWN_VIDEO_MEDIA_TYPES,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,
@@ -537,6 +544,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_forced_tool_choice_with_thinking': True,
     'forced_tool_choice_disables_thinking': False,
     'thinking_tags': DEFAULT_THINKING_TAGS,
+    'may_tokenize_special_tokens_in_content': False,
     'mimics_assistant_message_formatting': False,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
