@@ -27,7 +27,8 @@ Verify that the PR links an issue.
   `ctx.tracer`; emitting nothing is documented with its reason. See
   `capability-authoring.md` "Telemetry".
 - Capability ordering is justified when present.
-- Dependency changes are required, linked to an issue, and made through `uv`.
+- Dependency changes are required and made through `uv`. A dependency change from an author
+  without write access links an issue.
 - A capability that adds heavy CI machinery (a Docker image, an external service
   with a secret, a large system binary, live network calls) scopes its expensive
   job to its own paths and keeps the aggregate check green when that job is
