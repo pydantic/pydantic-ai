@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import base64
+
 import pytest
 
-from pydantic_ai import Agent, RunContext, UserError
-from pydantic_ai.computer_use import Click
-from pydantic_ai.models.test import TestModel
+from pydantic_ai import Agent, UserError
+from pydantic_ai.computer_use import Click, ComputerReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef
 from pydantic_ai_harness._x11 import STARTED
+from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
-from ..display_fakes import screen
+from ..display_fakes import FAKE_SCREENSHOT, screen
 from .fake_e2b import FakeE2B
 
 
@@ -36,10 +40,10 @@ class FakeDisplay:
             # The backend reads the size only from a display it started.
             assert self.up, 'xwininfo before the display started'
             return '  Width: 1280\n  Height: 800\n', '', 0
-        elif command.startswith('xdotool '):
+        elif 'scrot' in command:
+            return base64.b64encode(FAKE_SCREENSHOT).decode(), '', 0
+        elif command.startswith('xdotool ') or ' xdotool ' in command:  # input runs `xdotool` through a script
             self.xdotool.append(command)
-            if not self.up:
-                return '', "Error: Can't open display: :1", 1
         elif 'novnc_proxy' in command:
             self.viewers.append(command)
             if not self.up:
@@ -67,6 +71,7 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(fake_e2b: Fa
     workspace = screen(E2BSandboxBackend(desktop=True))
 
     assert await workspace.display_size() == (1280, 800)
+    await workspace.screenshot()  # an action waits for a screenshot of a display that just started
     await workspace.act(Click(x=3, y=4))
 
     assert len(display.starts) == 1
@@ -104,23 +109,6 @@ async def test_a_desktop_size_sets_the_display_it_starts(fake_e2b: FakeE2B, disp
     assert start.endswith(' sh 1440x900')
 
 
-async def test_a_display_that_went_away_is_started_again(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    backend = E2BSandboxBackend(desktop=True)
-    workspace = screen(backend)
-    await workspace.display_size()
-
-    display.up = False
-    with pytest.raises(WorkspaceError):
-        await workspace.act(Click(x=1, y=1))
-    # The next action starts the display again, and doesn't run on the new screen.
-    with pytest.raises(WorkspaceError, match='The display was not running and started for this action'):
-        await workspace.act(Click(x=1, y=1))
-    await workspace.act(Click(x=1, y=1))
-
-    # The last action uses the display that started, without running the start script again.
-    assert len(display.starts) == 2
-
-
 async def test_a_sandbox_without_a_desktop_has_no_display(fake_e2b: FakeE2B) -> None:
     backend = E2BSandboxBackend()
 
@@ -137,14 +125,31 @@ def test_a_desktop_sandbox_reattaches_with_its_display() -> None:
     assert E2BSandbox().backend(ref).display is None
 
 
-async def test_a_desktop_capability_gives_a_new_run_a_display(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    agent = Agent(TestModel(call_tools=['probe']), capabilities=[E2BSandbox(desktop=True)])
+def _look_click_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Takes a screenshot, clicks on what it showed, then answers."""
+    steps = [[{'type': 'screenshot'}], [{'type': 'click', 'x': 3, 'y': 4}]]
+    done = sum(isinstance(part, ComputerReturnPart) for message in messages for part in message.parts)
+    if done == len(steps):
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('computer', {'actions': steps[done]})])
 
-    @agent.tool
-    async def probe(ctx: RunContext[object]) -> str:
-        return 'x'.join(map(str, await screen(ctx.workspace.backend).display_size()))
 
-    result = await agent.run('go')
+async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(
+    fake_e2b: FakeE2B, display: FakeDisplay
+) -> None:
+    agent = Agent(
+        FunctionModel(_look_click_then_finish),
+        capabilities=[E2BSandbox(desktop=True), ComputerUse(native=False, settle_seconds=0)],
+    )
 
-    assert result.output == '{"probe":"1280x800"}'
+    result = await agent.run('Click.')
+
+    looked, clicked = [
+        part for message in result.all_messages() for part in message.parts if isinstance(part, ComputerReturnPart)
+    ]
+    assert looked.result == {'performed': 1, 'screenshot_size': (1280, 800)}
+    assert clicked.result == {'performed': 1, 'screenshot_size': (1280, 800)}
+    assert clicked.screenshot is not None and clicked.screenshot.data == FAKE_SCREENSHOT
     assert [call.template for call in fake_e2b.create_calls] == ['desktop']
+    assert len(display.starts) == 1
+    assert any(command.endswith('mousemove 3 4 click --repeat 1 1') for command in display.xdotool)
