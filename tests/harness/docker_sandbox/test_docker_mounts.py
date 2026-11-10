@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness import MountError, S3Mount
@@ -144,8 +143,3 @@ def test_from_spec_forwards_the_spec_fields_and_leaves_out_mounts(docker: FakeDo
 
     assert DockerSandbox[None].from_spec(**spec_fields) == DockerSandbox(**spec_fields)  # pyright: ignore[reportArgumentType]
     assert 'mounts' not in inspect.signature(DockerSandbox.from_spec).parameters
-
-
-def test_from_spec_refuses_mounts(docker: FakeDocker) -> None:
-    with pytest.raises(UserError, match='`mounts` holds keys, so an agent spec cannot set it'):
-        DockerSandbox[None].from_spec(mounts=[])

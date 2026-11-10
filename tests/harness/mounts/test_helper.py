@@ -121,6 +121,8 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     monkeypatch.setattr(helper.subprocess, 'run', sandbox.run)
     monkeypatch.setattr(helper.time, 'sleep', returns(None))
     monkeypatch.setattr(helper.time, 'time', lambda: 1_000.0)
+    # `main` sets root's own `PATH`; this puts the test process's back afterwards.
+    monkeypatch.setenv('PATH', os.environ.get('PATH', ''))
     return sandbox
 
 
@@ -337,7 +339,7 @@ def test_a_symlink_where_recovered_files_go_is_refused(sandbox: Sandbox) -> None
     (folder / 'stray.txt').write_text('')
     (sandbox.root / 'workspace' / helper.RECOVERED).symlink_to(sandbox.root)
 
-    with pytest.raises(helper.MountFailed, match=re.escape('is a symlink. Remove it')):
+    with pytest.raises(helper.MountFailed, match=re.escape('is not a folder. Remove it')):
         ensure(sandbox, mount)
 
 
@@ -400,6 +402,28 @@ def test_a_mount_that_does_not_answer_is_reported(sandbox: Sandbox) -> None:
 
     with pytest.raises(helper.MountFailed, match='did not answer right after it was mounted'):
         ensure(sandbox, wanted(sandbox))
+
+
+def test_a_mount_that_does_not_answer_is_unmounted_before_its_marker_is_removed(
+    sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Removed through the mount, the marker would be a bucket object of that name."""
+    mount = wanted(sandbox)
+    monkeypatch.setattr(helper, 'alive', returns(False))
+    mounted_at_removal: list[bool] = []
+    original = os.remove
+
+    def remove(path: str) -> None:
+        mounted_at_removal.append(mount['path'] in sandbox.kernel)
+        original(path)
+
+    monkeypatch.setattr(helper.os, 'remove', remove)
+
+    with pytest.raises(helper.MountFailed, match='did not answer right after it was mounted'):
+        ensure(sandbox, mount)
+
+    assert mounted_at_removal == [False]
+    assert mount['path'] not in sandbox.kernel and os.listdir(mount['path']) == []
 
 
 def test_an_unmount_waits_for_queued_uploads(sandbox: Sandbox) -> None:
@@ -758,6 +782,8 @@ def test_main_answers_with_one_json_line(
     assert json.loads(capsys.readouterr().out) == {'recovered': []}
     assert alarms == [helper.DEADLINE_SECONDS]
     assert (sandbox.root / 'state' / 'lock').exists()
+    # Not the image's `PATH`, which could list a folder the agent's user writes to ahead of root's own.
+    assert os.environ['PATH'] == helper.ROOT_PATH
 
 
 def test_main_reports_a_refusal_as_json(

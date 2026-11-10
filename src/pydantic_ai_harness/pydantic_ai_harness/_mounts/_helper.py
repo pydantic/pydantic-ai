@@ -40,6 +40,9 @@ SOCKET = f'{STATE}/rc.sock'
 MARKER = '.pydantic-ai-mount'
 """Written into a folder before mounting on it: the mount hides it, so seeing it means the mount was lost."""
 MOUNTINFO = '/proc/self/mountinfo'
+ROOT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+"""Where root finds `rclone`, `fusermount3` and `apt-get`: folders root owns, never one the image's `PATH` adds ahead of
+them, which the agent's user could write to."""
 RCLONE = '/usr/local/lib/pydantic-ai-mounts/rclone'
 """Where the pinned build goes: off `PATH`, so it never replaces or shadows an rclone the image has."""
 RCLONE_VERSION = 'v1.75.2'
@@ -294,19 +297,37 @@ def prepare(path: str, owner: os.stat_result) -> tuple[bool, str | None]:
         return False, None
     parent, name = os.path.split(path)
     recovered = os.path.join(parent, RECOVERED)
-    if os.path.islink(recovered):
+    staged = f'{time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())}-{uuid.uuid4().hex[:6]}-{name}'
+    # The agent's user owns these folders and could swap one for a link while root works in it, so every move goes
+    # through descriptors opened without following links, into a folder only root can change until the moves are done.
+    folder = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    with contextlib.suppress(FileExistsError):
+        os.mkdir(recovered, 0o755)
+    try:
+        recovered_fd = os.open(recovered, folder)
+    except OSError:
         raise MountFailed(
-            'conflict', f'{recovered} is a symlink. Remove it so files found in a lost mount can go there.'
-        )
-    stamp = f'{time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())}-{uuid.uuid4().hex[:6]}'
-    destination = os.path.join(recovered, f'{stamp}-{name}')
-    os.makedirs(destination)
-    # The agent's user can then move or remove what was found.
-    for folder in (recovered, destination):
-        os.chown(folder, owner.st_uid, owner.st_gid, follow_symlinks=False)
-    for entry in strays:
-        shutil.move(os.path.join(path, entry), os.path.join(destination, entry))
-    return False, destination
+            'conflict', f'{recovered} is not a folder. Remove it so files found in a lost mount can go there.'
+        ) from None
+    try:
+        os.mkdir(staged, 0o700, dir_fd=recovered_fd)
+        staged_fd = os.open(staged, folder, dir_fd=recovered_fd)
+        try:
+            source_fd = os.open(path, folder)
+            try:
+                for entry in strays:
+                    os.rename(entry, entry, src_dir_fd=source_fd, dst_dir_fd=staged_fd)
+            finally:
+                os.close(source_fd)
+            # The agent's user can then move or remove what was found.
+            os.fchmod(staged_fd, 0o755)
+            os.fchown(staged_fd, owner.st_uid, owner.st_gid)
+        finally:
+            os.close(staged_fd)
+        os.fchown(recovered_fd, owner.st_uid, owner.st_gid)
+    finally:
+        os.close(recovered_fd)
+    return False, os.path.join(recovered, staged)
 
 
 def record_expiry(fingerprint: str, expires_at: float) -> None:
@@ -386,7 +407,11 @@ def place(wanted: dict[str, Any], owner: os.stat_result) -> str | None:
     try:
         mount(wanted, owner)
     except MountFailed:
-        if marked:
+        if kernel_mounts().get(path) == f'pai-{fingerprint}':
+            # Mounted but not answering. The marker is behind the mount, where removing it would delete a bucket object,
+            # so it goes once the mount is off, as `unmount` does.
+            unmount(path)
+        elif marked:
             # Nothing was mounted, so the marker would later read as a lost mount.
             os.remove(os.path.join(path, MARKER))
         raise
@@ -407,6 +432,7 @@ def out_of_time(signum: int, frame: object) -> None:
 
 
 def main() -> None:
+    os.environ['PATH'] = ROOT_PATH
     signal.signal(signal.SIGALRM, out_of_time)
     signal.alarm(DEADLINE_SECONDS)
     request = json.loads(sys.stdin.readline())

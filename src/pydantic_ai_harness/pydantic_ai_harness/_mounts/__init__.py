@@ -90,7 +90,9 @@ class S3Mount:
     url: str
     """The bucket, and optionally a prefix in it to show instead of the whole bucket: `'s3://bucket/'` or `'s3://bucket/prefix/'`."""
     access_key_id: str = field(repr=False, compare=False)
+    """The access key ID, kept out of the `repr` along with the other keys."""
     secret_access_key: str = field(repr=False, compare=False)
+    """The secret access key that goes with `access_key_id`."""
     expires_at: datetime = field(compare=False)
     """When the keys expire. Required, since code in the sandbox can read them: pass only short-lived keys."""
     session_token: str | None = field(default=None, repr=False, compare=False)
@@ -98,6 +100,7 @@ class S3Mount:
     endpoint: str | None = None
     """The endpoint of an S3-compatible store, such as Cloudflare R2 or MinIO. `None` means AWS S3."""
     region: str | None = None
+    """The store's region, passed to rclone as written. Cloudflare R2 takes `'auto'`."""
     read_only: bool = False
     """Whether the folder refuses writes."""
 
@@ -211,23 +214,26 @@ def _check_paths(mounts: Sequence[S3Mount]) -> None:
 def mounted(
     backend: WorkspaceBackend,
     run_as_root: RunAsRoot,
-    mounts: Sequence[S3Mount] | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]],
+    mounts: Sequence[S3Mount]
+    | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]]
+    | Callable[[RunContext[AgentDepsT]], Awaitable[Sequence[S3Mount]]],
     ctx: RunContext[AgentDepsT],
 ) -> WorkspaceBackend:
     """`backend`, mounting a sandbox capability's `mounts=` before its first command or file operation.
 
     A function is not called here, since building a workspace does no I/O and the function may ask a service such as
-    AWS STS for keys: the first operation calls it, in a worker thread. An empty list leaves `backend` as it is.
+    AWS STS for keys: the first operation calls it, a sync one in a worker thread. An empty list leaves `backend` as
+    it is.
     """
     if callable(mounts):
         # The function stands for the mounts it will return, so a run-level capability with another one is told apart.
-        return _Mounted(_as_workspace(backend), run_as_root, lambda: mounts(ctx), policy=(mounts,))
+        return _Mounted(_as_workspace(backend), run_as_root, lambda: mounts(ctx), policy=(mounts,), refreshes=True)
     listed = tuple(mounts)
     if not listed:
         return backend
     _check_paths(listed)
     policy = sorted((mount.path, mount.url, mount.endpoint, mount.region, mount.read_only) for mount in listed)
-    return _Mounted(_as_workspace(backend), run_as_root, lambda: listed, policy=tuple(policy))
+    return _Mounted(_as_workspace(backend), run_as_root, lambda: listed, policy=tuple(policy), refreshes=False)
 
 
 def _as_workspace(backend: WorkspaceBackend) -> Workspace:
@@ -246,14 +252,17 @@ class _Mounted(WrapperWorkspace):
         self,
         wrapped: Workspace,
         run_as_root: RunAsRoot,
-        mounts: Callable[[], Sequence[S3Mount]],
+        mounts: Callable[[], Sequence[S3Mount] | Awaitable[Sequence[S3Mount]]],
         *,
         policy: tuple[object, ...],
+        refreshes: bool,
     ) -> None:
         super().__init__(wrapped)
         self._run_as_root = run_as_root
         self._mounts = mounts
         self._policy = policy
+        self._refreshes = refreshes
+        """Whether `mounts` can return fresh keys; a list's keys are used until they expire, then left to fail."""
         self._first: frozenset[S3Mount] | None = None
         """What the first call returned, which every later call must match."""
         self._remount_at: datetime | None = None
@@ -278,8 +287,10 @@ class _Mounted(WrapperWorkspace):
             # Another operation may have mounted while this one waited for the lock.
             if not self._due():
                 return
-            # In a worker thread: the function may ask a service such as AWS STS for keys.
-            fresh = tuple(await anyio.to_thread.run_sync(self._mounts))
+            # In a worker thread: a sync function may ask a service such as AWS STS for keys. An async one only makes its
+            # coroutine there, which runs here.
+            returned = await anyio.to_thread.run_sync(self._mounts)
+            fresh = tuple(await returned if isinstance(returned, Awaitable) else returned)
             if self._first is None:
                 _check_paths(fresh)
             elif len(fresh) != len(self._first) or _shown(fresh) != self._first:
@@ -304,6 +315,10 @@ class _Mounted(WrapperWorkspace):
                     f'Files written into a mount folder while the bucket was not mounted there were moved to {folder}.',
                     stacklevel=2,
                 )
+            if not self._refreshes:
+                # Nothing could give a list fresh keys: once they expire, only commands that use the folder fail.
+                self._remount_at = datetime.max.replace(tzinfo=UTC)
+                return
             # Keys too short-lived for the margin are used until they expire, not refreshed on every operation.
             refresh_at = expires_at - _REFRESH_MARGIN
             self._remount_at = refresh_at if refresh_at > now else expires_at
