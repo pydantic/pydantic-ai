@@ -187,6 +187,18 @@ if __name__ == '__main__':
 
 The `finally` terminates the sandbox even when setup or the run fails. If the task is cancelled while Modal is still creating the sandbox, `backend.ref` is still `None` there, and the sandbox Modal goes on to create keeps running; its ID is logged at `WARNING` (see [Telemetry](#telemetry)), so terminate it with `ModalSandbox().destroy(WorkspaceRef(provider='modal', id=...))`. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later.
 
+## Choose the runtime
+
+Modal runs a sandbox under one of two runtimes: gVisor, a kernel written in user space that stands between the sandbox and the host, or a VM. Pick one with `runtime=`:
+
+```python
+from pydantic_ai_harness.modal_sandbox import ModalSandbox
+
+sandbox = ModalSandbox(runtime='vm')
+```
+
+The default, `None`, lets Modal choose, which was gVisor when this was written. `runtime=` applies only to a sandbox `ModalSandbox` creates: an attached one keeps the runtime it was created with. It takes precedence over Modal's `MODAL_FUNCTION_RUNTIME` setting, which otherwise picks the runtime for every sandbox the process creates. [Mounting a bucket](#mount-a-bucket) needs `'vm'`, since gVisor can't mount the FUSE file systems mounts use.
+
 ## Mount a bucket
 
 To show an S3 or S3-compatible bucket as a folder in the sandbox, pass `mounts=` and create the sandbox on Modal's VM runtime:
