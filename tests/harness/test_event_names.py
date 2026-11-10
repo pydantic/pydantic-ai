@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from types import ModuleType
 
 import pytest
@@ -27,7 +28,8 @@ from pydantic_ai_harness import HarnessDeprecationWarning
 )
 def test_renamed_event_keeps_its_old_name_and_kind(module: ModuleType, old_name: str, new_name: str, kind: str) -> None:
     event_type = getattr(module, new_name)
-    with pytest.warns(HarnessDeprecationWarning, match=f'renamed to `{module.__name__}.{new_name}`'):
+    message = f'`{module.__name__}.{old_name}` has been renamed to `{module.__name__}.{new_name}`'
+    with pytest.warns(HarnessDeprecationWarning, match=re.escape(message)):
         assert getattr(module, old_name) is event_type
     assert event_type.kind == kind
 

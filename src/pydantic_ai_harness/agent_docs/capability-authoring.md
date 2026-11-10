@@ -126,14 +126,14 @@ A `CapabilityEvent` subclass has three names: its class, its namespace, and its 
   serialized with. Core has no kind aliases, so a payload written under a kind that was later
   changed loads as an `UnknownCapabilityEvent`. Keep the kind of a shipped event.
 
-The `<name>` segment follows one of two rules, chosen per event family:
+The `<name>` segment follows one of two rules, chosen per namespace:
 
-1. **Derived**, when the events have different subjects (`file_system`, `shell`, `sub_agents`,
-   `code_mode`): core's default, the snake_case of the class name without `Event`
+1. **Derived**, the default (`file_system`, `shell`, `sub_agents`, `code_mode`,
+   `step_persistence`): core's default, the snake_case of the class name without `Event`
    (`file_system.file_read`). Do not pass a `name=` equal to that default.
-2. **Subject-stripped**, when every event has the one subject the namespace already names
-   (`planning`, `ask_user`, `spend_limits`, `system_reminders`, `report_context_usage`): pass the
-   participle alone as `name=` (`planning.created`, `ask_user.requested`).
+2. **Subject-stripped**, only when the subject of every event is the thing the namespace already
+   names (`planning`, `ask_user`, `spend_limits`, `system_reminders`, `report_context_usage`): pass
+   the participle alone as `name=` (`planning.created`, `ask_user.requested`).
 
 A renamed event class keeps its alias like any renamed class, and passes its old segment as `name=`
 so the kind does not change: `DelegationStartedEvent` is still `sub_agents.delegation_start`.

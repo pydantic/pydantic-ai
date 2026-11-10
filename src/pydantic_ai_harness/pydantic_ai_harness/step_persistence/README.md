@@ -902,6 +902,8 @@ completes. It carries `persistence_run_id`, `conversation_id`, `step_index`, and
 `state`. Subscribe using core's `hooks.on.event(SnapshotSavedEvent)`, which a CLAI plugin
 returns from `get_capabilities`. Store writes are the source of truth; notifications may
 repeat during durable replay and observer failures cannot undo committed writes.
+`STEP_PERSISTENCE_EVENTS` is the namespace of that event (`step_persistence`), not of the
+persisted `StepEvent` log.
 
 Automatic execution recovery is not implemented. Snapshots are saved per settled
 batch, not per tool, so a hard kill during a parallel batch can leave a completed
