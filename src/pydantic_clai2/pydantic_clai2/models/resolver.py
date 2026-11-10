@@ -32,6 +32,12 @@ def _parse(name: str) -> ModelRef:
         raise UserError(f'{name}: {exc}') from None
 
 
+def _no_endpoint(name: str) -> UserError:
+    from pydantic_clai2.models.key_profiles import no_endpoint
+
+    return no_endpoint(name)
+
+
 @dataclass(kw_only=True)
 class ModelResolver:
     """Load provider integrations on demand, retaining Codex authentication per conversation."""
@@ -45,7 +51,9 @@ class ModelResolver:
     """Where a plugin sign-in saves its models."""
     pool_accounts: Callable[[], bool] = lambda: False
     """The `accounts.pool` setting, read per resolution so `/set` applies to the next run."""
-    codex_providers: 'dict[str, OpenAICodexProvider]' = field(default_factory=dict[str, 'OpenAICodexProvider'])
+    codex_providers: 'dict[tuple[str, str | None], OpenAICodexProvider]' = field(
+        default_factory=dict[tuple[str, str | None], 'OpenAICodexProvider']
+    )
     """The native Codex provider per account, which the process's sessions share; sign-ins prompt on `console`."""
     _auth: 'CodexAuth | None' = None
 
@@ -86,10 +94,12 @@ class ModelResolver:
         """
         from pydantic_clai2.models.chains import chain_name
 
+        base_url = self._base_url(name)
         if (chain := chain_name(name)) is not None:
+            if base_url is not None:
+                raise _no_endpoint(name)
             return await self._chain(chain)
         ref = _parse(name)
-        base_url = self._base_url(name)
         if ref.profile == ALL:
             return await self._all_accounts(ref.provider, ref.name, base_url=base_url)
         if ref.profile == DEFAULT:
@@ -102,11 +112,8 @@ class ModelResolver:
 
     def _base_url(self, name: str) -> str | None:
         """The endpoint `/model settings` saved for `name`, which its accounts all use."""
-        from pydantic_clai2.models.model_settings import model_settings_from_json
-
-        if self.store is None:
-            return None
-        return model_settings_from_json(self.store.model_settings(name)).base_url
+        base_url = self.store.model_settings(name).get('base_url') if self.store else None
+        return base_url if isinstance(base_url, str) else None
 
     async def _one_account(self, name: str, *, base_url: str | None) -> Model | str:
         """Build a model on the one account it names, the default one when it names none."""
@@ -121,9 +128,7 @@ class ModelResolver:
             return self.codex_auth().model(name, **endpoint)
         if (provider := self.plugins().get(ref.provider)) is not None:
             if endpoint:
-                from pydantic_clai2.models.key_profiles import no_endpoint
-
-                raise no_endpoint(ref.provider)
+                raise _no_endpoint(ref.provider)
             if ref.profile is None:
                 resolve = partial(provider.resolve, ref.name)
             elif provider.resolve_profile is not None:

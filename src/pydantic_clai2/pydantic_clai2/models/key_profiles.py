@@ -9,7 +9,6 @@ their existing setup: `/model add` connections, or core's environment variables.
 import inspect
 import json
 import re
-from collections.abc import Callable
 from functools import partial
 from typing import Annotated, Protocol, TypeGuard
 
@@ -55,8 +54,9 @@ class KeyedProvider(Protocol):
         ...
 
 
-def _accepts(provider_class: Callable[..., Provider[object]], *options: str) -> TypeGuard[KeyedProvider]:
-    return inspect.signature(provider_class).parameters.keys() >= set(options)
+def _accepts(provider_class: type[Provider[object]], *options: str) -> TypeGuard[KeyedProvider]:
+    # `__init__`, as the signature of a `@deprecated` class is its wrapped `__new__` before Python 3.13.
+    return inspect.signature(provider_class.__init__).parameters.keys() >= set(options)
 
 
 def keyed_provider(provider: str, *options: str) -> KeyedProvider | None:
@@ -186,7 +186,7 @@ def build_provider(provider: str, *, key: str | None = None, base_url: str | Non
 
 
 def no_endpoint(provider: str) -> UserError:
-    """The error for a `base_url` saved for a model whose provider cannot take one."""
+    """The error for a `base_url` saved for a provider, or a chain, that cannot take one."""
     return UserError(f'{provider} has no endpoint to override. Reset base_url in /model settings.')
 
 

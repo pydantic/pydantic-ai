@@ -15,6 +15,7 @@ from rich.console import Console
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.openai_codex import OpenAICodexModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.providers.github_copilot import GitHubCopilotCredentials
@@ -215,16 +216,23 @@ async def test_every_account_of_a_model_uses_its_base_url(tmp_path: Path, enviro
     ):
         store.save_model_settings(name, {'base_url': URL})
         assert host(await models.resolve(name)) == 'gateway.example'
-    store.save_model_settings('single:x', {'base_url': URL})
-    with pytest.raises(UserError, match='single has no endpoint to override'):
-        await models.resolve('single:x')
+    codex = await models.resolve('openai-codex@work:gpt-5')
+    assert isinstance(codex, OpenAICodexModel)
+    assert models.codex_providers == {('openai-codex@work', URL): codex.provider}
+    models.codex_auth().forget('openai-codex@work')
+    assert models.codex_providers == {}
+    store.save_chain(name='both', models=['openai:gpt-5', 'openai:gpt-4.1'])
+    for name, provider in (('single:x', 'single'), ('chain:both', 'chain:both')):
+        store.save_model_settings(name, {'base_url': URL})
+        with pytest.raises(UserError, match=f'{provider} has no endpoint to override'):
+            await models.resolve(name)
 
 
 def test_base_url_is_a_model_setting_that_no_request_carries(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     source = ModelSettingsSource(store, 'openai:gpt-5')
     row = FieldMenu(source).row_for('base_url')
-    assert row is not None and row.choices == ()
+    assert row is not None and (row.label, row.choices) == ('Base URL', ())
     assert source.apply(row, URL) == 'Saved base_url for openai:gpt-5. Applies when this model is selected.'
     assert store.model_settings('openai:gpt-5') == {'base_url': URL}
     assert ModelSettingsForm(base_url=URL).to_model_settings() is None

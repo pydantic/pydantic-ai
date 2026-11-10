@@ -409,11 +409,12 @@ async def test_base_url_takes_requests_and_credentials_to_its_host():
             http_client=client,
         )
         await client.get('https://gateway.example/v1/models')
+        await client.get('https://gateway.example:8443/v1/models')
         await client.get('https://api.openai.com/v1/models')
 
     assert provider.base_url == 'https://gateway.example/v1'
     assert provider.client.base_url == 'https://gateway.example/v1/'
-    assert seen == ['Bearer access-1', None]
+    assert seen == ['Bearer access-1', None, None]
 
 
 @pytest.mark.parametrize(

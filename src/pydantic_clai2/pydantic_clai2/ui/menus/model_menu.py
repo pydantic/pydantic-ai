@@ -144,6 +144,7 @@ def setting_label(key: str) -> str:
         'max_tokens': 'Max Output Tokens',
         'top_p': 'Top-P (Nucleus Sampling)',
         'cache': 'Prompt Caching',
+        'base_url': 'Base URL',
         'openai_text_verbosity': 'Verbosity',
         'anthropic_thinking_mode': 'Extended Thinking',
         'anthropic_thinking_budget': 'Thinking Budget',

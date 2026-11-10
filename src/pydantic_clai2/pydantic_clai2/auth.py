@@ -207,22 +207,22 @@ class CodexAuth:
         *,
         read_line: ReadLine | None = None,
         login_timeout: float = 300,
-        providers: dict[str, OpenAICodexProvider] | None = None,
+        providers: dict[tuple[str, str | None], OpenAICodexProvider] | None = None,
     ) -> None:
         """Defer all credential access until login or a Codex request; `read_line` defaults to one under `console`.
 
-        `providers` is the cache the process's sessions share, so each account refreshes its tokens once.
+        `providers` is the cache the process's sessions share, so each account's endpoint refreshes its tokens once.
         """
         self.console = console
         self.read_line = read_line or partial(line_input.read_line, console=console, hidden=True)
         self.login_timeout = login_timeout
         self.source = CodexCredentials()
-        self._providers: dict[str, OpenAICodexProvider] = {} if providers is None else providers
+        self._providers: dict[tuple[str, str | None], OpenAICodexProvider] = {} if providers is None else providers
 
     @property
     def provider(self) -> OpenAICodexProvider | None:
         """The default profile's provider, once a request has built it."""
-        return self._providers.get(CODEX)
+        return self._providers.get((CODEX, None))
 
     async def login(self, args: list[str], *, dialogs: Dialogs | None = None) -> str:
         """Run core's authorization-code + PKCE flow with a five-minute timeout.
@@ -247,7 +247,7 @@ class CodexAuth:
             if credentials is None:
                 return f'{who} sign-in cancelled.'
             await source.save_login(credentials)
-            self._providers.pop(name, None)
+            self.forget(name)
             return await anyio.to_thread.run_sync(self._connected, name, profile)
         self.console.print(
             f'Sign in to {who} in your browser. Waiting up to five minutes.', style=theme.color(theme.INFO)
@@ -267,7 +267,7 @@ class CodexAuth:
             with fail_after(self.login_timeout):
                 credentials = await self._receive(flow)
             await source.save_login(credentials)
-            self._providers.pop(name, None)
+            self.forget(name)
         except TimeoutError:
             raise UserError(f'Codex login timed out. Run /login {name} to try again.') from None
         finally:
@@ -349,26 +349,20 @@ class CodexAuth:
                 return await flow.exchange_code(code_from_paste(text=text, state=flow.state))
 
     def forget(self, account: str) -> None:
-        """Drop an account's cached provider after it signs out, so the next request asks to sign in."""
-        self._providers.pop(account, None)
+        """Drop an account's cached providers after it signs in or out, so the next request reads its sign-in."""
+        for key in [key for key in self._providers if key[0] == account]:
+            del self._providers[key]
 
     def model(self, name: str, *, base_url: str | None = None) -> OpenAICodexModel:
-        """Reuse each profile's core provider so it owns refresh and credential persistence.
-
-        A `base_url` gets a provider of its own, built per model so signing out still applies to it.
-        """
+        """Reuse each profile's core provider so it owns refresh and credential persistence."""
         ref = parse_model(name)
-        if base_url is None:
-            return OpenAICodexModel(ref.name, provider=self.account_provider(ref.account))
-        provider = OpenAICodexProvider(credential_source=self._source(ref.account), base_url=base_url)
-        return OpenAICodexModel(ref.name, provider=provider)
+        return OpenAICodexModel(ref.name, provider=self.account_provider(ref.account, base_url))
 
-    def account_provider(self, account: str) -> OpenAICodexProvider:
+    def account_provider(self, account: str, base_url: str | None = None) -> OpenAICodexProvider:
         """The core provider for `openai-codex` or `openai-codex@PROFILE`, shared by models and usage checks."""
-        provider = self._providers.get(account)
+        provider = self._providers.get((account, base_url))
         if provider is None:
-            provider = self._providers[account] = OpenAICodexProvider(credential_source=self._source(account))
+            source = self.source if account == CODEX else CodexCredentials(account=account)
+            provider = OpenAICodexProvider(credential_source=source, base_url=base_url)
+            self._providers[account, base_url] = provider
         return provider
-
-    def _source(self, account: str) -> CodexCredentials:
-        return self.source if account == CODEX else CodexCredentials(account=account)

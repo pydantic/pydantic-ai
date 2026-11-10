@@ -38,7 +38,9 @@ class ClaiProcess(Generic[DepsT]):
     """Plugin declarations, changes, and process-scoped plugins; each session's `SessionPlugins` joins it."""
     live: LiveRuntimes
     """The live sessions, by ID and by conversation, which process-scoped plugins reach as `host.live`."""
-    codex_providers: 'dict[str, OpenAICodexProvider]' = field(default_factory=dict[str, 'OpenAICodexProvider'])
+    codex_providers: 'dict[tuple[str, str | None], OpenAICodexProvider]' = field(
+        default_factory=dict[tuple[str, str | None], 'OpenAICodexProvider']
+    )
     """The native Codex provider per account, shared by every session's `ModelResolver`, so each refreshes once."""
 
     @classmethod

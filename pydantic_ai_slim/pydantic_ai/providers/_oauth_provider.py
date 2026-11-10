@@ -219,7 +219,7 @@ class OAuthCredentialsAuth(httpx2.Auth):
 
     async def async_auth_flow(self, request: httpx2.Request) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
         provider = self._provider
-        if request.url.scheme != 'https' or request.url.host != provider._host:  # pyright: ignore[reportPrivateUsage]
+        if request.url.scheme != 'https' or (request.url.host, request.url.port) != provider._origin:  # pyright: ignore[reportPrivateUsage]
             # Never send subscription credentials to a foreign destination or over plaintext:
             # a caller-supplied client may be reused for arbitrary requests.
             yield request
@@ -298,7 +298,7 @@ class OAuthCredentialsProvider(_OpenAISDKProvider, ABC, Generic[CredentialsT]):
             raise UserError(
                 f'`{type(self).__name__}` only sends credentials over HTTPS, got `base_url` {self.base_url!r}.'
             )
-        self._host = url.host
+        self._origin = (url.host, url.port)
         self._revision = 0
         self._refresh_failures = 0
         self._last_refresh_error: tuple[int, Exception] | None = None
