@@ -521,8 +521,6 @@ def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSetting
 
 LatestAnthropicModelNames = Literal[
     'claude-fable-5-2',
-    # The docs' `anthropic:xlarge` alias still resolves to it: the Gateway can't serve Fable 5.2 until it has its price.
-    'claude-fable-5-1',
     'claude-opus-5-5',
     'claude-sonnet-5-5',
     'claude-haiku-5-5',

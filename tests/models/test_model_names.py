@@ -125,9 +125,6 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:us.deepseek.r1-v1:0',
         # Gateway rejects it with a 403 "The provider denied access to model `global.zai.glm-5.3`."
         'gateway/bedrock:global.zai.glm-5.3',
-        # Gateway rejects it with a 404 "No cost data available for model `claude-fable-5-2`" until genai-prices
-        # has its price.
-        'gateway/anthropic:claude-fable-5-2',
     }
 )
 

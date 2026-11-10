@@ -50,6 +50,6 @@ Update this table whenever a change to `aliases.json` fills, opens, or moves a g
 | `google:small` | `gemini-3.1-flash-lite` | Haiku-priced, and Google's newest model at that price. `gemini-3.5-flash-lite` is Sonnet-priced by output, so it can't replace it. |
 | `xai:small` | `grok-4.3` | xAI's cheapest general chat model. Its output price is nearer Sonnet's than Haiku's, so `small` takes it as the nearest model above. |
 | `xai:medium`, `xai:large`, `xai:xlarge` | `grok-4.7` | Sonnet-priced and newer than `grok-4.3`. It replaced `grok-4.6` at the same price. Nothing sits above it. |
-| `anthropic:xlarge`, `bedrock:xlarge` | Claude Fable 5.1 | Claude Fable 5.2 is newer and cheaper, but Pydantic AI Gateway refuses it until `genai-prices` has its price, and doc examples render Gateway variants. Bedrock doesn't serve Fable 5.2. Move `anthropic:xlarge` once the Gateway serves it. |
+| `bedrock:xlarge` | `global.anthropic.claude-fable-5-1` | Bedrock doesn't serve Claude Fable 5.2, which `anthropic:xlarge` takes, so `bedrock:xlarge` keeps the newest Fable it serves. |
 | `openai:image` | `gpt-image-2.5-flare` | Same price as `gpt-image-2`, newer. Sunburst is OpenAI's slower premium editing model. |
 | `openai:embedding` | `text-embedding-3-small` | OpenAI's general-purpose embedding model. `text-embedding-3-large` costs 6.5 times as much. |

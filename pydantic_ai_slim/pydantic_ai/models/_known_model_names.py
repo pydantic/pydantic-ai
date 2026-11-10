@@ -13,7 +13,6 @@ from typing_extensions import TypeAliasType
 KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[
-        'anthropic:claude-fable-5-1',
         'anthropic:claude-fable-5-2',
         'anthropic:claude-haiku-4-5',
         'anthropic:claude-haiku-5-5',
@@ -94,7 +93,7 @@ KnownModelName = TypeAliasType(
         'crusoe:zai-org/GLM-5.3-Flash',
         'deepseek:deepseek-flash',
         'deepseek:deepseek-v4-pro',
-        'gateway/anthropic:claude-fable-5-1',
+        'gateway/anthropic:claude-fable-5-2',
         'gateway/anthropic:claude-haiku-4-5',
         'gateway/anthropic:claude-haiku-5-5',
         'gateway/anthropic:claude-opus-4-8',
