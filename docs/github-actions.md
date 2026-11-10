@@ -68,8 +68,8 @@ SHA instead in anything you rely on.
 
 The agent's output is printed to the log, written to the job summary, and exposed as the step's
 `result` output. A multi-line answer survives all three, and the runner reads none of it as
-instructions: workflow commands are stopped for the whole run, so a model that gets
-`::add-mask::` or `::stop-commands::` printed is printed rather than obeyed, and the `result` output is
+instructions: workflow commands are stopped for the whole run, so an `::add-mask::` or
+`::stop-commands::` line in the agent's answer is printed rather than obeyed, and the `result` output is
 delimited with a random token so an answer cannot forge a second output.
 
 That covers the action publishing the answer, not what you do with it next: `result` is text the
@@ -92,7 +92,8 @@ instructions out of the workflow file, and is read relative to `working-director
 
 Without an `agent` input, the action runs the [Harness](harness/index.md)'s
 [`Coder`](harness/coder.md), which reads and edits files and runs
-commands — the same composition the gh-aw engine runs by default.
+commands. It is the exported `pydantic_ai_harness.coder:coder_agent`, whose commands get only `PATH`,
+`HOME` and the locale variables, not the step's environment.
 
 Point `agent` at a `module:variable` pair to run your own [`Agent`][pydantic_ai.Agent] instead,
 and install the project that defines it with `pip-install`:
@@ -167,11 +168,13 @@ approve each run, put the agent's job in an
 [environment](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
 with required reviewers.
 
-The action withholds the runner's command files and tokens — `GITHUB_ENV`, `GITHUB_PATH`,
-`GITHUB_OUTPUT`, `GITHUB_STATE`, `GITHUB_STEP_SUMMARY`, the OIDC token request variables and the
-cache and runtime tokens — from the environment the agent and its tools inherit, so a command isn't
-handed the way to plant a variable or a binary for later steps, or to mint an OIDC token. That is
-not a sandbox: a command can still go looking for the runner's files on disk, which is why
+The action starts the agent's process without the runner's command files and tokens —
+`GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_STATE`, the OIDC token request variables and the cache and
+runtime tokens — so no command the agent runs can find them, not even in a process's starting
+environment under `/proc`, and none can plant a variable or a binary for later steps or mint an
+OIDC token. The output and job summary paths stay, because the action writes the answer to them.
+That is not a sandbox: the provider credential is in the agent's process, where a command can
+read it, and a command can still go looking for the runner's files on disk, which is why
 privileged steps belong in another job.
 
 Provider credentials belong in the step's `env:`. The action takes no API key input, so a key never
