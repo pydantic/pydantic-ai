@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeGuard, cast
 
@@ -101,9 +102,30 @@ class NativeComputer:
             return block.toolset_name == 'computer'
         return block.name == 'computer' and block.toolset_name is None
 
-    def call_part(self, blocks: list[dict[str, Any]], provider_name: str) -> ComputerCallPart:
-        """Calls of the computer use tool as one `computer` call, keeping them to send back as they were."""
-        member_actions = [map_computer_member(*computer_member(block, self.version)) for block in blocks]
+    def call_part(
+        self,
+        blocks: list[dict[str, Any]],
+        provider_name: str,
+        *,
+        incomplete: Collection[str] = (),
+        split: Mapping[str, Sequence[str]] | None = None,
+    ) -> ComputerCallPart:
+        """Calls of the computer use tool as one `computer` call, keeping them to send back as they were.
+
+        A call in `incomplete`, by ID, didn't arrive whole, such as one cut off at `max_tokens`: none of what it
+        asked for runs. `split` names, by call ID, the other tools Claude called just before a call: run as one
+        batch, the call would run before them, so the batch is refused and Claude asked again.
+        """
+        split = split or {}
+        member_actions = [
+            [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'incomplete_input': True}]
+            if block['id'] in incomplete
+            else [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'after_tool_calls': list(split[block['id']])}]
+            if block['id'] in split
+            else map_computer_member(name, args)
+            for block in blocks
+            for name, args in [computer_member(block, self.version)]
+        ]
         actions = [action for member in member_actions for action in member]
         replay = ComputerReplay(
             computer_blocks=[ComputerBlock(id=b['id'], name=b['name'], input=b['input']) for b in blocks],
@@ -183,6 +205,50 @@ _COMPUTER_MEMBER_TYPES: dict[str, str] = {
 }
 """The `computer` tool action type of each member whose name differs from it."""
 
+_REQUIRED_MEMBER_FIELDS: dict[str, frozenset[str]] = {
+    'mouse_move': frozenset({'coordinate'}),
+    'scroll': frozenset({'scroll_direction', 'scroll_amount'}),
+    'type': frozenset({'text'}),
+    'key': frozenset({'text'}),
+    'hold_key': frozenset({'text', 'duration'}),
+    'zoom': frozenset({'region'}),
+}
+"""The input fields a member can't do without; one that is missing is refused, not filled in."""
+
+
+def _ints(value: Any, count: int) -> bool:
+    return (
+        isinstance(value, list)
+        and len(cast(list[Any], value)) == count
+        and all(type(item) is int for item in cast(list[Any], value))
+    )
+
+
+_MEMBER_FIELD_TYPES: dict[str, Callable[[Any], bool]] = {
+    'coordinate': lambda value: _ints(value, 2),
+    'start_coordinate': lambda value: _ints(value, 2),
+    'region': lambda value: _ints(value, 4),
+    'text': lambda value: isinstance(value, str),
+    'scroll_direction': lambda value: isinstance(value, str),
+    'scroll_amount': lambda value: type(value) is int,
+    'repeat': lambda value: type(value) is int,
+    'duration': lambda value: type(value) in (int, float),
+}
+"""Whether each input field has the type the tool documents, checked as is: a number is not text."""
+
+
+def _unmapped_member_fields(name: str, args: dict[str, Any]) -> list[str] | None:
+    """The input fields of a member that don't map, or `None` when every one does.
+
+    A field that isn't one the `computer` tool takes, is missing though required, or has the wrong type doesn't map.
+    """
+    fields = _COMPUTER_MEMBER_FIELDS.get(name)
+    if fields is None:
+        return sorted(args.keys())
+    unmapped = (args.keys() - fields) | (_REQUIRED_MEMBER_FIELDS.get(name, frozenset()) - args.keys())
+    unmapped |= {key for key, value in args.items() if key in fields and not _MEMBER_FIELD_TYPES[key](value)}
+    return sorted(unmapped) if unmapped else None
+
 
 def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]:
     """One computer use call as `computer` tool actions, mapped field by field.
@@ -190,9 +256,8 @@ def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]
     A member or field that doesn't map fails validation, so the model retries; only the names of what didn't map are
     kept, so the call never runs with part of what the model asked for.
     """
-    fields = _COMPUTER_MEMBER_FIELDS.get(name)
-    unsupported = sorted(args.keys() - fields) if fields is not None else sorted(args.keys())
-    if fields is None or unsupported:
+    unsupported = _unmapped_member_fields(name, args)
+    if unsupported is not None:
         # Under the tool's own type, so the retry names the fields rather than refusing the member.
         return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'unsupported_fields': unsupported}]
     position = _point(args.get('coordinate'))
@@ -217,13 +282,13 @@ def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]
             amount = args.get('scroll_amount')
             return [{'type': 'scroll', **position, 'direction': direction, 'amount': amount, 'modifiers': modifiers}]
         case 'type':
-            return [{'type': 'type', 'text': args.get('text', '')}]
+            return [{'type': 'type', 'text': args['text']}]
         case 'key':
             # xdotool syntax, which Claude writes: chords separated by spaces are pressed one after another.
-            chords = str(args.get('text', '')).split() or ['']
+            chords = args['text'].split() or ['']
             return [{'type': 'keypress', 'keys': [chord], 'repeat': args.get('repeat')} for chord in chords]
         case 'hold_key':
-            return [{'type': 'hold_key', 'keys': [args.get('text', '')], 'seconds': args.get('duration')}]
+            return [{'type': 'hold_key', 'keys': [args['text']], 'seconds': args['duration']}]
         case 'wait':
             return [{'type': 'wait', 'seconds': args.get('duration')}]
         case 'zoom':
