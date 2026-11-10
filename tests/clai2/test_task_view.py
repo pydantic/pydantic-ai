@@ -3,6 +3,7 @@
 import asyncio
 import io
 import time
+from itertools import count
 
 import pytest
 from rich.console import Console
@@ -20,6 +21,10 @@ def tasks_ui() -> Tasks:
     return Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
 
 
+_STARTS = count(1)
+"""Start times in the order the tasks are made, whatever the clock's resolution."""
+
+
 def task(
     letter: str = 'a', *, agent: str = 'worker', parent: str | None = None, outcome: DelegationOutcome | None = None
 ) -> DelegationTask:
@@ -29,6 +34,7 @@ def task(
         agent_name=agent,
         prompt=f'inspect {letter}',
         conversation_id='root',
+        started_at=float(next(_STARTS)),
     )
     if outcome is not None:
         record.status, record.outcome, record.finished_at = 'finished', outcome, time.time()
@@ -155,6 +161,10 @@ def test_transcript_keeps_its_newest_blocks(monkeypatch: pytest.MonkeyPatch) -> 
     screen = driver.screen()
     assert 'earlier messages are hidden' in screen and 'answer 5' in screen
     assert 'answer 0' not in screen and 'inspect a' not in screen
+
+    record.messages[:] = [ModelResponse(parts=[TextPart('compacted')])]
+    screen = driver.screen(refresh=True)
+    assert 'compacted' in screen and 'answer 5' not in screen, 'a history rewritten shorter is shown from its start'
 
 
 def test_transcript_blocks_escape_terminal_control_and_show_the_directory() -> None:

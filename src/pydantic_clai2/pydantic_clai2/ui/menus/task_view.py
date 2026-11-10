@@ -314,8 +314,8 @@ class TaskView:
 class _Tail:
     """The transcript window's Markdown: the selected task's newest blocks, appended to while they only grow.
 
-    Streamed text leaves a snapshot between its part ending and its response joining the history. It stays on
-    screen meanwhile, so the transcript neither blinks nor loses its scroll position.
+    A snapshot that only lost its end keeps what is on screen: streamed text leaves it between its part ending
+    and its response joining the history.
     """
 
     window: Window
@@ -325,7 +325,7 @@ class _Tail:
     view: MarkdownView | None = None
 
     def show(self, task_id: str | None, blocks: Sequence[str]) -> None:
-        if task_id != self.task_id:
+        if task_id != self.task_id or self.first > len(blocks):
             self.task_id, self.first, self.text = task_id, 0, None
         if sum(map(len, blocks[self.first :])) > 2 * _TAIL:
             sizes = list(accumulate(len(block) for block in reversed(blocks)))
@@ -434,7 +434,7 @@ class _Input(Widget):
             region.ansi(0, 0, f'{theme.sgr(theme.MUTED)}› {terminal_text(view.placeholder, keep="")}{_RESET}')
 
 
-def _run(app: LiveApp) -> None:  # pragma: no cover - needs a real terminal
+def _run(app: LiveApp) -> None:  # pragma: no cover
     """Run `app` with the keyboard in legacy mode.
 
     Termflow's Kitty mode names a shifted key by its unshifted one, so `?` would type `/`. Its input backend

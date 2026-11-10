@@ -515,7 +515,7 @@ run through `menu_worker`. Metadata refreshes must preserve selection by ID.
 `/tasks` is the other exception: a `termflow.live` app, because a transcript that
 streams beside an input needs a frame loop. Its actions are Ctrl chords, since
 letters type the message. Keep `TaskView` free of the terminal and the event loop:
-`snapshot`, `act` and `size` are injected, and `open_tasks` takes the `run` tests script.
+`snapshot`, `act` and `size` are injected, and tests pass `open_tasks` a scripted `run`.
 History-changing plugins use `await conversation.commit_messages`, not the legacy
 in-memory `replace_messages`, so exiting immediately after `/compact` is durable.
 
