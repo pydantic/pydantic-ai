@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -267,7 +268,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 the default, and `()` lets the retry policy retry every model error. When the agent is built
                 with [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors], every model error is
                 non-retryable, so that capability is the one that retries them, and the retry policy still
-                covers worker crashes and activity timeouts. A `RetryOnModelErrors` that only a
+                covers worker crashes and activity timeouts. A `non_retryable_model_errors` other than the default
+                is then ignored, with a `UserWarning`. A `RetryOnModelErrors` that only a
                 `DynamicCapability` returns for the run raises a `UserError` inside a workflow instead.
 
         Note:
@@ -371,6 +373,15 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if self._retry_on_model_errors:
             # `RetryOnModelErrors` retries model errors in the workflow, waiting on a durable timer, so the activity
             # doesn't retry them too: its retry policy is left to crashes and timeouts, which never reach a hook.
+            if non_retryable_model_errors != _DEFAULT_NON_RETRYABLE_MODEL_ERRORS:
+                warnings.warn(
+                    '`non_retryable_model_errors` is ignored because the agent has `RetryOnModelErrors`: that '
+                    'capability does the retrying of model errors, so the model request activity treats every model '
+                    'error as non-retryable. Configure which errors are retried with `RetryOnModelErrors(retry_on=...)` '
+                    'instead.',
+                    UserWarning,
+                    stacklevel=2,
+                )
             non_retryable_model_errors = (ModelAPIError,)
         self._operation_backend = TemporalOperationBackend(
             agent_name=self.name,

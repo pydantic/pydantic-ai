@@ -753,6 +753,37 @@ async def test_durability_retry_owns_model_errors_over_the_activity_retry_policy
     assert len([e for e in history.events if e.HasField('timer_started_event_attributes')]) == 1
 
 
+def test_durability_warns_that_retry_on_model_errors_ignores_non_retryable_model_errors():
+    """With `RetryOnModelErrors`, an explicit `non_retryable_model_errors` other than the default has no effect.
+
+    Every model error is non-retryable in the model activity then, so the agent warns that the list is ignored.
+    """
+    with pytest.warns(
+        UserWarning, match='`non_retryable_model_errors` is ignored because the agent has `RetryOnModelErrors`'
+    ):
+        Agent(
+            FunctionModel(_fallback_target_fn, model_name='ignored'),
+            name='durability_ignored_non_retryable_agent',
+            capabilities=[
+                RetryOnModelErrors(),
+                TemporalDurability(
+                    activity_config=BASE_ACTIVITY_CONFIG, non_retryable_model_errors=[ModelUnavailableError]
+                ),
+            ],
+        )
+
+
+def test_durability_does_not_warn_about_the_default_non_retryable_model_errors():
+    """`RetryOnModelErrors` with the default `non_retryable_model_errors` is the normal setup, so it doesn't warn."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        Agent(
+            FunctionModel(_fallback_target_fn, model_name='default'),
+            name='durability_default_non_retryable_agent',
+            capabilities=[RetryOnModelErrors(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+        )
+
+
 dynamic_retry_durable_agent = Agent(
     FunctionModel(_fallback_target_fn, model_name='dynamic_retry'),
     name='durability_dynamic_retry_agent',
