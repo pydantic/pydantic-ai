@@ -161,6 +161,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [System Reminders](https://pydantic.dev/docs/ai/harness/system-reminders/) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
 | [Detect Loops](https://pydantic.dev/docs/ai/harness/detect-loops/) | Harness | Notice repeated tool calls, results, alternations, or responses, and nudge the model, stop the run, or call your handler |
 | [Trajectory Judge](https://pydantic.dev/docs/ai/harness/trajectory-judge/) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
+| [Refine Output](https://pydantic.dev/docs/ai/harness/refine-output/) | Harness | Send the agent back to review and revise its output before the run ends |
 
 ### Self-extension
 
