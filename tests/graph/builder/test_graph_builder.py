@@ -9,6 +9,7 @@ import pytest
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.exceptions import GraphValidationError
 from pydantic_graph.graph_builder import GraphBuildingError
+from pydantic_graph.id_types import NodeID, generate_placeholder_node_id, replace_placeholder_id
 from pydantic_graph.join import reduce_list_append, reduce_sum
 from pydantic_graph.node import Fork
 
@@ -483,3 +484,11 @@ async def test_multiple_stream_decorators_without_node_id():
     state = SimpleState()
     result = await graph.run(state=state)
     assert sorted(result) == [2, 5, 10]
+
+
+def test_replace_placeholder_id_preserves_colons_in_label():
+    """A label containing colons survives the placeholder round trip; only the trailing UUID is dropped."""
+    assert replace_placeholder_id(NodeID(generate_placeholder_node_id('a:b'))) == 'a:b'
+    assert replace_placeholder_id(NodeID(generate_placeholder_node_id('a:b:c'))) == 'a:b:c'
+    assert replace_placeholder_id(NodeID(generate_placeholder_node_id('plain'))) == 'plain'
+    assert replace_placeholder_id(NodeID('not_a_placeholder')) == 'not_a_placeholder'
