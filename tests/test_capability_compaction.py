@@ -836,9 +836,16 @@ async def test_resumed_suspended_response_is_not_compacted():
 
 async def test_resumed_request_stays_out_of_new_messages():
     """Compacting a run resumed from history without a prompt keeps that request out of `new_messages()`."""
+
+    def keep_only_the_request(request: CompactionRequest) -> CompactionResult:
+        part = CompactionPart(content='summary')
+        return CompactionResult(
+            messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='h', kept_from=1
+        )
+
     agent = Agent(
         FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
-        capabilities=[RequestOnce(), Summarize()],
+        capabilities=[RequestOnce(), Returns(keep_only_the_request)],
     )
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('first')]),
@@ -846,12 +853,13 @@ async def test_resumed_request_stays_out_of_new_messages():
         ModelRequest(parts=[UserPromptPart('second')]),
     ]
     result = await agent.run(message_history=history)
-    assert [type(m).__name__ for m in result.all_messages()] == [
-        'ModelRequest',
-        'ModelResponse',
-        'ModelRequest',
-        'ModelResponse',
-    ]
+    # The compaction removed a message ahead of the resumed request, so its index shifted.
+    [record] = result.compactions
+    assert (record.messages_before, record.messages_after) == (3, 2)
+    summary, resumed, response = result.all_messages()
+    assert summary == ModelRequest(parts=[CompactionPart(content='summary')])
+    assert isinstance(resumed, ModelRequest) and resumed.parts == history[2].parts
+    assert isinstance(response, ModelResponse)
     assert result.new_messages() == [result.all_messages()[-1]]
 
 
