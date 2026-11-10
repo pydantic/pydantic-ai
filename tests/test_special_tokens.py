@@ -64,7 +64,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters, known_model_names
 from pydantic_ai.models.batch import BatchRequest, BatchResult
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -914,7 +914,7 @@ async def test_held_text_is_sent_before_the_next_part_starts():
 async def test_held_tool_args_sent_at_the_end_keep_the_tool_call_id(args: str):
     """Arguments cut off while a joiner or an escape is held, as at `finish_reason='length'`, end in a delta UI adapters accept."""
 
-    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[Any]:
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         if len(messages) == 1:
             yield {0: DeltaToolCall(name='look_up', json_args=args, tool_call_id='call_a')}
         else:
