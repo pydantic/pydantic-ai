@@ -218,7 +218,7 @@ async def test_every_account_of_a_model_uses_its_base_url(tmp_path: Path, enviro
         assert host(await models.resolve(name)) == 'gateway.example'
     codex = await models.resolve('openai-codex@work:gpt-5')
     assert isinstance(codex, OpenAICodexModel)
-    assert models.codex_providers == {('openai-codex@work', URL): codex.provider}
+    assert models.codex_providers == {f'openai-codex@work {URL}': codex.provider}
     models.codex_auth().forget('openai-codex@work')
     assert models.codex_providers == {}
     store.save_chain(name='both', models=['openai:gpt-5', 'openai:gpt-4.1'])

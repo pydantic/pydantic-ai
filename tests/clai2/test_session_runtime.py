@@ -81,9 +81,10 @@ async def test_runtimes_share_the_process_services(tmp_path: Path) -> None:
     assert process.tasks.owner.directory == tmp_path / 'sessions.db.tasks'
     # Every account's Codex provider, and so its token refresh, is built once for all sessions.
     assert await resolve_model_name(a.session.resolve_model, 'openai-codex:gpt-5') is not None
-    provider = process.codex_providers['openai-codex', None]
+    provider = process.codex_providers['openai-codex']
     assert await resolve_model_name(b.session.resolve_model, 'openai-codex:gpt-5') is not None
-    assert process.codex_providers == {('openai-codex', None): provider}
+    assert list(process.codex_providers) == ['openai-codex']
+    assert process.codex_providers['openai-codex'] is provider
     assert not (a.interrupts.signals or b.interrupts.signals)
     alone, _ = runtime_over(ClaiProcess.open(SettingsStore(tmp_path / 'other.db')), tmp_path / 'alone')
     assert alone.tasks.owner is not process.tasks.owner

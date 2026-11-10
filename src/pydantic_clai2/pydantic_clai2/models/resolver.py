@@ -51,9 +51,7 @@ class ModelResolver:
     """Where a plugin sign-in saves its models."""
     pool_accounts: Callable[[], bool] = lambda: False
     """The `accounts.pool` setting, read per resolution so `/set` applies to the next run."""
-    codex_providers: 'dict[tuple[str, str | None], OpenAICodexProvider]' = field(
-        default_factory=dict[tuple[str, str | None], 'OpenAICodexProvider']
-    )
+    codex_providers: 'dict[str, OpenAICodexProvider]' = field(default_factory=dict[str, 'OpenAICodexProvider'])
     """The native Codex provider per account, which the process's sessions share; sign-ins prompt on `console`."""
     _auth: 'CodexAuth | None' = None
 

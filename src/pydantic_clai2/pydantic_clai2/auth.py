@@ -207,22 +207,22 @@ class CodexAuth:
         *,
         read_line: ReadLine | None = None,
         login_timeout: float = 300,
-        providers: dict[tuple[str, str | None], OpenAICodexProvider] | None = None,
+        providers: dict[str, OpenAICodexProvider] | None = None,
     ) -> None:
         """Defer all credential access until login or a Codex request; `read_line` defaults to one under `console`.
 
-        `providers` is the cache the process's sessions share, so each account's endpoint refreshes its tokens once.
+        `providers` is the cache the process's sessions share, so each account refreshes its tokens once.
         """
         self.console = console
         self.read_line = read_line or partial(line_input.read_line, console=console, hidden=True)
         self.login_timeout = login_timeout
         self.source = CodexCredentials()
-        self._providers: dict[tuple[str, str | None], OpenAICodexProvider] = {} if providers is None else providers
+        self._providers: dict[str, OpenAICodexProvider] = {} if providers is None else providers
 
     @property
     def provider(self) -> OpenAICodexProvider | None:
         """The default profile's provider, once a request has built it."""
-        return self._providers.get((CODEX, None))
+        return self._providers.get(CODEX)
 
     async def login(self, args: list[str], *, dialogs: Dialogs | None = None) -> str:
         """Run core's authorization-code + PKCE flow with a five-minute timeout.
@@ -350,7 +350,7 @@ class CodexAuth:
 
     def forget(self, account: str) -> None:
         """Drop an account's cached providers after it signs in or out, so the next request reads its sign-in."""
-        for key in [key for key in self._providers if key[0] == account]:
+        for key in [key for key in self._providers if key.partition(' ')[0] == account]:
             del self._providers[key]
 
     def model(self, name: str, *, base_url: str | None = None) -> OpenAICodexModel:
@@ -359,10 +359,13 @@ class CodexAuth:
         return OpenAICodexModel(ref.name, provider=self.account_provider(ref.account, base_url))
 
     def account_provider(self, account: str, base_url: str | None = None) -> OpenAICodexProvider:
-        """The core provider for `openai-codex` or `openai-codex@PROFILE`, shared by models and usage checks."""
-        provider = self._providers.get((account, base_url))
+        """The core provider for `openai-codex` or `openai-codex@PROFILE`, shared by models and usage checks.
+
+        One with a `base_url` is cached as `ACCOUNT BASE_URL`, so its endpoint refreshes its tokens once too.
+        """
+        key = account if base_url is None else f'{account} {base_url}'
+        provider = self._providers.get(key)
         if provider is None:
             source = self.source if account == CODEX else CodexCredentials(account=account)
-            provider = OpenAICodexProvider(credential_source=source, base_url=base_url)
-            self._providers[account, base_url] = provider
+            provider = self._providers[key] = OpenAICodexProvider(credential_source=source, base_url=base_url)
         return provider
