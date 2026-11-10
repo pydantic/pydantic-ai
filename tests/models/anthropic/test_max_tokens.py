@@ -140,7 +140,8 @@ async def test_max_tokens_is_left_alone_with_an_output_extending_beta(
     """A beta like `output-300k-2026-03-24`, for Message Batches, raises the maximum output, so it isn't capped.
 
     That holds wherever the request gets the beta from: the setting, its `anthropic-beta` header in any spelling, or
-    the client's `default_headers`.
+    the client's `default_headers`. A mock, since the beta is documented for Message Batches only, so it checks the
+    request this builds rather than one the Messages API answers.
     """
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='391', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
