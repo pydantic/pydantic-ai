@@ -197,6 +197,8 @@ class HttpKeenableClient:
                 # was cut short, the stack's close below is a no-op, so it is finished here.
                 close_incomplete = response is not None and not body_complete and response.is_closed
                 await stack.aclose()
+                # TODO: drop this and its `suppress` once httpx2 completes an interrupted close
+                # itself: https://github.com/pydantic/httpx2/issues/1326
                 if close_incomplete and response is not None and isinstance(response.stream, httpx2.AsyncByteStream):
                     with suppress(Exception):
                         await response.stream.aclose()
