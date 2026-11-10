@@ -12,6 +12,9 @@ under its old name.
 from __future__ import annotations
 
 import warnings
+from typing import TypeVar
+
+_T = TypeVar('_T')
 
 
 class HarnessDeprecationWarning(UserWarning):
@@ -102,6 +105,21 @@ def warn_argument_renamed(owner: str, old: str, new: str, *, stacklevel: int = 3
         category=HarnessDeprecationWarning,
         stacklevel=stacklevel,
     )
+
+
+def renamed_argument(
+    owner: str, old: str, new: str, *, old_value: _T | None, new_value: _T, default: _T, stacklevel: int = 3
+) -> _T:
+    """The value of an argument still accepted as `old`: `old_value`, with a warning, when it was passed.
+
+    Passing `new` as well, recognized by `new_value` differing from `default`, raises `TypeError`.
+    """
+    if old_value is None:
+        return new_value
+    if new_value != default:
+        raise TypeError(f'Pass `{new}` only: `{old}` is its deprecated name.')
+    warn_argument_renamed(owner, old, new, stacklevel=stacklevel + 1)
+    return old_value
 
 
 SET_WORKING_DIR_ON_THE_WORKSPACE = (

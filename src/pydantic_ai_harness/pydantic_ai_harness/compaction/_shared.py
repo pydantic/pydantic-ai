@@ -101,22 +101,24 @@ def _message_segments(messages: Sequence[ModelMessage]) -> list[list[str]]:
     baseline_index = instruction_window_start(messages)
     loads_start = _post_compaction_window_start(messages)
     per_message: list[list[str]] = []
-    for index, msg in enumerate(messages):
-        if isinstance(msg, ModelRequest):
-            per_message.append(_request_segments(msg, index, baseline_index, loads_start))
+    for index, message in enumerate(messages):
+        if isinstance(message, ModelRequest):
+            per_message.append(_request_segments(message, index, baseline_index, loads_start))
         else:
             segments: list[str] = []
-            for response_part in msg.parts:
+            for response_part in message.parts:
                 segments.extend(_response_part_text(response_part))
             per_message.append(segments)
     return per_message
 
 
-def _request_segments(msg: ModelRequest, index: int, baseline_index: int, loads_start: tuple[int, int]) -> list[str]:
+def _request_segments(
+    message: ModelRequest, index: int, baseline_index: int, loads_start: tuple[int, int]
+) -> list[str]:
     """The text segments of the request at *index*, without the instruction changes core omits."""
-    opened_at = window_boundary_index(msg) if index == baseline_index else -1
+    opened_at = window_boundary_index(message) if index == baseline_index else -1
     segments: list[str] = []
-    for part_index, request_part in enumerate(msg.parts):
+    for part_index, request_part in enumerate(message.parts):
         if (
             isinstance(request_part, InstructionDeltaPart)
             and (index < baseline_index or part_index <= opened_at)
@@ -214,9 +216,9 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
     turns, which is the opposite error from ignoring it. The most recent non-empty set is the
     one that goes, mirroring how a model synthesizes instructions from history.
     """
-    for msg in reversed(messages):
-        if isinstance(msg, ModelRequest) and msg.instructions:
-            return [msg.instructions]
+    for message in reversed(messages):
+        if isinstance(message, ModelRequest) and message.instructions:
+            return [message.instructions]
     return []
 
 
@@ -793,9 +795,9 @@ def find_safe_cutoff(messages: list[ModelMessage], keep: int) -> int:
         return 0
 
     target = len(messages) - keep
-    for idx in range(target, -1, -1):
-        if _is_safe_cutoff(messages, idx):
-            return idx
+    for index in range(target, -1, -1):
+        if _is_safe_cutoff(messages, index):
+            return index
     return 0  # pragma: no cover
 
 
@@ -885,9 +887,9 @@ def _legacy_token_cutoff(messages: list[ModelMessage], target_tokens: int, tail_
         candidate = max(0, len(messages) - 1)
 
     # Walk backward to a safe point.
-    for idx in range(candidate, -1, -1):
-        if _is_safe_cutoff(messages, idx):
-            return idx
+    for index in range(candidate, -1, -1):
+        if _is_safe_cutoff(messages, index):
+            return index
     return 0  # pragma: no cover
 
 
@@ -978,11 +980,11 @@ def _is_harness_marker_part(part: ModelRequestPart) -> bool:
 
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
     """Return the first `ModelRequest` that contains a `UserPromptPart`, or `None`."""
-    for msg in messages:
-        if isinstance(msg, ModelRequest) and any(
-            isinstance(part, UserPromptPart) and not _is_harness_marker_part(part) for part in msg.parts
+    for message in messages:
+        if isinstance(message, ModelRequest) and any(
+            isinstance(part, UserPromptPart) and not _is_harness_marker_part(part) for part in message.parts
         ):
-            return msg
+            return message
     return None
 
 
@@ -1002,8 +1004,8 @@ def prepend_first_user_message(
     first = find_first_user_message(original)
     if first is None:
         return trimmed
-    idx = original.index(first)
-    if idx < cutoff and first not in trimmed:
+    index = original.index(first)
+    if index < cutoff and first not in trimmed:
         genuine = [part for part in first.parts if not is_harness_data(part)]
         return [first if len(genuine) == len(first.parts) else replace(first, parts=genuine), *trimmed]
     return trimmed
@@ -1040,16 +1042,16 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
     """
     calls = {
         part.tool_call_id: part
-        for msg in messages
-        if isinstance(msg, ModelResponse)
-        for part in msg.parts
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
         if isinstance(part, ToolCallPart) and part.tool_call_id
     }
     returns = [
         part
-        for msg in messages
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
         if isinstance(part, ToolReturnPart) and part.outcome != 'retried' and part.tool_call_id in calls
     ]
     return [
@@ -1121,18 +1123,18 @@ def rebuild_with_cleared(
     `load_capability` call keeps its input: core reads which capability is loaded from it.
     """
     return [
-        _clear_returns(msg, clear_return_ids, placeholder)
-        if isinstance(msg, ModelRequest)
-        else _clear_inputs(msg, clear_input_ids)
-        for msg in messages
+        _clear_returns(message, clear_return_ids, placeholder)
+        if isinstance(message, ModelRequest)
+        else _clear_inputs(message, clear_input_ids)
+        for message in messages
     ]
 
 
-def _clear_returns(msg: ModelRequest, clear_return_ids: set[str], placeholder: str) -> ModelRequest:
+def _clear_returns(message: ModelRequest, clear_return_ids: set[str], placeholder: str) -> ModelRequest:
     """*msg* with the returns in *clear_return_ids* blanked, or *msg* itself when none changes."""
     request_parts: list[ModelRequestPart] = []
     changed = False
-    for part in msg.parts:
+    for part in message.parts:
         cleared = (
             cleared_return(part, placeholder)
             if isinstance(part, ToolReturnPart)
@@ -1145,14 +1147,14 @@ def _clear_returns(msg: ModelRequest, clear_return_ids: set[str], placeholder: s
             changed = True
         else:
             request_parts.append(part)
-    return replace(msg, parts=request_parts) if changed else msg
+    return replace(message, parts=request_parts) if changed else message
 
 
-def _clear_inputs(msg: ModelResponse, clear_input_ids: set[str]) -> ModelResponse:
+def _clear_inputs(message: ModelResponse, clear_input_ids: set[str]) -> ModelResponse:
     """*msg* with the call arguments in *clear_input_ids* blanked, or *msg* itself when none changes."""
     response_parts: list[ModelResponsePart] = []
     changed = False
-    for part in msg.parts:
+    for part in message.parts:
         if (
             isinstance(part, ToolCallPart)
             and not isinstance(part, LoadCapabilityCallPart)
@@ -1165,4 +1167,4 @@ def _clear_inputs(msg: ModelResponse, clear_input_ids: set[str]) -> ModelRespons
             changed = True
         else:
             response_parts.append(part)
-    return replace(msg, parts=response_parts) if changed else msg
+    return replace(message, parts=response_parts) if changed else message

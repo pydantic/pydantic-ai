@@ -1300,11 +1300,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 )
             )
             run_state.has_executed_feed = True
-        except BaseException as e:
-            retry = await self._feed_failure_retry(e, run_state, execution, fresh_repl=fresh_repl)
+        except BaseException as exc:
+            retry = await self._feed_failure_retry(exc, run_state, execution, fresh_repl=fresh_repl)
             if retry is None:
                 raise
-            raise retry from e
+            raise retry from exc
 
         _raise_usage_limit_exceeded(execution)
         result = completed.output

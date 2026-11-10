@@ -56,7 +56,7 @@ print(result.output)
 
 | Tool | Purpose |
 |---|---|
-| `web_search` | Search the web and return the top `num_results` pages, each with title, URL, and its most relevant excerpts. |
+| `web_search` | Search the web and return the top `max_results` pages, each with title, URL, and its most relevant excerpts. |
 | `get_page` | Retrieve the full text of one specific URL -- a promising `web_search` hit, or a URL the user provided. |
 | `deep_search` | Run Exa's multi-step deep search and return a synthesized, cited answer. Opt-in via `include_deep_search=True`. |
 | `exa_agent` | Delegate a research task to an asynchronous Exa agent run. Provided by the separate `ExaAgent` capability. |
@@ -69,7 +69,7 @@ so surveying several sources stays cheap; the agent reads a chosen page with
 `get_page` returns the first `max_text_chars` characters of the page. A longer
 page ends with `[... page text truncated at N characters]`. At the
 10,000-character API maximum Exa cannot return the extra character that reveals
-truncation, so no marker appears. `web_search` returns at most `num_results`
+truncation, so no marker appears. `web_search` returns at most `max_results`
 results, even if Exa returns more.
 
 A `web_search` query with no matches returns `No results found for {query!r}.`,
@@ -172,7 +172,7 @@ Every field of `ExaSearch` with its default:
 from pydantic_ai_harness import ExaSearch
 
 ExaSearch(
-    num_results=5,              # results per web_search call (1 to 100)
+    max_results=5,              # results per web_search call (1 to 100)
     max_text_chars=10_000,      # get_page text cap, in characters (1 to 10,000)
     text_summary=False,         # web_search also returns a synthesized text summary
     include_deep_search=False,  # also expose the deep_search tool
@@ -419,7 +419,7 @@ To use the provider's search where there is one and Exa's elsewhere, either:
   from pydantic_ai.capabilities import WebSearch
   from pydantic_ai_harness.exa import ExaSearch
 
-  WebSearch(local=ExaSearch(num_results=10).web_search_tool())
+  WebSearch(local=ExaSearch(max_results=10).web_search_tool())
   ```
 
 Don't combine `WebSearch()` with the default `ExaSearch()` on native-search
@@ -460,7 +460,7 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[ExaSearch(), MCP('htt
 model: anthropic:claude-sonnet-4-6
 capabilities:
   - ExaSearch:
-      num_results: 3
+      max_results: 3
       include_deep_search: true
   - ExaAgent:
       effort: low

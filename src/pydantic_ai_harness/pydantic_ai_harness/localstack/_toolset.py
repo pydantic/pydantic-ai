@@ -297,8 +297,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         """
         try:
             tokens = shlex.split(command)
-        except ValueError as e:
-            raise ModelRetry(f'Could not parse the AWS CLI command: {e}') from e
+        except ValueError as exc:
+            raise ModelRetry(f'Could not parse the AWS CLI command: {exc}') from exc
         if tokens and tokens[0] == 'aws':
             tokens = tokens[1:]
         if not tokens:
@@ -426,7 +426,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
                 Path(work_dir, 'stderr').open('w+b') as stderr_file,
             ):
                 try:
-                    proc = await anyio.open_process(
+                    process = await anyio.open_process(
                         argv,
                         env=self._build_env(work_dir),
                         stdin=subprocess.DEVNULL,
@@ -442,14 +442,14 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
                 try:
                     try:
                         with anyio.fail_after(timeout):
-                            await proc.wait()
+                            await process.wait()
                     except TimeoutError:
-                        proc.kill()
+                        process.kill()
                         with anyio.CancelScope(shield=True):
-                            await proc.wait()
+                            await process.wait()
                         return f'[command timed out after {timeout}s]'
                 finally:
-                    await proc.aclose()
+                    await process.aclose()
 
                 stdout, stderr = await anyio.to_thread.run_sync(
                     lambda: (
@@ -468,7 +468,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             parts.append(f'[stderr]\n{stderr}')
         output = '\n'.join(parts) if parts else '(no output)'
 
-        exit_code = proc.returncode
+        exit_code = process.returncode
         if exit_code:
             output = f'{output}\n[exit code: {exit_code}]'
         return truncate_tail(output, self._max_output_chars)
@@ -488,8 +488,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         try:
             async with httpx.AsyncClient(timeout=self._default_timeout) as client:
                 response = await client.get(url)
-        except httpx.HTTPError as e:
-            return truncate_tail(f'[error: could not reach LocalStack at {url}: {e}]', self._max_output_chars)
+        except httpx.HTTPError as exc:
+            return truncate_tail(f'[error: could not reach LocalStack at {url}: {exc}]', self._max_output_chars)
         if response.status_code != 200:
             return f'[error: LocalStack health check returned HTTP {response.status_code}]'
         return truncate_tail(response.text, self._max_output_chars)

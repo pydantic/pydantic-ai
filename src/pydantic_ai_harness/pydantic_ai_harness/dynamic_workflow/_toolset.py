@@ -822,13 +822,13 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 portal=monty.portal,
                 max_sleep_secs=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))
-        except MontyTypingError as e:
-            raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(e.display())}') from e
+        except MontyTypingError as exc:
+            raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(exc.display())}') from exc
         # Backstop: the type checker parses the code first. `lax` because the errors handled below
         # are still matched against this clause.
-        except MontySyntaxError as e:  # pragma: lax no cover
-            raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(e.display())}') from e
-        except MontyRuntimeError as e:
+        except MontySyntaxError as exc:  # pragma: lax no cover
+            raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(exc.display())}') from exc
+        except MontyRuntimeError as exc:
             if budget_exhausted:
                 # The script may catch the budget error and fail later on something else, so
                 # the flag -- not the displayed error -- proves this script hit the budget;
@@ -836,27 +836,27 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 # failure from the same batch.
                 return _budget_terminal_result(
                     max_agent_calls=self.max_agent_calls,
-                    last_error=capture.prepend_to(e.display()),
+                    last_error=capture.prepend_to(exc.display()),
                     completed_dispatches=completed_dispatches,
                 )
             raise ModelRetry(
-                f'Runtime error in workflow:\n{capture.prepend_to(e.display())}'
+                f'Runtime error in workflow:\n{capture.prepend_to(exc.display())}'
                 f'{_completed_retry_section(completed_dispatches)}'
-            ) from e
-        except MontyCrashedError as e:
+            ) from exc
+        except MontyCrashedError as exc:
             # The worker died mid-script (e.g. resource exhaustion or request timeout);
             # the pool replaces it transparently. Completed sub-agent results are listed
             # so the retry can reuse them as plain values.
             return _worker_crash_result(
-                crash=e,
+                crash=exc,
                 budget_exhausted=budget_exhausted,
                 max_agent_calls=self.max_agent_calls,
                 completed_dispatches=completed_dispatches,
             )
-        except BaseException as e:
+        except BaseException as exc:
             # Convert a sandbox panic to a retry (see `is_sandbox_panic`);
             # anything else (CancelledError, ...) re-raises unchanged.
-            if not is_sandbox_panic(e):
+            if not is_sandbox_panic(exc):
                 raise
             if budget_exhausted:
                 return _budget_terminal_result(
@@ -867,7 +867,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             raise ModelRetry(
                 'The workflow script aborted inside the sandbox. Revise the script and try again.'
                 f'{_completed_retry_section(completed_dispatches)}'
-            ) from e
+            ) from exc
         finally:
             _in_workflow.reset(in_workflow_token)
             await monty.close()

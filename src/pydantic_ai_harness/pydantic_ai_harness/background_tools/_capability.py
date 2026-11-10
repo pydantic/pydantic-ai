@@ -365,27 +365,27 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 _backgrounded_call.set(call)
                 try:
                     result = await handler(args)
-                except ToolRetryError as e:
+                except ToolRetryError as exc:
                     # Core charged the tool body's `ModelRetry` to the issuing step, whose count the next step may
                     # already have carried over. `_settle` charges it on delivery instead, so it counts exactly once.
                     assert ctx.tool_manager is not None  # Set for every tool call.
                     ctx.tool_manager.failed_tools.discard(tool_name)
-                    outcome = failure(e, retry=e)
-                except (ModelRetry, ValidationError) as e:
+                    outcome = failure(exc, retry=exc)
+                except (ModelRetry, ValidationError) as exc:
                     # Raised by an execute hook such as `before_tool_execute`. Core counts it outside
                     # `wrap_tool_execute`, so `_settle` does.
-                    outcome = failure(e, retry=e)
-                except (ApprovalRequired, CallDeferred, ToolFailedError, ToolFailed) as e:
-                    outcome = failure(e)
-                except anyio.get_cancelled_exc_class() as e:
+                    outcome = failure(exc, retry=exc)
+                except (ApprovalRequired, CallDeferred, ToolFailedError, ToolFailed) as exc:
+                    outcome = failure(exc)
+                except anyio.get_cancelled_exc_class() as exc:
                     # Propagate cancellation delivered by any enclosing scope. If none is pending,
                     # the tool raised this itself and it ends the run like a sequential tool.
                     await anyio.lowlevel.checkpoint_if_cancelled()
-                    outcome = e
-                except BaseException as e:
+                    outcome = exc
+                except BaseException as exc:
                     # Unexpected failures, including an exhausted retry budget, end the run as they
                     # would for a sequential tool.
-                    outcome = e
+                    outcome = exc
                 else:
                     outcome = _Completion(
                         tool_name,

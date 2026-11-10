@@ -426,27 +426,27 @@ def _sanitize_recoverable_error(error: BaseException, root: str) -> str:
 
 
 def _recoverable(
-    fn: Callable[Concatenate[FileSystemToolset, _Scope, _P], Awaitable[_R]],
+    func: Callable[Concatenate[FileSystemToolset, _Scope, _P], Awaitable[_R]],
 ) -> Callable[Concatenate[FileSystemToolset, _Scope, _P], Awaitable[_R]]:
     """Surface model-correctable tool errors as `ModelRetry`, and workspace refusals as `ToolFailed`."""
 
-    @functools.wraps(fn)
+    @functools.wraps(func)
     async def wrapper(self: FileSystemToolset, scope: _Scope, *args: _P.args, **kwargs: _P.kwargs) -> _R:
         try:
-            return await fn(self, scope, *args, **kwargs)
+            return await func(self, scope, *args, **kwargs)
         # Before the recoverable tuple and `OSError`: `WorkspaceReadOnlyError` is a
         # `PermissionError` and `WorkspaceTimeoutError` a `TimeoutError`, and neither is
         # something the model fixes by changing its arguments.
-        except WorkspaceError as e:
-            raise_tool_failure(e)
-        except _RECOVERABLE_ERRORS as e:
-            raise ModelRetry(_sanitize_recoverable_error(e, scope.bounds.root)) from e
-        except OSError as e:
-            reason = _recoverable_reason(e)
+        except WorkspaceError as exc:
+            raise_tool_failure(exc)
+        except _RECOVERABLE_ERRORS as exc:
+            raise ModelRetry(_sanitize_recoverable_error(exc, scope.bounds.root)) from exc
+        except OSError as exc:
+            reason = _recoverable_reason(exc)
             if reason is None:
                 raise
             # The full error may embed an absolute path; the reason is path-free.
-            raise ModelRetry(reason) from e
+            raise ModelRetry(reason) from exc
 
     return wrapper
 
@@ -758,9 +758,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """The bytes of the file a tool call names, refusing a socket the way core refuses a FIFO."""
         try:
             return await scope.workspace.read_bytes(resolved)
-        except OSError as e:
-            if e.errno in _SOCKET_OPEN_ERRNOS:
-                raise ModelRetry(_NOT_A_REGULAR_FILE_REASON) from e
+        except OSError as exc:
+            if exc.errno in _SOCKET_OPEN_ERRNOS:
+                raise ModelRetry(_NOT_A_REGULAR_FILE_REASON) from exc
             raise
 
     async def _stat(self, scope: _Scope, resolved: str) -> FileEntry | None:
@@ -1055,13 +1055,13 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             parent = posixpath.dirname(resolved)
             try:
                 parent_entry = await scope.workspace.stat(parent)
-            except FileNotFoundError as e:
+            except FileNotFoundError as exc:
                 parent_rel = posixpath.relpath(parent, scope.bounds.root)
                 raise FileNotFoundError(
                     f"Parent directory '{parent_rel}' does not exist. Create the parent directory first."
-                ) from e
-            except NotADirectoryError as e:
-                raise ModelRetry(f'Path {path!r} has a parent that is not a directory.') from e
+                ) from exc
+            except NotADirectoryError as exc:
+                raise ModelRetry(f'Path {path!r} has a parent that is not a directory.') from exc
             # Checked before the announcement, like `create_directory` does, so a
             # listener is only asked about a write the filesystem would accept.
             if not parent_entry.is_dir:
@@ -1217,12 +1217,12 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 replacement.new_text.encode('utf-8')
             try:
                 new_content = apply_replacements(text, replacements, path)
-            except ValueError as e:
+            except ValueError as exc:
                 if text != shown and any('\ufffd' in replacement.old_text for replacement in replacements):
                     raise ValueError(
-                        f'{e} {path} is not valid UTF-8: read_file shows each undecodable byte as U+FFFD, '
+                        f'{exc} {path} is not valid UTF-8: read_file shows each undecodable byte as U+FFFD, '
                         'which does not match the byte, so match only the text around it.'
-                    ) from e
+                    ) from exc
                 raise
             new_raw = new_content.encode('utf-8', errors='surrogateescape')
             change = Change.propose(
@@ -1239,8 +1239,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 # still holds it, and reports a file deleted in the meantime as missing.
                 try:
                     now = await scope.workspace.read_bytes(resolved)
-                except FileNotFoundError as e:
-                    raise FileNotFoundError(f'File not found: {path}') from e
+                except FileNotFoundError as exc:
+                    raise FileNotFoundError(f'File not found: {path}') from exc
                 check_expected_hash(path, bytes_hash(now), current_hash)
             await scope.workspace.write_bytes(resolved, new_raw)
         new_hash = bytes_hash(new_raw)
@@ -1272,8 +1272,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         resolved = await self._safe_resolve(scope, path, check_allowed=False)
         try:
             children = await scope.workspace.list_dir(resolved)
-        except (FileNotFoundError, NotADirectoryError) as e:
-            raise NotADirectoryError(f'Not a directory: {path}') from e
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            raise NotADirectoryError(f'Not a directory: {path}') from exc
 
         entries: list[str] = []
         entry_count = 0
@@ -1362,8 +1362,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         try:
             compiled = re.compile(pattern)
         # A repeat count past the regex engine's limit, such as `a{99999999999}`, raises `OverflowError`.
-        except (re.error, OverflowError) as e:
-            raise ValueError(f'Invalid regex pattern: {e}') from e
+        except (re.error, OverflowError) as exc:
+            raise ValueError(f'Invalid regex pattern: {exc}') from exc
 
         entry = await self._stat(scope, resolved)
         # Probe rg on the first call too: walking remote files is only for backends
@@ -2143,10 +2143,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry(f'Path {path!r} exists and is not a directory.')
         try:
             await scope.workspace.make_dir(resolved)
-        except FileExistsError as e:
-            raise ModelRetry(f'Path {path!r} exists and is not a directory.') from e
-        except NotADirectoryError as e:
-            raise ModelRetry(f'Path {path!r} has a parent that is not a directory.') from e
+        except FileExistsError as exc:
+            raise ModelRetry(f'Path {path!r} exists and is not a directory.') from exc
+        except NotADirectoryError as exc:
+            raise ModelRetry(f'Path {path!r} has a parent that is not a directory.') from exc
         if ctx is not None:
             await ctx.emit(DirectoryCreatedEvent(**self._event_location(scope, resolved)))
         return f'Created directory: {path}'

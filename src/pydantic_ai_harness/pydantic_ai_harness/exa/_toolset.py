@@ -20,6 +20,7 @@ from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import ToolOperation, raise_retry
+from pydantic_ai_harness._warn import renamed_argument
 from pydantic_ai_harness._web_search import defer_to_native_web_search
 
 try:
@@ -248,11 +249,11 @@ def recoverable(*, idempotent: bool = True) -> Callable[[Callable[_P, Awaitable[
     exception propagates and aborts the whole run.
     """
 
-    def decorate(fn: Callable[_P, Awaitable[_R]]) -> Callable[_P, Awaitable[_R]]:
-        @functools.wraps(fn)
+    def decorate(func: Callable[_P, Awaitable[_R]]) -> Callable[_P, Awaitable[_R]]:
+        @functools.wraps(func)
         async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
             try:
-                return await fn(*args, **kwargs)
+                return await func(*args, **kwargs)
             except (httpx.HTTPError, ValueError) as error:
                 if not is_recoverable(error, idempotent=idempotent):
                     raise
@@ -276,7 +277,7 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
     titles (`ExaSource` dicts), so applications can render citations from
     `ToolReturnPart.metadata` without parsing the text.
 
-    `get_page` text is capped at `max_text_chars` characters, and `num_results`
+    `get_page` text is capped at `max_text_chars` characters, and `max_results`
     is requested from Exa and re-applied to the response. Bounds are validated by
     `ExaSearch` at construction.
 
@@ -292,7 +293,7 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         self,
         *,
         client: ExaClient | None,
-        num_results: int,
+        max_results: int = 5,
         max_text_chars: int,
         include_deep_search: bool,
         include_domains: Sequence[str] = (),
@@ -301,11 +302,14 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         defer_to_native: bool = False,
         id: str | None = None,
         operations: ExaSearchOperations | None = None,
+        num_results: int | None = None,
     ) -> None:
         super().__init__(id=id)
         self._client = client if client is not None else default_client()
         self._operations = operations
-        self._num_results = num_results
+        self._max_results = renamed_argument(
+            'ExaSearchToolset', 'num_results', 'max_results', old_value=num_results, new_value=max_results, default=5
+        )
         self._max_text_chars = max_text_chars
         self._include_domains = list(include_domains) if include_domains else None
         self._exclude_domains = list(exclude_domains) if exclude_domains else None
@@ -333,14 +337,14 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         response = await self._client.search(
             query,
             contents={'highlights': True},
-            num_results=self._num_results,
+            num_results=self._max_results,
             output_schema=self._summary_schema(),
             include_domains=self._include_domains,
             exclude_domains=self._exclude_domains,
         )
         if not response.results:
             return ToolReturn(f'No results found for {query!r}.', metadata={'sources': []})
-        results = response.results[: self._num_results]
+        results = response.results[: self._max_results]
         sources = source_list(source_map((result.url, result.title) for result in results))
         sections = [_format_result(result, _highlights_body(result)) for result in results]
         plural = 's' if len(sections) != 1 else ''

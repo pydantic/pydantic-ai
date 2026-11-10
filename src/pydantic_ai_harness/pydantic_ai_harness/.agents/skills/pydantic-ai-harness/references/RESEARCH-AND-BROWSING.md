@@ -97,11 +97,11 @@ from pydantic_ai_harness import ExaAgent, ExaSearch
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
-    capabilities=[ExaSearch(num_results=5, include_deep_search=True), ExaAgent(effort='low')],
+    capabilities=[ExaSearch(max_results=5, include_deep_search=True), ExaAgent(effort='low')],
 )
 ```
 
-`ExaSearch` fields: `num_results=5` (1 to 100), `max_text_chars=10_000` (1 to 10,000; `get_page` cap,
+`ExaSearch` fields: `max_results=5` (1 to 100), `max_text_chars=10_000` (1 to 10,000; `get_page` cap,
 head kept), `text_summary=False` (`True` or a format string prepends a `Summary:` line),
 `include_deep_search=False`, `include_domains=[]` / `exclude_domains=[]` (mutually exclusive; they filter
 `web_search` and `deep_search`, not `get_page`),
@@ -151,7 +151,7 @@ from pydantic_ai_harness.subagents import SubAgent
 researcher = Agent(
     name='researcher',
     description='Research one sub-question on the web; report findings with source links',
-    capabilities=[ExaSearch(num_results=5), ToolOutputLimits()],
+    capabilities=[ExaSearch(max_results=5), ToolOutputLimits()],
 )
 orchestrator = Agent(
     'anthropic:claude-sonnet-5',
@@ -183,7 +183,7 @@ agent = Agent(
 )
 ```
 
-`YouSearch`: `num_results=10` (1 to 20), `extraction_mode='highlights'` or `'full_page'`,
+`YouSearch`: `max_results=10` (1 to 20), `extraction_mode='highlights'` or `'full_page'`,
 `max_text_chars=10_000`, `include_domains` / `exclude_domains` / `boost_domains`, `freshness=None`
 (`'day'|'week'|'month'|'year'|'YYYY-MM-DDtoYYYY-MM-DD'`), `country=None`, `guidance=None`,
 `timeout_ms=60_000`, `client=None`.

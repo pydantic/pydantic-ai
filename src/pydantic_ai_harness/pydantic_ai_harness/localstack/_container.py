@@ -64,8 +64,8 @@ def endpoint_port(endpoint_url: str) -> int:
     """Return the port of `endpoint_url`, or LocalStack's edge port when it names none or port 0."""
     try:
         port = urlsplit(endpoint_url).port
-    except ValueError as e:
-        raise ValueError(f'`endpoint_url` {endpoint_url!r} has an invalid port: {e}') from e
+    except ValueError as exc:
+        raise ValueError(f'`endpoint_url` {endpoint_url!r} has an invalid port: {exc}') from exc
     return port or _EDGE_PORT
 
 
@@ -221,14 +221,14 @@ class LocalStackContainer:
                 self._run_argv(container_environment),
                 self._docker_environment(container_environment),
             )
-        except FileNotFoundError as e:
+        except FileNotFoundError as exc:
             raise LocalStackError(
                 f'Docker CLI {self._docker_path!r} not found. Install Docker to manage LocalStack.'
-            ) from e
-        except subprocess.TimeoutExpired as e:
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
             raise LocalStackError(
                 f'Docker did not start the LocalStack container within {self._startup_timeout}s.'
-            ) from e
+            ) from exc
         if result.returncode != 0:
             stderr = result.stderr.decode('utf-8', errors='replace').strip()
             raise LocalStackError(f'Failed to start LocalStack container: {stderr}')
@@ -242,8 +242,8 @@ class LocalStackContainer:
                 async with httpx.AsyncClient() as client:
                     while not await self._is_ready(client, url):
                         await anyio.sleep(self._poll_interval)
-        except TimeoutError as e:
-            raise LocalStackError(f'LocalStack did not become ready within {self._startup_timeout}s.') from e
+        except TimeoutError as exc:
+            raise LocalStackError(f'LocalStack did not become ready within {self._startup_timeout}s.') from exc
 
     async def _is_ready(self, client: httpx.AsyncClient, url: str) -> bool:
         """Return True once the health endpoint answers with HTTP 200."""
@@ -267,14 +267,14 @@ class LocalStackContainer:
         with anyio.CancelScope(shield=True):
             try:
                 result = await self._run_docker([self._docker_path, 'stop', container_id], self._docker_environment({}))
-            except FileNotFoundError as e:
+            except FileNotFoundError as exc:
                 raise LocalStackError(
                     f'Docker CLI {self._docker_path!r} not found while stopping LocalStack container {container_id}.'
-                ) from e
-            except subprocess.TimeoutExpired as e:
+                ) from exc
+            except subprocess.TimeoutExpired as exc:
                 raise LocalStackError(
                     f'Docker did not stop the LocalStack container {container_id} within {self._startup_timeout}s.'
-                ) from e
+                ) from exc
             if result.returncode != 0:
                 stderr = result.stderr.decode('utf-8', errors='replace').strip()
                 raise LocalStackError(f'Failed to stop LocalStack container {container_id}: {stderr}')

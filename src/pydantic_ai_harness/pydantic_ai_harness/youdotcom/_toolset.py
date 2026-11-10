@@ -19,6 +19,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import ToolOperation, raise_retry
 from pydantic_ai_harness._output import truncate_head
+from pydantic_ai_harness._warn import renamed_argument
 from pydantic_ai_harness._web_search import defer_to_native_web_search
 
 try:
@@ -31,7 +32,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 YOU_MAX_NUM_RESULTS = 20
-"""Largest `num_results` requested per `web_search` call."""
+"""Largest `max_results` requested per `web_search` call."""
 
 DEFAULT_SEARCH_TIMEOUT_MS = 60_000
 """Default per-request timeout for the search and contents endpoints, in milliseconds.
@@ -201,7 +202,7 @@ def default_client(timeout_ms: int) -> YouClient:
 
 
 def recoverable(
-    fn: Callable[Concatenate[_SelfT, _P], Awaitable[_R]],
+    func: Callable[Concatenate[_SelfT, _P], Awaitable[_R]],
 ) -> Callable[Concatenate[_SelfT, _P], Awaitable[_R]]:
     """Convert transient You.com API failures into `ModelRetry`.
 
@@ -214,10 +215,10 @@ def recoverable(
     whether they surface as a `YouError` or a raw `httpx.HTTPStatusError`.
     """
 
-    @functools.wraps(fn)
+    @functools.wraps(func)
     async def wrapper(self: _SelfT, *args: _P.args, **kwargs: _P.kwargs) -> _R:
         try:
-            return await fn(self, *args, **kwargs)
+            return await func(self, *args, **kwargs)
         except httpx.HTTPStatusError as error:
             # A response-bearing status error may carry an auth/billing/authorization status,
             # so inspect it before the broad `httpx.HTTPError` handler wraps it as a retry.
@@ -301,7 +302,7 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
         self,
         *,
         client: YouClient | None,
-        num_results: int,
+        max_results: int = 10,
         extraction_mode: ExtractionModeName,
         max_text_chars: int,
         include_domains: list[str] | None = None,
@@ -313,11 +314,14 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
         defer_to_native: bool = False,
         id: str | None = None,
         operations: YouSearchOperations | None = None,
+        num_results: int | None = None,
     ) -> None:
         super().__init__(id=id)
         self._client = client if client is not None else default_client(timeout_ms)
         self._operations = operations
-        self._num_results = num_results
+        self._max_results = renamed_argument(
+            'YouSearchToolset', 'num_results', 'max_results', old_value=num_results, new_value=max_results, default=10
+        )
         self._extraction_mode: ExtractionModeName = extraction_mode
         self._max_text_chars = max_text_chars
         self._include_domains = list(include_domains) if include_domains else None
@@ -354,7 +358,7 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
             return raise_retry(await self._operations.web_search(query))
         response = await self._client.search_async(
             query=query,
-            count=self._num_results,
+            count=self._max_results,
             freshness=self._freshness,
             country=self._country,
             extraction=self._extraction(),
@@ -369,7 +373,7 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
                 continue
             body = _web_result_body(result, self._max_text_chars, self._extraction_mode)
             rows.append((result.url, result.title, result.page_age, body))
-            if len(rows) >= self._num_results:
+            if len(rows) >= self._max_results:
                 break
         metadata = self._search_metadata(response)
         if not rows:

@@ -74,7 +74,7 @@ async def run_model_command(
 
 
 def recoverable(
-    fn: Callable[Concatenate[_ToolsetT, _P], Awaitable[str]],
+    func: Callable[Concatenate[_ToolsetT, _P], Awaitable[str]],
 ) -> Callable[Concatenate[_ToolsetT, _P], Awaitable[str]]:
     """Convert model-correctable errors into `ModelRetry`, and workspace refusals into `ToolFailed`.
 
@@ -88,22 +88,22 @@ def recoverable(
     still ends the run.
     """
 
-    @functools.wraps(fn)
+    @functools.wraps(func)
     async def wrapper(self: _ToolsetT, *args: _P.args, **kwargs: _P.kwargs) -> str:
         try:
-            return await fn(self, *args, **kwargs)
+            return await func(self, *args, **kwargs)
         # Before `PermissionError` and `OSError`: `WorkspaceReadOnlyError` is a `PermissionError`
         # and `WorkspaceTimeoutError` a `TimeoutError`, and neither is a policy denial.
-        except WorkspaceError as e:
-            raise_tool_failure(e)
-        except PermissionError as e:
-            raise ModelRetry(str(e)) from e
-        except OSError as e:
-            reason = _RECOVERABLE_ERRNOS.get(e.errno)
+        except WorkspaceError as exc:
+            raise_tool_failure(exc)
+        except PermissionError as exc:
+            raise ModelRetry(str(exc)) from exc
+        except OSError as exc:
+            reason = _RECOVERABLE_ERRNOS.get(exc.errno)
             if reason is None:
                 raise
             # `str(e)` embeds the absolute host path; the reason alone doesn't.
-            raise ModelRetry(reason) from e
+            raise ModelRetry(reason) from exc
 
     return wrapper
 
