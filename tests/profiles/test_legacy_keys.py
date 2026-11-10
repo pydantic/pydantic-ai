@@ -65,6 +65,7 @@ def test_legacy_keys_reach_resolution_through_model_profile_argument():
         ('openai_supports_forced_tool_choice_with_thinking', 'supports_forced_tool_choice_with_thinking'),
         ('openrouter_supports_forced_tool_choice_with_thinking', 'supports_forced_tool_choice_with_thinking'),
         ('openai_reasoning_enabled_by_default', 'thinking_enabled_by_default'),
+        ('openai_responses_tool_call_ids_are_response_scoped', 'tool_call_ids_are_response_scoped'),
     ],
 )
 def test_legacy_provider_keys_translate_to_model_profile_keys(legacy_key: str, key: str):

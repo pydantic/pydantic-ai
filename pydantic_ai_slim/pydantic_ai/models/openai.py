@@ -181,6 +181,7 @@ from . import (
 from ._decode_errors import MapStreamDecodeErrors, check_json_response, map_decode_errors
 from ._prompt_cache import split_cache_setting
 from ._sdk_retries import with_max_retries
+from ._tool_call_ids import stored_tool_call_id
 from ._tool_choice import (
     ResolvedToolChoice,
     resolve_tool_choice,
@@ -2145,13 +2146,19 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
         )
         if choice.message.tool_calls is not None:
+            response_scoped = self.profile.get('tool_call_ids_are_response_scoped', False)
             for c in choice.message.tool_calls:
                 if isinstance(c, ChatCompletionMessageFunctionToolCall):
                     part_provider_details = _map_tool_call_provider_details(c)
                     part = ToolCallPart(
                         c.function.name,
                         c.function.arguments,
-                        tool_call_id=c.id,
+                        tool_call_id=stored_tool_call_id(
+                            c.id,
+                            response_scoped=response_scoped,
+                            provider_response_id=response.id or None,
+                            timestamp=timestamp,
+                        ),
                         provider_name=self.system if part_provider_details else None,
                         provider_details=part_provider_details,
                     )
@@ -2580,6 +2587,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
+        messages = self._restore_response_scoped_tool_call_ids(messages)
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         profile = self.profile
         # DeepSeek-style APIs 400 on a tool-calling assistant turn that omits their thinking field while
@@ -4183,6 +4191,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and item.id in tool_search_output_call_ids
         }
         paired_tool_search_output_ids = {item.id for item in tool_search_outputs.values()}
+        timestamp = _now_utc()
+        response_scoped = self.profile.get('tool_call_ids_are_response_scoped', False)
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 items.extend(_map_reasoning_item(item, self.system))
@@ -4225,11 +4235,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     ToolCallPart(
                         item.name,
                         item.arguments,
-                        tool_call_id=_response_tool_call_id(
+                        tool_call_id=stored_tool_call_id(
                             item.call_id,
-                            response.id
-                            if self.profile.get('openai_responses_tool_call_ids_are_response_scoped', False)
-                            else None,
+                            response_scoped=response_scoped,
+                            provider_response_id=response.id,
+                            timestamp=timestamp,
                         ),
                         id=item.id,
                         provider_name=self.system,
@@ -4329,7 +4339,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
             model_name=response.model,
             provider_response_id=response.id,
-            timestamp=_now_utc(),
+            timestamp=timestamp,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             canonical_system=self._canonical_system_stamp,
@@ -4380,9 +4390,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             background = True
             initial_state = 'suspended'
 
-        tool_call_ids_are_response_scoped = self.profile.get(
-            'openai_responses_tool_call_ids_are_response_scoped', False
-        )
+        tool_call_ids_are_response_scoped = self.profile.get('tool_call_ids_are_response_scoped', False)
         is_websocket = False
         if self._websocket_stream is not None:
             from ._openai_responses_websocket import ResponsesWebSocketStream
@@ -5484,9 +5492,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # duplicate the standing prompt. The re-compaction path passes `False`: retention decayed
         # across a second compaction in probing, so each freshly built window plants it explicitly.
         messages = self._trim_before_compaction(messages, standing_prompt_retained=standing_prompt_retained)
+        messages = self._restore_response_scoped_tool_call_ids(messages, previous_response_id=previous_response_id)
         profile = self.profile
-        response_scoped_tool_call_ids = profile.get('openai_responses_tool_call_ids_are_response_scoped', False)
-        response_id = previous_response_id if response_scoped_tool_call_ids else None
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
         )
@@ -5558,7 +5565,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
-                        call_id = _provider_response_tool_call_id(call_id, response_id)
                         if call_id in client_replay_call_ids and isinstance(part, ToolSearchReturnPart):
                             # Replay the local `search_tools` result as a
                             # `tool_search_output` so the provider rehydrates the
@@ -5604,7 +5610,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # Server-side state is only sent back to the endpoint that created it. A part from this provider in a
                 # response from another (or none) has no endpoint of its own, so it's judged by name as before.
                 same_endpoint = message.provider_name != self.system or self.accepts_server_state(message)
-                response_from_same_provider = message.provider_name == self.system and same_endpoint
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
@@ -5625,11 +5630,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         item.provider_name == self.system
                         or (item.provider_name is None and message.provider_name == self.system)
                     )
-                    response_id_from_same_provider = same_endpoint and (
-                        message.provider_name == self.system
-                        or (message.provider_name is None and item.provider_name == self.system)
-                    )
-                    response_from_same_provider |= response_id_from_same_provider
                     # Two distinct gates. For native tool items whose state lives server-side
                     # (web search, code interpreter, image generation, MCP), the item ID *is*
                     # the replay payload, so `should_send_item_id` decides whether those items
@@ -5677,12 +5677,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(item, ToolCallPart):
                         call_id = _guard_tool_call_id(t=item)
                         call_id, id = _split_combined_tool_call_id(call_id)
-                        call_id = _provider_response_tool_call_id(
-                            call_id,
-                            message.provider_response_id
-                            if response_scoped_tool_call_ids and response_id_from_same_provider
-                            else None,
-                        )
                         id = id or item.id
 
                         if client_tool_search_active and isinstance(item, ToolSearchCallPart):
@@ -5964,11 +5958,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         response_start,
                         responses.EasyInputMessageParam(role='user', content='\n\n'.join(carried_thinkings)),
                     )
-                response_id = (
-                    message.provider_response_id
-                    if response_scoped_tool_call_ids and response_from_same_provider
-                    else None
-                )
             else:
                 assert_never(message)
         _move_leading_cache_breakpoints(openai_messages, text_type='input_text')
@@ -6429,11 +6418,17 @@ class OpenAIStreamedResponse(StreamedResponse):
         """
         for dtc in choice.delta.tool_calls or []:
             provider_details = _map_tool_call_provider_details(dtc)
+            tool_call_id = dtc.id and stored_tool_call_id(
+                dtc.id,
+                response_scoped=self._model_profile.get('tool_call_ids_are_response_scoped', False),
+                provider_response_id=self.provider_response_id,
+                timestamp=self.timestamp,
+            )
             for event in self._parts_manager.handle_tool_call_delta_events(
                 vendor_part_id=dtc.index,
                 tool_name=dtc.function.name if dtc.function is not None else None,
                 args=dtc.function.arguments if dtc.function is not None else None,
-                tool_call_id=dtc.id,
+                tool_call_id=tool_call_id,
                 provider_name=self.provider_name if provider_details else None,
                 provider_details=provider_details,
             ):
@@ -6683,9 +6678,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     vendor_part_id=item_id,
                     tool_name=item.name,
                     args=item.arguments,
-                    tool_call_id=_response_tool_call_id(
+                    tool_call_id=stored_tool_call_id(
                         item.call_id,
-                        self.provider_response_id if self._tool_call_ids_are_response_scoped else None,
+                        response_scoped=self._tool_call_ids_are_response_scoped,
+                        provider_response_id=self.provider_response_id,
+                        timestamp=self.timestamp,
                     ),
                     id=item_id,
                     provider_name=self.provider_name,
@@ -7820,22 +7817,6 @@ def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
         return call_id, id
     else:
         return combined_id, None
-
-
-def _response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:
-    """Qualify a Responses tool-call ID with its response ID, or return it unchanged.
-
-    `response_id` is the provider response ID when the model's tool-call IDs are response-scoped (so the
-    ID must be made history-wide unique), or `None` to leave the call ID as-is.
-    """
-    return f'{response_id}:{tool_call_id}' if response_id is not None else tool_call_id
-
-
-def _provider_response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:
-    """Restore a response-scoped provider tool-call ID from its normalized form."""
-    if response_id is None:
-        return tool_call_id
-    return tool_call_id.removeprefix(f'{response_id}:')
 
 
 def _map_code_interpreter_tool_call(

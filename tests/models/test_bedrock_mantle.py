@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from decimal import Decimal
 
 import httpx2
@@ -80,7 +81,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
     ]
     assert [call.tool_name for _, call in tool_calls] == ['first_tool', 'second_tool']
     assert len({call.tool_call_id for _, call in tool_calls}) == len(tool_calls)
-    assert all(call.tool_call_id.startswith(f'{response_id}:') for response_id, call in tool_calls)
+    assert all(re.fullmatch(r'call_\d+_[0-9A-Za-z]{8}', call.tool_call_id) for _, call in tool_calls)
 
     if not stream:
         # Pin the full non-streaming message shape (reasoning parts, part ids, response-qualified
@@ -100,7 +101,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
                         ToolCallPart(
                             tool_name='first_tool',
                             args='{}',
-                            tool_call_id='resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va:call_0',
+                            tool_call_id='call_0_nYmVunD4',
                             id='fc_ccdc17fdac4f5c7e863e8d8fd3812a13',
                             provider_name='bedrock-mantle',
                         )
@@ -133,7 +134,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
                         ToolReturnPart(
                             tool_name='first_tool',
                             content='first result',
-                            tool_call_id='resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va:call_0',
+                            tool_call_id='call_0_nYmVunD4',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -147,7 +148,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
                         ToolCallPart(
                             tool_name='second_tool',
                             args='{}',
-                            tool_call_id='resp_cizhrpixixp4ylkykezegmnkbgixq2qteaqq2gigeu5aluj6dhva:call_0',
+                            tool_call_id='call_0_iKVOozOV',
                             id='fc_a0cc01696625559fbb1e15fde9c518f5',
                             provider_name='bedrock-mantle',
                         )
@@ -180,7 +181,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
                         ToolReturnPart(
                             tool_name='second_tool',
                             content='second result',
-                            tool_call_id='resp_cizhrpixixp4ylkykezegmnkbgixq2qteaqq2gigeu5aluj6dhva:call_0',
+                            tool_call_id='call_0_iKVOozOV',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -235,7 +236,7 @@ Second tool result: `second result`\
         )
         # Non-streaming Mantle reuses the raw `call_0` id across separate responses; the qualified ids
         # stay unique, and replaying the full (normalized) history back to Mantle succeeds.
-        assert all(call.tool_call_id.endswith(':call_0') for _, call in tool_calls)
+        assert all(call.tool_call_id.startswith('call_0_') for _, call in tool_calls)
         replay_result = await Agent(model).run('Reply with exactly OK.', message_history=messages)
         assert replay_result.output == 'OK'
 
@@ -312,10 +313,10 @@ async def test_reused_tool_call_ids_gpt_5_5(allow_model_requests: None) -> None:
     ]
     assert [call.tool_name for _, call in tool_calls] == ['first_tool', 'second_tool']
     assert len({call.tool_call_id for _, call in tool_calls}) == len(tool_calls)
-    assert all(call.tool_call_id.startswith(f'{response_id}:') for response_id, call in tool_calls)
+    assert all(re.fullmatch(r'call_\d+_[0-9A-Za-z]{8}', call.tool_call_id) for _, call in tool_calls)
     # gpt-5.5 reuses the raw `call_0` id across separate responses (like gpt-5.6); the qualified ids
     # stay unique, and replaying the full (normalized) history back to Mantle succeeds.
-    assert all(call.tool_call_id.endswith(':call_0') for _, call in tool_calls)
+    assert all(call.tool_call_id.startswith('call_0_') for _, call in tool_calls)
     replay_result = await Agent(model).run('Reply with exactly OK.', message_history=messages)
     assert replay_result.output == 'OK'
 
