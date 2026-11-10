@@ -99,6 +99,35 @@ The mount is the only part of your machine's files the commands can change; the 
 
 A new container gets `--pids-limit 2048`, so a runaway fork loop can't use up the process table of the machine (or VM) running Docker. A command that hits it fails with `Cannot fork` or `Resource temporarily unavailable`; pass your own `--pids-limit` in `docker_args` to change it, or `-1` to remove it.
 
+## Mount a bucket
+
+To show an S3 or S3-compatible bucket as a folder in the container, pass `mounts=` and give the container the FUSE device:
+
+```python {names="defined"}
+import os
+from datetime import UTC, datetime, timedelta
+
+from pydantic_ai_harness import S3Mount
+from pydantic_ai_harness.docker_sandbox import DockerSandbox
+
+sandbox = DockerSandbox(
+    image='python:3.13-slim',
+    docker_args=['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined'],
+    mounts=[
+        S3Mount(
+            path='data',
+            url='s3://acme-data/',
+            access_key_id=os.environ['DATA_ACCESS_KEY_ID'],
+            secret_access_key=os.environ['DATA_SECRET_ACCESS_KEY'],
+            session_token=os.environ['DATA_SESSION_TOKEN'],
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    ],
+)
+```
+
+The run's first command or file operation mounts the bucket at `/workspace/data`. A container without `/dev/fuse`, including an attached one created without these flags, is refused with `MountError`. See [Mounting Cloud Storage](https://pydantic.dev/docs/ai/harness/cloud-storage-mounts/) for fresh keys per run, other stores, read-only mounts and how long a mount lasts.
+
 ## Use a remote Docker host
 
 The capability runs the `docker` CLI on your machine, so it uses whichever daemon that CLI points at. To run containers on another host, point the CLI there before the agent starts; your code doesn't change:
@@ -219,6 +248,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
 | `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`; a `--pids-limit` here replaces the default of 2048. Default: `()`. |
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
+| `mounts` | Buckets to show as folders in the container, as `S3Mount`s, or a function of the run returning them with fresh keys. The container needs the FUSE device; see [Mount a bucket](#mount-a-bucket). Default: `()`. Left out of agent specs, since it holds keys. |
 
 ## Platforms
 

@@ -189,6 +189,14 @@ agent = Agent(
 )
 ```
 
+To give a `LocalWorkspace` a cloud storage bucket as a folder, mount it yourself before the agent starts, for example with [rclone](https://rclone.org/) and the AWS credentials in your environment. On Linux:
+
+```bash
+rclone mount ':s3,provider=AWS,env_auth=true:bucket/prefix' ./data --daemon --vfs-cache-mode writes
+```
+
+On macOS, which has no FUSE by default, use `rclone nfsmount` with the same arguments. Then `LocalWorkspace('.')` shows the bucket in `./data`. The sandbox capabilities in Pydantic AI Harness can do this for you inside the sandbox: see [Mounting Cloud Storage](harness/cloud-storage-mounts.md).
+
 ## Using the workspace in tools
 
 `ctx.workspace` has the same methods whatever the environment:
