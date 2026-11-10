@@ -357,8 +357,11 @@ async def fails_streaming(messages: list[ModelMessage], info: AgentInfo) -> Asyn
     yield ''  # pragma: no cover
 
 
-async def test_a_stock_agent_falls_back_only_on_the_sessions_selection(tmp_path: Path) -> None:
-    """A delegated task on the model the session ran on falls back through the chain; one on another model does not."""
+def chain_session(tmp_path: Path, chains: dict[str, list[str]]) -> tuple[Session[None, str], list[Model]]:
+    """A stock-agent session over `limited:*` models, which fail, and `pooled:NAME` ones, which answer `NAME`.
+
+    Also returns every `limited` model resolved, in order.
+    """
     limited: list[Model] = []
 
     def limit(name: str) -> Model:
@@ -373,16 +376,39 @@ async def test_a_stock_agent_falls_back_only_on_the_sessions_selection(tmp_path:
     }
     models = resolver(tmp_path, providers)
     assert models.store is not None
-    models.store.save_chain(name='pool', models=['limited:a', 'pooled:b'])
+    for name, members in chains.items():
+        models.store.save_chain(name=name, models=members)
     session = Session(create_stock_agent(TestModel()), deps=None)
-    session.model = 'chain:pool'
     session.resolve_model = models.resolve
     session.expand_model = models.expand
+    return session, limited
+
+
+async def test_a_stock_agent_falls_back_only_on_the_sessions_selection(tmp_path: Path) -> None:
+    """A delegated task on the model the session ran on falls back through the chain; one on another model does not."""
+    session, limited = chain_session(tmp_path, {'pool': ['limited:a', 'pooled:b']})
+    session.model = 'chain:pool'
     assert (await session.prompt('hello')).output == 'b'
     # As delegated tasks run: on the session's model, and on a delegate's own option.
     assert (await session.agent.run('task', model=limited[0])).output == 'b'
     with pytest.raises(ModelHTTPError, match='usage limit reached'):
         await session.agent.run('task', model=FunctionModel(fails))
+
+
+async def test_a_new_chain_rebuilds_the_stock_agent(tmp_path: Path) -> None:
+    """Choosing a chain, or another chain with the same first model, binds its own fallback for delegated tasks."""
+    session, limited = chain_session(tmp_path, {'one': ['limited:a', 'pooled:b'], 'two': ['limited:a', 'pooled:c']})
+    session.model = 'pooled:z'
+    assert (await session.prompt('hello')).output == 'z'
+    single = session.agent
+    session.model = 'chain:one'
+    assert (await session.prompt('hello')).output == 'b'
+    one = session.agent
+    assert one is not single
+    session.model = 'chain:two'
+    assert (await session.prompt('hello')).output == 'c'
+    assert session.agent is not one
+    assert (await session.agent.run('task', model=limited[-1])).output == 'c'
 
 
 async def test_switching_between_single_models_keeps_the_stock_agent() -> None:
