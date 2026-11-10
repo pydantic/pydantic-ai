@@ -180,6 +180,8 @@ Function tools and event stream handlers registered on the agent directly or thr
 
 A function tool running in the workflow can load an [on-demand capability](../capabilities/on-demand.md) with [`ctx.load_capability()`][pydantic_ai.tools.RunContext.load_capability], but a tool running as a step can't; see [Loading a capability from code](../capabilities/on-demand.md#loading-from-code-durable).
 
+A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] applies its `sequential=True` and `defer_loading=True` to the [`Tool`][pydantic_ai.tools.Tool] instances it holds. Workflows started before Pydantic AI did so keep listing those tools without them, so that they recover with the steps they recorded: a run holding such a tool [patches](https://docs.dbos.dev/python/tutorials/upgrading-workflows) its workflow when it starts, and a workflow without the patch marker gets the old listing.
+
 All other agents and toolsets are supported.
 
 ### Agent Run Context and Dependencies
@@ -294,6 +296,8 @@ Child workflows are only supported for async tools in a [`FunctionToolset`][pyda
 ### Concurrent Agent Runs
 
 Every run of an agent records its model requests and tool calls as steps with the same names, and DBOS replays a recovered workflow's steps in the order they start, checking only their names. When one workflow runs the same agent more than once at the same time, like `asyncio.gather(agent.run(...), agent.run(...))` or parallel tool calls that each run the same nested agent, the runs can start their steps in a different order during recovery than they originally did. Recovery then hands each run the results the other one recorded, and the workflow carries on with them.
+
+A run holding a `Tool` instance that a `FunctionToolset` made sequential or deferred also patches its workflow when it starts, which raises `DBOSPatchNondeterminismError` if another run in the workflow starts a step at that moment.
 
 Give each concurrent run a workflow of its own, so its steps are recorded and replayed in a sequence of their own: call a `@DBOS.workflow` function that runs the agent once, or run a tool that runs a nested agent in a [child workflow](#child-workflows).
 

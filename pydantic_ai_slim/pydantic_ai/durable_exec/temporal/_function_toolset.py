@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -13,6 +12,7 @@ from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableFunctionToolset,
     ToolConfig,
+    tools_before_tool_instance_defaults,
     unwrap_tool_call_result,
 )
 from pydantic_ai.exceptions import UserError
@@ -44,17 +44,7 @@ def gate_tool_instance_defaults(
     A sequential or deferred tool changes which activities the workflow schedules, so those histories
     replay only without them.
     """
-    unpatched: dict[str, ToolsetTool[AgentDepsT]] = {}
-    for name, tool in tools.items():
-        assert isinstance(tool, FunctionToolsetTool) and tool.original_name is not None
-        held = toolset.tools[tool.original_name]
-        tool_def = replace(
-            tool.tool_def,
-            sequential=tool.tool_def.sequential and not held._sequential_from_toolset,  # pyright: ignore[reportPrivateUsage]
-            defer_loading=tool.tool_def.defer_loading and not held._defer_loading_from_toolset,  # pyright: ignore[reportPrivateUsage]
-        )
-        if tool_def != tool.tool_def:
-            unpatched[name] = replace(tool, tool_def=tool_def)
+    unpatched = tools_before_tool_instance_defaults(toolset, tools)
     if not unpatched or workflow.patched(_TOOL_INSTANCE_DEFAULTS_PATCH):
         return tools
     return {**tools, **unpatched}

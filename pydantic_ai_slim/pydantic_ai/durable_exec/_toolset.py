@@ -765,6 +765,29 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
                 await held.aclose(*args)
 
 
+def tools_before_tool_instance_defaults(
+    toolset: FunctionToolset[AgentDepsT], tools: dict[str, ToolsetTool[AgentDepsT]]
+) -> dict[str, ToolsetTool[AgentDepsT]]:
+    """The `Tool` instances `toolset` lists as sequential or deferred because a `FunctionToolset` made them so, without that.
+
+    That's how they were listed before `FunctionToolset` applied its `sequential` and `defer_loading` to
+    `Tool` instances. A sequential or deferred tool changes which durable operations a workflow runs, so
+    workflows started before then can only continue with these.
+    """
+    before: dict[str, ToolsetTool[AgentDepsT]] = {}
+    for name, tool in tools.items():
+        assert isinstance(tool, FunctionToolsetTool) and tool.original_name is not None
+        held = toolset.tools[tool.original_name]
+        tool_def = replace(
+            tool.tool_def,
+            sequential=tool.tool_def.sequential and not held._sequential_from_toolset,  # pyright: ignore[reportPrivateUsage]
+            defer_loading=tool.tool_def.defer_loading and not held._defer_loading_from_toolset,  # pyright: ignore[reportPrivateUsage]
+        )
+        if tool_def != tool.tool_def:
+            before[name] = replace(tool, tool_def=tool_def)
+    return before
+
+
 class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
     def __init__(
         self,

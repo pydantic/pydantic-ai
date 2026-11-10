@@ -41,6 +41,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._agent import DBOSParallelExecutionMode
+from ._function_toolset import ToolInstanceDefaultsGateToolset, holds_tool_instance_defaults
 from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig
 from ._operation_names import DBOSOperationNamer
 from ._utils import ChildWorkflowConfig, StepConfig, guard_enqueue_in_workflow, in_workflow_code, using_durable_sleep
@@ -298,9 +299,11 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
         def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             nonlocal swapped
-            child = self._child_workflow_toolset(ts)
-            swapped = swapped or child is not None
-            return child or ts
+            replacement = self._child_workflow_toolset(ts) or ts
+            if isinstance(ts, FunctionToolset) and holds_tool_instance_defaults(ts):
+                replacement = ToolInstanceDefaultsGateToolset(replacement, function_toolset=ts)
+            swapped = swapped or replacement is not ts
+            return replacement
 
         replaced = (wrapped or toolset).visit_and_replace(swap)
         return replaced if swapped else wrapped

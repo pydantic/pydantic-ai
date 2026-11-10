@@ -357,6 +357,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_function_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_mcp_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_utils.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::<module>",
@@ -6254,13 +6255,13 @@
     },
     "ToolDefinition.defer_loading": {
       "engines": [
-        "temporal"
+        "durable_exec"
       ],
       "kinds": [
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::tools_before_tool_instance_defaults"
       ]
     },
     "ToolDefinition.metadata": {
@@ -6302,14 +6303,14 @@
     "ToolDefinition.sequential": {
       "engines": [
         "dbos",
-        "temporal"
+        "durable_exec"
       ],
       "kinds": [
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.prepare_tools",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::tools_before_tool_instance_defaults",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.prepare_tools"
       ]
     },
     "ToolDefinition.timeout": {
@@ -6468,6 +6469,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_function_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::<module>",
@@ -6482,6 +6484,7 @@
     },
     "AbstractToolset.__aenter__": {
       "engines": [
+        "dbos",
         "durable_exec",
         "temporal"
       ],
@@ -6492,6 +6495,7 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableToolsetBase.__aenter__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::RunHeldToolset.entered",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_function_toolset.py::ToolInstanceDefaultsGateToolset.__aenter__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::TemporalWrapperToolset.__aenter__"
       ]
     },
@@ -6617,6 +6621,7 @@
     },
     "AbstractToolset.get_tools": {
       "engines": [
+        "dbos",
         "durable_exec"
       ],
       "kinds": [
@@ -6627,7 +6632,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableDynamicToolset.get_tools",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableFunctionToolset.get_tools",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableMCPToolset.get_tools",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_dynamic_tool"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_dynamic_tool",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_function_toolset.py::ToolInstanceDefaultsGateToolset.get_tools"
       ]
     },
     "AbstractToolset.id": {
@@ -6717,6 +6723,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_operation.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_function_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_mcp_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_operation_backend.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>",
@@ -6783,6 +6790,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::resolve_tool_durable_config",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::run_args_validator",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::tools_before_tool_instance_defaults",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._register_child_workflow.call_tool_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::_child_workflow_config",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_replace_toolset_tools.project",
@@ -6790,7 +6798,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._resolve_temporal_tool_config",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_dynamic_toolset.py::temporalize_dynamic_toolset.call_tool_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_dynamic_toolset.py::temporalize_dynamic_toolset.validate_args_operation",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::temporalize_function_toolset.call_tool_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_mcp_toolset.py::temporalize_mcp_toolset.call_tool_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_FunctionCallTransport.dump",
@@ -6850,6 +6857,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::reject_unsupported_runtime_toolsets.collect",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_function_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_function_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>",
@@ -6937,9 +6945,9 @@
     },
     "FunctionToolset.tools": {
       "engines": [
+        "dbos",
         "durable_exec",
-        "render",
-        "temporal"
+        "render"
       ],
       "kinds": [
         "attribute_read"
@@ -6948,7 +6956,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::toolset_selects_child_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::reject_unsupported_runtime_toolsets.collect",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::tools_before_tool_instance_defaults",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_function_toolset.py::holds_tool_instance_defaults",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_operation_backend.py::RenderOperationBackend._validate_tool_options"
       ]
     },
@@ -7001,8 +7010,8 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::tools_before_tool_instance_defaults",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._register_child_workflow.call_tool_operation",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::gate_tool_instance_defaults",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::temporalize_function_toolset.call_tool_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_FunctionCallTransport.dump",
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_capability.py::_resolve_options",
@@ -7025,6 +7034,7 @@
   "pydantic_ai_slim/pydantic_ai/toolsets/wrapper.py": {
     "WrapperToolset": {
       "engines": [
+        "dbos",
         "durable_exec",
         "temporal"
       ],
@@ -7035,20 +7045,24 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_function_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]
     },
     "WrapperToolset.__aenter__": {
       "engines": [
+        "dbos",
         "durable_exec",
         "temporal"
       ],
       "kinds": [
+        "attribute_read",
         "override"
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableToolsetBase.__aenter__",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_function_toolset.py::ToolInstanceDefaultsGateToolset.__aenter__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::TemporalWrapperToolset.__aenter__"
       ]
     },
@@ -7121,6 +7135,7 @@
     },
     "WrapperToolset.get_tools": {
       "engines": [
+        "dbos",
         "durable_exec"
       ],
       "kinds": [
@@ -7130,7 +7145,8 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableDynamicToolset.get_tools",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableFunctionToolset.get_tools",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableMCPToolset.get_tools"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableMCPToolset.get_tools",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_function_toolset.py::ToolInstanceDefaultsGateToolset.get_tools"
       ]
     },
     "WrapperToolset.id": {
