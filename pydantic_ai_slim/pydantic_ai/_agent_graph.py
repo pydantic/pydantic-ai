@@ -1024,6 +1024,11 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     Runtime-only: read by `RunContext.output_tool_defs`, so a wrapper toolset building its tools after them
     (like Code Mode's catalog) and the step's tools see what this step accepts. `None` before any step."""
+    first_step_output_tool_manager: ToolManager[DepsT] | None = dataclasses.field(default=None, repr=False)
+    """The output tools, prepared on their own before the run's first step.
+
+    Runtime-only: code that runs before that step, like `before_run`, submits its output to them, since
+    `tool_manager` isn't prepared until the step starts. `None` when the output has no output tools."""
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -5077,6 +5082,8 @@ class _GraphOutputSubmitter(Generic[DepsT]):
         With `for_run`, a rejection is raised as is, without using up a retry.
         """
         tool_manager = self.ctx.deps.tool_manager
+        if tool_manager.tools is None and self.ctx.deps.first_step_output_tool_manager is not None:
+            tool_manager = self.ctx.deps.first_step_output_tool_manager
         tool = (tool_manager.tools or {}).get(tool_name)
         if tool is None or tool.tool_def.kind != 'output':
             # A `prepare_output_tools` hook left it out of this step.

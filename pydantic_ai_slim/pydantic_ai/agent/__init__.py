@@ -530,6 +530,27 @@ class _OutputToolsFirstToolset(CombinedToolset[AgentDepsT]):
         return self._merge_tools([output_tools, await toolset.get_tools(ctx)])
 
 
+async def _prepare_first_step_output_tools(
+    ctx: GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]],
+) -> None:
+    """Prepare the output tools before the run's lifecycle hooks, so code in them can submit output.
+
+    Unlike the other tools, output tools need no toolset to be entered, so they can be prepared before
+    `wrap_run` and `before_run`: `RunContext.output_tool_defs` and `RunContext.submit_output` then see
+    them as the `prepare_output_tools` hooks leave them. The first step prepares them again.
+    """
+    deps = ctx.deps
+    toolset = deps.tool_manager.toolset
+    if not isinstance(toolset, _OutputToolsFirstToolset):
+        return
+    output_toolset = toolset.toolsets[0]
+    tool_manager = await ToolManager[AgentDepsT](
+        output_toolset, root_capability=deps.tool_manager.root_capability
+    ).for_run_step(_agent_graph.build_run_context(ctx))
+    deps.first_step_output_tool_manager = tool_manager
+    deps.prepared_output_tool_defs = tool_manager.tool_defs
+
+
 @dataclasses.dataclass
 class _ResolvedSpec:
     """Result of resolving an AgentSpec for use at run/override time."""
@@ -5106,6 +5127,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # to this task above, before `wrap_run`/`before_run`.
                 self.binding.agent_run = agent_run
             self.resolve_metadata(agent_run.ctx)
+            await _prepare_first_step_output_tools(agent_run.ctx)
 
             # Build RunContext for run lifecycle hooks
             run_ctx = _agent_graph.build_run_context(agent_run.ctx)

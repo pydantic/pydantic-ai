@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
+    AgentRunResult,
     CallToolsNode,
     ModelMessage,
     ModelRequest,
@@ -30,6 +31,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolOutput,
     ToolReturnPart,
+    UserPromptNode,
 )
 from pydantic_ai.agent import EndStrategy
 from pydantic_ai.capabilities import (
@@ -39,6 +41,7 @@ from pydantic_ai.capabilities import (
     NodeResult,
     PrepareOutputTools,
     ValidatedToolArgs,
+    WrapRunHandler,
     WrapToolExecuteHandler,
 )
 from pydantic_ai.durable_exec import durable_unit_scope
@@ -1077,3 +1080,52 @@ async def test_run_level_submission_to_a_hidden_output_tool_is_rejected():
 
     assert result.output == Invoice(order_id='ord_1', total=1)
     assert raised == ["Output tool 'submit_receipt' is not available right now."]
+
+
+class SubmitBeforeTheFirstStep(AbstractCapability[None]):
+    """Submits an output from a hook that runs before the run's first step."""
+
+    def __init__(self, hook: str):
+        super().__init__()
+        self.hook = hook
+        self.output_tool_names: list[str] = []
+
+    async def submit(self, ctx: RunContext[None]) -> None:
+        self.output_tool_names = [d.name for d in ctx.output_tool_defs]
+        await ctx.submit_output('submit_invoice', {'order_id': self.hook, 'total': 1})
+
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        if self.hook == 'before_run':
+            await self.submit(ctx)
+
+    async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        if self.hook == 'wrap_run':
+            await self.submit(ctx)
+        return await handler()
+
+    async def before_node_run(self, ctx: RunContext[None], *, node: AgentNode[None]) -> AgentNode[None]:
+        if self.hook == 'before_node_run' and isinstance(node, UserPromptNode):
+            await self.submit(ctx)
+        return node
+
+
+@pytest.mark.parametrize('hook', ['before_run', 'wrap_run', 'before_node_run'])
+async def test_tool_output_submission_before_the_first_step(hook: str):
+    """The output tools are prepared before the run's hooks, so they see what `prepare_output_tools` left."""
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('no request should be sent')  # pragma: no cover
+
+    submitter = SubmitBeforeTheFirstStep(hook)
+    agent = Agent(
+        FunctionModel(model),
+        output_type=[ToolOutput(Invoice, name='submit_invoice'), ToolOutput(Receipt, name='submit_receipt')],
+        capabilities=[PrepareOutputTools(hide_receipts), submitter],
+        deps_type=type(None),
+    )
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id=hook, total=1)
+    assert result.usage.requests == 0
+    assert submitter.output_tool_names == ['submit_invoice']

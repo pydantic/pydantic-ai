@@ -853,6 +853,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Return a filtered or modified list. The result flows into both the model's request
         parameters and `ToolManager.tools`, so filtering also blocks tool execution.
+
+        Also called once when the run starts, before `wrap_run` and `before_run`, so output submitted
+        with [`RunContext.submit_output`][pydantic_ai.tools.RunContext.submit_output] before the first
+        step goes to the output tools as this hook leaves them.
         """
         return tool_defs
 
