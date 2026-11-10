@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 from uuid import UUID
 
 import anyio
@@ -21,7 +21,7 @@ from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, CallToolsNode, ModelRequestNode, ModelRetry, RunContext, ToolFailed
 from pydantic_ai._agent_graph import GraphAgentState
-from pydantic_ai.capabilities import AbstractCapability, Hooks
+from pydantic_ai.capabilities import AbstractCapability, Hooks, ValidatedToolArgs
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
 from pydantic_ai.messages import (
     DocumentUrl,
@@ -1233,17 +1233,27 @@ class TestToolCallEndingInRetryOrFailure:
             ('tool_call_completed', 'call-2', None),
         ]
 
-    async def test_retry_from_a_later_capabilitys_before_hook_is_recorded_failed(self) -> None:
+    @pytest.mark.parametrize(
+        ('error', 'recorded'),
+        [
+            (ModelRetry('pick another query'), "ModelRetry('pick another query')"),
+            (ToolFailed('query refused'), "ToolFailed('query refused')"),
+        ],
+        ids=['model_retry', 'tool_failed'],
+    )
+    async def test_retry_or_failure_from_a_later_capabilitys_before_hook_is_recorded_failed(
+        self, error: Exception, recorded: str
+    ) -> None:
         """`StepPersistence` already wrote `started` when the hook of a capability after it refuses the call."""
         store = InMemoryStepStore()
         hooks: Hooks[object] = Hooks()
 
         @hooks.on.before_tool_execute
         async def refuse_first(
-            ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
-        ) -> dict[str, Any]:
+            ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+        ) -> ValidatedToolArgs:
             if call.tool_call_id == 'call-1':
-                raise ModelRetry('pick another query')
+                raise error
             return args
 
         agent: Agent[object, str] = Agent(
@@ -1258,7 +1268,7 @@ class TestToolCallEndingInRetryOrFailure:
 
         assert await tool_call_ledger(store, 'call-1') == (
             [],
-            ('failed', "ModelRetry('pick another query')"),
+            ('failed', recorded),
             ['tool_call_started', 'tool_call_failed'],
         )
 
@@ -1269,8 +1279,13 @@ class TestToolCallEndingInRetryOrFailure:
 
         @hooks.on.after_tool_execute
         async def require_int(
-            ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
-        ) -> Any:
+            ctx: RunContext[object],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: object,
+        ) -> object:
             if call.tool_call_id == 'call-1':
                 TypeAdapter(int).validate_python(result)
             return result
@@ -1298,8 +1313,13 @@ class TestToolCallEndingInRetryOrFailure:
 
         @hooks.on.after_tool_execute
         async def reject_first(
-            ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any], result: Any
-        ) -> Any:
+            ctx: RunContext[object],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: object,
+        ) -> object:
             if call.tool_call_id == 'call-1':
                 raise ModelRetry('result rejected')
             return result
@@ -1331,9 +1351,9 @@ class TestToolCallEndingInRetryOrFailure:
             *,
             call: ToolCallPart,
             tool_def: ToolDefinition,
-            args: dict[str, Any],
+            args: ValidatedToolArgs,
             error: Exception,
-        ) -> Any:
+        ) -> NoReturn:
             raise ModelRetry('try again') from error
 
         agent: Agent[object, str] = Agent(
