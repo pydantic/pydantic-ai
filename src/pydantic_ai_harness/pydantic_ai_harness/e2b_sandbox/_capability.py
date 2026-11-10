@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -10,6 +10,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._mounts import S3Mount, mounted
 from pydantic_ai_harness._workspace_provider import (
     check_env_types,
     check_integer,
@@ -69,6 +70,9 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     The agent's commands can read them, and a new sandbox keeps them for every process it runs.
     """
 
+    mounts: Sequence[S3Mount] | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]] = ()
+    """Buckets to show as folders in the sandbox, or a function of the run returning them with fresh keys."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('E2BSandbox', self.defer_loading)
         check_integer('sandbox_timeout', self.sandbox_timeout)
@@ -125,10 +129,9 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""
-        del ctx
         if ref is not None and ref.provider != 'e2b':
             return None
-        return E2BSandboxBackend(
+        backend = E2BSandboxBackend(
             client=self.client,
             ref=ref,
             template=self.template,
@@ -137,3 +140,4 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
         )
+        return mounted(backend, backend._run_as_root, self.mounts, ctx)  # pyright: ignore[reportPrivateUsage]

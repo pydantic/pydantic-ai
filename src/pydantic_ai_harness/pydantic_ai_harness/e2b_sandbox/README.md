@@ -206,6 +206,33 @@ if __name__ == '__main__':
 
 The `finally` kills the sandbox even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later.
 
+## Mount a bucket
+
+To show an S3 or S3-compatible bucket as a folder in the sandbox, pass `mounts=`:
+
+```python {names="defined"}
+import os
+from datetime import UTC, datetime, timedelta
+
+from pydantic_ai_harness import S3Mount
+from pydantic_ai_harness.e2b_sandbox import E2BSandbox
+
+sandbox = E2BSandbox(
+    mounts=[
+        S3Mount(
+            path='data',
+            url='s3://acme-data/',
+            access_key_id=os.environ['DATA_ACCESS_KEY_ID'],
+            secret_access_key=os.environ['DATA_SECRET_ACCESS_KEY'],
+            session_token=os.environ['DATA_SESSION_TOKEN'],
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    ],
+)
+```
+
+The run's first command or file operation mounts the bucket at `/home/user/data` on the default template, as root, through E2B's `user='root'` rather than `sudo`, so the keys reach the sandbox on stdin and no command line or log. The sandbox needs `python3` and must reach the store, so leave `allow_internet_access` on. See [Mounting Cloud Storage](https://pydantic.dev/docs/ai/harness/cloud-storage-mounts/) for fresh keys per run, other stores, read-only mounts and how long a mount lasts.
+
 ## Preview a dev server
 
 With `Shell`, ask the agent to use `start_command` for `npm run dev -- --host 0.0.0.0 --port 3000`, then poll `check_command` and `curl http://localhost:3000/health` until ready. Save the returned command ID. Given the workspace ref, get the sandbox with `sandbox = await capability.backend(ref).get_sandbox()`, where `capability` is the `E2BSandbox` the agent runs with, so its `sandbox_timeout` applies, and use `sandbox.get_host(3000)` for the public hostname (prefix with `https://` for the preview URL). When done, call `stop_command` with the ID while the workspace is attached, then delete the sandbox with `await E2BSandbox().destroy(ref)`. Do not leave a public preview running longer than necessary.
@@ -264,6 +291,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[E2BSandbox(), Coder(), 
 | `sandbox_timeout` | Seconds the sandbox lives before E2B pauses it, set on create and on reattach. Default: `3_600` (1 hour, the most E2B's Hobby plan allows). |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/user` on the default template, where commands run as `user`); prefer relative paths or set `working_dir` for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Output is decoded as UTF-8 either way; the default template's locale is POSIX, so pass `env={'LC_ALL': 'C.UTF-8'}` if a tool such as `wc -m` should count characters rather than bytes. Nothing from your machine's environment reaches the sandbox. The agent's commands can read these values, and a new sandbox keeps them for every process, so leave out secrets the agent should not see. |
+| `mounts` | Buckets to show as folders in the sandbox, as `S3Mount`s, or a function of the run returning them with fresh keys; see [Mount a bucket](#mount-a-bucket). Default: `()`. Left out of agent specs, since it holds keys. |
 
 `E2BSandbox` needs asyncio: the E2B SDK runs every request on asyncio, so under Trio every operation, including `destroy`, raises `UserError` before it reaches E2B.
 
