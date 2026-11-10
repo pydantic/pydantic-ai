@@ -13,8 +13,8 @@ from pydantic import TypeAdapter
 _EVENT = TypeAdapter(dict[str, object])
 
 
-def review_result(path: Path) -> ReviewResult:
-    """Return the final assistant result only after a normal completed stream."""
+def final_text(path: Path) -> str:
+    """Return the final assistant text only after a normal completed stream."""
     events = [_EVENT.validate_json(line) for line in path.read_text(encoding='utf-8').splitlines()]
     if not events or events[-1].get('type') != 'step_finish':
         raise ValueError('OpenCode review did not complete')
@@ -34,8 +34,13 @@ def review_result(path: Path) -> ReviewResult:
             content = part.get('text')
             if not isinstance(content, str):
                 raise ValueError('Invalid OpenCode text event')
-            return ReviewResult.model_validate_json(content)
+            return content
     raise ValueError('OpenCode review did not return text')
+
+
+def review_result(path: Path) -> ReviewResult:
+    """Return the final assistant result only after a normal completed stream."""
+    return ReviewResult.model_validate_json(final_text(path))
 
 
 def main() -> None:

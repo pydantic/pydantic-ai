@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import re
 import warnings
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, cast
@@ -12,7 +11,7 @@ import pytest
 
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 
-from ..conftest import TestEnv, try_import
+from ..conftest import TestEnv, google_user_agents, try_import
 
 with try_import() as imports_successful:
     from google.auth import crypt
@@ -247,33 +246,79 @@ async def test_google_sends_one_user_agent(allow_model_requests: None, provider_
 
 
 @pytest.mark.parametrize(
-    'user_agent_header,expected',
+    'extra_headers,expected',
     [
-        ('User-Agent', ['google-genai', 'support-bot']),
-        ('user-agent', ['google-genai support-bot', 'pydantic-ai']),
-        ('USER-AGENT', ['google-genai', 'pydantic-ai', 'support-bot']),
+        ({'User-Agent': 'support-bot'}, ['google-genai support-bot']),
+        ({'user-agent': 'support-bot'}, ['google-genai support-bot']),
+        ({'USER-AGENT': 'support-bot'}, ['google-genai support-bot']),
+        ({'User-Agent': ''}, ['google-genai']),
+        ({'User-Agent': 'a', 'user-agent': 'b'}, ['google-genai a b']),
     ],
 )
-async def test_google_extra_headers_user_agent_goes_out_as_given(
-    allow_model_requests: None, provider_factory: GoogleProviderFactory, user_agent_header: str, expected: list[str]
+async def test_google_extra_headers_user_agent_replaces_ours(
+    allow_model_requests: None,
+    provider_factory: GoogleProviderFactory,
+    extra_headers: dict[str, str],
+    expected: list[str],
 ) -> None:
-    """A user-agent in `extra_headers` goes out as given, and only the exact spelling `User-Agent` replaces ours."""
+    """A user-agent in `extra_headers` replaces ours in any spelling, on the one line google-genai adds its label to.
+
+    google-genai would prefix its label to an empty value, leaving a trailing space that h11 rejects. Several
+    spellings join into one value.
+    """
     requests: list[httpx2.Request] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         return httpx2.Response(200, json=_GEMINI_RESPONSE)
 
-    settings: GoogleModelSettings = {'extra_headers': {user_agent_header: 'support-bot'}}
+    settings: GoogleModelSettings = {'extra_headers': extra_headers}
     async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
         agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider_factory(http_client)))
         await agent.run('What is the capital of France?', model_settings=settings)
 
-    user_agents = [
-        re.sub(r'google-genai-sdk/\S+ gl-python/\S+', 'google-genai', value).replace(get_user_agent(), 'pydantic-ai')
-        for value in requests[0].headers.get_list('user-agent')
-    ]
-    assert user_agents == expected
+    assert google_user_agents(requests[0]) == expected
+
+
+@pytest.mark.parametrize(
+    'extra_headers',
+    [
+        {'User-Agent': 'per-request-app'},
+        {'user-agent': 'per-request-app'},
+        {'USER-AGENT': 'per-request-app'},
+        {'user-agent': ' per-request-app'},
+    ],
+)
+@pytest.mark.parametrize(
+    'client_header,expected',
+    [
+        ('user-agent', ['google-genai per-request-app']),
+        ('User-Agent', ['per-request-app', 'google-genai per-request-app']),
+    ],
+)
+async def test_google_extra_headers_user_agent_replaces_user_built_client_user_agent(
+    allow_model_requests: None, client_header: str, extra_headers: dict[str, str], expected: list[str]
+) -> None:
+    """A user-agent in `extra_headers` replaces the one the user set on their own client, in any spelling.
+
+    A client given `User-Agent` sends google-genai's lowercase `user-agent` beside it, which no per-request header
+    can remove, so the caller's value goes on both. Without google-genai's label in front, h11 rejects the
+    surrounding whitespace, so it's stripped.
+    """
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, json=_GEMINI_RESPONSE)
+
+    settings: GoogleModelSettings = {'extra_headers': extra_headers}
+    async with httpx2.AsyncClient(timeout=60, transport=httpx2.MockTransport(handler)) as http_client:
+        http_options = HttpOptions(httpx_async_client=http_client, headers={client_header: 'client-app'})
+        client = Client(api_key='test-key', http_options=http_options)
+        agent = Agent(GoogleModel('gemini-2.5-flash', provider=GoogleProvider(client=client)))
+        await agent.run('What is the capital of France?', model_settings=settings)
+
+    assert google_user_agents(requests[0]) == expected
 
 
 @pytest.mark.parametrize('vertexai', [False, True], ids=['google', 'google-cloud'])

@@ -207,9 +207,15 @@ class SdkModelLiteral:
 
 SDK_MODEL_LITERALS = [
     SdkModelLiteral('openai', 'openai', AllModels, OpenAIModelName, frozenset({'gpt-6.1-terra'})),
-    SdkModelLiteral('openai-image', 'openai', ImageModel, LatestOpenAIImageModelNames),
+    SdkModelLiteral(
+        'openai-image',
+        'openai',
+        ImageModel,
+        LatestOpenAIImageModelNames,
+        frozenset({'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'}),
+    ),
     SdkModelLiteral('openai-embedding', 'openai', EmbeddingModel, LatestOpenAIEmbeddingModelNames),
-    SdkModelLiteral('anthropic', 'anthropic', ModelParam, AnthropicModelName),
+    SdkModelLiteral('anthropic', 'anthropic', ModelParam, AnthropicModelName, frozenset({'claude-fable-5-2'})),
     SdkModelLiteral('xai', 'xai-sdk', ChatModel, XaiModelName, frozenset({'grok-4.7'})),
     SdkModelLiteral('xai-image', 'xai-sdk', ImageGenerationModel, LatestXaiImageGenerationModelNames),
 ]

@@ -266,6 +266,19 @@ def strip_logfire_metrics(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return spans
 
 
+_GOOGLE_GENAI_USER_AGENT_LABEL = re.compile(r'google-genai-sdk/\S+ gl-python/\S+')
+
+
+def google_user_agents(request: httpx2.Request) -> list[str]:
+    """The request's user-agent lines, with google-genai's version label as `google-genai` and ours as `pydantic-ai`."""
+    return [
+        _GOOGLE_GENAI_USER_AGENT_LABEL.sub('google-genai', value).replace(
+            pydantic_ai.models.get_user_agent(), 'pydantic-ai'
+        )
+        for value in request.headers.get_list('user-agent')
+    ]
+
+
 SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
 
 
