@@ -731,8 +731,8 @@ and Trio when installed). For an asyncio-only SDK, override the `anyio_backend` 
 `'asyncio'`, class-scoped when your `backend` fixture is. A class-scoped fixture starts one environment for the whole
 suite instead of one per rule. Under durable execution every workspace call rebuilds your backend from
 its ref, so provide `attach_backend`, a factory that builds a backend for a ref the way your capability's
-`get_workspace` does: it enables the rule that a backend attached by ref reaches the same files and
-commands and keeps that ref. To check destruction,
+`get_workspace` does: it enables the rules that a backend attached by ref reaches the same files and
+commands, keeps that ref, and finds a process that an earlier command detached still running. To check destruction,
 also provide `destroy_environment` and `destructive_backend`, a factory for an independent environment.
 The latter defaults to `fresh_backend` when supplied. The destructive rule never uses the shared `backend` fixture.
 
@@ -745,6 +745,8 @@ Before shipping a backend, use the suite to check:
   indefinitely delay a finished command.
 - File operations preserve bytes, follow symlinks where appropriate, and report path errors;
   understand containment limits: a working directory is not a jail, and symlinks may cross roots.
+- A process detached into its own session outlives the command, backend and run that started it:
+  background jobs, and any terminal session a client attaches to later, depend on it.
 - Supply `attach_backend`, `destroy_environment`, and an independent `destructive_backend` to check
   reattachment, a destroyed reference, and destruction during a command. These optional rules
   skip when their fixtures are absent.

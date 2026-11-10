@@ -498,6 +498,36 @@ class WorkspaceBackendSuite:
             # Attaching never replaces the environment it names.
             assert attached.ref == ref
 
+    async def test_a_backend_attached_by_ref_reaches_a_detached_process(
+        self,
+        backend: WorkspaceBackend,
+        attach_backend: Callable[[WorkspaceRef], WorkspaceBackend] | None,
+        has_real_posix_shell: bool,
+    ) -> None:
+        """A background job or terminal session outlives the command, backend and run that started it."""
+        if attach_backend is None:
+            pytest.skip('provide the `attach_backend` fixture to enable this rule')
+        if not has_real_posix_shell:
+            pytest.skip('backend does not run real POSIX processes')
+        commands = _commands(backend)
+        async with _scratch_dir(Workspace(backend)) as root:
+            pid_file = posixpath.join(root, 'pid')
+            # Detach with `setsid` where the image has it, else `nohup`, then wait for the process to publish its PID.
+            launch = (
+                '$(command -v setsid || command -v nohup) sh -c \'echo $$ > "$1"; exec sleep 60\' sh "$1"'
+                ' < /dev/null > /dev/null 2>&1 & while [ ! -s "$1" ]; do sleep 0.1; done'
+            )
+            try:
+                with anyio.fail_after(60):  # Hang guard, not an assertion about remote speed.
+                    assert (await commands.run(['sh', '-c', launch, 'sh', pid_file])).exit_code == 0
+                ref = backend.ref
+                assert ref is not None
+                attached = _commands(attach_backend(ref))
+                assert (await attached.run(['sh', '-c', 'kill -0 "$(cat "$1")"', 'sh', pid_file])).exit_code == 0
+            finally:
+                with anyio.move_on_after(30, shield=True):
+                    await commands.run(['sh', '-c', 'kill "$(cat "$1")"', 'sh', pid_file])
+
     async def test_destroying_environment_during_command_raises_unavailable(
         self,
         destructive_backend: Callable[[], WorkspaceBackend] | None,
