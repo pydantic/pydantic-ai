@@ -384,6 +384,14 @@ async def test_output_that_is_not_the_helpers_is_quoted_with_the_keys_blanked() 
     )
 
 
+@pytest.mark.parametrize('reply', ['{"recovered": null}', '{"error": "unheard-of", "message": "no"}'])
+async def test_a_reply_not_in_the_helpers_shape_is_a_mount_error(reply: str) -> None:
+    workspace = wrap(FakeRoot(f'{reply}\n'), [s3()])
+
+    with pytest.raises(MountError, match='Could not mount storage in the sandbox'):
+        await workspace.exists('data')
+
+
 async def test_a_key_the_helper_quotes_escaped_is_blanked_too() -> None:
     key = 'AKIA"quoted\\slash'
     reply = json.dumps({'error': 'rclone', 'message': f'rclone rejected {key}'})

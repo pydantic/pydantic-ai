@@ -34,7 +34,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WrapperWorkspace,
 )
-from pydantic_ai_harness._mounts._helper import DEADLINE_SECONDS
+from pydantic_ai_harness._mounts._helper import DEADLINE_SECONDS, FailureCode
 
 __all__ = ('MountError', 'S3Mount')
 
@@ -57,7 +57,7 @@ class _Reply(TypedDict, total=False):
     """What the helper prints: the folders strays were moved to, or why it refused."""
 
     recovered: list[str]
-    error: str
+    error: FailureCode
     message: str
 
 
