@@ -1370,6 +1370,7 @@ async def test_non_json_response_body_raises_model_api_error(allow_model_request
 
 
 async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):
+    """Mocked because no provider sends an empty stream on demand."""
     mock_client = MockHuggingFace.create_stream_mock([[]])
     model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
 

@@ -4368,7 +4368,10 @@ async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
 
 
 async def test_empty_choices_raise_model_empty_response_error(allow_model_requests: None):
-    """A completion without choices is a model error, so `FallbackModel` falls back on it, rather than an `AssertionError`."""
+    """A completion without choices is a model error, so `FallbackModel` falls back on it, rather than an `AssertionError`.
+
+    Mocked because no provider returns a completion without choices on demand.
+    """
     response = completion_message(MistralAssistantMessage(content='unused'))
     response.choices = []
     model = MistralModel(
@@ -4381,6 +4384,7 @@ async def test_empty_choices_raise_model_empty_response_error(allow_model_reques
 
 
 async def test_choice_without_message_raises_model_empty_response_error(allow_model_requests: None):
+    """Mocked because no provider returns a choice without a message on demand."""
     response = completion_message(MistralAssistantMessage(content='unused'))
     response.choices[0].message = None
     model = MistralModel(
@@ -4392,6 +4396,7 @@ async def test_choice_without_message_raises_model_empty_response_error(allow_mo
 
 
 async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):
+    """Mocked because no provider sends an empty stream on demand."""
     mock_client = MockMistralAI.create_stream_mock([[]])
     model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
 
