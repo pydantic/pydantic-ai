@@ -3342,6 +3342,7 @@ def test_deferred_tool_results_serializable():
                 'tool-denied': {'message': 'The tool call was denied.', 'kind': 'tool-denied'},
             },
             'metadata': {},
+            'answered_by': {},
         }
     )
     # `DeferredToolCallResult` still accepts the deprecated part, and unlike a message history it

@@ -25,6 +25,17 @@ from .exceptions import ModelRetry, ToolFailed, UserError
 # TODO(v3): remove `RetryPromptPart`
 from .messages import RetryPromptPart, ToolCallPart, ToolReturn  # pyright: ignore[reportDeprecated]
 
+DeferredToolKind: TypeAlias = Literal['approval', 'question', 'external']
+"""What a deferred tool call waits for.
+
+- `'approval'`: consent to run a call the model made, from [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired]
+  or `requires_approval=True`. Answered in `DeferredToolResults.approvals`.
+- `'question'`: content the model asked for, from `CallDeferred(kind='question')`, such as Pydantic AI
+  Harness's `AskUser` question. Answered in `DeferredToolResults.calls`.
+- `'external'`: the result of a call run outside the agent, from [`CallDeferred`][pydantic_ai.exceptions.CallDeferred]
+  or an external tool. Answered in `DeferredToolResults.calls`.
+"""
+
 
 @dataclass(kw_only=True)
 class DeferredToolRequests:
@@ -43,6 +54,26 @@ class DeferredToolRequests:
     """Tool calls that require human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
+    kinds: dict[str, DeferredToolKind] = field(default_factory=dict[str, DeferredToolKind])
+    """The kind of each call whose kind its list doesn't already say, keyed by `tool_call_id`: a call in `calls` that is a `'question'`.
+
+    Read a call's kind with [`kind()`][pydantic_ai.tools.DeferredToolRequests.kind], which covers
+    every call: one in `approvals` is an `'approval'`, and one in `calls` not listed here is `'external'`.
+    """
+
+    def kind(self, tool_call_id: str) -> DeferredToolKind:
+        """What the pending call with this ID waits for: an approval, an answer to a question, or an external result.
+
+        A call in `approvals` is an `'approval'`, and one in `calls` is `'external'` unless `kinds` says otherwise.
+
+        Raises:
+            ValueError: No pending call has this ID.
+        """
+        if any(call.tool_call_id == tool_call_id for call in self.approvals):
+            return 'approval'
+        if not any(call.tool_call_id == tool_call_id for call in self.calls):
+            raise ValueError(f'No pending deferred tool call has ID {tool_call_id!r}')
+        return self.kinds.get(tool_call_id, 'external')
 
     def build_results(
         self,
@@ -50,6 +81,7 @@ class DeferredToolRequests:
         approvals: Mapping[str, bool | DeferredToolApprovalResult] | None = None,
         calls: dict[str, DeferredToolCallResult | Any] | None = None,
         metadata: dict[str, dict[str, Any]] | None = None,
+        answered_by: dict[str, str] | None = None,
         approve_all: bool = False,
     ) -> DeferredToolResults:
         """Create a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] for these requests.
@@ -60,6 +92,7 @@ class DeferredToolRequests:
             calls: Results for tool calls that required external execution. Keys must
                 match `tool_call_id`s in `self.calls`.
             metadata: Per-call metadata, keyed by `tool_call_id`.
+            answered_by: Who answered each call, keyed by `tool_call_id`.
             approve_all: If `True`, every approval-requesting call not already listed in
                 `approvals` is approved (with default `ToolApproved()`).
 
@@ -86,7 +119,9 @@ class DeferredToolRequests:
             for tool_call_id in approval_ids - set(approvals):
                 approvals[tool_call_id] = ToolApproved()
 
-        return DeferredToolResults(approvals=approvals, calls=calls, metadata=metadata or {})
+        return DeferredToolResults(
+            approvals=approvals, calls=calls, metadata=metadata or {}, answered_by=answered_by or {}
+        )
 
     def remaining(self, results: DeferredToolResults) -> DeferredToolRequests | None:
         """Return unresolved requests after applying results, or `None` if all resolved."""
@@ -98,6 +133,7 @@ class DeferredToolRequests:
             calls=[c for c in self.calls if c.tool_call_id not in call_result_ids],
             approvals=[c for c in self.approvals if c.tool_call_id not in approval_result_ids],
             metadata={k: v for k, v in self.metadata.items() if k not in resolved_ids},
+            kinds={k: v for k, v in self.kinds.items() if k not in resolved_ids},
         )
         return remaining if remaining.calls or remaining.approvals else None
 
@@ -176,12 +212,20 @@ class DeferredToolResults:
     """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`. Each value will be available in the tool's RunContext as `tool_call_metadata`."""
+    answered_by: dict[str, str] = field(default_factory=dict[str, str])
+    """Who answered each call, keyed by `tool_call_id`: a person's ID, a bot or a policy name.
+
+    Reported as given, such as in the [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent]
+    of calls resolved during the run. Pydantic AI doesn't check it, so authorize whoever answers before
+    you record who they are.
+    """
 
     def update(self, other: DeferredToolResults) -> None:
         """Update this `DeferredToolResults` with entries from another, in-place."""
         self.approvals.update(other.approvals)
         self.calls.update(other.calls)
         self.metadata.update(other.metadata)
+        self.answered_by.update(other.answered_by)
 
     def to_tool_call_results(self) -> dict[str, DeferredToolResult]:
         """Convert results into the internal per-call format used by the tool-execution pipeline.
@@ -220,4 +264,9 @@ def filter_deferred_results(requests: DeferredToolRequests, results: DeferredToo
         },
         calls={tool_call_id: result for tool_call_id, result in results.calls.items() if tool_call_id in call_ids},
         metadata=results.metadata,
+        answered_by={
+            tool_call_id: answerer
+            for tool_call_id, answerer in results.answered_by.items()
+            if tool_call_id in approval_ids | call_ids
+        },
     )

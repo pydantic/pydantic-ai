@@ -1531,6 +1531,7 @@ class ToolManager(Generic[AgentDepsT]):
             approvals=[call] if isinstance(exc, ApprovalRequired) else [],
             calls=[call] if isinstance(exc, CallDeferred) else [],
             metadata={call.tool_call_id: exc.metadata} if exc.metadata else {},
+            kinds={call.tool_call_id: 'question'} if isinstance(exc, CallDeferred) and exc.kind == 'question' else {},
         )
         if on_deferred_requests is not None:
             # Before the handler, as the graph emits `DeferredToolRequestsEvent`: a handler may take a

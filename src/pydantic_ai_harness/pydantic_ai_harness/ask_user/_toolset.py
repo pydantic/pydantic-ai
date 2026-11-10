@@ -1,27 +1,18 @@
-"""The `ask_user_question` tool: validate, hand off to the answerer, report back to the model."""
+"""The `ask_user_question` tool: validate, defer the question, and render the answer for the model."""
 
 from __future__ import annotations
-
-from typing import overload
-
-import anyio
-from typing_extensions import TypeIs
 
 from pydantic_ai.exceptions import CallDeferred
 from pydantic_ai.framing import close_tag, neutralize_tags, open_tag, register_tag
 from pydantic_ai.messages import TextContent, ToolReturn, UserContent
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness._callable import takes_context
-from pydantic_ai_harness.ask_user._events import AskUserAnsweredEvent, AskUserRequestedEvent
+from pydantic_ai_harness.ask_user._events import AskUserRequestedEvent
 from pydantic_ai_harness.ask_user._types import (
     TOOL_NAME,
-    Answerer,
-    AnyAnswerer,
     AskUserRequest,
     AskUserResponse,
     AskUserResult,
-    ContextAnswerer,
     Questions,
     check_response,
 )
@@ -32,7 +23,7 @@ DECLINED = 'The user declined to answer. Continue without the answer, or ask dif
 TIMED_OUT = (
     'The user did not answer in time. Continue without the answer: make a reasonable choice and say which one you made.'
 )
-"""The tool result when the answerer does not return within `AskUser.timeout`."""
+"""The tool result when no answer arrives within `AskUser.timeout`, or the wait for one fails."""
 
 
 _ANSWER_NOTE_TAG = register_tag('answer_note')
@@ -79,27 +70,16 @@ def _note_item_content(item: UserContent) -> UserContent:
     return item
 
 
-def _takes_context(answerer: AnyAnswerer[AgentDepsT]) -> TypeIs[ContextAnswerer[AgentDepsT]]:
-    return takes_context(answerer) is True
+OWNER_METADATA_KEY = 'ask_user'
+"""Metadata key naming the `AskUser` capability whose tool deferred a question, so only that one answers it."""
 
 
 class AskUserToolset(FunctionToolset[AgentDepsT]):
-    """Registers `ask_user_question` bound to one answerer, or deferring every call when there is none."""
+    """Registers `ask_user_question`, which defers every call as a question for `AskUser` or the host to answer."""
 
-    @overload
-    def __init__(self, *, answerer: Answerer | None, timeout: float | None = None) -> None: ...
-
-    @overload
-    def __init__(self, *, answerer: ContextAnswerer[AgentDepsT], timeout: float | None = None) -> None: ...
-
-    def __init__(self, *, answerer: AnyAnswerer[AgentDepsT] | None, timeout: float | None = None) -> None:
+    def __init__(self, *, capability_id: str | None = None) -> None:
         super().__init__()
-        self._answerer: ContextAnswerer[AgentDepsT] | None
-        if answerer is None or _takes_context(answerer):
-            self._answerer = answerer
-        else:
-            self._answerer = lambda ctx, request: answerer(request)
-        self._timeout = timeout
+        self._capability_id = capability_id
         self.add_function(self.ask_user_question, name=TOOL_NAME)
 
     async def ask_user_question(self, ctx: RunContext[AgentDepsT], questions: Questions) -> AskUserResult:
@@ -115,22 +95,7 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
             questions: One to ten questions, each with a unique `header`, two to six options,
                 and `multi_select` when several answers are allowed.
         """
-        if self._answerer is None:
-            # Keyed by the call (always set inside a tool) so `AskUserRequest.from_tool_call` rebuilds the same request.
-            request = AskUserRequest(questions=tuple(questions), id=ctx.tool_call_id or '')
-            await ctx.emit(AskUserRequestedEvent(request=request))
-            raise CallDeferred
-        request = AskUserRequest(questions=tuple(questions))
+        # Keyed by the call (always set inside a tool) so `AskUserRequest.from_tool_call` rebuilds the same request.
+        request = AskUserRequest(questions=tuple(questions), id=ctx.tool_call_id or '')
         await ctx.emit(AskUserRequestedEvent(request=request))
-        response = AskUserResponse(cancelled=True)  # What observers see if the answerer times out or fails.
-        try:
-            with anyio.move_on_after(self._timeout) as scope:
-                response = await self._answerer(ctx, request)
-        except Exception:
-            await ctx.emit(AskUserAnsweredEvent(request_id=request.id, response=response, failed=True))
-            raise
-        # Observers waiting since the request event are released whether or not the response fits.
-        await ctx.emit(AskUserAnsweredEvent(request_id=request.id, response=response, timed_out=scope.cancelled_caught))
-        if scope.cancelled_caught:
-            return TIMED_OUT
-        return ask_user_result(request, response)
+        raise CallDeferred(metadata={OWNER_METADATA_KEY: self._capability_id}, kind='question')

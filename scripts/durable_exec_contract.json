@@ -3231,6 +3231,17 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_protocol.py::<module>"
       ]
     },
+    "CallDeferred.kind": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::unwrap_tool_call_result"
+      ]
+    },
     "CallDeferred.metadata": {
       "engines": [
         "durable_exec",

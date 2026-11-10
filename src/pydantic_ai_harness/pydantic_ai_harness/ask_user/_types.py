@@ -160,8 +160,13 @@ class AskUserRequest:
         """
         if call.tool_name != TOOL_NAME:
             raise ValueError(f'expected an {TOOL_NAME!r} call, got {call.tool_name!r}')
-        arguments = _TOOL_ARGUMENTS.validate_python(call.args_as_dict())
-        return cls(questions=tuple(arguments['questions']), id=call.tool_call_id)
+        return rebuild_request(call)
+
+
+def rebuild_request(call: ToolCallPart) -> AskUserRequest:
+    """The request behind an `ask_user_question` call, whatever name a toolset wrapper such as `PrefixTools` gave it."""
+    arguments = _TOOL_ARGUMENTS.validate_python(call.args_as_dict())
+    return AskUserRequest(questions=tuple(arguments['questions']), id=call.tool_call_id)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -256,10 +261,28 @@ class ContextAnswerer(Protocol[AgentDepsT]):
         ...  # pragma: no cover
 
 
-AnyAnswerer: TypeAlias = Answerer | ContextAnswerer[AgentDepsT]
-"""Either answerer signature, for hosts storing a callback to pass to `AskUser`.
+class TokenAnswerer(Protocol[AgentDepsT]):
+    """An answerer that may hand the question on and let the answer arrive later, through a resume token.
 
-`Answerer` remains the request-only protocol; `ContextAnswerer` also receives the asking run's context.
+    Three required positional parameters select this form. Return the response to answer right away,
+    as the other forms do, or `None` after delivering `token` to whoever will answer, such as in a
+    Slack message. The run then waits until the token is resolved with the JSON form of an
+    `AskUserResponse`: with `pydantic_ai.external_events.resolve_external_event` in process, or
+    through the durable engine's API, such as AWS Lambda's `SendDurableExecutionCallbackSuccess`.
+    """
+
+    async def __call__(
+        self, ctx: RunContext[AgentDepsT], request: AskUserRequest, token: str, /
+    ) -> AskUserResponse | None:
+        """Answer `request`, or deliver `token` and return `None`."""
+        ...  # pragma: no cover
+
+
+AnyAnswerer: TypeAlias = Answerer | ContextAnswerer[AgentDepsT] | TokenAnswerer[AgentDepsT]
+"""Any answerer signature, for hosts storing a callback to pass to `AskUser`.
+
+`Answerer` remains the request-only protocol; `ContextAnswerer` also receives the asking run's context,
+and `TokenAnswerer` also a resume token, so it can let the answer arrive later.
 """
 
 

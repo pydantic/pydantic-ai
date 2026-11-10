@@ -1,9 +1,10 @@
-"""Tests for waiting on a decision inside an AWS Lambda durable execution, with `AwaitApproval`.
+"""Tests for waiting on a decision inside an AWS Lambda durable execution, with `RequestInput`.
 
-The run creates a Lambda callback, announces its ID in a step, and suspends on the callback's
-result. A test resolves the callback on the fake context the way `SendDurableExecutionCallbackSuccess`
-would, and the next invocation replays the journal: the model is not called again, the
-announcement is not repeated, and the wait returns the decision.
+The run creates a Lambda callback and passes its ID to `ask` in a step. When `ask` answers, the
+step records the answer and the run continues. Otherwise the run suspends on the callback's result. A
+test resolves the callback on the fake context the way `SendDurableExecutionCallbackSuccess` would,
+and the next invocation replays the journal: the model is not called again, `ask` is not called
+again, and the wait returns the decision.
 """
 
 from __future__ import annotations
@@ -19,12 +20,12 @@ from aws_durable_execution_sdk_python.exceptions import SuspendExecution
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AwaitApproval
+from pydantic_ai.capabilities import RequestInput
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.external_events import resolve_external_event, wait_for_external_event
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, run_durable
 
 from .conftest import FakeDurableContext
@@ -68,7 +69,7 @@ class Approvals:
             FunctionModel(model_fn, stream_function=stream_fn),
             name='a',
             deps_type=type(None),
-            capabilities=[AWSLambdaDurability[None](**durability), AwaitApproval[None](announce, timeout=timeout)],
+            capabilities=[AWSLambdaDurability[None](**durability), RequestInput[None](announce, timeout=timeout)],
         )
 
         @self.agent.tool_plain(requires_approval=True)
@@ -90,7 +91,7 @@ def test_the_run_suspends_until_the_decision_and_resumes_from_the_journal() -> N
     first = approvals.suspend()
 
     assert first.step_names == snapshot(
-        ['a__model.request', 'a__external_event.deferred_tool_calls', 'a__external_event.deferred_tool_calls.announce']
+        ['a__model.request', 'a__external_event.deferred_tool_calls', 'a__external_event.deferred_tool_calls.ask']
     )
     assert approvals.announced == [('callback-1', ['call-1'])]
     assert approvals.deleted == []
@@ -166,11 +167,11 @@ def test_no_timeout_and_the_base_step_config_reach_the_callback() -> None:
 
     first = approvals.suspend()
 
-    callback, announce = first.operations[1], first.operations[2]
+    callback, ask = first.operations[1], first.operations[2]
     assert callback.callback_config is not None
     assert callback.callback_config.timeout_seconds == 0
-    assert announce.config is not None
-    assert announce.config.step_semantics == StepSemantics.AT_MOST_ONCE_PER_RETRY
+    assert ask.config is not None
+    assert ask.config.step_semantics == StepSemantics.AT_MOST_ONCE_PER_RETRY
 
 
 def test_a_sub_second_timeout_rounds_up_to_a_whole_second() -> None:
@@ -193,7 +194,7 @@ def test_outside_a_durable_handler_the_same_agent_waits_in_process() -> None:
         FunctionModel(delete_then_report),
         name='a',
         deps_type=type(None),
-        capabilities=[AWSLambdaDurability[None](), AwaitApproval[None](announce)],
+        capabilities=[AWSLambdaDurability[None](), RequestInput[None](announce)],
     )
 
     @agent.tool_plain(requires_approval=True)
@@ -213,29 +214,29 @@ def test_waiting_inside_a_tool_step_is_rejected() -> None:
 
     @agent.tool_plain
     async def ask() -> str:
-        await wait_for_external_event('question', announce=lambda token: None)
+        await wait_for_external_event('question', ask=lambda token: None)
         raise AssertionError('unreachable')  # pragma: no cover
 
     with pytest.raises(UserError, match=r'was called from inside a durable unit, such as a tool call'):
         run_durable(lambda: agent.run('go'), context=FakeDurableContext())
 
 
-def test_waiting_inside_the_announce_step_is_rejected() -> None:
+def test_waiting_inside_the_ask_step_is_rejected() -> None:
     async def announce(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
-        await wait_for_external_event('nested', announce=lambda nested_token: None)
+        await wait_for_external_event('nested', ask=lambda nested_token: None)
 
     agent = Agent(
         FunctionModel(delete_then_report),
         name='a',
         deps_type=type(None),
-        capabilities=[AWSLambdaDurability[None](), AwaitApproval[None](announce)],
+        capabilities=[AWSLambdaDurability[None](), RequestInput[None](announce)],
     )
 
     @agent.tool_plain(requires_approval=True)
     def delete(path: str) -> str:
         raise AssertionError('unreachable')  # pragma: no cover
 
-    with pytest.raises(UserError, match=r'was called from inside a durable unit, such as a tool call or an `announce`'):
+    with pytest.raises(UserError, match=r'was called from inside a durable unit, such as a tool call or an `ask`'):
         run_durable(lambda: agent.run('clean up'), context=FakeDurableContext())
 
 
@@ -256,7 +257,7 @@ def test_event_stream_handler_steps_and_the_wait_replay_in_order() -> None:
             'a__event_stream_handler',
             'a__event_stream_handler',
             'a__external_event.deferred_tool_calls',
-            'a__external_event.deferred_tool_calls.announce',
+            'a__external_event.deferred_tool_calls.ask',
         ]
     )
     assert 'DeferredToolRequestsEvent' in events
@@ -269,3 +270,46 @@ def test_event_stream_handler_steps_and_the_wait_replay_in_order() -> None:
     assert result.output == 'success: deleted a.txt'
     assert resumed.step_names[: len(names)] == names
     assert approvals.deleted == ['a.txt']
+
+
+def test_an_answer_from_ask_is_recorded_and_the_run_continues_without_suspending() -> None:
+    """`ask` answering inline is journaled as its step's result, so a replay reuses it instead of asking again."""
+    asked: list[str] = []
+    deleted: list[str] = []
+
+    def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+        asked.append(token)
+        return requests.build_results(approvals={'call-1': True}, answered_by={'call-1': 'policy'})
+
+    agent = Agent(
+        FunctionModel(delete_then_report),
+        name='a',
+        deps_type=type(None),
+        capabilities=[AWSLambdaDurability[None](), RequestInput[None](ask, timeout=timedelta(minutes=5))],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete(path: str) -> str:
+        deleted.append(path)
+        return f'deleted {path}'
+
+    first = FakeDurableContext()
+    assert run_durable(lambda: agent.run('clean up'), context=first).output == 'success: deleted a.txt'
+    assert first.step_names == snapshot(
+        [
+            'a__model.request',
+            'a__external_event.deferred_tool_calls',
+            'a__external_event.deferred_tool_calls.ask',
+            'a__function_toolset__<agent>.call_tool:delete',
+            'a__model.request',
+        ]
+    )
+    callback = first.operations[1]
+    assert callback.status == 'started', 'nothing waits on the callback once `ask` answered'
+    assert asked == ['callback-1']
+
+    replayed = FakeDurableContext(journal=first.operations)
+    assert run_durable(lambda: agent.run('clean up'), context=replayed).output == 'success: deleted a.txt'
+    assert replayed.invoked == []
+    assert asked == ['callback-1'], 'replay reuses the recorded answer'
+    assert deleted == ['a.txt']

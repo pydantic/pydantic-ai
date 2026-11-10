@@ -132,7 +132,9 @@ class RequestInput(AbstractCapability[AgentDepsT]):
 
     async def _ask(self, ctx: RunContext[AgentDepsT], requests: DeferredToolRequests, token: str) -> JsonValue:
         """Call `ask`, and turn an answer into the JSON form a resolver would send, so both reach the run the same way."""
-        if is_async_callable(self.ask):
+        # A plain bool, so the checker keeps `ask`'s declared return type in both branches.
+        is_async: bool = is_async_callable(self.ask)
+        if is_async:
             results = await await_maybe(self.ask(ctx, requests, token))
         else:
             results = await await_maybe(await run_in_executor(self.ask, ctx, requests, token))

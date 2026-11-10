@@ -14,7 +14,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import JsonValue
 
 from pydantic_ai import Agent, AgentSpec, DeferredToolRequests
-from pydantic_ai.capabilities import AbstractCapability, AwaitApproval, HandleDeferredToolCalls
+from pydantic_ai.capabilities import AbstractCapability, RequestInput, HandleDeferredToolCalls
 from pydantic_ai.durable_exec import ExternalEventWaiter, external_event_scope
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelAPIError, UserError
 from pydantic_ai.messages import (
@@ -508,9 +508,9 @@ class _DecidingWaiter(ExternalEventWaiter):
         self.decision = decision
 
     async def wait(
-        self, name: str, *, announce: Callable[[str], Awaitable[None]], timeout: timedelta | None
+        self, name: str, *, ask: Callable[[str], Awaitable[JsonValue]], timeout: timedelta | None
     ) -> JsonValue:
-        await announce('token')
+        await ask('token')
         return self.decision
 
 
@@ -545,7 +545,7 @@ class TestComposition:
         ran: list[str] = []
         model = _reviewer_model(lambda prompt: 'no' if '"x": 1' in prompt else 'yes')
         agent = _agent(
-            AwaitApproval[None](announce),
+            RequestInput[None](announce),
             _reviewer(model),
             outer=_outer_model(_danger(1, 'call-1'), _danger(2, 'call-2')),
             ran=ran,

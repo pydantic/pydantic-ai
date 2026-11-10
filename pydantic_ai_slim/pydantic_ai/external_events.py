@@ -264,7 +264,9 @@ async def wait_for_external_event(
         # `ask` runs inside the engine's durable unit, so mark it as one: a durable operation it
         # calls runs directly, and a wait it starts is rejected above.
         with durable_unit_scope():
-            if is_async_callable(ask):
+            # A plain bool, so the checker keeps `ask`'s declared return type in both branches.
+            is_async: bool = is_async_callable(ask)
+            if is_async:
                 answer = await await_maybe(ask(token))
             else:
                 answer = await await_maybe(await run_in_executor(ask, token))

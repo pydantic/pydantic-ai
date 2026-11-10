@@ -29,7 +29,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext, TextOutput
 from pydantic_ai.capabilities import (
     MCP,
     AbstractCapability,
-    AwaitApproval,
+    RequestInput,
     Capability,
     CombinedCapability,
     DynamicCapability,
@@ -134,7 +134,7 @@ def _keep_model(ctx: ModelSelectionContext[Any]) -> Model:
 
 FIXTURES: dict[str, Fixture] = {
     'CombinedCapability': lambda _: CombinedCapability([Thinking()]),
-    'AwaitApproval': lambda _: AwaitApproval(lambda ctx, requests, token: None),
+    'RequestInput': lambda _: RequestInput(lambda ctx, requests, token: None),
     'DynamicCapability': lambda _: DynamicCapability(lambda ctx: Thinking()),
     'FileUnderstanding': lambda _: FileUnderstanding(fallback_subagent_model=TestModel()),
     'HandleDeferredToolCalls': lambda _: HandleDeferredToolCalls(lambda ctx, requests: requests.build_results()),

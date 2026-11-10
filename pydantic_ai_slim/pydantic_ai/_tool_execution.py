@@ -21,7 +21,13 @@ from pydantic_graph.basenode import NodeRunEndT
 from . import _output, exceptions, messages as _messages, result
 from ._deferred_capabilities import LoadCapabilityCallPart
 from .exceptions import ToolFailedError, ToolRetryError
-from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDefinitionKind, ToolDenied
+from .tools import (
+    DeferredToolRequests,
+    DeferredToolResult,
+    ToolApproved,
+    ToolDefinitionKind,
+    ToolDenied,
+)
 
 if TYPE_CHECKING:
     from ._agent_graph import GraphAgentDeps, GraphAgentState
@@ -175,6 +181,24 @@ def build_tool_return_part(
         tool_kind=tool_kind,
     )
     return _messages.ToolReturnPart.narrow_type(return_part), tool_return.content or None, tools
+
+
+_DeferredBucket = Literal['external', 'question', 'unapproved']
+"""Where a deferred call is collected: `'unapproved'` for approvals, and for calls, by their kind."""
+
+_DEFERRED_BUCKETS: tuple[_DeferredBucket, ...] = ('unapproved', 'external', 'question')
+
+
+def _deferred_tool_requests(
+    deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]], deferred_metadata: dict[str, dict[str, Any]]
+) -> DeferredToolRequests:
+    """Build the `DeferredToolRequests` for collected deferred calls, recording which calls are questions."""
+    return DeferredToolRequests(
+        calls=[*deferred_calls['external'], *deferred_calls['question']],
+        approvals=deferred_calls['unapproved'],
+        metadata=deferred_metadata,
+        kinds={call.tool_call_id: 'question' for call in deferred_calls['question']},
+    )
 
 
 def _duplicate_tool_call_ids(calls: Sequence[_messages.ToolCallPart]) -> list[str]:
@@ -439,9 +463,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     retry_wins_triggered: bool = dataclasses.field(default=False, init=False)
     output_retries_increment: int = dataclasses.field(default=0, init=False)
     winning_output_part: _messages.ToolReturnPart | None = dataclasses.field(default=None, init=False)
-    deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = dataclasses.field(
-        init=False
-    )
+    deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]] = dataclasses.field(init=False)
     deferred_metadata: dict[str, dict[str, Any]] = dataclasses.field(init=False)
 
     def __post_init__(self) -> None:
@@ -857,12 +879,12 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         *,
         tool_call_results: dict[str, DeferredToolResult],
         validated_calls: dict[str, ValidatedToolCall[DepsT]],
-        deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
+        deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]],
         deferred_metadata: dict[str, dict[str, Any]],
     ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         tool_parts_by_index: dict[int, _FunctionCallParts] = {}
         user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
-        deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
+        deferred_calls_by_index: dict[int, _DeferredBucket] = {}
         deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
         def record_result(
@@ -887,7 +909,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
                 )
             except exceptions.CallDeferred as e:
-                deferred_calls_by_index[index] = 'external'
+                deferred_calls_by_index[index] = e.kind
                 deferred_metadata_by_index[index] = e.metadata
             except exceptions.ApprovalRequired as e:
                 deferred_calls_by_index[index] = 'unapproved'
@@ -1010,9 +1032,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         self,
         tool_calls: list[_messages.ToolCallPart],
         *,
-        deferred_calls_by_index: dict[int, Literal['external', 'unapproved']],
+        deferred_calls_by_index: dict[int, _DeferredBucket],
         deferred_metadata_by_index: dict[int, dict[str, Any] | None],
-        deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
+        deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]],
         deferred_metadata: dict[str, dict[str, Any]],
     ) -> None:
         """Populate deferred calls and metadata from indexed mappings."""
@@ -1113,29 +1135,28 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         A deferral raised during validation routes the call by its type, as one raised by the tool
         function would; only a call that validation didn't defer goes by its tool's kind.
         """
+        bucket: _DeferredBucket
         if deferral is None:
-            external = call in self.tool_calls_by_kind['external']
+            bucket = 'external' if call in self.tool_calls_by_kind['external'] else 'unapproved'
         else:
-            external = isinstance(deferral, exceptions.CallDeferred)
+            bucket = deferral.kind if isinstance(deferral, exceptions.CallDeferred) else 'unapproved'
             if deferral.metadata is not None:
                 self.deferred_metadata[call.tool_call_id] = deferral.metadata
-        self.deferred_calls['external' if external else 'unapproved'].append(call)
+        self.deferred_calls[bucket].append(call)
 
     async def _resolve_deferred_calls(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
         # Deferred calls are returned to the caller and later matched back to results by `tool_call_id`.
         # Duplicate ids would make that matching ambiguous, so reject them before handing the requests out.
         if duplicate_ids := _duplicate_tool_call_ids(
-            [*self.deferred_calls['external'], *self.deferred_calls['unapproved']]
+            [call for bucket in _DEFERRED_BUCKETS for call in self.deferred_calls[bucket]]
         ):
             raise exceptions.UnexpectedModelBehavior(
                 f'Deferred tool calls must have unique tool_call_id values; duplicate ids: {duplicate_ids}'
             )
 
-        deferred_tool_requests: DeferredToolRequests | None = DeferredToolRequests(
-            calls=self.deferred_calls['external'],
-            approvals=self.deferred_calls['unapproved'],
-            metadata=self.deferred_metadata,
+        deferred_tool_requests: DeferredToolRequests | None = _deferred_tool_requests(
+            self.deferred_calls, self.deferred_metadata
         )
 
         # Emit the batch of deferred requests so stream consumers can observe the pending
@@ -1153,7 +1174,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             handler_tool_call_results = handler_results.to_tool_call_results()
             resolved_calls = [
                 call
-                for call in [*self.deferred_calls['unapproved'], *self.deferred_calls['external']]
+                for call in [
+                    *self.deferred_calls['unapproved'],
+                    *self.deferred_calls['external'],
+                    *self.deferred_calls['question'],
+                ]
                 if call.tool_call_id in handler_tool_call_results
             ]
 
@@ -1174,9 +1199,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     raise
 
-            new_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(
-                list
-            )
+            new_deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]] = defaultdict(list)
             new_deferred_metadata: dict[str, dict[str, Any]] = {}
             async with aclosing(
                 self._call_tools(
@@ -1191,17 +1214,20 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     yield event
 
             deferred_tool_requests = deferred_tool_requests.remaining(handler_results)
-            if new_deferred_calls['external'] or new_deferred_calls['unapproved']:
+            if any(new_deferred_calls[bucket] for bucket in _DEFERRED_BUCKETS):
                 # A resolved call can defer again when it re-executes (e.g. an approved tool raises
                 # `CallDeferred`). No second `DeferredToolRequestsEvent` is emitted for these: the
                 # batch was already announced above, and re-announcing the same tool call IDs
                 # (possibly under a different kind) would be ambiguous for consumers. The final
                 # pending batch still surfaces as the run's `DeferredToolRequests` output below.
+                new_requests = _deferred_tool_requests(new_deferred_calls, new_deferred_metadata)
                 if deferred_tool_requests is None:
-                    deferred_tool_requests = DeferredToolRequests()
-                deferred_tool_requests.calls.extend(new_deferred_calls['external'])
-                deferred_tool_requests.approvals.extend(new_deferred_calls['unapproved'])
-                deferred_tool_requests.metadata.update(new_deferred_metadata)
+                    deferred_tool_requests = new_requests
+                else:
+                    deferred_tool_requests.calls.extend(new_requests.calls)
+                    deferred_tool_requests.approvals.extend(new_requests.approvals)
+                    deferred_tool_requests.metadata.update(new_requests.metadata)
+                    deferred_tool_requests.kinds.update(new_requests.kinds)
 
         if deferred_tool_requests is not None:
             if not self.ctx.deps.output_schema.allows_deferred_tools:
@@ -1315,7 +1341,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
         # Under `parallel_ordered_events`, function-tool result events are buffered and yielded in
         # emission order at the end (alongside output events) instead of streaming as tasks complete.
         function_events: dict[int, _messages.FunctionToolResultEvent] = {}
-        deferred_by_index: dict[int, Literal['external', 'unapproved']] = {}
+        deferred_by_index: dict[int, _DeferredBucket] = {}
         deferred_meta_by_index: dict[int, dict[str, Any] | None] = {}
 
         async def run_one(index: int) -> tuple[int, _ToolCallPayload[NodeRunEndT]]:
@@ -1351,7 +1377,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                             if isinstance(payload, _OutputCallResult):
                                 output_results[index] = payload
                             elif isinstance(payload, exceptions.CallDeferred):
-                                deferred_by_index[index] = 'external'
+                                deferred_by_index[index] = payload.kind
                                 deferred_meta_by_index[index] = payload.metadata
                             elif isinstance(payload, exceptions.ApprovalRequired):
                                 deferred_by_index[index] = 'unapproved'
