@@ -334,6 +334,14 @@ class _ValidationDeferral(Exception):
         super().__init__()
 
 
+def _has_safety_checks(call: ToolCallPart) -> bool:
+    """Whether `call` is a `computer` call carrying a provider's safety checks."""
+    from .computer_use import _SAFETY_CHECKS, COMPUTER_KIND  # pyright: ignore[reportPrivateUsage]
+
+    # Read raw so a malformed list still asks for approval rather than slipping through.
+    return call.tool_kind == COMPUTER_KIND.id and bool((call.provider_details or {}).get(_SAFETY_CHECKS))
+
+
 def _validate_hook_deferral_error(hook_name: str, error: CallDeferred | ApprovalRequired) -> UserError:
     """Build the error for a tool validation hook that deferred before the arguments were validated.
 
@@ -640,6 +648,11 @@ class ToolManager(Generic[AgentDepsT]):
                 # deliberately chose to request approval or defer. Carry the validated arguments
                 # out with the deferral so `validate_tool_call` can report the call as valid.
                 raise _ValidationDeferral(e, args_dict) from e
+
+        if not ctx.tool_call_approved and _has_safety_checks(call):
+            # The provider asks a person to look before this call runs, whichever tool runs it, and the model's
+            # adapter tells the provider the checks were acknowledged once the call has a result.
+            raise _ValidationDeferral(ApprovalRequired(), args_dict)
 
         return args_dict
 
