@@ -2449,6 +2449,30 @@ async def test_anthropic_drops_top_p_set_together_with_temperature(
     )
 
 
+async def test_anthropic_thinking_keeps_sampling_settings_without_the_restriction(allow_model_requests: None):
+    """A model without `anthropic_restricts_sampling_with_thinking`, like a non-Claude model behind an
+    Anthropic-compatible endpoint, gets its sampling settings with thinking too.
+
+    A mock, since this only checks that the drop follows the profile flag, which the request shows.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    model = AnthropicModel(
+        'claude-opus-4-1',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        profile=AnthropicModelProfile(anthropic_restricts_sampling_with_thinking=False),
+    )
+
+    await Agent(model).run(
+        'What is 2+2?', model_settings=ModelSettings(thinking=True, temperature=0.5, top_p=0.9, top_k=40)
+    )
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 10000}
+    assert kwargs['extra_body'] == {'temperature': 0.5, 'top_p': 0.9, 'top_k': 40}
+
+
 async def test_anthropic_keeps_top_p_set_together_with_temperature_where_accepted(allow_model_requests: None):
     """Models without `anthropic_disallows_temperature_with_top_p`, like Claude Opus 4.1, get both.
 
