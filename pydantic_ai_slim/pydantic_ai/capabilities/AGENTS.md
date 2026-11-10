@@ -14,5 +14,6 @@ Capabilities are the composable home for cross-cutting agent behavior.
 ## Prompt-cache prefix stability
 
 - Follow [Message History & Prompt Caching](../../../agent_docs/message-history-and-caching.md): history is append-only across steps and runs, per-request nudges are enqueued request-scoped `InstructionCapabilityPart`s, and content goes in the channel that matches who wrote it.
+- Never hand-build a `SystemPromptPart`, a `UserPromptPart`, user text with a `metadata` marker, or `ctx.enqueue(str)` for what a capability tells the model: define a `DataCapabilityPart` or `InstructionCapabilityPart` kind with the content's real `source` ("Trust tiers map to channels" in the doc above). `tests/test_raw_request_parts.py` enforces it; allowlist an exception there only with its reason.
 - Keep tool definitions and their ordering stable across steps. Providers serialize tools before instructions and messages.
 - Use date-only timestamps in instructions. Finer-grained timestamps invalidate an otherwise stable prefix.

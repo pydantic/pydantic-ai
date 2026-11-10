@@ -93,6 +93,13 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 
 ## Framing tags
 
+Never hand-build a `SystemPromptPart`, a `UserPromptPart`, user text with a `metadata` marker, or
+`ctx.enqueue(str)` for something a capability tells the model. Define a `DataCapabilityPart` or
+`InstructionCapabilityPart` kind with the content's real `source`, and keep reading the old form when stored
+histories hold it. `tests/test_raw_request_parts.py` fails on a new one; allowlist it there, with the reason, only
+when it's the user's own words, a translation adapter, or a part that never enters the agent's history. See
+"Trust tiers map to channels" in core's `agent_docs/message-history-and-caching.md`.
+
 A capability that tells the model something mid-conversation, such as `<memory>`, `<judge_feedback>` or
 `<task_output>`, defines a `DataCapabilityPart` kind with a declared `tag`. The framework renders it and never
 escapes its body, so don't escape it yourself: text in it that looks like its tag or a framework frame gets a
