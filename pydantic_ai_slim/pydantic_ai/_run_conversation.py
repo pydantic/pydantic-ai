@@ -83,7 +83,15 @@ def unsaved_start(state: _agent_graph.GraphAgentState, new_message_index: int) -
 def failed_run_conversation(
     state: _agent_graph.GraphAgentState, deps: _agent_graph.GraphAgentDeps[Any, Any]
 ) -> Conversation:
-    """The conversation of a run that raised, with the messages it got to, so a store can record the failed turn."""
+    """The conversation of a run that raised, with the messages it got to, so a store can record the failed turn.
+
+    A run that failed before adding a message, say before it applied the results for the tool calls its
+    conversation was waiting on, leaves those calls waiting.
+    """
+    added = len(state.message_history) > deps.new_message_index
     return conversation_from_state(
-        state, deps.new_message_index, messages=list(state.message_history), deferred_tool_requests=None
+        state,
+        deps.new_message_index,
+        messages=list(state.message_history),
+        deferred_tool_requests=None if added else state.conversation_deferred_tool_requests,
     )

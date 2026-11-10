@@ -150,6 +150,7 @@ from .output import OutputDataT, OutputSpec, PendingModelResponse, StructuredOut
 from .settings import ModelSettings
 from .tools import (
     AgentNativeTool,
+    DeferredToolRequests,
     DeferredToolResult,
     DeferredToolResults,
     NativeToolFunc,
@@ -784,6 +785,11 @@ class GraphAgentState:
     `None` when the run wasn't given a conversation that knows its
     [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index]. The result's
     `conversation` finds them in the history to tell its store where the unsaved messages start.
+    """
+    conversation_deferred_tool_requests: DeferredToolRequests | None = None
+    """The [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests] of the conversation this run was given, if any.
+
+    A run that fails before it adds a message leaves them waiting, so its failed conversation keeps them.
     """
     conversation_unchecked: bool = False
     """Whether the messages before `conversation_unsaved` may have changed since they were stored, say after the conversation was serialized.

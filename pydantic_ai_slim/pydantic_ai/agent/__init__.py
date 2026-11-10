@@ -127,6 +127,7 @@ from ..tools import (
     AgentDepsT,
     AgentNativeTool,
     ArgsValidatorFunc,
+    DeferredToolRequests,
     DeferredToolResults,
     DocstringFormat,
     GenerateToolJsonSchema,
@@ -1635,6 +1636,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_revision=conversation_revision,
             conversation_unsaved=conversation_unsaved,
             conversation_unchecked=conversation_unchecked,
+            conversation_deferred_tool_requests=conversation.deferred_tool_requests if conversation else None,
             run_id=run_id,
             model=model,
             instructions=instructions,
@@ -1665,6 +1667,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         conversation_revision: str | None = None,
         conversation_unsaved: list[_messages.ModelMessage] | None = None,
         conversation_unchecked: bool = False,
+        conversation_deferred_tool_requests: DeferredToolRequests | None = None,
         run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -1828,6 +1831,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_revision=conversation_revision,
             conversation_unsaved=conversation_unsaved,
             conversation_unchecked=conversation_unchecked,
+            conversation_deferred_tool_requests=conversation_deferred_tool_requests,
         )
 
         # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability

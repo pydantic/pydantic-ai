@@ -19,7 +19,7 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_conversation,
 )
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
 from pydantic_ai.conversation import ConversationTypeAdapter
 from pydantic_ai.conversation_store import (
     ConversationConflict,
@@ -31,7 +31,7 @@ from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelSettingsDeltaPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 pytestmark = pytest.mark.anyio
@@ -1038,6 +1038,59 @@ async def test_a_conversation_read_while_the_run_goes_on_is_not_kept() -> None:
     assert [len(snapshot.messages) for snapshot in snapshots if snapshot is not None] == [0, 0, 2]
     assert len(failed.messages) == 3
     assert captured.conversation is failed
+
+
+async def test_capture_run_conversation_keeps_the_first_run_and_leaves_an_inner_context_s_run_to_it() -> None:
+    agent = Agent(TestModel())
+
+    with capture_run_conversation() as outer:
+        first = await agent.run('First', conversation_id='first')
+        with capture_run_conversation() as inner:
+            await agent.run('Inner', conversation_id='inner')
+        await agent.run('Second', conversation_id='second')
+
+    assert outer.conversation is not None and inner.conversation is not None
+    assert outer.conversation.conversation_id == 'first'
+    assert outer.conversation.messages == first.all_messages()
+    assert inner.conversation.conversation_id == 'inner'
+
+
+class _FailsBeforeTheRun(AbstractCapability[None]):
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        raise RuntimeError('the hook failed')
+
+
+async def test_a_resumed_run_that_fails_before_adding_a_message_leaves_the_calls_waiting() -> None:
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel())
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file() -> str:
+        return 'deleted'  # pragma: no cover
+
+    paused = await agent.run('Delete it', output_type=[str, DeferredToolRequests])
+    assert isinstance(paused.output, DeferredToolRequests)
+    await store.save(paused)
+    loaded = await store.load(paused.conversation_id)
+    assert loaded is not None and loaded.deferred_tool_requests is not None
+    [call] = loaded.deferred_tool_requests.approvals
+
+    with capture_run_conversation() as captured:
+        with pytest.raises(RuntimeError, match='the hook failed'):
+            await agent.run(
+                conversation=loaded,
+                output_type=[str, DeferredToolRequests],
+                deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
+                capabilities=[_FailsBeforeTheRun()],
+            )
+    failed = captured.conversation
+    assert failed is not None
+    assert failed.deferred_tool_requests == loaded.deferred_tool_requests
+
+    await store.save(failed)
+    reloaded = await store.load(paused.conversation_id)
+    assert reloaded is not None
+    assert reloaded.deferred_tool_requests == loaded.deferred_tool_requests
 
 
 async def test_a_cancelled_run_carries_its_conversation() -> None:
