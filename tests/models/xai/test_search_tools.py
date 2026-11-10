@@ -20,6 +20,7 @@ from pydantic_ai import (
     UserPromptPart,
     XSearchTool,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.messages import PartStartEvent, RequestUsage
 from pydantic_ai.profiles import ModelProfile
@@ -906,8 +907,12 @@ async def test_xai_builtin_file_search_tool(
                     FileSearchTool(
                         file_store_ids=[collection.collection_id],
                         max_num_results=1,
-                        instructions='Prioritize exact factual matches from the uploaded research memo.',
-                        retrieval_mode='semantic',
+                        provider_settings={
+                            'xai': {
+                                'instructions': 'Prioritize exact factual matches from the uploaded research memo.',
+                                'retrieval_mode': 'semantic',
+                            }
+                        },
                     )
                 )
             ],
@@ -1023,8 +1028,9 @@ async def test_xai_file_search_options_forwarded(allow_model_requests: None):
                 FileSearchTool(
                     file_store_ids=['col-1', 'col-2'],
                     max_num_results=5,
-                    instructions='Focus on recent documents.',
-                    retrieval_mode='hybrid',
+                    provider_settings={
+                        'xai': {'instructions': 'Focus on recent documents.', 'retrieval_mode': 'hybrid'}
+                    },
                 )
             )
         ],
@@ -1041,6 +1047,33 @@ async def test_xai_file_search_options_forwarded(allow_model_requests: None):
                     'limit': 5,
                     'instructions': 'Focus on recent documents.',
                     'hybrid_retrieval': {},
+                }
+            }
+        ]
+    )
+
+
+async def test_xai_file_search_provider_field_deprecation(allow_model_requests: None):
+    """A deprecated field and a different nested option combine in one request."""
+    response = create_response(content='result', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'field `instructions` is deprecated'):
+        tool = FileSearchTool(
+            file_store_ids=['col-1'],
+            instructions='Legacy instructions.',
+            provider_settings={'xai': {'retrieval_mode': 'semantic'}},
+        )
+
+    await Agent(m, capabilities=[NativeTool(tool)]).run('Search my docs')
+
+    assert get_mock_chat_create_kwargs(mock_client)[0]['tools'] == snapshot(
+        [
+            {
+                'collections_search': {
+                    'collection_ids': ['col-1'],
+                    'instructions': 'Legacy instructions.',
+                    'semantic_retrieval': {},
                 }
             }
         ]

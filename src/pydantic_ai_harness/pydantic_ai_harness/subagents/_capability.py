@@ -7,7 +7,7 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
 
@@ -15,7 +15,7 @@ from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_de
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.agent import Agent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler, durable_operation
-from pydantic_ai.durable_exec import BaseDurabilityCapability
+from pydantic_ai.durable_exec import BaseDurabilityCapability, DurabilityEngineSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputContext
@@ -89,6 +89,24 @@ the delegates run rather than *who* they are -- so merging them applies one harn
 other's sub-agents. Enumerating those instead would mean a field added
 later merges silently by default, which is the wrong way round for a decision nobody made.
 """
+
+
+def _durably_unsupported(capability: SubAgents[Any], spec: DurabilityEngineSpec) -> list[str]:
+    """The task-control settings set on `capability` that durable execution on `spec`'s engine can't replay."""
+    control = capability.task_control
+    assert control is not None
+    found = {
+        'include_self': capability.include_self,
+        'remote_agents': bool(control.remote_agents),
+        # A durable unit has no live link back to stream its run's events through.
+        'forward_events': control.forward_events,
+    }
+    if spec.tool_config_key != 'temporal':
+        # Only Temporal journals when a task settles: elsewhere, a recovered task can settle before a timer fires or a
+        # limit is checked, so replay would decide differently.
+        found['auto_background_after'] = control.auto_background_after is not None
+        found['max_running_tasks'] = control.max_running_tasks is not None
+    return [name for name, is_set in found.items() if is_set]
 
 
 @dataclass
@@ -308,8 +326,10 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     task_control: TaskControl | None = field(default=None, kw_only=True)
     """Let delegations outlive the tool call, and give the model tools to manage them. Off by default.
 
-    See `TaskControl`. Only one `SubAgents` on an agent can set it. Not supported under durable execution,
-    where a run raises a `UserError`.
+    See `TaskControl`. Only one `SubAgents` on an agent can set it. On Temporal and DBOS, each task runs in a durable
+    unit of its own, which can't ask questions, take messages, or be resumed. Under durable execution, `include_self`,
+    `remote_agents`, `forward_events`, `auto_background_after` or `max_running_tasks` outside Temporal, other durable
+    engines, and a bound `DelegationTasks` owner raise a `UserError`.
     """
 
     dynamic_agents: DynamicAgents[AgentDepsT] | None = field(default=None, kw_only=True)
@@ -359,22 +379,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     def _build_roster(self, disk_agents: list[SubAgent[AgentDepsT]]) -> None:
         if self.max_depth < 1:
             raise ValueError(f'`max_depth` counts the top-level run, so it must be at least 1; got {self.max_depth}.')
-        by_name: dict[str, SubAgent[AgentDepsT]] = {}
-        for sub_agent in self.agents:
-            name = sub_agent.resolved_name
-            if name is None:
-                raise ValueError('Sub-agent has no name: give its `Agent` a `name`, or set `SubAgent(name=...)`.')
-            if self.include_self and name == SELF_AGENT_NAME:
-                raise ValueError(
-                    f'Sub-agent name {SELF_AGENT_NAME!r} is taken by the running agent when `include_self=True`; '
-                    f'set `SubAgent(name=...)` to rename it.'
-                )
-            if name in by_name:
-                raise ValueError(
-                    f'Duplicate sub-agent name {name!r}. Each sub-agent needs a distinct name; '
-                    f'set `SubAgent(name=...)` to disambiguate.'
-                )
-            by_name[name] = sub_agent
+        by_name = self._explicit_agents_by_name()
         # Disk agents are lower precedence than explicit ones and than earlier
         # folders, so a name already taken is shadowed (a warning, not an error --
         # overriding a shared folder's agent from an earlier one, or a disk agent from code, is
@@ -396,6 +401,25 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         for name, sub_agent in by_name.items():
             validate_restriction(name, sub_agent.models, self._menu)
         self._validate_task_control()
+
+    def _explicit_agents_by_name(self) -> dict[str, SubAgent[AgentDepsT]]:
+        by_name: dict[str, SubAgent[AgentDepsT]] = {}
+        for sub_agent in self.agents:
+            name = sub_agent.resolved_name
+            if name is None:
+                raise ValueError('Sub-agent has no name: give its `Agent` a `name`, or set `SubAgent(name=...)`.')
+            if self.include_self and name == SELF_AGENT_NAME:
+                raise ValueError(
+                    f'Sub-agent name {SELF_AGENT_NAME!r} is taken by the running agent when `include_self=True`; '
+                    f'set `SubAgent(name=...)` to rename it.'
+                )
+            if name in by_name:
+                raise ValueError(
+                    f'Duplicate sub-agent name {name!r}. Each sub-agent needs a distinct name; '
+                    f'set `SubAgent(name=...)` to disambiguate.'
+                )
+            by_name[name] = sub_agent
+        return by_name
 
     def _validate_task_control(self) -> None:
         if (control := self.task_control) is not None:
@@ -538,20 +562,22 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             self._created.pop(ctx.run_id or '', None)
 
     def _require_durable_support(self, ctx: RunContext[AgentDepsT], owner: DelegationTasks | None) -> None:
-        if self.task_control is not None:
-            raise UserError('`SubAgents` `task_control` is not supported under durable execution.')
-        if self.dynamic_agents is None:
+        if self.task_control is None and self.dynamic_agents is None:
             return
         durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
         assert durability is not None, 'Only called in a durable context.'
         spec = durability.engine_spec
+        if self.task_control is not None and (unsupported := _durably_unsupported(self, spec)):
+            settings = ', '.join(f'`{name}`' for name in unsupported)
+            raise UserError(f'`SubAgents` `task_control` is not supported under durable execution with {settings}.')
         # Replay rebuilds the roster only if `create_agent` runs in workflow code: an engine that runs function tools
         # there, or Temporal, which honors the toolset's `{'temporal': False}`.
         in_workflow = 'function' not in spec.wrapped_toolset_kinds or spec.tool_config_key == 'temporal'
         if owner is not None or not in_workflow:
             raise UserError(
-                '`SubAgents` `dynamic_agents` is only supported under durable execution on an engine that runs its '
-                'tools in workflow code, such as Temporal or DBOS, outside a `DelegationTasks` owner.'
+                '`SubAgents` `task_control` and `dynamic_agents` are only supported under durable execution on an '
+                'engine that runs its tools in workflow code, such as Temporal or DBOS, outside a `DelegationTasks` '
+                'owner.'
             )
 
     async def _run_plain(
@@ -576,14 +602,16 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         """Run with an owner of the run's own, which stops every task still running when the run ends."""
         owner = DelegationTasks(max_depth=self.max_depth)
         conversation_id = ctx.conversation_id or ctx.run_id or ''
+        # A question waits for an answer, so the model sees it at its next request. Durable tasks ask none, and their
+        # reports wait for the run to go idle, a point that replay reaches again however fast a recorded task returns.
+        priority: Literal['asap', 'when_idle'] = 'when_idle' if ctx.in_durable_context else 'asap'
         async with owner.opened():
             with (
                 isolated(owner),
                 owner.receiving(
                     conversation_id=conversation_id,
                     parent_id=None,
-                    # A question waits for an answer, so the model sees it at its next request.
-                    enqueue=lambda part: enqueue_while_open(ctx, part, priority='asap'),
+                    enqueue=lambda part: enqueue_while_open(ctx, part, priority=priority),
                 ),
                 owner.publishing(conversation_id=conversation_id, parent_id=None, emit=ctx.emit),
             ):
@@ -680,9 +708,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     def _has_delegates(self) -> bool:
         return bool(self._by_name or self.include_self or self._remote_agents or self.dynamic_agents)
 
-    def _render_instructions(self) -> str | None:
-        if self._delegation_off or not self._has_delegates():
-            return None
+    def _agent_listing(self) -> str:
         lines: list[str] = [f'- {SELF_AGENT_NAME}: {_SELF_DESCRIPTION}'] if self.include_self else []
         for name, sub_agent in self._by_name.items():
             description = sub_agent.description or sub_agent.agent.description
@@ -692,11 +718,15 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             f'- {remote.name}: {remote.description}' if remote.description else f'- {remote.name}'
             for remote in self._remote_agents
         )
-        listing = '\n'.join(lines) or '(none yet)'
+        return '\n'.join(lines) or '(none yet)'
+
+    def _render_instructions(self) -> str | None:
+        if self._delegation_off or not self._has_delegates():
+            return None
         instructions = (
             f'You can delegate self-contained tasks to these sub-agents using the `{self.tool_name}` '
             f'tool. Each runs in its own fresh context and does not see this conversation, so pass '
-            f'everything it needs.\n\nAvailable sub-agents:\n{listing}'
+            f'everything it needs.\n\nAvailable sub-agents:\n{self._agent_listing()}'
         )
         if self.dynamic_agents is not None:
             instructions += (
@@ -765,7 +795,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             dynamic_agents=self.dynamic_agents,
             created=self._created,
             workspace_resolver=self.workspace_resolver,
-            _record_delegation=self._delegate if self.dynamic_agents is not None else None,
+            _record_delegation=self._delegate
+            if self.dynamic_agents is not None or self.task_control is not None
+            else None,
         )
 
     @durable_operation('delegate')
@@ -777,11 +809,12 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         model: str | None,
         spec: DynamicAgentSpec | None,
         level: int,
+        managed: bool = False,
     ) -> RecordedDelegation:
         """Run a delegation in a durable unit of its own, so recovery reuses its result."""
         toolset = self._run_toolset if self._per_run else self._toolset
         assert toolset is not None, 'Only a capability with delegates offers the delegate tool.'
-        return await toolset._run_recorded(ctx, agent_name, task, model, spec, level)  # pyright: ignore[reportPrivateUsage]
+        return await toolset._run_recorded(ctx, agent_name, task, model, spec, level, managed)  # pyright: ignore[reportPrivateUsage]
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

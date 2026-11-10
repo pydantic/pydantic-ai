@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from pydantic_ai._capability_loads import deferred_capability_ids, keep_capability_loads
+from pydantic_ai._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -161,23 +161,33 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
         protected_tail = len(messages) - cutoff if self.keep_tokens else 0
         trimmed = reinject_pinned(messages, trimmed, protected_tail=protected_tail)
         if self.receipts:
-            if protected_tail:
-                trimmed = [*self._without_receipts(trimmed[:-protected_tail]), *trimmed[-protected_tail:]]
-            else:
-                trimmed = self._without_receipts(trimmed)
-            dropped = self._dropped_messages(messages, trimmed)
-            trimmed = [self._receipt_message(dropped, ctx), *trimmed]
+            trimmed = self._prepend_receipt(messages, trimmed, protected_tail, ctx)
         kept = messages[cutoff:]
         kept_from = next(
             (index for index, message in enumerate(trimmed) if any(message is k for k in kept)), len(trimmed) - 1
         )
-        return keep_capability_loads(
+        return keep_loaded_state(
             messages,
             trimmed,
             kept_from=kept_from,
             deferred_ids=deferred_capability_ids(ctx),
             preserve=self.preserve_loaded_capabilities,
         )
+
+    def _prepend_receipt(
+        self,
+        messages: list[ModelMessage],
+        trimmed: list[ModelMessage],
+        protected_tail: int,
+        ctx: RunContext[AgentDepsT],
+    ) -> list[ModelMessage]:
+        """*trimmed* without earlier receipts outside the protected tail, led by a receipt for what it dropped."""
+        if protected_tail:
+            trimmed = [*self._without_receipts(trimmed[:-protected_tail]), *trimmed[-protected_tail:]]
+        else:
+            trimmed = self._without_receipts(trimmed)
+        dropped = self._dropped_messages(messages, trimmed)
+        return [self._receipt_message(dropped, ctx), *trimmed]
 
     @staticmethod
     def _without_receipts(messages: list[ModelMessage]) -> list[ModelMessage]:

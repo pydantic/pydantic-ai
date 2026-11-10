@@ -71,6 +71,11 @@ def colored(text: str, *, role: str = theme.INFO, bold: bool = False) -> str:
     return f'{theme.sgr(role, bold=bold)}{plain(text)}\x1b[0m'
 
 
+def _heading(text: str, *, focused: bool) -> str:
+    """Use the terminal's own foreground, bold while the pane has focus."""
+    return f'\x1b[1m{plain(text)}\x1b[0m' if focused else plain(text)
+
+
 class SessionBrowser:
     """Pure browsing state plus a thin, injectable terminal loop.
 
@@ -276,7 +281,7 @@ class SessionBrowser:
         budget = max(1, height - 5)
         shown = ', archived included' if self.archived else ''
         source = f' | Source: {self.source_name()}' if self.source is not None else ''
-        header = colored(
+        header = plain(
             f'CLAI > Resume session    {len(self.visible)} sessions / {len(self.projects)} projects{shown}{source}'
         )
         if self.mode == 'preview':
@@ -308,7 +313,7 @@ class SessionBrowser:
         chosen = (self.project, self.checkout)
         cursor = rows.index(chosen) if chosen in rows else 0
         start = max(0, cursor - budget + 2)
-        lines = [colored('SELECT PROJECT' if self.mode == 'projects' else 'PROJECTS', bold=self.mode == 'projects')]
+        lines = [_heading('SELECT PROJECT' if self.mode == 'projects' else 'PROJECTS', focused=self.mode == 'projects')]
         for index, _ in enumerate(rows[start : start + budget - 1], start):
             lines.append(self._project_row(rows, index, chosen=chosen))
         return lines
@@ -324,7 +329,7 @@ class SessionBrowser:
         else:
             line = f'{marker}{self.project_label(project)} ({count})'
         if (project, checkout) == chosen:
-            return colored(line, bold=True)
+            return colored(line, role=theme.ACCENT)
         return colored(line, role=theme.MUTED) if checkout else plain(line)
 
     def _sessions_frame(self, *, budget: int, width: int) -> list[str]:
@@ -340,11 +345,11 @@ class SessionBrowser:
             if self.checkout:
                 location += f' / {self.checkout_label(self.project, self.checkout)}'
         lines = [
-            colored(
+            _heading(
                 f'{"SELECT SESSION" if self.mode == "sessions" else "SESSIONS"}: '
                 f'{location} | '
                 f'Sort: {("recent", "messages", "tokens")[self.sort]}',
-                bold=self.mode == 'sessions',
+                focused=self.mode == 'sessions',
             )
         ]
         last_day = ''
@@ -371,15 +376,18 @@ class SessionBrowser:
         when = when or f'{entry.updated_at.astimezone():%b %d}'
         title = f'{marker}{when} {entry.title}{risk}{archived}'
         counts = f'{entry.message_count} msgs / {entry.total_tokens:,} tok'
+        short = f'{entry.message_count} msgs'
         if len(counts) > width // 2:
-            counts = f'{entry.message_count} msgs'
+            counts = short
         if self.importing(entry):
-            counts = 'to import'
-        if (source := imported_from(entry)) is not None:
-            counts = f'{source} · {counts}'
+            counts = short = 'to import'
+        source = imported_from(entry)
+        # Drop the source label before it squeezes the title below a third of the row.
+        labelled = () if source is None else (f'{source} · {counts}', f'{source} · {short}')
+        counts = next((text for text in labelled if len(text) <= width - width // 3), counts)
         title = truncate(plain(title), max(1, width - len(counts) - 1))
         if entry == selected and self.mode == 'sessions':
-            title = f'{theme.sgr(theme.INFO, bold=True)}{title}\x1b[0m'
+            title = f'{theme.sgr(theme.ACCENT)}{title}\x1b[0m'
         line = title + ' ' * max(1, width - visible_length(title) - len(counts)) + counts
         return [line, self._session_detail(entry, source=source, width=width)]
 

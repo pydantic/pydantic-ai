@@ -1,7 +1,9 @@
 """Git worktrees for isolated CLI workspaces."""
 
+import asyncio
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -9,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.menus.worktree_cleanup import ask_removal
 from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
 
@@ -227,7 +231,10 @@ def current_worktree() -> Worktree | None:
 
 
 def offer_worktree_cleanup(
-    *, worktree: Worktree | None, read_remove_commands: Callable[[], Mapping[str, Sequence[str]]] | None = None
+    *,
+    worktree: Worktree | None,
+    read_remove_commands: Callable[[], Mapping[str, Sequence[str]]] | None = None,
+    store: SettingsStore | None = None,
 ) -> None:
     """After interactive shutdown, remove an unchanged checkout marked `remove_if_unchanged`, or offer to remove a changed one.
 
@@ -249,6 +256,20 @@ def offer_worktree_cleanup(
         if worktree.remove_if_unchanged:
             _remove(worktree, unchanged=True)
         return
+    _offer_changed_worktree_cleanup(worktree=worktree, read_remove_commands=read_remove_commands, store=store)
+
+
+def _offer_changed_worktree_cleanup(
+    *,
+    worktree: Worktree,
+    read_remove_commands: Callable[[], Mapping[str, Sequence[str]]] | None,
+    store: SettingsStore | None,
+) -> None:
+    """Confirm changed-checkout removal, unless this checkout's saved preference keeps it."""
+    root = str(worktree.path)
+    if _kept_checkout(worktree.path, store=store):
+        print(f'Worktree kept at {root}.')
+        return
     try:
         remove_commands: Mapping[str, Sequence[str]] = (
             read_remove_commands() if read_remove_commands is not None else {}
@@ -266,25 +287,50 @@ def offer_worktree_cleanup(
         except (OSError, subprocess.CalledProcessError, UnicodeDecodeError) as exc:
             print(f'Worktree kept at {root}: cannot prepare removal command: {exc}', file=sys.stderr)
             return
-    prompt = f'Remove worktree {root}? The branch will be kept. [y/N] '
+    details = f'{root}\nThe branch will be kept. Git refuses to remove uncommitted files.'
     if custom is not None:
-        print(f'Registered removal command: {custom[1]!r}')
-        prompt = (
-            f'Run registered removal command for worktree {root}? '
-            'It may delete the branch and uncommitted files. [y/N] '
-        )
+        details = f'{root}\nRegistered removal command: {custom[1]!r}\nIt may delete the branch and uncommitted files.'
     try:
-        answer = input(prompt)
+        answer = asyncio.run(ask_removal(details))
     except (EOFError, KeyboardInterrupt):
-        answer = ''
+        answer = 'keep'
         print()
-    if answer.strip().lower() not in ('y', 'yes'):
+    if answer == 'never':
+        _keep_checkout(worktree.path, store=store)
+    if answer != 'remove':
         print(f'Worktree kept at {root}.')
         return
     if custom is not None:
         _remove_with_command(path=worktree.path, repo=custom[0], command=custom[1])
     elif _remove(worktree, unchanged=False):
         print(f'Removed worktree {root}. Branch kept.')
+
+
+def _checkout_identity(path: Path) -> str:
+    # Git recreates this file for a new checkout, even if it reuses the path and branch.
+    identity = (path / '.git').stat()
+    return f'{identity.st_dev}:{identity.st_ino}:{identity.st_mtime_ns}'
+
+
+def _kept_checkout(path: Path, *, store: SettingsStore | None) -> bool:
+    """An unreadable preference still lets the user choose whether to remove the checkout."""
+    if store is None:
+        return False
+    try:
+        return store.kept_worktree(path) == _checkout_identity(path)
+    except (OSError, sqlite3.Error) as exc:
+        print(f'Cannot read worktree cleanup preference for {path}: {exc}', file=sys.stderr)
+        return False
+
+
+def _keep_checkout(path: Path, *, store: SettingsStore | None) -> None:
+    """A failed save keeps the checkout for this exit and reports that it could not remember the choice."""
+    if store is None:
+        return
+    try:
+        store.keep_worktree(path, checkout=_checkout_identity(path))
+    except (OSError, sqlite3.Error) as exc:
+        print(f'Cannot save worktree cleanup preference for {path}: {exc}', file=sys.stderr)
 
 
 def _remove_with_command(*, path: Path, repo: Path, command: list[str]) -> None:
