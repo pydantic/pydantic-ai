@@ -8,7 +8,7 @@ or incomplete JSON. Use this capability on its own or through [Coder](../coder/)
 ```mermaid
 flowchart TB
     accTitle: Repair Tool Arguments: fix malformed JSON before validation
-    accDescr: RepairToolArguments runs in the before_tool_validate hook, after the model makes a tool call and before Pydantic AI validates its arguments. Malformed JSON such as {'path': 'a.py', 'limit': 10, with single quotes, a trailing comma and a missing brace is repaired by json-repair into valid JSON, which then goes through normal schema validation. Valid arguments pass through unchanged.
+    accDescr: The model makes a tool call with JSON args. The RepairToolArguments capability runs in before_tool_validate, where json-repair fixes syntax, so the args are repaired if malformed and unchanged if valid. The args are then validated against the schema and reach your tool, and the tool result goes back to the model with the next request.
     model(["model"])
     repair["RepairToolArguments()<br/>before_tool_validate<br/>json-repair fixes syntax"]:::capability
     validate["validate args<br/>against the schema"]

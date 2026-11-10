@@ -7,7 +7,7 @@ Discover and load a repo's accumulated coding-assistant context engineering (CE)
 ```mermaid
 flowchart TB
     accTitle: Repo Context: load the instruction files a repo already has
-    accDescr: RepoContext has three strategies. On by default, autoload puts one instruction file per directory, AGENTS.md or else CLAUDE.md, into the instructions: the working directory's, plus each ancestor's when walk_up is set, broadest first, once per run. Off by default, the inventory_agent_context tool reports where the .claude, .agents, .codex and .grok roots keep skills, agents and hooks. On by default, nested traversal reacts to FileSystem reading or listing a directory, such as src/api, and queues the contents of that directory's AGENTS.md before the next model request.
+    accDescr: On by default, RepoContext instruction autoload loads AGENTS.md or CLAUDE.md in the working directory as instructions once, at run start, and nested traversal adds AGENTS.md in src/api to the message tail after a read or listing. Off by default, asset inventory answers the model's inventory_agent_context() with skills, agents and hooks from .claude, .agents, .codex and .grok.
     subgraph workspace["Workspace"]
         files["AGENTS.md or<br/>CLAUDE.md in the<br/>working directory"]
         roots[".claude, .agents,<br/>.codex, .grok"]

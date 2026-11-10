@@ -14,7 +14,7 @@ Ask a second model whether a tool call may run, and stop it before the tool func
 ```mermaid
 flowchart TB
     accTitle: Tool Call Judge: a second model can stop a tool call
-    accDescr: ToolCallJudge runs in the before_tool_execute hook, after the arguments are validated and before the tool function runs. A second model is asked one question about the call delete_file(path='./old-report.txt'). A yes blocks the call and the model gets the denial message instead of a result; a no lets the tool run; unsure or a failed judgement follows on_uncertain, which blocks by default.
+    accDescr: The model's tool call, with validated args, goes to the before_tool_execute hook of the ToolCallJudge capability. The hook asks a judge model one risk question. On no, your tool runs the function, and on yes, or on unsure with on_uncertain='block', the call is blocked and the model gets denial_message.
     model(["model"])
     judge["ToolCallJudge()<br/>before_tool_execute<br/>hook"]:::capability
     second(["judge model"])

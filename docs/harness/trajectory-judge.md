@@ -14,7 +14,7 @@ Watch a live agent run with a second model, and steer it back on course mid-run.
 ```mermaid
 flowchart TB
     accTitle: Trajectory Judge: a second model reviews the run while it runs
-    accDescr: TrajectoryJudge starts an evaluation from the after_model_request hook every 20 model requests. The most recent window of the transcript goes to a judge model, which runs alongside the agent instead of blocking it. The judge returns AllGood, and nothing happens, or Steer(message=...), which is enqueued and delivered on the next model request as a framework note plus the message in a judge_feedback element.
+    accDescr: Every 20 model requests, TrajectoryJudge(every=20) runs in the after_model_request hook and sends a recent window of the transcript to a judge model, which runs alongside the agent. The judge model returns AllGood, and nothing happens, or Steer(message=...), which is enqueued and delivered to the model on the next request.
     model(["model"])
     judge["TrajectoryJudge(every=20)<br/>after_model_request hook"]:::capability
     reviewer(["judge model<br/>runs alongside<br/>the agent"])

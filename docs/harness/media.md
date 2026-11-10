@@ -27,7 +27,7 @@ Why it exists: a conversation that carries images, audio, or other `BinaryConten
 ```mermaid
 flowchart TB
     accTitle: Media Externalization: store large payloads once, keep a URI in the history
-    accDescr: externalize_media walks the JSON form of a message history. Each binary or text payload at or above threshold_bytes is written to a MediaStore with put and replaced by a media+sha256:// URI derived from its hash, so the same image referenced twice is stored once. restore_media reads each URI back with get and puts the original payload in place. Disk, SQLite, S3, MongoDB and PostgreSQL stores are available.
+    accDescr: externalize_media takes binary and text payloads at or above threshold_bytes out of a message history and puts each, once per hash, in a MediaStore on disk, SQLite, S3, MongoDB or PostgreSQL. A media+sha256:// URI replaces each payload, leaving a lean history. From it, restore_media gets the payloads from the MediaStore and puts them back in place in the message history.
     history["message history<br/>binary and text payloads"]
     ext["externalize_media<br/>payloads at or above<br/>threshold_bytes"]:::capability
     store[("MediaStore<br/>disk, SQLite, S3,<br/>MongoDB or PostgreSQL")]:::external

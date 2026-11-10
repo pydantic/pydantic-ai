@@ -7,7 +7,7 @@ Give an agent a tool that locates and returns Pydantic AI documentation on deman
 ```mermaid
 flowchart TB
     accTitle: Pydantic AI Docs: read the current docs page on demand
-    accDescr: The model calls read_pyai_docs with one of six topics. The tool first looks for the page in a docs checkout inside the run workspace, and otherwise fetches it from the main branch on GitHub. It then replaces model aliases using model_aliases/aliases.json and returns the full page to the model. If neither source has the page, the tool returns an error naming the path and URL it tried.
+    accDescr: The model calls read_pyai_docs(topic) on the PydanticAIDocs capability and gets the full page, with model aliases replaced. The capability first reads the workspace checkout at local_docs_path, when the page exists there, and otherwise the pydantic-ai main branch on GitHub. If neither has the page, the capability returns an error naming the path and URL it tried.
     model(["model"])
     docs["PydanticAIDocs()<br/>read_pyai_docs(topic)<br/>replaces model aliases"]:::capability
     checkout["workspace<br/>checkout at<br/>local_docs_path"]

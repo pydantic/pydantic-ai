@@ -12,7 +12,7 @@ description: "Let a Pydantic AI orchestrator agent coordinate subagents by writi
 ```mermaid
 sequenceDiagram
     accTitle: Dynamic Workflow: coordinate sub-agents with one script
-    accDescr: The orchestrator agent has one tool, run_workflow. Its model writes a Python script that runs in the Monty sandbox, where each sub-agent is an async function: the script runs reviewer twice in parallel with asyncio.gather, then passes both reports to summarizer. Each call is a separate sub-agent run with its own model loop. Only the script's final value, the summary, goes back to the orchestrator's next model request.
+    accDescr: The orchestrator model calls run_workflow with one Python script, and the DynamicWorkflow capability runs it in the Monty sandbox. The capability starts two reviewer sub-agent runs in parallel, one for auth.py and one for parser.py, and their two reports stay in the sandbox. It passes both reports to a summarizer run and returns only the summary to the orchestrator model.
     participant model as orchestrator model
     participant cap as DynamicWorkflow()<br/>Monty sandbox
     participant agents as sub-agent runs

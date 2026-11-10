@@ -12,7 +12,7 @@ Give an agent a persistent notebook that it can update, search, and reuse across
 ```mermaid
 flowchart TB
     accTitle: Memory: a notebook the agent keeps across runs
-    accDescr: The model gets four tools, write_memory, read_memory, delete_memory and search_memory, over a notebook of Markdown files kept in a store such as FileStore, SqliteMemoryStore or PostgresMemoryStore. Your code picks the namespace, such as the user ID from the run dependencies, so the model cannot reach another user's files, and writes are compare-and-swap. On the first request of a run, Memory adds a #lt;memory#gt; block with an excerpt of MEMORY.md and the names of the other files next to the user's prompt, only when memory changed, within max_tokens.
+    accDescr: Your code gives Memory a namespace, such as from ctx.deps. The model calls Memory's four tools, such as write_memory, which read and make compare-and-swap writes in a store, such as FileStore, with alice/main/MEMORY.md and auth-notes.md. On the first request of each run, Memory sends the model a memory block (MEMORY.md excerpt, names of other files) with the user's prompt.
     model(["model"])
     code["your code"]
     memory["Memory()<br/>four tools, such as<br/>write_memory"]:::capability

@@ -7,7 +7,7 @@ Let an agent search and change content in a Notion workspace. `Notion` gives the
 ```mermaid
 flowchart TB
     accTitle: Notion: search and edit a workspace through Notion's MCP server
-    accDescr: Inside your agent, the Notion capability connects to Notion's hosted MCP server at mcp.notion.com/mcp with a Notion OAuth access token. The model sees the server's tool names unchanged, such as notion-search, because they already start with the service. Your auth function returns the token for each run; a Notion integration token is not accepted. read_only=True drops tools the server does not mark read-only.
+    accDescr: Inside your agent, the model calls tools of the Notion capability, such as notion-search, and gets their results. The capability gets a token for each run from your auth function, and with read_only=True it drops the tools not marked read-only. It calls the Notion MCP server at mcp.notion.com/mcp with an OAuth access token, and the server rejects a Notion integration token.
     subgraph agent["Your agent"]
         model(["model"])
         auth["auth function"]

@@ -9,7 +9,7 @@ Run your agent's commands and file edits in a [smolvm](https://github.com/smol-m
 ```mermaid
 flowchart TB
     accTitle: Smol Sandbox: your agent's commands run in a local smolvm microVM
-    accDescr: The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SmolSandbox's get_workspace hook gives the run a smolvm microVM on your own machine as ctx.workspace. The smolvm engine runs inside your process, and each command and file operation runs in the VM, which has its own kernel and filesystem and no network by default; output comes back to the tool. The first use boots the VM, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. File changes are kept when the VM is stopped with machine.stop() before the process exits, and can be lost otherwise.
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command and gets results. Via ctx.workspace, the SmolSandbox capability hands the run a VM, a smolvm microVM on the same machine with its own kernel and filesystem, reached through smolmachines in your process. The VM has no network access by default, unless allow_internet_access=True.
     subgraph machine["Your machine"]
         model(["model"])
         tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]

@@ -26,7 +26,7 @@ Editors like [Zed](https://zed.dev/docs/ai/external-agents) speak ACP: a stdio J
 ```mermaid
 sequenceDiagram
     accTitle: ACP: serve an agent to Zed and other editors
-    accDescr: An editor such as Zed launches the agent script as a subprocess and talks to it over stdio with ACP JSON-RPC messages. session/new carries the workspace directory, and session_config roots the FileSystem and Shell tools there. session/prompt starts an agent run, and session/update streams its text and tool calls back so the editor shows them as messages and diffs. A tool that requires approval sends session/request_permission and waits as pending until the user allows or rejects it.
+    accDescr: The Editor launches the script and sends run_acp_stdio session/new with cwd, and session_config roots the tools at cwd. On session/prompt from the Editor, run_acp_stdio calls agent.run, and the Agent's text and tool calls go back to the Editor as session/update. For a pending tool call, run_acp_stdio sends session/request_permission and the Editor answers allow or reject.
     participant editor as Editor
     participant acp as run_acp_stdio
     participant agent as Agent

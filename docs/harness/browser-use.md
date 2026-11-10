@@ -27,7 +27,7 @@ recovery from failed actions), and the tool returns a text result.
 ```mermaid
 flowchart TB
     accTitle: Browser Use: hand a web goal to a browsing sub-agent
-    accDescr: The host model calls browse_web with one natural-language goal. BrowserUse hands it to a browser-use sub-agent, which by default runs on the host run's model. The sub-agent reads the page as indexed DOM elements and a screenshot, picks an action, and repeats for up to 50 steps in its own Chromium session, behind a domain allowlist. A judge call checks the result, and browse_web returns the final text or validated JSON to the host model, with any secrets replaced by placeholders.
+    accDescr: The model gives BrowserUse's browse_web(task) a goal and gets final text or JSON. The tool's browser-use sub-agent takes up to 50 steps, then one judge call, calling its model (the host run's by default) per step and acting on a Chromium session fresh per call. Chromium opens allowed sites on the web and refuses ones not in allowed_domains, IP addresses, localhost and file://.
     model(["model"])
     tool["BrowserUse()<br/>browse_web(task)"]:::capability
     sub["browser-use sub-agent<br/>up to 50 steps,<br/>then one judge call"]:::capability

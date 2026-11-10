@@ -15,7 +15,7 @@ the `load_capability` tool to receive that skill's instructions.
 ```mermaid
 flowchart TB
     accTitle: Skills: load SKILL.md instructions on demand
-    accDescr: At the start of every run, Skills reads each SKILL.md in the configured libraries from the run's workspace, such as .agents/skills/code-review/SKILL.md, and puts a catalog of skill names and descriptions in the model's instructions. When a skill is useful, the model calls load_capability with its name and gets back a "# Skill: code-review" heading, the skill's directory and the Markdown body of SKILL.md.
+    accDescr: At run start, the Skills capability reads the workspace files under .agents/skills/, here code-review/SKILL.md and release-notes/SKILL.md. It puts each skill's name and description in the model's instructions. When a skill is needed, the model calls load_capability and gets a heading, the skill directory and the SKILL.md body.
     subgraph workspace["Workspace"]
         files[".agents/skills/<br/>code-review/SKILL.md<br/>release-notes/SKILL.md"]
     end

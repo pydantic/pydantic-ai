@@ -8,7 +8,7 @@ agent and hand the findings back for validation and fixing.
 ```mermaid
 flowchart TB
     accTitle: Macroscope: a code review the agent runs, checks and fixes
-    accDescr: The model calls run_macroscope_review, which runs macroscope codereview --raw in the run's workspace. The CLI uploads the branch diff to Macroscope's service and streams findings back, and the tool returns them as a MacroscopeReview with a review id, a status and a list of MacroscopeIssue findings. The agent then checks each finding and fixes the real ones with its own file and shell tools. Setup problems, such as a missing or signed-out CLI, raise UserError and stop the run.
+    accDescr: The model calls run_macroscope_review of the Macroscope capability, gets a MacroscopeReview, checks findings and fixes the real ones with FileSystem or Shell. The tool runs macroscope codereview --raw in the workspace, which sends the branch diff to the Macroscope service for review and returns streamed findings. If the CLI is missing or not signed in, UserError stops the run.
     subgraph agent["Your agent"]
         model(["model"])
         macroscope["Macroscope()<br/>run_macroscope_review"]:::capability

@@ -7,7 +7,7 @@ Give an agent bounded, pattern-filtered access to a directory tree.
 ```mermaid
 flowchart TB
     accTitle: FileSystem: file tools bounded by one directory
-    accDescr: The model calls FileSystem tools such as read_file, write_file and edit_file. Before any I/O, each path is resolved with symlinks, checked to stay inside root_dir, and matched against the allowed, denied and read-only patterns; only then does the tool touch the workspace. Four example calls show a read that succeeds, a write to .env rejected as read-only, a read of /etc/passwd rejected as outside root_dir, and an edit announced as a FileChangeRequestEvent that a listener can cancel.
+    accDescr: The model calls FileSystem tools such as read_file, write_file and edit_file, which before any I/O resolve the path, check it is inside root_dir and match the patterns. They reject calls outside root_dir, denied or writing to a read-only path and pass allowed ones to the workspace root_dir/. Before a change your listener gets FileChangeRequestEvent and can call cancel(reason).
     model(["model"])
     tools["FileSystem()<br/>read_file, write_file,<br/>edit_file and more"]:::capability
     checks["resolve the path, check<br/>it is inside root_dir,<br/>match the patterns"]:::capability

@@ -19,7 +19,7 @@ If you only need background execution, a native Render task around `agent.run(..
 ```mermaid
 flowchart TB
     accTitle: Render Workflows: each model request and tool call as its own task run
-    accDescr: Your application starts the support task with start_task and gets a run ID back at once. On Render, the root task run calls agent.run. RenderWorkflows sends each model request to a chained support__model.request task run and each tool call to a chained call_tool task run, each in its own instance with its own retries, timeout and compute plan. The application reads the result later with get_task_run. Nothing is checkpointed, so a retried root task run repeats finished calls.
+    accDescr: Your app gets run.id at once from start_task('support', [prompt]) and status and results later from get_task_run. The Render workflow service's support root task run from @workflows.task calls agent.run. RenderWorkflows chains one task run and instance per call, support__model.request or a call_tool run under support__function_toolset__, each with its own retries, timeout and plan.
     subgraph app["Your app"]
         start["start_task('support',<br/>[prompt])"]
         check["get_task_run(id)"]

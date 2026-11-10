@@ -8,7 +8,7 @@ managed background processes.
 ```mermaid
 flowchart TB
     accTitle: Shell: run commands in the workspace, with guardrails
-    accDescr: The model calls Shell tools: run_command, start_command, check_command and stop_command, or the opt-in shell tool. Before a command runs, its executable is checked against allowed_commands or denied_commands, its shell operators against denied_operators, and interactive commands are blocked; then it runs as a process in the workspace's working directory with only the workspace's environment plus Shell(env=). Four example calls show pytest running and returning labelled output, rm rejected by the default denylist, a dev server started in the background with an ID, and that ID used to check on or stop it.
+    accDescr: The model calls Shell tools, such as run_command and start_command, and gets results. Before a command runs, the capability checks the executable, shell operators and interactive commands. A passing command runs as a process in the workspace, with its working directory and environment, and one in denied_commands, such as rm by default, is rejected and the model gets a retry.
     model(["model"])
     shell["Shell()<br/>run_command,<br/>start_command"]:::capability
     checks["checks the executable,<br/>shell operators and<br/>interactive commands"]:::capability

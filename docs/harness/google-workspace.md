@@ -11,7 +11,7 @@ Let an agent use Gmail, Calendar, Drive, Docs, Sheets, Slides, Chat, and People 
 ```mermaid
 flowchart TB
     accTitle: Google Workspace: Gmail, Calendar, Drive and more through Google's MCP servers
-    accDescr: Inside your agent, the GoogleWorkspace capability opens one connection per selected product to Google's hosted MCP servers, here gmailmcp.googleapis.com and calendarmcp.googleapis.com, with the same OAuth access token. The model sees each server's tools under names that start with the product, such as gmail_search_threads. Your auth function returns the token at the start of each run; the capability does not refresh it, and Google access tokens expire after about an hour.
+    accDescr: Inside your agent, the model calls tools of the GoogleWorkspace capability, such as gmail_search_threads and those prefixed calendar_, and gets results. Your auth function gives it a token for each run. It sends tools/call with a Bearer token to the Gmail MCP server and with the same token to the Calendar MCP server, and with read_only=True it drops the tools not marked read-only.
     subgraph agent["Your agent"]
         model(["model"])
         auth["auth function"]

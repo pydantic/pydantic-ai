@@ -14,7 +14,7 @@ Give an executor model a way to consult a separate advisor model before it answe
 ```mermaid
 flowchart TB
     accTitle: Advisor: let the model consult a second model
-    accDescr: Advisor gives the executor model an advisor tool. On the local path, calling advisor(prompt) runs a separate agent with the advisor model, and its answer comes back as the tool result. When the executor and advisor are both on Anthropic, or both on OpenRouter, the provider's native AdvisorTool runs the consultation inside the model request instead.
+    accDescr: The executor model consults the advisor tool of the Advisor capability and gets an answer. On the local fallback, for any other pairing, an advisor agent run with its own instructions and no access to your tools prompts the advisor model and gets an answer. On the native path, for the same provider, Anthropic or OpenRouter, the provider runs AdvisorTool in the model request.
     executor(["executor model"])
     advisor["Advisor()<br/>advisor tool"]:::capability
     run["advisor agent run<br/>own instructions,<br/>no access to your tools"]:::capability

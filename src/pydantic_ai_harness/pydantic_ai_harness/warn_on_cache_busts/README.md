@@ -39,7 +39,7 @@ Providers report cache reads and writes in `RequestUsage.cache_read_tokens` and
 ```mermaid
 flowchart TB
     accTitle: Warn On Cache Busts: notice when the prompt cache stops hitting
-    accDescr: WarnOnCacheBusts runs in the after_model_request hook and only observes. For each response it compares cache_read_tokens with the cacheable prefix the conversation has established. Requests 2 to 4 read back the whole prefix; request 5 reads back 4K of an established 40K, so it emits a CacheBustWarning with reason unexpected. Collapses explained by an expired cache, compaction or unreported usage do not warn.
+    accDescr: WarnOnCacheBusts receives each response from the model in after_model_request. When cache_read_tokens falls short of the established prefix, it checks the reason. The reasons unexpected and unknown lead to a CacheBustWarning, and the reasons ttl_expired, compacted and unreported lead to no warning.
     model(["model"])
     cap["WarnOnCacheBusts()<br/>after_model_request"]:::capability
     reason{"reason?"}

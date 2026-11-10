@@ -16,7 +16,7 @@ Runtime capability creation lets an agent write, validate, and persist Pydantic 
 ```mermaid
 flowchart TB
     accTitle: Capability Creation: the agent writes capabilities for its next run
-    accDescr: In one run the model calls author_capability with a name and Python source. CapabilityCreation writes it to #lt;directory#gt;/#lt;name#gt;.py, imports it, checks that it holds exactly one AbstractCapability subclass that constructs with no arguments, calls its static getters, and records it in manifest.json. The capability is not live in that run. Your loop calls creation.store.load_active() and passes the result to the next agent.run as capabilities, so its tools, hooks and instructions take effect there. The authored code runs in the agent process, so a run requires a writable LocalWorkspace.
+    accDescr: In this run, the model calls author_capability(name, code) on CapabilityCreation(directory=...) and gets a result. The capability writes, imports and checks the capability's .py file in the directory and writes manifest.json. Your loop calls creation.store.load_active() and passes the active capabilities as capabilities= to the next agent.run, where their tools, hooks and instructions are live.
     subgraph thisrun["This run"]
         model(["model"])
         creation["CapabilityCreation(directory=...)<br/>author_capability(name, code)"]:::capability

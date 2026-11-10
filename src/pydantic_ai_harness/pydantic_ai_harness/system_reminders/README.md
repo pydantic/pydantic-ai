@@ -17,7 +17,7 @@ Re-inject behavioral guidance mid-run to counter instruction fade -- without mov
 ```mermaid
 flowchart TB
     accTitle: System Reminders: restate guidance late in a long run
-    accDescr: SystemReminders runs in the before_model_request hook. A Reminder with interval=3 fires on requests 3 and 6. When it fires, the reminder is added at the tail of that request, after the cache breakpoint, so the cached prefix of tools, instructions and conversation is reused. The next request does not show it again.
+    accDescr: The agent loop fills each model request with a cached prefix of tools, instructions and conversation. Before each request, the SystemReminders capability runs in before_model_request, and a Reminder(interval=3) adds a reminder on requests 3 and 6. The reminder sits at the tail of the request, after the cache breakpoint, for that request only, and the request goes to the model.
     loop["agent loop"]
     cap["SystemReminders()<br/>before_model_request"]:::capability
     subgraph request["Model request"]

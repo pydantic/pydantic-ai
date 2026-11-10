@@ -11,7 +11,7 @@ System One API, or TypeSafe's Jev, is the recommended judge.
 ```mermaid
 flowchart TB
     accTitle: Smart Search: find code by what it does
-    accDescr: The model calls smart_search with a plain-English query. SmartSearch lists the files in the workspace with rg --files, chunks them into snippets, shortlists up to 128 snippets with BM25, and sends each one to the judge model you chose. Snippets whose relevance reaches the threshold come back to the model as a SmartSearchResult with file, line range and a short excerpt, plus coverage figures and warnings.
+    accDescr: The model sends a smart_search query to the SmartSearch capability, which lists files under the directory with rg --files in the run workspace, LocalWorkspace or a sandbox. It chunks them into snippets, shortlists 128 by default with BM25, and sends the judge model one request per snippet. Snippets at or above the relevance threshold return to the model as a SmartSearchResult.
     model(["model"])
     subgraph search["SmartSearch()"]
         files["List files<br/>under directory"]:::capability

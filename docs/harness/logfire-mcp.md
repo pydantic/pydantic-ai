@@ -11,7 +11,7 @@ Let an agent query Logfire telemetry and manage Logfire projects. `LogfireMCP` g
 ```mermaid
 flowchart TB
     accTitle: Logfire MCP: query traces and telemetry through Logfire's MCP server
-    accDescr: Inside your agent, the LogfireMCP capability connects to Logfire's hosted MCP server, US region by default or EU with LOGFIRE_EU_MCP_URL, sending the API key as a bearer token. The model sees the server's tools under the logfire_ prefix, such as logfire_query_run. The capability also adds guidance to the agent's instructions: the current UTC hour, that queries cover a short time window, that links are made only when asked, and the logfire_ prefix.
+    accDescr: Inside your agent, the model calls LogfireMCP tools such as logfire_query_run and gets their results. The capability adds guidance to the instructions: the current UTC hour, a short query window and links only if asked. Your auth function gives it a token for each run, and it sends tools/call with a Bearer token to the Logfire MCP server, US by default, or EU or self-hosted.
     subgraph agent["Your agent"]
         model(["model"])
         auth["auth function"]

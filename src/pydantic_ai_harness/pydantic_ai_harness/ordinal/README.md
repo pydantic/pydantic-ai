@@ -11,7 +11,7 @@ user's workspaces.
 ```mermaid
 flowchart TB
     accTitle: Ordinal: draft, schedule and analyze social posts through Ordinal's MCP server
-    accDescr: Inside your agent, the Ordinal capability connects to Ordinal's hosted MCP server at app.tryordinal.com/mcp with an OAuth access token. The model sees the server's tool names unchanged. It starts with ordinal_get_workspace_context, which returns the workspaceSlug every other Ordinal tool needs. Wrapping the toolset with approval_required() pauses calls that publish or schedule posts for review.
+    accDescr: Inside your agent, the model calls tools of the Ordinal capability and gets their results. Its ordinal_get_workspace_context tool gives the workspaceSlug for the other tools. Your auth function gives the capability a token for each run, and the capability calls the Ordinal MCP server at app.tryordinal.com/mcp with an OAuth access token.
     subgraph agent["Your agent"]
         model(["model"])
         auth["auth function"]

@@ -14,7 +14,7 @@ description: "Give a Pydantic AI agent a todo list it plans and updates itself, 
 ```mermaid
 flowchart TB
     accTitle: Planning: a task list the model keeps up to date
-    accDescr: The model keeps a task plan with the Planning tools: write_plan, read_plan, add_task, update_task_status, update_task_statuses and remove_task, plus add_subtask, set_dependency and get_available_tasks with enable_subtasks. The plan lives in a PlanStore, in memory by default or in SQLite, Postgres or Redis. Every tool that changes the plan ends its result with the whole plan as a checklist in a #lt;plan_reminder#gt; tag, so the plan stays in the conversation and never in the system prompt. Before each model request Planning reads the store and records the plan itself only when the model cannot see the current one.
+    accDescr: The model calls the Planning tools write_plan, add_task and update_task_status, which read and write a PlanStore in memory, SQLite, Postgres or Redis. After each change, a plan_reminder block with the whole plan as a checklist reaches the model in the conversation. Before each request, the plan from the PlanStore also goes into a plan_reminder block if the model can't see it.
     model(["model"])
     tools["Planning()<br/>write_plan, add_task,<br/>update_task_status"]:::capability
     store[("PlanStore<br/>in memory, SQLite,<br/>Postgres or Redis")]:::external

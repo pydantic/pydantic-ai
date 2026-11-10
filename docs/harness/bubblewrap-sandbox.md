@@ -14,7 +14,7 @@ Run your agent's commands in a Linux [bubblewrap](https://github.com/containers/
 ```mermaid
 flowchart TB
     accTitle: Bubblewrap Sandbox: confine your agent's commands on the host they run on
-    accDescr: The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. BubblewrapSandbox wraps another workspace capability, here SSHWorkspace, and its get_workspace hook runs every command and file operation on that host inside a bwrap sandbox. In the sandbox the working directory is writable, the rest of the host's files are read-only, /tmp is private, /run is empty, and a seccomp filter blocks every socket. The sandbox does not stop commands from reading files the host user can read, signalling the host user's processes, or writing files such as git hooks that run unsandboxed later.
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command. Their ctx.workspace is BubblewrapSandbox, which wraps SSHWorkspace and runs commands over ssh -T in a bwrap sandbox on dev@build-box with private /tmp and empty /run. In it, working_dir /srv/app is writable, the host's other files are read-only, and seccomp blocks the network, every socket.
     subgraph machine["Your machine"]
         model(["model"])
         tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]

@@ -88,7 +88,8 @@ slug as `harness/<page>`. When renaming a page, keep its existing `aliases:`.
   don't improvise variants.
 - **Diagrams**: draw a page's diagram as a `mermaid` fence, byte-identical on the docs page and in the README
   (`tests/harness/test_docs_parity.py` compares them). The docs site and GitHub both render it in light and dark
-  themes, so set no fill or text colors. Start with `accTitle:` and `accDescr:`, the text a screen reader gets.
+  themes, so set no fill or text colors. Start with `accTitle:` and `accDescr:`, the text a screen reader gets:
+  `accDescr` describes the diagram as drawn, in plain text with no angle brackets.
   Style nodes only with the three shared classes, copying their `classDef` lines from an existing page:
   `capability` (what the capability adds), `external` (a system outside the agent), and `blocked` (rejected or
   dropped, reached by a `-.-x` edge). Break labels with `<br/>` and keep the diagram narrower than the text column.

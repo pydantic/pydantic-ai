@@ -14,7 +14,7 @@ Run your agent's commands and file edits on another machine over SSH, using your
 ```mermaid
 flowchart TB
     accTitle: SSH Workspace: your agent's commands run on another machine over SSH
-    accDescr: The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SSHWorkspace's get_workspace hook gives the run a remote host as ctx.workspace, so each command and file operation opens an SSH connection with your own ssh client, logs in with a key in BatchMode, and runs on the host as the login user; output comes back to the tool. The WorkspaceRef names the host and directory. A ref from the message history for the same host and directory reattaches; a ref for any other host or directory raises ValueError.
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command. As their ctx.workspace, SSHWorkspace uses your ssh client with key login only to open a new SSH connection to host dev@build-box for each operation, run as the login user. A WorkspaceRef in the message history for the same host and directory reattaches, and any other ref raises ValueError.
     subgraph machine["Your machine"]
         model(["model"])
         tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]

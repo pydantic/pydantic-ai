@@ -17,7 +17,7 @@ description: "Let a local Pydantic AI agent run Python and call its tools from a
 ```mermaid
 flowchart TB
     accTitle: IPython Code Mode: run_code in a local IPython kernel
-    accDescr: The model calls run_code with Python. The code runs in a separate IPython kernel process with full CPython and any installed package, such as pandas. Each call it makes to an agent tool, here get_sales, goes back to the agent over the Jupyter stdin channel and runs one at a time; the value of the last expression goes back to the model. Variables stay in the kernel for the next run_code call, each call has a 60 second timeout, and the kernel is not a sandbox: the code has the user's files, network and environment variables.
+    accDescr: Inside your agent, the model calls run_code of the IPythonCodeMode capability, which sends Python code to an IPython kernel process and gets the last value back. The kernel has full CPython, keeps state between calls, and calls your tool get_sales one call at a time over the stdin channel. It is not a sandbox and reaches your files, network and environment variables.
     subgraph agent["Your agent"]
         model(["model"])
         mode["IPythonCodeMode()<br/>run_code"]:::capability

@@ -20,7 +20,7 @@ checkpointing, a resumed run would repeat every model request and tool call.
 ```mermaid
 sequenceDiagram
     accTitle: AWS Lambda Durability: resume an agent run from its last completed step
-    accDescr: A Lambda handler decorated with durable_execution and durable_agent_handler runs an agent named support that has the AWSLambdaDurability capability. In the first invocation, each model request and tool call runs as a durable step, and Lambda records its result in the checkpoint log under a step name such as support__model.request; the invocation times out during the second model request. The resumed invocation runs the handler again from the top: the two completed steps return their recorded results without calling the model or the tool again, and only the unfinished model request runs, is recorded, and finishes the run.
+    accDescr: AWSLambdaDurability runs each model request and tool call as a durable step. Invocation 1 records a model request and a get_weather call in the checkpoint log, then its next model request times out. Invocation 2 gets both replayed from the log without running them again, then a model request runs now and is recorded.
     participant one as Invocation 1
     participant log as Checkpoint log
     participant two as Invocation 2

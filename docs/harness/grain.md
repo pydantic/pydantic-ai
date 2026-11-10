@@ -14,7 +14,7 @@ description: Connect a Pydantic AI agent to Grain's hosted MCP server to search 
 ```mermaid
 flowchart TB
     accTitle: Grain: meetings, transcripts and notes through Grain's MCP server
-    accDescr: Inside your agent, the Grain capability connects to Grain's hosted MCP server at api.grain.com/_/mcp with an OAuth access token, and the model sees the server's tools under the grain_ prefix. It connects when the run starts, even with defer_loading=True, so an invalid or expired token raises httpx.HTTPStatusError with status 401; return None from the auth function to give that run no Grain tools instead. read_only=True drops tools the server does not mark read-only.
+    accDescr: Your agent's model calls tools prefixed grain_ and gets results. The Grain capability gets a token for each run from your auth function, sends tools/call with an OAuth Bearer token to the Grain MCP server at api.grain.com/_/mcp, and with read_only=True drops tools not marked read-only. As the run starts, the server rejects an invalid or expired token with 401 and the run raises.
     subgraph agent["Your agent"]
         model(["model"])
         auth["auth function"]

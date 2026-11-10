@@ -11,7 +11,7 @@ Let an agent read and change Linear issues, projects, teams, and comments throug
 ```mermaid
 flowchart TB
     accTitle: Linear: issue, project and comment tools from Linear's MCP server
-    accDescr: Inside your agent, the Linear capability connects to Linear's hosted MCP server with a bearer token, and the model sees the server's tools under the linear_ prefix, such as linear_list_issues. Your auth function returns the token for each run from its deps. With read_only=True the capability connects to the read-only endpoint, mcp.linear.app/mcp/readonly, instead of mcp.linear.app/mcp.
+    accDescr: Inside your agent, the model calls tools of the Linear capability, such as linear_list_issues, and gets their results. Your auth function gives the capability a token for each run. The capability calls the Linear MCP server with a Bearer token, at mcp.linear.app/mcp by default and at mcp.linear.app/mcp/readonly with read_only=True.
     subgraph agent["Your agent"]
         model(["model"])
         auth["auth function"]

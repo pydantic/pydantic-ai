@@ -14,7 +14,7 @@ Run your agent's commands and file edits in a persistent [Fly.io Sprite](https:/
 ```mermaid
 flowchart TB
     accTitle: Sprites Sandbox: your agent's commands run in a persistent Fly.io Sprite
-    accDescr: The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SpritesSandbox's get_workspace hook gives the run a persistent Fly.io Sprite as ctx.workspace, so each command and file operation goes over the Sprites API, authenticated with SPRITE_TOKEN, and runs in the Sprite as the sprite user; output comes back to the tool. The first use creates the Sprite, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. A Sprite has no lifetime limit: it sleeps when idle, keeps its files and installed packages, and wakes on the next command.
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command, using ctx.workspace. SpritesSandbox's get_workspace hands the run a Sprite via the Sprites API and SPRITE_TOKEN. The Fly.io Sprite sleeps when idle, destroy(ref) deletes it, and a later run reattaches with the WorkspaceRef in the message history and result.workspace.ref, waking it if asleep.
     subgraph machine["Your machine"]
         model(["model"])
         tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]

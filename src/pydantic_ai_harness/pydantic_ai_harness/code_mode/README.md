@@ -7,7 +7,7 @@ Replace individual tool calls with a single sandboxed Python execution environme
 ```mermaid
 sequenceDiagram
     accTitle: Code Mode: one program instead of a tool call per step
-    accDescr: Two lanes compare the same task. With tool calling, the model makes three requests: it calls list_items, then get_item ten times, then answers, and every tool result is sent back to the model on each later request. With Code Mode, the model makes two requests: its first writes one run_code program, which runs in the Monty sandbox, calls list_items and then get_item ten times in parallel, filters the items in Python, and returns only the names that match; the second request answers.
+    accDescr: The model sends one run_code program to the CodeMode capability, which runs it in the Monty sandbox. The program calls list_items on your tools and gets 10 ids, then calls get_item 10 times in parallel and gets 10 full items. It filters them in Python, the 10 items stay in the sandbox, and only the 3 matching names go back to the model.
     participant model
     participant cap as CodeMode()<br/>Monty sandbox
     participant tools as your tools

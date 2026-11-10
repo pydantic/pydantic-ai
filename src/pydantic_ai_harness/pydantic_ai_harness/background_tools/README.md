@@ -40,7 +40,7 @@ By default, any tool with `metadata={'background': True}` runs in the background
 ```mermaid
 sequenceDiagram
     accTitle: Background Tools: slow tools run while the agent keeps working
-    accDescr: The model calls slow_research, a tool marked to run in the background. BackgroundTools answers at once with a started message and a task ID, so the model keeps working on other calls while the tool runs. When the tool finishes, its result arrives as a follow-up user message wrapped in a tool_result tag that names the tool and the call, and the next model request uses it. A normal run waits for its background tools before it ends.
+    accDescr: The model calls slow_research(query) through the BackgroundTools capability. The capability runs slow_research in the background and answers with a started message and a task ID, so the model works on other calls or ends its turn. When slow_research returns its result, the capability sends the model a follow-up user message with the result and the same task ID.
     participant model
     participant cap as BackgroundTools()
     participant tool as slow_research

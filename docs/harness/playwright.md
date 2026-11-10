@@ -29,7 +29,7 @@ JavaScript-rendered SPAs, and interactive multi-step flows.
 ```mermaid
 flowchart TB
     accTitle: Playwright Browser: the model drives a real browser
-    accDescr: The model drives a real Chromium browser itself, one tool call per action, using the eighteen tools PlaywrightBrowser adds, such as navigate, snapshot, click and type_text. Chromium starts on the first browser call and closes when the run ends. Every request passes an egress guard that enforces allowed_domains and refuses private addresses. Each tool returns the page text, trimmed to a token budget, or a screenshot as image content.
+    accDescr: The model calls PlaywrightBrowser tools (navigate, snapshot, click and 15 more), one call per action, for page text or screenshot. They run Chromium from the first call to run end. An egress guard passes every request to allowed sites, except navigation and data requests to other domains (allowed_domains) and loopback, private and metadata addresses (block_private_addresses).
     model(["model"])
     browser["PlaywrightBrowser()<br/>navigate, snapshot, click<br/>and 15 more tools"]:::capability
     chromium["Chromium<br/>starts on the first call,<br/>closes at run end"]:::external

@@ -18,7 +18,7 @@ a task the capability is transparent.
 ```mermaid
 flowchart TB
     accTitle: Absurd Durability: resume a crashed run from its last saved step
-    accDescr: An agent named analyst runs inside an Absurd task handler. On the first attempt its model request and its tool call each finish and are saved to Postgres as Absurd steps, named analyst__model.request and analyst__function_toolset__{id}.call_tool:{tool}; then the worker crashes during the next model request, which is not saved. Absurd retries the task: the handler runs from the top, the two saved steps return their stored results without calling the model or the tool, and only the unfinished model request runs live.
+    accDescr: On a worker's first attempt, a model request and a tool call each finish, and each is saved to Postgres as an Absurd step. The worker crashes before the next model request's step is saved, so Absurd retries the task. On the retried task, AbsurdDurability returns stored results from the saved steps with no model or tool call, then the next model request runs live.
     subgraph first["Worker, attempt 1"]
         done["model request, tool call<br/>each one finishes"]
         crash["next model request<br/>worker crashes before<br/>the step is saved"]:::blocked

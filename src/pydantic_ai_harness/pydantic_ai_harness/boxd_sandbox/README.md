@@ -9,7 +9,7 @@ Run your agent's commands and file edits in an isolated [boxd](https://boxd.sh) 
 ```mermaid
 flowchart TB
     accTitle: boxd Sandbox: your agent's commands run in a boxd cloud machine
-    accDescr: The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. BoxdSandbox's get_workspace hook gives the run a boxd cloud machine as ctx.workspace, so each command and file operation goes over the boxd API, authenticated with BOXD_API_KEY, and runs in the machine as the boxd user; output comes back to the tool. The first use creates the machine, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. fork(ref) copies a machine, with its files and running processes, into a new isolated one.
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools like run_command. Via ctx.workspace, BoxdSandbox's get_workspace hands the run a boxd cloud machine over the boxd API with BOXD_API_KEY. Later runs reattach with the WorkspaceRef in the message history or result.workspace.ref, destroy(ref) deletes the machine and fork(ref) copies it with its files and processes.
     subgraph machine["Your machine"]
         model(["model"])
         tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]

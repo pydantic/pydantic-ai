@@ -7,7 +7,7 @@ Track what an agent costs, and stop it when a budget is gone.
 ```mermaid
 flowchart TB
     accTitle: Spend: budgets that outlast one run
-    accDescr: SpendLimits checks budgets around each model request. Before a request, before_model_request reads every budget window from the spend store and lets the request through while all are under their ceilings. After the response, wrap_model_request prices it and adds the cost to each window. When a later request finds the day window spent, SpendLimitExceeded is raised and the request is not sent. The store can be in memory, Redis or PostgreSQL, so several workers can share one counter.
+    accDescr: On each model request of an agent run, SpendLimits before_model_request reads every window from the spend store (in memory, Redis or PostgreSQL). With all under ceiling the request goes to the model, and with a window spent it is not sent and ends in SpendLimitExceeded. SpendLimits wrap_model_request takes the model's response and adds its price to each window in the store.
     run["agent run"]
     before["SpendLimits()<br/>before_model_request"]:::capability
     model(["model"])

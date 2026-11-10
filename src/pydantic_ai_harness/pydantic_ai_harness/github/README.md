@@ -7,7 +7,7 @@ Let an agent read and change GitHub repositories, issues, pull requests, and oth
 ```mermaid
 flowchart TB
     accTitle: GitHub: repository, issue and pull request tools from GitHub's MCP server
-    accDescr: Inside your agent, the GitHub capability connects to GitHub's hosted MCP server at api.githubcopilot.com/mcp/ with a bearer token, and the model sees the server's tools under the github_ prefix, such as github_get_me. Your auth function returns the token for each run from its deps. The toolsets, read_only and lockdown options are sent to the server as X-MCP headers, and read_only also drops any tool the server does not mark read-only.
+    accDescr: Inside your agent, the model calls tools of the GitHub capability, such as github_get_me, and gets their results. Your auth function gives the capability a token for each run. The capability calls the GitHub MCP server at api.githubcopilot.com/mcp/ with a Bearer token and X-MCP-* headers, and with read_only=True it drops the tools not marked read-only.
     subgraph agent["Your agent"]
         model(["model"])
         auth["auth function"]

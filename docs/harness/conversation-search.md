@@ -36,7 +36,7 @@ async def ask(question: str, conversation_id: str) -> str:
 ```mermaid
 flowchart TB
     accTitle: Conversation Search: recall what compaction dropped
-    accDescr: StepPersistence saves the full message history to a step store at every step. When compaction later drops messages from the live context, the model can call search_conversation_history. ConversationSearch keeps only runs with the calling run's conversation_id, replays their complete snapshots from the store to recover the original messages, ranks them with BM25, and returns the best excerpts with the messages around them.
+    accDescr: The model sends a query to search_conversation_history, the tool of the ConversationSearch capability, and gets BM25-ranked excerpts. StepPersistence saves the full history to a step store, which holds snapshots of each step, from before compaction too, and ConversationSearch replays complete snapshots from it. With scope='conversation', other conversations are not searched.
     model(["model"])
     search["ConversationSearch()<br/>search_conversation_history"]:::capability
     persist["StepPersistence"]

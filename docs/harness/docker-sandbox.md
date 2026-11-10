@@ -14,7 +14,7 @@ Run your agent's commands and file edits in a local [Docker](https://www.docker.
 ```mermaid
 flowchart TB
     accTitle: Docker Sandbox: your agent's commands run in a local container
-    accDescr: The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. DockerSandbox's get_workspace hook gives the run a Docker container on your machine as ctx.workspace, and each command and file operation runs in it through docker exec; output comes back to the tool. The first use creates the container with docker run and the ai.pydantic.workspace=true label, its WorkspaceRef holds the container name, a later run reattaches with it, and destroy(ref) removes it. A project directory mounted with docker_args is the only part of your files the commands can change. A container shares your kernel, a weaker boundary than a VM.
+    accDescr: The model calls Coder, Shell or FileSystem tools, such as run_command, and gets results. Through ctx.workspace the tools use DockerSandbox, whose get_workspace hands the run a container. DockerSandbox runs docker exec and gets output in a local Docker container, created on first use and kept until destroy(ref), where docker_args can mount a project directory on your machine.
     model(["model"])
     tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
     sandbox["DockerSandbox()<br/>get_workspace hands<br/>the run a container"]:::capability

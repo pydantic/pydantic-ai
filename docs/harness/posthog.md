@@ -14,7 +14,7 @@ description: Connect a Pydantic AI agent to PostHog's hosted MCP server to query
 ```mermaid
 flowchart TB
     accTitle: PostHog: analytics, SQL and feature flags through PostHog's MCP server
-    accDescr: Inside your agent, the PostHog capability connects to PostHog's hosted MCP server at mcp.posthog.com/mcp with a personal API key as a bearer token. By default the server offers one command-driven tool, which the model sees as posthog_posthog. The features option is sent as a ?features= query that limits the server to those feature groups, and read_only=True sends the x-posthog-read-only header so the server drops every tool that makes changes.
+    accDescr: Inside your agent, the model calls tools of the PostHog capability, such as posthog_posthog, and gets their results. Your auth function gives the capability a key for each run. The capability calls the PostHog MCP server at mcp.posthog.com/mcp with a Bearer token, a ?features= query and x-posthog-read-only, and with read_only=True the server drops the tools that make changes.
     subgraph agent["Your agent"]
         model(["model"])
         auth["auth function"]

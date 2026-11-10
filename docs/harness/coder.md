@@ -17,7 +17,7 @@ It works in the run's workspace, on this machine or in a sandbox. It is a regula
 ```mermaid
 flowchart LR
     accTitle: Coder: a coding agent assembled from harness capabilities
-    accDescr: Coder is a bundle of other capabilities. FileSystem gives the model read_file, write_file, edit_file, list_files and grep; Shell gives it shell; SubAgents gives it delegate_task, which hands a sub-task to a fresh run of the same agent; RepoContext loads AGENTS.md and CLAUDE.md into the instructions. Plumbing the model never calls clears old tool results, caps tool output at 64,000 characters, repairs malformed tool arguments and turns on prompt caching. All of it works in the run's workspace: a LocalWorkspace on this machine or a cloud sandbox.
+    accDescr: The model calls the Coder capability and gets results. Coder bundles FileSystem with read_file, write_file, edit_file, list_files and grep, Shell with shell, SubAgents with delegate_task, and RepoContext with AGENTS.md and CLAUDE.md. Coder works in the workspace, which is LocalWorkspace('.') or a cloud sandbox.
     model(["model"])
     subgraph coder["Coder()"]
         direction LR

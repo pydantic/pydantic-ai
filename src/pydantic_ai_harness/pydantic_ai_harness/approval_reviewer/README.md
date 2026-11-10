@@ -14,7 +14,7 @@ Let a second model approve the low-risk tool calls that need approval, and leave
 ```mermaid
 flowchart TB
     accTitle: Approval Reviewer: a second model approves low-risk calls
-    accDescr: ApprovalReviewer runs in the handle_deferred_tool_calls hook, on tool calls that need approval. A second model is asked one risk question about the call run_shell(command="find . -name '*.py' | wc -l"). A no approves the call and it runs in the same run step; a yes, unsure or a failed review leaves the call for a person, as it would be without the reviewer.
+    accDescr: The model makes a tool call that needs approval, which reaches ApprovalReviewer in the handle_deferred_tool_calls hook. The capability asks a reviewer model one risk question and gets its answer. On no, the call is approved and your tool runs in the same run step, and on yes, unsure or a failed review, the call goes to a person, who approves or denies it.
     model(["model"])
     reviewer["ApprovalReviewer()<br/>handle_deferred_tool_calls<br/>hook"]:::capability
     second(["reviewer model"])

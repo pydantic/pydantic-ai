@@ -19,7 +19,7 @@ follow `parallel_execution_mode`, which runs them one at a time by default (see
 ```mermaid
 flowchart TB
     accTitle: pgtask Durability: pick up a crashed run where it left off
-    accDescr: An agent named analyst runs inside a pgtask task. On the first attempt its model request and its tool call each finish and are saved to Postgres as pgtask steps, named analyst__model.request and analyst__function_toolset__{id}.call_tool:{tool}; then the worker crashes during the next model request, which is not saved. pgtask runs the task again: the two saved steps return their stored results without calling the model or the tool, and only the unfinished model request runs live.
+    accDescr: In attempt 1, the worker finishes a model request and a tool call, and each is saved to Postgres as a pgtask step. The worker then crashes during the next model request, before that step is saved. pgtask runs the task again: the PGTaskDurability capability returns the stored results of the saved steps with no model or tool call, and then the next model request runs live.
     subgraph first["Worker, attempt 1"]
         done["model request, tool call<br/>each one finishes"]
         crash["next model request<br/>worker crashes before<br/>the step is saved"]:::blocked

@@ -23,7 +23,7 @@ pip/uv-add "pydantic-ai-harness[logfire]"
 ```mermaid
 flowchart TB
     accTitle: Managed Prompt: instructions you change in Logfire, not in code
-    accDescr: The prompt lives in Logfire as the managed variable prompt__support_agent, with labels such as production and staging. At the start of each run, ManagedPrompt resolves it in the wrap_run hook and uses the value as the run's instructions, which the model receives. The resolved label and version are set as baggage, so the agent run span and its children record which prompt produced them, and those traces go back to Logfire.
+    accDescr: As an agent run starts, the ManagedPrompt capability resolves the Logfire managed variable prompt__support_agent once in its wrap_run hook. It gives the resolved value to the model as instructions and sets the label and version as baggage on the agent run span and its children. Those spans go to Logfire traces, where each span records the prompt label.
     variable[("Logfire<br/>managed variable<br/>prompt__support_agent")]:::external
     subgraph run["Agent run"]
         prompt["ManagedPrompt()<br/>wrap_run hook"]:::capability

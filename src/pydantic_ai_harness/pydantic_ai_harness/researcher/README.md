@@ -8,7 +8,7 @@ It is a regular [combined capability](https://pydantic.dev/docs/ai/capabilities/
 ```mermaid
 flowchart TB
     accTitle: Researcher: a ready-made web research stack
-    accDescr: Researcher combines research instructions with four capabilities. WebSearch and WebFetch use the model provider's native search and fetch, or duckduckgo_search and web_fetch where the model has none. SubAgents adds delegate_task, which hands a sub-question to a 'researcher' sub-agent with its own search, fetch and output limits. ToolOutputLimits spills oversized tool results to the run workspace, where read_tool_result reads them.
+    accDescr: Researcher adds research instructions and tools the model calls. Its WebSearch(local=True) and WebFetch(local=True) search and fetch the web natively, or by duckduckgo_search and web_fetch. SubAgents' delegate_task sends a sub-question to a 'researcher' sub-agent with its own search and fetch, and ToolOutputLimits spills results to the run workspace, read by read_tool_result.
     model(["model"])
     researcher["Researcher()<br/>research instructions"]:::capability
     web["WebSearch(local=True)<br/>WebFetch(local=True)"]:::capability
@@ -16,7 +16,7 @@ flowchart TB
     limits["ToolOutputLimits<br/>read_tool_result"]:::capability
     internet["the web"]:::external
     child["'researcher' sub-agent<br/>own search and fetch"]
-    workspace[("run workspace<br/>spilled results")]
+    workspace[("run workspace<br/>spilled results")]:::external
     model <-->|"tool call, result"| researcher
     researcher --> web
     researcher --> sub

@@ -14,7 +14,7 @@ description: "Let a Pydantic AI agent delegate tasks to named subagents through 
 ```mermaid
 flowchart TB
     accTitle: Subagents: hand a task to another agent run
-    accDescr: The parent model calls delegate_task with an agent name and a self-contained task. SubAgents checks that the name is in the roster, that the delegate has calls left in its max_calls budget and that the tree is not deeper than max_depth, then runs that agent, such as researcher, writer or self, in its own run with its own message history and the parent's deps, usage and workspace. The child's output comes back as the tool result; a timeout or an exhausted budget comes back as a steering message, and a child error as a retry.
+    accDescr: The parent model calls delegate_task and gets a result. The SubAgents capability passes the task to researcher, writer or self, a new run with its own message history, and gets str(result.output) back. It does not run the child on an unknown agent name, max_calls used up or max_depth reached, and a child stops early if timeout_seconds or usage_limits is reached or it failed.
     model(["parent model"])
     subagents["SubAgents()<br/>delegate_task"]:::capability
     child["researcher, writer or self<br/>a new run with its<br/>own message history"]

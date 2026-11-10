@@ -11,7 +11,7 @@ Let an agent read and send Slack messages, browse channels, and work with canvas
 ```mermaid
 flowchart TB
     accTitle: Slack: read and send messages through Slack's MCP server
-    accDescr: Inside your agent, the Slack capability connects to Slack's hosted MCP server at mcp.slack.com/mcp with a Slack user token (xoxp-); bot tokens (xoxb-) are not accepted. The model sees the server's tool names unchanged, such as slack_send_message, and messages it posts appear as that user. Your auth function returns the token for each run.
+    accDescr: Inside your agent, the model calls tools of the Slack capability, such as slack_send_message, and gets results. Your auth function gives it a token for each run. It calls the Slack MCP server at mcp.slack.com/mcp with a Bearer xoxp- user token, the server rejects an xoxb- bot token, and with read_only=True the capability drops the tools not marked read-only.
     subgraph agent["Your agent"]
         model(["model"])
         auth["auth function"]

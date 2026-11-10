@@ -14,7 +14,7 @@ Run your agent's commands and file edits in an isolated [Modal](https://modal.co
 ```mermaid
 flowchart TB
     accTitle: Modal Sandbox: your agent's commands run in a Modal cloud sandbox
-    accDescr: The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. ModalSandbox's get_workspace hook gives the run a Modal cloud sandbox as ctx.workspace, so each command and file operation goes over the Modal API, authenticated with your Modal token, and runs in the sandbox as root; output comes back to the tool. The first use creates the sandbox, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) terminates it. The sandbox also ends when sandbox_timeout, at most 24 hours, or an idle_timeout runs out; a later run with its ref then raises WorkspaceUnavailableError.
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools. Their ctx.workspace is a Modal cloud sandbox from ModalSandbox's get_workspace hook, reached over the Modal API with your Modal token and running until destroy(ref) or a timeout. A later run reattaches with the WorkspaceRef in the message history, and a ref to an ended sandbox gives WorkspaceUnavailableError.
     subgraph machine["Your machine"]
         model(["model"])
         tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]

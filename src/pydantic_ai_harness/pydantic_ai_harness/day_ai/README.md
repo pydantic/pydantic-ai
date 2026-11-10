@@ -11,7 +11,7 @@ signed-in user's workspace.
 ```mermaid
 flowchart TB
     accTitle: Day AI: CRM records and meeting context through Day AI's MCP server
-    accDescr: Inside your agent, the DayAI capability connects to Day AI's hosted MCP server at day.ai/api/mcp with an OAuth access token, and the model sees the server's tools under the day_ai_ prefix. The server marks no tool read-only, so there is no read_only option. Wrapping the capability's toolset with approval_required() pauses every Day AI tool call until you approve it.
+    accDescr: Inside your agent, the model calls tools of the DayAI capability, prefixed day_ai_, and gets their results. Your auth function gives the capability a token for each run. The capability sends tools/call requests with an OAuth Bearer token to the Day AI MCP server at day.ai/api/mcp and gets the results back.
     subgraph agent["Your agent"]
         model(["model"])
         auth["auth function"]

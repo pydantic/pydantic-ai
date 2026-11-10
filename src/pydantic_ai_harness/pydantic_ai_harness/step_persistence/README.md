@@ -23,7 +23,7 @@ which `StepPersistence` works alongside.
 ```mermaid
 sequenceDiagram
     accTitle: Step Persistence: save a run so you can continue or fork it later
-    accDescr: An agent run with StepPersistence writes to a step store as it goes: before_run writes a RunRecord, after_model_request appends a model_request_completed event, after_tool_execute marks a tool effect completed, and after_node_run saves a complete snapshot of the message history. When the worker crashes during a second tool call, that tool effect stays at started, so it reads as unknown after the crash. Later, in any process, your code finds the run with list_runs, loads the latest complete snapshot with continue_run, and passes its messages to a new Agent.run.
+    accDescr: StepPersistence hooks write an agent run to the step store: before_run a RunRecord, after_model_request an event, after_tool_execute a completed tool effect, after_node_run a complete snapshot, and before_tool_execute the next tool effect as started. The worker then crashes. Later, your code calls list_runs and continue_run, gets the latest complete snapshot and starts a new Agent.run from it.
     participant agent as Agent run
     participant store as Step store
     participant code as Your code, later
@@ -32,7 +32,7 @@ sequenceDiagram
     agent->>store: after_model_request<br/>event appended
     agent->>store: after_tool_execute<br/>tool effect completed
     agent->>store: after_node_run<br/>complete snapshot
-    agent->>store: before_tool_execute<br/>tool effect started
+    agent->>store: before_tool_execute<br/>next tool effect started
     agent->>agent: worker crashes
     code->>store: list_runs
     code->>store: continue_run

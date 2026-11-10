@@ -20,7 +20,7 @@ scripts/run-mutmut.sh show <mutant-name>
 ```mermaid
 flowchart TB
     accTitle: Mutation testing: check that the tests pin the behavior down
-    accDescr: mutmut makes small changes, called mutants, to the filesystem and shell toolset sources and runs the test suite against each one. A mutant that makes a test fail is killed. A mutant that survives is triaged: either a test is missing and should be written, or the change is an equivalent mutant that no test could tell apart from the original, such as a mutated default parameter that the mutmut wrapper never uses.
+    accDescr: For filesystem/_toolset.py and shell/_toolset.py, mutmut makes each mutant with one small change, such as a flipped condition, and runs the test suite against the mutated code. A mutant is killed if a test failed and survived if no test failed. Triage each survivor: it is a missing test, so write one that kills it, or an equivalent mutant no test could tell from the original.
     code["filesystem/_toolset.py<br/>shell/_toolset.py"]
     subgraph mutmut["mutmut, per mutant"]
         mutant["mutant<br/>one small change, such<br/>as a flipped condition"]

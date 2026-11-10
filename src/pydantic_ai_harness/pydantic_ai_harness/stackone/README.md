@@ -11,10 +11,10 @@ Salesforce, or Zendesk. Each instance is scoped to one linked account, which is 
 ```mermaid
 flowchart TB
     accTitle: StackOne: run actions in a user's linked business apps
-    accDescr: Inside your agent, the StackOne capability connects to StackOne's MCP endpoint at api.stackone.com/mcp with your API key and an x-account-id header naming one linked account, and StackOne runs actions against that account's provider, such as BambooHR or Salesforce. In the default search_execute mode the model sees two tools: one ending in _search_actions that returns action ids, and one ending in _execute_action that runs an action by id. Passing actions switches to individual mode, with one tool per matching action, such as bamboohr_list_employees.
+    accDescr: Inside your agent, the model searches and then executes through the StackOne capability, whose two tools end in _search_actions and _execute_action. The capability calls StackOne MCP at api.stackone.com/mcp with an API key and x-account-id. StackOne MCP sends the action to the linked account, such as BambooHR or Salesforce, and gets the result.
     subgraph agent["Your agent"]
         model(["model"])
-        stackone["StackOne()<br/>*_search_actions,<br/>*_execute_action"]:::capability
+        stackone["StackOne()<br/>..._search_actions,<br/>..._execute_action"]:::capability
     end
     mcp["StackOne MCP<br/>api.stackone.com/mcp"]:::external
     account["linked account<br/>such as BambooHR<br/>or Salesforce"]:::external

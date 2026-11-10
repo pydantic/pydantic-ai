@@ -14,7 +14,7 @@ Run your agent's commands and file edits in an isolated [Daytona](https://www.da
 ```mermaid
 flowchart TB
     accTitle: Daytona Sandbox: your agent's commands run in a Daytona cloud sandbox
-    accDescr: The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. DaytonaSandbox's get_workspace hook gives the run a Daytona cloud sandbox as ctx.workspace, so each command and file operation goes over the Daytona API, authenticated with DAYTONA_API_KEY, and runs in the sandbox as the daytona user; output comes back to the tool. The first use creates the sandbox, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. Left idle, Daytona stops the sandbox after 15 minutes and archives it after 7 days stopped; a later run starts it again.
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command. DaytonaSandbox's get_workspace hands the run a Daytona cloud sandbox as ctx.workspace over the Daytona API with DAYTONA_API_KEY. It stops when idle, destroy(ref) deletes it, and later runs reattach with the WorkspaceRef in the message history or result.workspace.ref, starting it if stopped.
     subgraph machine["Your machine"]
         model(["model"])
         tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]

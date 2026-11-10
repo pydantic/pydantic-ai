@@ -11,7 +11,7 @@ form persist. The reduction is not recomputed per request.
 ```mermaid
 flowchart TB
     accTitle: Tool Output Limits: reduce large tool results once, when they arrive
-    accDescr: ToolOutputLimits runs in the after_tool_execute hook, on a tool result before it enters the history. With the default band, a 48,000-character result is spilled: the full payload is written to the workspace store under .pydantic-ai-harness/tool-output/, and the model gets a short marker with the handle and a head and tail preview. The model reads slices back with the read_tool_result tool.
+    accDescr: The model calls your tool, and in after_tool_execute the result goes to ToolOutputLimits, whose default band is Spill at 10,000 characters. It writes the full payload to the WorkspaceStore under .pydantic-ai-harness/tool-output/ and gives the model a marker, a handle and a preview. The model passes the handle to read_tool_result, which reads the store and returns a slice.
     model(["model"])
     tool["your tool"]
     limits["ToolOutputLimits()<br/>default band: Spill at<br/>10,000 characters"]:::capability
