@@ -83,6 +83,10 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+### Turning thinking off
+
+On routes that can't turn reasoning off, the unified `thinking=False` setting sends the lowest effort the route accepts instead of `effort='none'`: see [Thinking](../capabilities/thinking.md#openrouter) for which routes get `minimal` and which get `low`.
+
 ### Eager Input Streaming
 
 For Anthropic models via OpenRouter, you can enable eager input streaming to reduce latency for tool calls with large inputs.

@@ -305,15 +305,18 @@ jobs:
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
+          .github/scripts/test_pr_guard.py
           .github/scripts/test_pr_gates.py
           .github/scripts/test_douwebot_config_approval.py
           .github/scripts/test_douwebot_usage_limit.py
           .github/scripts/test_douwebot_opencode_run.py
           .github/scripts/test_douwebot_opencode_result.py
+          .github/scripts/test_pr_review_checks.py
+          .github/scripts/test_run_pr_review_check.py
+          .github/scripts/test_publish_pr_review_checks.py
           .github/scripts/test_gh_aw_opencode_detect.py
           .github/scripts/test_size_label.py
           .github/scripts/test_ci_content_classifier.py
-          .github/scripts/test_ui_security_detection.py
           .github/scripts/test_gh_aw_engine_pin_bump.py
           .github/scripts/test_clai2_web_bundle.py
           .github/scripts/test_shard_durations.py

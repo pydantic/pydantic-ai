@@ -35,12 +35,8 @@ def check_symlinks(root: Path, *, skip_pr_head: bool = False) -> None:
                 raise ValueError(f'Symlink loops through an ancestor: {path.relative_to(root)}')
 
 
-def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: float | None = None) -> None:
-    """Run OpenCode in `cwd` with read, grep, and glob tools only, saving its event stream to `output`."""
-    api_key = os.environ['OPENCODE_API_KEY']
-    if not api_key:
-        raise ValueError('OPENCODE_API_KEY is empty')
-    runner_temp = Path(os.environ['RUNNER_TEMP'])
+def read_only_config(*, agent: str, steps: int | None = None) -> dict[str, object]:
+    """Allow only the read, grep and glob tools, and only the OpenCode Go provider."""
     # The wildcard deny covers external_directory for direct outside reads. OpenCode checks paths
     # lexically, so callers run check_symlinks to reject links that could escape `cwd`.
     permissions: list[dict[str, str]] = [
@@ -55,24 +51,35 @@ def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: 
         {'action': 'tool.use', 'resource': '*', 'effect': 'deny'},
         *({'action': 'tool.use', 'resource': f'{action}:*', 'effect': 'allow'} for action in ('read', 'grep', 'glob')),
     ]
-    config: dict[str, object] = {
+    agent_config: dict[str, object] = {'mode': 'primary', 'permissions': permissions}
+    if steps is not None:
+        agent_config['steps'] = steps
+    return {
         'plugins': ['-opencode.browser'],
         'snapshots': False,
         'default_agent': agent,
         'permissions': permissions,
         'agents': {
-            agent: {'mode': 'primary', 'permissions': permissions},
+            agent: agent_config,
             'title': {'model': MODEL},
             'compaction': {'model': MODEL},
         },
         'policies': policies,
     }
 
+
+def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: float | None = None) -> None:
+    """Run OpenCode in `cwd` with read, grep, and glob tools only, saving its event stream to `output`."""
+    api_key = os.environ['OPENCODE_API_KEY']
+    if not api_key:
+        raise ValueError('OPENCODE_API_KEY is empty')
+    runner_temp = Path(os.environ['RUNNER_TEMP'])
+
     with tempfile.TemporaryDirectory(dir=runner_temp, prefix='opencode-') as temp:
         temp_root = Path(temp)
         config_dir = temp_root / 'config' / 'opencode'
         config_dir.mkdir(parents=True)
-        (config_dir / 'opencode.json').write_text(json.dumps(config), encoding='utf-8')
+        (config_dir / 'opencode.json').write_text(json.dumps(read_only_config(agent=agent)), encoding='utf-8')
         env = {
             'HOME': str(temp_root),
             'PATH': os.environ['PATH'],

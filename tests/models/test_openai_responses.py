@@ -12416,6 +12416,70 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
     )
 
 
+async def test_openai_responses_image_generation_gpt_image_2_6_xhigh(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """The native tool carries a GPT Image 2.6 model with the `xhigh` quality, which `gpt-image-2` rejects.
+
+    OpenAI's GPT Image 2.6 model pages list the Responses API as not supported, which refers to using the
+    image model as the top-level `model`. The `image_generation` tool accepts it.
+    """
+    model = OpenAIResponsesModel(
+        'gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+    agent = Agent(
+        model=model,
+        capabilities=[
+            NativeTool(
+                ImageGenerationTool(
+                    provider_settings={'openai': {'model': 'gpt-image-2.6-flare', 'quality': 'xhigh'}},
+                    size='1024x1024',
+                    output_format='jpeg',
+                    output_compression=10,
+                )
+            )
+        ],
+        output_type=BinaryImage,
+    )
+
+    result = await agent.run('Generate an image of a red circle on a white background.')
+
+    assert request_capture.body('/v1/responses')['tools'] == snapshot(
+        [
+            {
+                'type': 'image_generation',
+                'action': 'auto',
+                'background': 'auto',
+                'moderation': 'auto',
+                'output_compression': 10,
+                'output_format': 'jpeg',
+                'partial_images': 0,
+                'quality': 'xhigh',
+                'size': '1024x1024',
+                'model': 'gpt-image-2.6-flare',
+            }
+        ]
+    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
+    assert result.output.media_type == 'image/jpeg'
+    return_part = next(
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, NativeToolReturnPart)
+    )
+    assert return_part.content == snapshot(
+        {
+            'status': 'completed',
+            'background': 'opaque',
+            'quality': 'xhigh',
+            'size': '1024x1024',
+            'revised_prompt': 'A simple minimalist image: a solid red circle centered on a plain white background. Clean edges, no shadows, no text.',
+        }
+    )
+
+
 async def test_openai_responses_image_generation_jpeg(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(

@@ -1853,6 +1853,8 @@ class TestImageGenerationCapability:
     @pytest.mark.parametrize(
         'provider, model_name, suggestion',
         [
+            ('openai-responses', 'gpt-image-2.6-flare', 'openai-responses:gpt-5.5'),
+            ('openai-responses', 'gpt-image-2.6-sunburst', 'openai-responses:gpt-5.5'),
             ('openai-responses', 'gpt-image-2', 'openai-responses:gpt-5.5'),
             ('openai-responses', 'gpt-image-1.5', 'openai-responses:gpt-5.5'),
             ('openai-responses', 'gpt-image-1', 'openai-responses:gpt-5.4'),

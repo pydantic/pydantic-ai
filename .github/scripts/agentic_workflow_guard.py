@@ -1168,10 +1168,6 @@ def check_provider_health_recovery_wiring(workflows_dir: Path = WORKFLOWS_DIR) -
         frontmatter = parse_frontmatter(source)
         if not _is_zai_workflow(frontmatter):
             continue
-        # The UI review can reach its model only from a pull request event: its
-        # detect job needs `github.event.pull_request.number` before activation.
-        if source.name == 'pydantic-ai-ui-security-review.md':
-            continue
         trigger = _as_mapping(_as_mapping(frontmatter.get('on')).get('workflow_dispatch'))
         recovery_input = _as_mapping(_as_mapping(trigger.get('inputs')).get('recovery_issue'))
         if recovery_input.get('type') != 'string' or recovery_input.get('required') is not False:
