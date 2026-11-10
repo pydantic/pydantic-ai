@@ -294,8 +294,10 @@ PR cannot test its own change to this workflow or its scripts.
 # A copy of the repository picks the `CI` Linux runner
 
 The `CI_LINUX_RUNNER` repository variable sets the runner label of `check` and of every Linux job
-it depends on, including the jobs of `clai2-web.yml` and `latest-versions-canary.yml`. A fork or
-other copy sets it when GitHub's standard runners are too small or unavailable for those jobs.
+it depends on, including the jobs of `clai2-web.yml` and `latest-versions-canary.yml`. Those two
+reusable workflows read it wherever they run, so it also moves the build that `clai2-bleeding.yml`
+publishes and the scheduled canary of `latest-versions-canary-nightly.yml`. A fork or other copy
+sets it when GitHub's standard runners are too small or unavailable for those jobs.
 Leave it unset in pydantic/pydantic-ai: unset, each job runs on its fallback label,
 `ubuntu-24.04` for `test-all-extras` and `ubuntu-latest` for the rest.
 
