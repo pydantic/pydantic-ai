@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Never
 
@@ -11,6 +11,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._mounts import S3Mount, mounted
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
@@ -190,7 +191,13 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command in the sandbox gets; a command's own `env` is layered on top."""
 
     runtime: Literal['gvisor', 'vm'] | None = None
-    """Modal's runtime for a newly created sandbox, `'gvisor'` or `'vm'`; `None` lets Modal choose."""
+    """Modal's runtime for a newly created sandbox, `'gvisor'` or `'vm'`; `None` lets Modal choose.
+
+    `mounts` needs `'vm'`: gVisor can't mount the FUSE file systems they use.
+    """
+
+    mounts: Sequence[S3Mount] | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]] = ()
+    """Buckets to show as folders in the sandbox, or a function of the run returning them with fresh keys."""
 
     client: modal.Client | None = None
     """The `modal.Client` to create, attach and destroy with, such as one from `modal.Client.from_credentials`;
@@ -232,6 +239,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         workdir: str | None = None,
         client: modal.Client | None = None,
         runtime: Literal['gvisor', 'vm'] | None = None,
+        mounts: Sequence[S3Mount] | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]] = (),
         **removed_arguments: Never,
     ) -> None:
         # Hand-written, with the same parameters a dataclass would generate, so the previous
@@ -270,6 +278,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.working_dir = working_dir
         self.env = env
         self.runtime = runtime
+        self.mounts = mounts
         self.client = client
         self.warn_if_no_tools = warn_if_no_tools
         self._warned_no_tools = False
@@ -299,8 +308,10 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         `TYPE_CHECKING` import, and publishes only the bare `'ModalSandbox'`. A spec names an
         image by its registry tag. `**kwargs` reaches
         `__init__` unchanged, so deprecated arguments keep their guidance and `defer_loading`
-        its refusal.
+        its refusal. `mounts` is not one of them: it holds keys.
         """
+        if 'mounts' in kwargs:
+            raise UserError('`mounts` holds keys, so an agent spec cannot set it. Pass it to `ModalSandbox` in code.')
         return cls(
             id=id,
             description=description,
@@ -330,10 +341,9 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build a backend without performing Modal I/O."""
-        del ctx
         if ref is not None and ref.provider != 'modal':
             return None
-        return ModalSandboxBackend(
+        backend = ModalSandboxBackend(
             ref=ref or self._sandbox_id_ref,
             image=self.image,
             app_name=self.app_name,
@@ -345,6 +355,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             runtime=self.runtime,
             client=self.client,
         )
+        return mounted(backend, backend._run_as_root, self.mounts, ctx)  # pyright: ignore[reportPrivateUsage]
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         # The previous `ModalSandbox` registered its own tools, so `ModalSandbox(image=...)` on its

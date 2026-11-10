@@ -82,19 +82,26 @@ def _store_env(password: str) -> bytes:
 
 
 _WITH_KEYS = f'set -a; . {STORE}/env; set +a; '
+_FETCH = (
+    'python3 -c "import shutil, sys, urllib.request; shutil.copyfileobj(urllib.request.urlopen(urllib.request.Request('
+    "sys.argv[1], headers={'User-Agent': 'pai-live'})), sys.stdout.buffer)\""
+)
+"""Print a URL's body, failing on an error status. Python, as slim images such as Modal's lack `curl`, with a
+User-Agent of its own, as rclone's download site refuses Python's."""
 
 
 async def _serve(live: LiveSandbox, password: str) -> None:
     """(Re)start the store with `password` as its only valid key."""
     await as_root(live, f'umask 077; cat > {STORE}/env', _store_env(password))
-    # By the PID it saved: `pkill -f` would match this script's own command line too.
+    # By the PID it saved: `pkill -f` would match this script's own command line too. A stopped store counts as gone
+    # once it is a zombie: Modal's PID 1 does not reap the orphans it adopts, so `kill -0` would succeed forever.
     await as_root(
         live,
-        f'if [ -f {STORE}/pid ]; then kill "$(cat {STORE}/pid)" 2> /dev/null || true;'
-        f' while kill -0 "$(cat {STORE}/pid)" 2> /dev/null; do sleep 0.2; done; fi;'
+        f'if [ -f {STORE}/pid ]; then p=$(cat {STORE}/pid); kill "$p" 2> /dev/null || true;'
+        ' while [ -e "/proc/$p" ] && ! grep -q "^State:.*Z" "/proc/$p/status" 2> /dev/null; do sleep 0.2; done; fi;'
         f' {_WITH_KEYS}setsid nohup {STORE}/silo server {STORE}/data --address 127.0.0.1:9000'
         f' --console-address 127.0.0.1:9001 > {STORE}/silo.log 2>&1 < /dev/null & echo $! > {STORE}/pid;'
-        ' for i in $(seq 120); do curl -sf http://127.0.0.1:9000/minio/health/live > /dev/null && exit 0; sleep 0.5;'
+        f' for i in $(seq 120); do {_FETCH} http://127.0.0.1:9000/minio/health/live > /dev/null && exit 0; sleep 0.5;'
         f' done; tail -5 {STORE}/silo.log; exit 1',
     )
 
@@ -107,10 +114,10 @@ case $arch in amd64) silo={_SILO_SHA256['amd64']} rclone={_RCLONE_SHA256['amd64'
   arm64) silo={_SILO_SHA256['arm64']} rclone={_RCLONE_SHA256['arm64']} ;; esac
 mkdir -p -m 0700 {STORE}/data
 cd {STORE}
-curl -fsSL --retry 3 -o silo.tgz "{_SILO.format('$arch')}"
+{_FETCH} "{_SILO.format('$arch')}" > silo.tgz
 echo "$silo  silo.tgz" | sha256sum -c - > /dev/null
 tar -xzf silo.tgz silo
-curl -fsSL --retry 3 -o rclone.zip "{_RCLONE.format('$arch')}"
+{_FETCH} "{_RCLONE.format('$arch')}" > rclone.zip
 echo "$rclone  rclone.zip" | sha256sum -c - > /dev/null
 python3 -c "import sys, zipfile; z = zipfile.ZipFile('rclone.zip'); open('rclone', 'wb').write(z.read(next(n for n in z.namelist() if n.endswith('/rclone'))))"
 chmod 0755 silo rclone

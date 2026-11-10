@@ -17,7 +17,14 @@ from .fake_modal import FakeModal
 collect_ignore = (
     []
     if importlib.util.find_spec('modal') is not None
-    else ['test_backend.py', 'test_conformance.py', 'test_modal_live.py', 'test_modal_sandbox.py']
+    else [
+        'test_backend.py',
+        'test_conformance.py',
+        'test_modal_live.py',
+        'test_modal_mounts.py',
+        'test_modal_sandbox.py',
+        'test_mounts_live.py',
+    ]
 )
 
 # CI stops the live job after 15 minutes, before a `finally` can terminate what it started.

@@ -45,6 +45,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._mounts import MountError
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -101,6 +102,11 @@ _PARTIAL_OUTPUT_LIMIT = 65_536
 # Like the local backend: a runaway command (`yes`, `cat` on a huge log) must not exhaust this
 # process's memory, so reading stops once combined stdout and stderr pass this.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+
+_GVISOR_EXIT = 86
+# gVisor shows a `/dev/fuse` but refuses to mount one, so the kernel's name is what tells; the input is read first,
+# so it never waits on a pipe nothing reads.
+_FUSE_CHECK = 'case "$(uname -r)" in *gvisor*) head -n 1 > /dev/null; exit 86 ;; esac; exec "$@"'
 logger = logging.getLogger(__name__)
 
 
@@ -775,6 +781,22 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             raise WorkspaceError(
                 f'working_dir {workdir!r} does not exist in Modal sandbox {sandbox.object_id!r}. '
                 'Create it there, or pass a working_dir that exists.'
+            )
+        return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
+
+    async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
+        """Run `argv` with `stdin` as its input, which reaches no command line or log; Modal runs commands as root."""
+        sandbox = await self.get_sandbox()
+        async with self._mapped_errors(sandbox, 'Could not mount storage in the Modal sandbox'):
+            process = await sandbox.exec.aio('sh', '-c', _FUSE_CHECK, 'sh', *argv, workdir='/', text=False)
+            process.stdin.write(stdin)
+            process.stdin.write_eof()
+            await process.stdin.drain.aio()
+            stdout, stderr, exit_code, _ = await _collect_output(process, ['', ''], anyio.Event())
+        if exit_code == _GVISOR_EXIT:
+            raise MountError(
+                f'Modal sandbox {sandbox.object_id} runs on gVisor, which cannot mount the FUSE file systems mounts '
+                "use. Create it on Modal's VM runtime: `ModalSandbox(runtime='vm')`."
             )
         return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
