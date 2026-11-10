@@ -127,6 +127,9 @@ def _apply_policy(config: ActivityConfig, policy: StepPolicy) -> ActivityConfig:
     if policy.timeout is not None:
         floor = timedelta(seconds=policy.timeout)
         config['start_to_close_timeout'] = max(config.get('start_to_close_timeout') or floor, floor)
+        # An overall deadline shorter than the floor would end the activity before the floor does.
+        if (overall := config.get('schedule_to_close_timeout')) is not None:
+            config['schedule_to_close_timeout'] = max(overall, floor)
     return config
 
 
@@ -148,16 +151,17 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
     def operation(self) -> DurableOperation[ParamsT, WireT, ResultT]:
         return self._operation
 
-    def _policy_config(self) -> TemporalOperationConfigValue:
-        """The operation's config, under its step policy if it has one."""
+    def _policy_config(self, config: TemporalOperationConfigValue) -> TemporalOperationConfigValue:
+        """`config` under the operation's step policy if it has one."""
         policy = self._operation.policy
-        if policy is None or 'child_workflow' in self._config:
-            return self._config
-        return _apply_policy(self._config, policy)
+        if policy is None or 'child_workflow' in config:
+            return config
+        return _apply_policy(config, policy)
 
     async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
         payload = self._operation.parameter_transport.dump(params)
-        resolved_config = cast(TemporalOperationConfigValue, config or self._policy_config())
+        # A config passed for one invocation still runs under the operation's policy.
+        resolved_config = self._policy_config(cast(TemporalOperationConfigValue, config or self._config))
         if 'child_workflow' in resolved_config:
             toolset_id = cast(Any, self._operation.operation_id).toolset_id
             # A replay re-issues what the original execution did, which already passed this check, and may run

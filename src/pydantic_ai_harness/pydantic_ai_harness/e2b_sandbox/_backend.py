@@ -146,15 +146,22 @@ _START_VIEWER = (
 """Starts the template's VNC server and noVNC viewer behind a password, unless they are running, and prints the
 password. Both run until the sandbox stops."""
 
+_XFCE_ON_DISPLAY = (
+    '(for p in $(pgrep -x xfce4-session); do '
+    f'tr "\\0" "\\n" </proc/$p/environ 2>/dev/null | grep -qx "DISPLAY={DISPLAY}" && exit 0; done; exit 1)'
+)
+"""Exits 0 when an XFCE session runs on `DISPLAY`. One on another display, such as a template's own on `:0`, doesn't
+count."""
+
 _START_DESKTOP = start_x_server(_XVFB_LOG) + (
-    'if command -v startxfce4 >/dev/null && ! pgrep -x xfce4-session >/dev/null; then '
+    f'if command -v startxfce4 >/dev/null && ! {_XFCE_ON_DISPLAY}; then '
     'setsid startxfce4 >/dev/null 2>&1 & i=0; '
     'until xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1 || [ $i -ge 100 ]; do '
     'sleep 0.1; i=$((i+1)); done; fi'
 )
 """Starts an X display of the size `$1` names, such as `1280x800`, unless one is running, and the XFCE desktop.
 
-XFCE starts unless its session is running, so starting it every time recovers one that died, and the script waits up
+XFCE starts unless its session is running on the display, so starting it every time recovers one that died, and the script waits up
 to 10 seconds for its desktop window, so the first screenshot isn't black; a template without XFCE gets a display with
 no window manager. Output goes to files, not the command's stream, which E2B keeps open while a background child holds
 it.
