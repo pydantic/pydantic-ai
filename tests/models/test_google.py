@@ -6515,7 +6515,7 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
 
     assert system_instruction == {
         'role': 'user',
-        'parts': [{'text': 'You are helpful.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}],
+        'parts': [{'text': SYSTEM_VOICE_ANNOUNCEMENT}, {'text': 'You are helpful.'}],
     }
     contents_any = cast(list[Any], contents)
     wrapped_texts = [
