@@ -14,7 +14,7 @@ from rich.console import Console, Group
 from rich.text import Text
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2.config import ToolCallDisplay
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
@@ -191,7 +191,7 @@ class ToolOutput:
         self.tool_calls = tool_calls
         self._shells: dict[str | None, ShellPreview] = {}
         self._headers: set[tuple[str | None, str]] = set()
-        self._writes: dict[tuple[str | None, str, str], FileChangeRequestEvent] = {}
+        self._writes: dict[tuple[str | None, str, str], FileChangeRequestedEvent] = {}
 
     def _header(self, name: str, argument: str) -> None:
         if name == 'shell':
@@ -330,7 +330,7 @@ class ToolOutput:
                     self._shells.pop(event.tool_call_id, None)
                     return True
                 self._shell_finished(event)
-            case FileChangeRequestEvent():
+            case FileChangeRequestedEvent():
                 if event.operation == 'write':
                     self._writes[event.tool_call_id, event.root_dir, event.path] = event
             case FileEditedEvent():

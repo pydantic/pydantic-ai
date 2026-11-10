@@ -198,7 +198,7 @@ descendants; denied and read-only patterns ignore case), `read_only=False` (`Tru
   `*.key`, `**/secrets*`, `**/.pydantic-ai-harness/**`).
 - Walkers skip dotfiles and dot-directories unless a path or pattern names one explicitly, and filter entries, not the root, by
   `allowed_patterns`. A read-only workspace gets only read tools.
-- Veto writes with `@agent.on_event(FileChangeRequestEvent)` + `event.cancel(reason)` (from
+- Veto writes with `@agent.on_event(FileChangeRequestedEvent)` + `event.cancel(reason)` (from
   `pydantic_ai_harness.filesystem`); the event carries a unified `diff`.
 - Recognize the file tools by kind, never by name: each declares `tool_kind` `file_system.<tool>`
   (`READ_FILE_KIND`, `WRITE_FILE_KIND`, ... from `pydantic_ai_harness.filesystem`), and its calls
@@ -536,7 +536,7 @@ every activity reattaches to that environment.
 
 | Feature | Temporal | DBOS | Prefect |
 | --- | --- | --- | --- |
-| File tools, background jobs, `persist_cwd`, `FileChangeRequestEvent` | Yes | Yes | Yes |
+| File tools, background jobs, `persist_cwd`, `FileChangeRequestedEvent` | Yes | Yes | Yes |
 | `run_command`, `shell` | Yes, within the activity timeout | Yes | Yes |
 | Live tool events | File-change request and write events only | Yes | Yes |
 | `delegate_task` | To `self` only | Yes | Yes |

@@ -172,8 +172,8 @@ Gotchas:
   remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
   crashes abort the parent unless `contain_errors=True`.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
-- Not agent-spec serializable (holds live agents). Events: `DelegationStartEvent`,
-  `DelegationEndEvent` (`outcome` is `ok`/`timeout`/`budget`/`failed`/`contained`).
+- Not agent-spec serializable (holds live agents). Events: `DelegationStartedEvent`,
+  `DelegationFinishedEvent` (`outcome` is `ok`/`timeout`/`budget`/`failed`/`contained`).
 
 ### Task control
 

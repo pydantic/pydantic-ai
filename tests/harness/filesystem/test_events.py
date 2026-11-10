@@ -28,7 +28,7 @@ from pydantic_ai_harness.filesystem import (
     MAX_EVENT_DIFF_CHARS,
     DirectoryCreatedEvent,
     DirectoryListedEvent,
-    FileChangeRequestEvent,
+    FileChangeRequestedEvent,
     FileEditedEvent,
     FileOperation,
     FileReadEvent,
@@ -128,10 +128,10 @@ class Listener(AbstractCapability[None]):
 
     cancel: bool = False
     reason: str | None = None
-    requests: list[FileChangeRequestEvent] = field(default_factory=list[FileChangeRequestEvent])
+    requests: list[FileChangeRequestedEvent] = field(default_factory=list[FileChangeRequestedEvent])
 
-    @on_event(FileChangeRequestEvent)
-    async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
+    @on_event(FileChangeRequestedEvent)
+    async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
         self.requests.append(event)
         if self.cancel:
             event.cancel(self.reason)
@@ -143,8 +143,8 @@ class MeddlingListener(AbstractCapability[None]):
 
     act: Callable[[], object]
 
-    @on_event(FileChangeRequestEvent)
-    async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
+    @on_event(FileChangeRequestedEvent)
+    async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
         # Off the event loop: the listener is called from library code, which must not block.
         await anyio.to_thread.run_sync(self.act)
 
@@ -153,8 +153,8 @@ class MeddlingListener(AbstractCapability[None]):
 class RaisingListener(AbstractCapability[None]):
     """Raises out of the announcement, as a listener with an error in it does."""
 
-    @on_event(FileChangeRequestEvent)
-    async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
+    @on_event(FileChangeRequestedEvent)
+    async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
         raise RuntimeError('no writes today')
 
 
@@ -356,7 +356,7 @@ class TestFileSystemEvents:
 
         events = await _run_and_collect(tmp_path, 'create_directory', '{"path":"existing"}')
 
-        assert not any(isinstance(event, (DirectoryCreatedEvent, FileChangeRequestEvent)) for event in events)
+        assert not any(isinstance(event, (DirectoryCreatedEvent, FileChangeRequestedEvent)) for event in events)
 
     @pytest.mark.parametrize(
         ('tool_name', 'json_args', 'search'),
@@ -504,7 +504,7 @@ class TestFileChangeRequests:
 
         path = json.loads(json_args)['path']
         assert listener.requests == [
-            FileChangeRequestEvent(
+            FileChangeRequestedEvent(
                 path=path,
                 root_dir=_root(tmp_path),
                 operation=operation,

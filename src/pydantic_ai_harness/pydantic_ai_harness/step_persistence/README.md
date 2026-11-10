@@ -897,9 +897,9 @@ or shortened history rewrites. Put the recorder before capabilities whose
 message values are copied before storage so later mutations cannot alter a saved
 in-memory checkpoint through shared references.
 
-`SnapshotSaved` is a typed capability event emitted after a checkpoint write
+`SnapshotSavedEvent` is a typed capability event emitted after a checkpoint write
 completes. It carries `persistence_run_id`, `conversation_id`, `step_index`, and
-`state`. Subscribe using core's `hooks.on.event(SnapshotSaved)`, which a CLAI plugin
+`state`. Subscribe using core's `hooks.on.event(SnapshotSavedEvent)`, which a CLAI plugin
 returns from `get_capabilities`. Store writes are the source of truth; notifications may
 repeat during durable replay and observer failures cannot undo committed writes.
 

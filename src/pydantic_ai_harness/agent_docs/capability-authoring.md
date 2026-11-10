@@ -112,6 +112,32 @@ A root export shipped in a published release is a backward-compatibility commitm
 APIs are subject to change between releases; breaking changes ship deprecation
 warnings where practical.
 
+### Naming Capability Events
+
+A `CapabilityEvent` subclass has three names: its class, its namespace, and its kind.
+
+- **Class**: `<Subject><PastParticiple>Event` (`FileReadEvent`, `PlanCreatedEvent`,
+  `FileChangeRequestedEvent`). A start/stop pair is `*StartedEvent` and `*FinishedEvent`
+  (`CommandStartedEvent`, `CommandFinishedEvent`), not the `Start`/`End` of core's part events. A
+  streamed chunk of data is a noun (`CommandOutputEvent`).
+- **Namespace**: the snake_case of the emitting capability's class, exported from the capability's
+  package as `<NAMESPACE>_EVENTS` (`SUB_AGENTS_EVENTS = 'sub_agents'`).
+- **Kind**: `<namespace>.<name>`, the discriminator that persisted and streamed events are
+  serialized with. Core has no kind aliases, so a payload written under a kind that was later
+  changed loads as an `UnknownCapabilityEvent`. Keep the kind of a shipped event.
+
+The `<name>` segment follows one of two rules, chosen per event family:
+
+1. **Derived**, when the events have different subjects (`file_system`, `shell`, `sub_agents`,
+   `code_mode`): core's default, the snake_case of the class name without `Event`
+   (`file_system.file_read`). Do not pass a `name=` equal to that default.
+2. **Subject-stripped**, when every event has the one subject the namespace already names
+   (`planning`, `ask_user`, `spend_limits`, `system_reminders`, `report_context_usage`): pass the
+   participle alone as `name=` (`planning.created`, `ask_user.requested`).
+
+A renamed event class keeps its alias like any renamed class, and passes its old segment as `name=`
+so the kind does not change: `DelegationStartedEvent` is still `sub_agents.delegation_start`.
+
 ## API Design
 
 - Prefer a small dataclass capability with typed fields.

@@ -22,7 +22,7 @@ from pydantic_ai_harness.step_persistence._context import (
     current_run_id,
     live_run_history,
 )
-from pydantic_ai_harness.step_persistence._events import SnapshotSaved
+from pydantic_ai_harness.step_persistence._events import SnapshotSavedEvent
 from pydantic_ai_harness.step_persistence._helpers import is_provider_valid
 from pydantic_ai_harness.step_persistence._store import InMemoryStepStore, StepStore
 from pydantic_ai_harness.step_persistence._types import (
@@ -526,7 +526,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
             state=state,
         )
         await ctx.emit(
-            SnapshotSaved(
+            SnapshotSavedEvent(
                 persistence_run_id=self._effective_run_id(ctx),
                 conversation_id=ctx.conversation_id,
                 step_index=step_index,
