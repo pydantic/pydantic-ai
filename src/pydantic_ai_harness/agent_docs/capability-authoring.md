@@ -133,7 +133,8 @@ The `<name>` segment follows one of two rules, chosen per namespace:
    (`file_system.file_read`). Do not pass a `name=` equal to that default.
 2. **Subject-stripped**, only when the subject of every event is the thing the namespace already
    names (`planning`, `ask_user`, `spend_limits`, `system_reminders`, `report_context_usage`): pass
-   the participle alone as `name=` (`planning.created`, `ask_user.requested`).
+   the snake_case of the class name without that subject and `Event` as `name=`
+   (`planning.created`, `planning.status_changed`, `ask_user.requested`).
 
 A renamed event class keeps its alias like any renamed class, and passes its old segment as `name=`
 so the kind does not change: `DelegationStartedEvent` is still `sub_agents.delegation_start`.
