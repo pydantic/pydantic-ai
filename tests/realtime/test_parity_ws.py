@@ -650,7 +650,7 @@ async def test_capability_tool_reveal_parity(
     """Loading a deferred capability mid-session gives the model the capability's tools, which it then calls.
 
     The session sends the tools ahead of the load's result, and history records the reveal as a standard run does.
-    A model that keeps the tools it opened with refuses such an agent before connecting (see `test_tool_reveals.py`).
+    A model that keeps the tools it opened with refuses such an agent before connecting (see `test_capabilities.py`).
     """
     case, provider, _ = parity_ws_cassette
     model = _model(case, provider, text_output=True)
