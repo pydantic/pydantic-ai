@@ -908,8 +908,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     like `temperature`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
 
     This covers the fields a model class sends to its provider. `request_timeout` and `first_event_timeout` are
-    enforced by Pydantic AI for every model, and `thinking`, `cache` and `tool_choice` are resolved through the model
-    profile, so they're not listed here.
+    enforced by Pydantic AI for every model, `framing_announcement` is applied by it, and `thinking`, `cache` and
+    `tool_choice` are resolved through the model profile, so they're not listed here.
 
     It's declared on the model class because whether a setting reaches the provider is mostly decided by the API and
     SDK the class speaks. The OpenAI model classes add the ignored settings their profile lists in
@@ -2759,7 +2759,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         with the announcement after the operator's prompt, Gemini acted more often on requests quoted in a tool result
         that an operator instruction seemed to cover. The history alone decides whether it's needed, so once it's in,
         it's in the same place on every later request: the cached prefix changes once, at the request that first
-        needs it.
+        needs it, and stays stable as long as the history keeps what needed it. A UI adapter's frontend doesn't send
+        a mid-conversation system prompt back (AG-UI, Vercel AI), so UI apps should use `'always'`.
         """
         if framing_announcement == 'always':
             if not standing_prompt_count:

@@ -670,6 +670,8 @@ agent = Agent(
 ...
 ```
 
+Responses that ran in fast mode carry `provider_details['speed'] == 'fast'`, so [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], `usage.cost` and [usage limits](../agent.md#usage-limits) use fast mode prices from [`genai-prices`](https://github.com/pydantic/genai-prices).
+
 !!! note "Prompt cache interaction"
     Switching between `'fast'` and `'standard'` invalidates the prompt cache. Requests at different speeds do not share cached prefixes, so pick one speed per cache-sensitive conversation.
 

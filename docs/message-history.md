@@ -360,7 +360,15 @@ The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announce
 | `'always'` (default on Claude Sonnet 4.6 and gpt-oss) | At the start of the system prompt, on every request from the first | The same as `'when_needed'` |
 | `'never'` | Not sent | Not sent |
 
-The announcement is about 120 words on a model without a mid-conversation system role, about 185 on the ones that get `<system verified>` blocks, and about 60 as a system message. With `'when_needed'`, a conversation that never has anything to explain doesn't pay for it. Whether it's needed is decided from the history alone, so once it's in, it stays in the same place on every later request: the cached prefix changes once, at that request, and is stable again from there. `'always'` sends it from the first request, so the prefix never changes for it, at the cost of sending it in every conversation.
+The announcement is about 120 words on a model without a mid-conversation system role, about 185 on the ones that get `<system verified>` blocks, and about 60 as a system message. With `'when_needed'`, a conversation that never has anything to explain doesn't pay for it. Whether it's needed is decided from the history alone, so once it's in, it stays in the same place on every later request: the cached prefix changes once, at that request, and is stable again from there, as long as the history keeps what needed it. `'always'` sends it from the first request, so the prefix never changes for it, at the cost of sending it in every conversation.
+
+Use `'always'` in an [AG-UI](ui/ag-ui.md) or [Vercel AI](ui/vercel-ai.md) app: their frontends don't send mid-conversation system prompts back, so with `'when_needed'` the announcement drops out of the next turn's system prompt and the cached prefix changes every turn.
+
+```python {title="framing_announcement.py"}
+from pydantic_ai import Agent
+
+agent = Agent('{{ google:medium }}', model_settings={'framing_announcement': 'always'})
+```
 
 `'never'` leaves the lookalike notes in place: they only appear next to text that resembles one of the application's frames, so they cost nothing in a conversation without any. Without the announcement, though, the model isn't told what the notes or the application's `<system>` blocks mean, and it may not follow a `<system>` block it has no explanation for. With it turned off, Claude Sonnet 4.6 and Grok 4.7 followed none of 24 instruction changes (all 24 with it), and Claude Sonnet 5.5, Claude Haiku 5.5 and Gemini 4 Argon couldn't say who had asked for a change (0 of 24, against 24 of 24). Turn it off only if your application doesn't change instructions mid-conversation and you've checked your model without it.
 

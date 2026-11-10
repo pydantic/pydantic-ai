@@ -1922,7 +1922,15 @@ async def test_instruction_updates_preserve_wire_prefix(
         def state(ctx: RunContext[State]) -> str | None:
             return f'Send parcels to warehouse {ctx.deps.value}.' if ctx.deps.value is not None else None
 
-        agent = Agent(wire_model, deps_type=State, instructions=instructions, capabilities=[cap])
+        # `'always'` keeps the `<system>` tag announcement in the standing prompt from the first request, so the
+        # whole prefix stays the same on models that get the updates as `<system>` blocks too.
+        agent = Agent(
+            wire_model,
+            deps_type=State,
+            instructions=instructions,
+            capabilities=[cap],
+            model_settings={'framing_announcement': 'always'},
+        )
         if stream:
             async with agent.run_stream(prompt, deps=State(value), message_history=history) as result:
                 output = await result.get_output()
@@ -1993,6 +2001,8 @@ async def test_instruction_updates_after_tool_mutation(
         deps_type=State,
         instructions='When the todo is pending, call finish_todo once. When it is done, reply DONE.',
         capabilities=[cap],
+        # Keeps the standing prompt the same on every request; see `test_instruction_updates_preserve_wire_prefix`.
+        model_settings={'framing_announcement': 'always'},
     )
     if stream:
         completed: AgentRunResult[str] | None = None
