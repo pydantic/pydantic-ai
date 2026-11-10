@@ -519,6 +519,9 @@ class _JsonSchemaTestData:
             case None:
                 # if there's no type or ref, we can't generate anything
                 return self._char()
+            case [_, *_] as types:
+                # JSON Schema allows a list of types; generate from one of them
+                return self._gen_any({**schema, 'type': types[self.seed % len(types)]})
             case 'object':
                 return self._object_gen(schema)
             case 'string':
