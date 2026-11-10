@@ -27,7 +27,7 @@ from pydantic_core import PydanticCustomError, PydanticSerializationError, to_js
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
-from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import (
@@ -532,24 +532,22 @@ async def revalidate_function_call(
                 f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
                 f'Removing or renaming tools during an agent run is not supported with {engine_spec.engine_name}.'
             ) from exc
-    args = tool.args_validator.validate_python(params.tool_args, context=unit_validation_context(params.ctx))
+    args = revalidate_function_args(toolset, tool, params.tool_args, context=unit_validation_context(params.ctx))
     return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
 
 
-class EnqueueGuard(list[PendingMessage]):
-    """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
-
-    A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
-    across the activity boundary (Temporal) without re-running the code, so messages enqueued
-    inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
-    """
-
-    def __init__(self, message: str):
-        super().__init__()
-        self._message = message
-
-    def append(self, pending: PendingMessage) -> None:
-        raise UserError(self._message)
+def revalidate_function_args(
+    toolset: FunctionToolset[Any], tool: ToolsetTool[Any], tool_args: dict[str, Any], *, context: Any = None
+) -> dict[str, Any]:
+    """Validate a function tool's already-validated arguments again after they crossed a durable boundary as JSON."""
+    if (
+        isinstance(tool, FunctionToolsetTool)
+        and (source := toolset.tools.get(tool.original_name or tool.tool_def.name)) is not None
+        # Only the source's own validator produced arguments in the shape `revalidate` expects.
+        and tool.args_validator is source.function_schema.validator
+    ):
+        return source.function_schema.revalidate(tool_args, context=context)
+    return tool.args_validator.validate_python(tool_args, context=context)
 
 
 @dataclass
@@ -569,20 +567,6 @@ class DispatchSnapshots:
     active_capability_ids: set[str] = field(repr=False)
     _deferred_capability_ids: set[str] = field(repr=False)
     _tool_names_by_kind: dict[str, str] = field(repr=False)
-
-
-def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
-    """The shared `ctx.enqueue()` error, worded for one engine's durable unit and container.
-
-    `unit_noun` is the engine's durable unit (`'activity'`/`'step'`/`'task'`) and
-    `container_noun` is its durable container (`'workflow'`/`'flow'`), so every engine
-    raises the same explanation with its own vocabulary.
-    """
-    return (
-        f'`ctx.enqueue()` is not supported inside a durable {unit_noun}: the durable runtime replays '
-        f"the {unit_noun}'s recorded result without re-running your code, so the enqueued messages "
-        f'would be dropped. Enqueue messages from {container_noun}-level code instead.'
-    )
 
 
 class CancelGuard(RunCancellation):
@@ -624,7 +608,7 @@ def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_
     """
     return replace(
         ctx,
-        pending_messages=EnqueueGuard(enqueue_not_supported_message(unit_noun, container_noun)),
+        pending_messages=EnqueueGuard(unit_noun, container_noun),
         _cancellation=CancelGuard(cancel_not_supported_message(unit_noun, container_noun)),
     )
 

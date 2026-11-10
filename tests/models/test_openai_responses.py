@@ -123,7 +123,13 @@ from ..conftest import (
 )
 from .citation_utils import IsCitationList
 from .conftest import json_objects
-from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_mock_retrieve_kwargs, response_message
+from .mock_openai import (
+    MockOpenAIResponses,
+    get_mock_responses_kwargs,
+    get_mock_retrieve_kwargs,
+    response_message,
+    with_history_digests,
+)
 
 with try_import() as imports_successful:
     from openai import APIStatusError, AsyncAzureOpenAI, AsyncOpenAI, omit
@@ -660,7 +666,7 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
             revealed_tool_names={tool.name},
         ),
     )
-    await model.request(messages, settings, parameters)
+    await model.request(with_history_digests(messages), settings, parameters)
 
     request_kwargs = get_mock_responses_kwargs(mock_client)[0]
     assert {
@@ -1312,9 +1318,13 @@ async def test_openai_responses_image_generation_tool_options(allow_model_reques
         capabilities=[
             NativeTool(
                 ImageGenerationTool(
-                    action='generate',
-                    model='gpt-image-2',
-                    background='opaque',
+                    provider_settings={
+                        'openai': {
+                            'action': 'generate',
+                            'model': 'gpt-image-2',
+                            'background': 'opaque',
+                        }
+                    },
                     output_format='jpeg',
                     size='1536x1024',
                 )
@@ -1364,12 +1374,16 @@ async def test_openai_responses_image_generation_tool_input_fidelity_set(allow_m
         capabilities=[
             NativeTool(
                 ImageGenerationTool(
-                    action='generate',
-                    model='gpt-image-2',
-                    background='opaque',
+                    provider_settings={
+                        'openai': {
+                            'action': 'generate',
+                            'model': 'gpt-image-2',
+                            'background': 'opaque',
+                            'input_fidelity': 'high',
+                        }
+                    },
                     output_format='jpeg',
                     size='1536x1024',
-                    input_fidelity='high',
                 )
             )
         ],
@@ -4968,38 +4982,40 @@ async def test_openai_previous_response_id(allow_model_requests: None, openai_ap
 
 async def test_openai_previous_response_id_auto_mode(allow_model_requests: None, openai_api_key: str):
     """Test if invalid previous response id is ignored when history contains non-OpenAI responses"""
-    history = [
-        ModelRequest(
-            parts=[
-                UserPromptPart(
-                    content='The first secret key is sesame',
-                ),
-            ],
-        ),
-        ModelResponse(
-            parts=[
-                TextPart(content='Open sesame! What would you like to unlock?'),
-            ],
-            model_name='gpt-5',
-            provider_name='openai',
-            provider_response_id='resp_68b9bd97025c8195b443af591ca2345c08cb6072affe6099',
-        ),
-        ModelRequest(
-            parts=[
-                UserPromptPart(
-                    content='The second secret key is olives',
-                ),
-            ],
-        ),
-        ModelResponse(
-            parts=[
-                TextPart(content='Understood'),
-            ],
-            model_name='gpt-5',
-            provider_name='openai',
-            provider_response_id='resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b',
-        ),
-    ]
+    history = with_history_digests(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='The first secret key is sesame',
+                    ),
+                ],
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Open sesame! What would you like to unlock?'),
+                ],
+                model_name='gpt-5',
+                provider_name='openai',
+                provider_response_id='resp_68b9bd97025c8195b443af591ca2345c08cb6072affe6099',
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='The second secret key is olives',
+                    ),
+                ],
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Understood'),
+                ],
+                model_name='gpt-5',
+                provider_name='openai',
+                provider_response_id='resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b',
+            ),
+        ]
+    )
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
@@ -5056,45 +5072,47 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
 
 async def test_openai_previous_response_id_same_model_history(allow_model_requests: None, openai_api_key: str):
     """Test if message history is trimmed when model responses are from same model"""
-    history = [
-        ModelRequest(
-            parts=[
-                UserPromptPart(
-                    content='The first secret key is sesame',
-                ),
-            ],
-        ),
-        ModelResponse(
-            parts=[
-                TextPart(content='Open sesame! What would you like to unlock?'),
-            ],
-            model_name='gpt-5',
-            provider_name='openai',
-            provider_response_id='resp_68b9bd97025c8195b443af591ca2345c08cb6072affe6099',
-        ),
-        ModelRequest(
-            parts=[
-                UserPromptPart(
-                    content='The second secret key is olives',
-                ),
-            ],
-        ),
-        ModelResponse(
-            parts=[
-                TextPart(content='Understood'),
-            ],
-            model_name='gpt-5',
-            provider_name='openai',
-            provider_response_id='resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b',
-        ),
-        ModelRequest(
-            parts=[
-                UserPromptPart(
-                    content='what is the first secret key?',
-                ),
-            ],
-        ),
-    ]
+    history = with_history_digests(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='The first secret key is sesame',
+                    ),
+                ],
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Open sesame! What would you like to unlock?'),
+                ],
+                model_name='gpt-5',
+                provider_name='openai',
+                provider_response_id='resp_68b9bd97025c8195b443af591ca2345c08cb6072affe6099',
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='The second secret key is olives',
+                    ),
+                ],
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Understood'),
+                ],
+                model_name='gpt-5',
+                provider_name='openai',
+                provider_response_id='resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b',
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='what is the first secret key?',
+                    ),
+                ],
+            ),
+        ]
+    )
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     previous_response_id, messages, _ = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
@@ -5144,7 +5162,9 @@ async def test_openai_responses_server_state_scoped_by_endpoint(allow_model_requ
     cast(MockOpenAIResponses, producer_client).base_url = 'https://gateway-a.example/v1'
     producer = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=producer_client))
     first_request = ModelRequest(parts=[UserPromptPart(content='q')])
-    response = await producer.request([first_request], None, params)
+    response = await producer.request(
+        [first_request], OpenAIResponsesModelSettings(openai_previous_response_id='auto'), params
+    )
 
     client = MockOpenAIResponses.create_mock(response_message([]))
     cast(MockOpenAIResponses, client).base_url = base_url
@@ -5311,6 +5331,7 @@ async def test_response_scoped_tool_call_id_with_previous_response(allow_model_r
         ),
         ModelRequest(parts=[ToolReturnPart(tool_name='tool', content='result', tool_call_id=qualified_call_id)]),
     ]
+    history = with_history_digests(history)
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel(
         'gpt-5.6-sol',
@@ -5391,7 +5412,9 @@ async def test_openai_previous_response_id_concrete_seed_overridden_by_history(o
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # pyright: ignore[reportPrivateUsage]
+    previous_response_id, messages = model._resolve_previous_response_id(  # pyright: ignore[reportPrivateUsage]
+        'resp_seed_from_prior_turn', with_history_digests(history)
+    )
     assert previous_response_id == 'resp_from_first_call'
     assert messages == snapshot(
         [
@@ -5616,7 +5639,7 @@ async def test_compatible_compaction_stops_previous_response_chaining(
         settings=settings,
         profile=OpenAIModelProfile(openai_responses_supports_prompt_cache_diagnostics=True),
     )
-    await model.request(history, None, ModelRequestParameters())
+    await model.request(with_history_digests(history), None, ModelRequestParameters())
     body = get_mock_responses_kwargs(client)[0]
     actual: dict[str, object] = {
         key: body[key] for key in ('previous_response_id', 'input', 'prompt_cache_options') if key in body
@@ -5899,6 +5922,145 @@ async def test_openai_previous_response_id_keeps_chaining_when_a_rewritten_block
         'resp_1',
         'resp_2',
     ]
+
+
+async def test_background_response_without_a_digest_is_not_continued_from_when_retrieved(allow_model_requests: None):
+    """The history may have changed while it ran, and with no digest on the suspended response there's no telling."""
+    mock_client = MockOpenAIResponses(
+        response=_text_response('', status='queued', background=True),
+        retrieve_responses=[_text_response('You said secret.', background=True)],
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)))
+    parameters = ModelRequestParameters()
+
+    suspended = await model.request(
+        [ModelRequest.user_text_prompt('secret')], OpenAIResponsesModelSettings(openai_background=True), parameters
+    )
+    assert suspended.state == 'suspended'
+    assert suspended.history_digest is None
+
+    redacted = ModelRequest.user_text_prompt('[redacted]')
+    resumed = await model.request(
+        [redacted, suspended],
+        OpenAIResponsesModelSettings(openai_background=True, openai_previous_response_id='auto'),
+        parameters,
+    )
+    merged = merge_responses(suspended, resumed)
+    assert merged.history_digest is None
+
+    history: list[ModelMessage] = [redacted, merged, ModelRequest.user_text_prompt('Again')]
+    previous_response_id, messages, _ = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
+    assert previous_response_id is None
+    assert messages is history
+
+
+@pytest.mark.parametrize('previous_response_id', ['auto', 'resp_seed'])
+async def test_openai_previous_response_id_resends_a_response_without_a_digest(
+    allow_model_requests: None, previous_response_id: str
+):
+    """There's no telling whether such a response or the history before it has changed, so neither is relied on."""
+    mock_client = MockOpenAIResponses.create_mock(_text_reply('resp_2', 'two'))
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[TextPart(content='one')], provider_name='openai', provider_response_id='resp_1'),
+        ModelRequest(parts=[UserPromptPart(content='Again')]),
+    ]
+
+    response = await model.request(
+        history,
+        OpenAIResponsesModelSettings(openai_previous_response_id=previous_response_id),
+        ModelRequestParameters(),
+    )
+
+    [sent] = get_mock_responses_kwargs(mock_client)
+    assert 'previous_response_id' not in sent
+    assert sent['input'] == snapshot(
+        [
+            {'role': 'user', 'content': 'Hello'},
+            {'role': 'assistant', 'content': 'one'},
+            {'role': 'user', 'content': 'Again'},
+        ]
+    )
+    # The request records one, so the next can continue from its response.
+    assert response.history_digest is not None
+
+
+def _with_text_edited(*, clear_id: bool) -> Callable[[list[ModelMessage]], list[ModelMessage]]:
+    """A history processor that replaces the middle of each long response text."""
+
+    def process(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(
+                message,
+                parts=[
+                    replace(
+                        part,
+                        content=f'{part.content[:100]}\n[edited]\n{part.content[-100:]}',
+                        id=None if clear_id else part.id,
+                    )
+                    if isinstance(part, TextPart) and len(part.content) > 1_000
+                    else part
+                    for part in message.parts
+                ],
+            )
+            if isinstance(message, ModelResponse)
+            else message
+            for message in messages
+        ]
+
+    return process
+
+
+_EDITED_HISTORY_QUESTION = (
+    'Does your previous message contain the literal string `[edited]`? Reply with only yes or no.'
+)
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason="a history processor edits an earlier response's text")
+async def test_edit_reaches_the_model_from_a_response_without_a_digest(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """The response was created without the setting, so a request with it resends the edited history."""
+    model = OpenAIResponsesModel(
+        'gpt-6-luna', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+    first = await Agent(model).run(
+        'Write exactly 80 lines of the form `LINE <n>: <eight random lowercase English words>`. No preamble.'
+    )
+    assert first.response.history_digest is None
+
+    second = await Agent(model, capabilities=[ProcessHistory(_with_text_edited(clear_id=True))]).run(
+        _EDITED_HISTORY_QUESTION,
+        message_history=first.all_messages(),
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+    )
+
+    assert 'previous_response_id' not in request_capture.body('/responses', 1)
+    assert second.output == snapshot('yes')
+    assert second.response.usage.input_tokens < first.response.usage.output_tokens / 2
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason="a history processor edits an earlier response's text")
+async def test_edit_needs_its_item_id_cleared_to_reach_the_model(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """The API uses its stored copy of an item sent with its ID, whatever text comes with it."""
+    model = OpenAIResponsesModel(
+        'gpt-6-luna', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+    first = await Agent(model).run(
+        'Write exactly 80 lines of the form `LINE <n>: <eight random lowercase English words>`. No preamble.'
+    )
+
+    ignored = await Agent(model, capabilities=[ProcessHistory(_with_text_edited(clear_id=False))]).run(
+        _EDITED_HISTORY_QUESTION, message_history=first.all_messages()
+    )
+
+    assert ignored.output == snapshot('no')
+    assert ignored.response.usage.input_tokens > first.response.usage.output_tokens
 
 
 async def test_openai_previous_response_id_continues_from_a_digest_that_covers_instructions(
@@ -11474,7 +11636,12 @@ async def test_openai_responses_image_generation_stream_empty_final_answer(
         model,
         capabilities=[
             NativeTool(
-                ImageGenerationTool(quality='low', size='1024x1024', output_format='jpeg', output_compression=50)
+                ImageGenerationTool(
+                    provider_settings={'openai': {'quality': 'low'}},
+                    size='1024x1024',
+                    output_format='jpeg',
+                    output_compression=50,
+                )
             )
         ],
         output_type=BinaryImage,
@@ -12250,6 +12417,70 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
     )
 
 
+async def test_openai_responses_image_generation_gpt_image_2_6_xhigh(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """The native tool carries a GPT Image 2.6 model with the `xhigh` quality, which `gpt-image-2` rejects.
+
+    OpenAI's GPT Image 2.6 model pages list the Responses API as not supported, which refers to using the
+    image model as the top-level `model`. The `image_generation` tool accepts it.
+    """
+    model = OpenAIResponsesModel(
+        'gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+    agent = Agent(
+        model=model,
+        capabilities=[
+            NativeTool(
+                ImageGenerationTool(
+                    provider_settings={'openai': {'model': 'gpt-image-2.6-flare', 'quality': 'xhigh'}},
+                    size='1024x1024',
+                    output_format='jpeg',
+                    output_compression=10,
+                )
+            )
+        ],
+        output_type=BinaryImage,
+    )
+
+    result = await agent.run('Generate an image of a red circle on a white background.')
+
+    assert request_capture.body('/v1/responses')['tools'] == snapshot(
+        [
+            {
+                'type': 'image_generation',
+                'action': 'auto',
+                'background': 'auto',
+                'moderation': 'auto',
+                'output_compression': 10,
+                'output_format': 'jpeg',
+                'partial_images': 0,
+                'quality': 'xhigh',
+                'size': '1024x1024',
+                'model': 'gpt-image-2.6-flare',
+            }
+        ]
+    )
+    assert result.output == snapshot(IsInstance(BinaryImage))
+    assert result.output.media_type == 'image/jpeg'
+    return_part = next(
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, NativeToolReturnPart)
+    )
+    assert return_part.content == snapshot(
+        {
+            'status': 'completed',
+            'background': 'opaque',
+            'quality': 'xhigh',
+            'size': '1024x1024',
+            'revised_prompt': 'A simple minimalist image: a solid red circle centered on a plain white background. Clean edges, no shadows, no text.',
+        }
+    )
+
+
 async def test_openai_responses_image_generation_jpeg(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
@@ -12346,7 +12577,9 @@ async def test_openai_responses_image_generation_store_false(
     agent = Agent(
         model,
         output_type=BinaryImage,
-        capabilities=[NativeTool(ImageGenerationTool(quality='low', size='1024x1024'))],
+        capabilities=[
+            NativeTool(ImageGenerationTool(provider_settings={'openai': {'quality': 'low'}}, size='1024x1024'))
+        ],
         model_settings=OpenAIResponsesModelSettings(openai_store=False),
     )
 
@@ -17275,7 +17508,8 @@ async def test_openai_responses_compact_with_auto_previous_response_id(allow_mod
 
     # Build up history with provider_response_id
     message_history: list[Any] = []
-    result = await agent.run('Hello!', message_history=message_history)
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    result = await agent.run('Hello!', message_history=message_history, model_settings=settings)
     messages = result.all_messages()
 
     # Compact with auto previous_response_id
@@ -20661,3 +20895,13 @@ async def test_responses_stream_provider_details_hook_builtin_wins_collisions(
         'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
         **({'background': True} if resumed else {}),
     }
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+@pytest.mark.parametrize('tier', ['fast', 'ultrafast'])
+async def test_openai_service_tier_fast_and_ultrafast(
+    allow_model_requests: None, openai_api_key: str, tier: Literal['fast', 'ultrafast']
+) -> None:
+    model = OpenAIResponsesModel('gpt-6.1-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    result = await Agent(model).run('Say hi.', model_settings=OpenAIResponsesModelSettings(openai_service_tier=tier))
+    assert (result.response.provider_details or {}).get('service_tier') == tier

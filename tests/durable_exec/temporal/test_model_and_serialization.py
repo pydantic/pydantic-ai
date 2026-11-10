@@ -848,6 +848,45 @@ async def test_logfire_plugin_does_not_emit_spans_during_replay(
     assert len(capfire.exporter.exported_spans_as_dict()) > span_count
 
 
+def _recorded_metric_names(capfire: CaptureLogfire) -> set[str]:
+    """Names of the metrics recorded since the last collection."""
+    data = capfire.metrics_reader.get_metrics_data()
+    if data is None:
+        return set()
+    return {
+        metric.name
+        for resource_metrics in data.resource_metrics
+        for scope_metrics in resource_metrics.scope_metrics
+        for metric in scope_metrics.metrics
+    }
+
+
+async def test_replay_records_no_model_request_metrics(client_with_logfire: Client, capfire: CaptureLogfire) -> None:
+    """Replaying history re-runs workflow code, but the model requests it replays were metered when they ran."""
+    workflow_id = f'{ReplaySafeLogfireWorkflow.__name__}-metrics-{uuid.uuid4()}'
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[ReplaySafeLogfireWorkflow],
+        plugins=[AgentPlugin(replay_safe_logfire_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        await client_with_logfire.execute_workflow(
+            ReplaySafeLogfireWorkflow.run, args=['hello'], id=workflow_id, task_queue=TASK_QUEUE
+        )
+        history = await client_with_logfire.get_workflow_handle(workflow_id).fetch_history()
+    assert 'gen_ai.client.token.usage' in _recorded_metric_names(capfire)
+
+    await Replayer(
+        workflows=[ReplaySafeLogfireWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+        plugins=[LogfirePlugin()],
+    ).replay_workflow(history)
+
+    assert 'gen_ai.client.token.usage' not in _recorded_metric_names(capfire)
+
+
 image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
 
 
@@ -3802,6 +3841,9 @@ def test_a_category_subclass_defined_elsewhere_keeps_its_own_type():
 
 
 def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):
+    """An error the workflow can't rebuild, without a `retry_after` or a listing as non-retryable, fails the activity
+    as it always did."""
+
     class ApplicationModelError(ModelAPIError):
         """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
 
@@ -3839,6 +3881,49 @@ def test_a_non_retryable_model_error_that_cannot_be_rebuilt_is_still_marked_non_
     with pytest.raises(ActivityError):
         with rebuilt_model_errors():
             raise _activity_error(raised.value)
+
+
+@pytest.mark.parametrize(
+    ('retry_after', 'next_retry_delay'),
+    [
+        pytest.param(7.0, timedelta(seconds=7), id='retry-after'),
+        # Outside an activity, the default retry policy's `maximum_interval` of 100 seconds caps the delay.
+        pytest.param(3600.0, timedelta(seconds=100), id='capped'),
+    ],
+)
+def test_a_model_error_that_cannot_be_rebuilt_still_carries_its_retry_delay(
+    retry_after: float, next_retry_delay: timedelta
+):
+    """An error the workflow can't rebuild, like one defined outside Pydantic AI, is raised as an `ApplicationError`
+    when it has a `retry_after`, so Temporal still waits that long, under its own class name as Temporal would have
+    reported it."""
+
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom', retry_after=retry_after)
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    assert (raised.value.type, raised.value.non_retryable, raised.value.details, raised.value.next_retry_delay) == (
+        'ApplicationModelError',
+        False,
+        (),
+        next_retry_delay,
+    )
+    assert raised.value.__cause__ is error
+    with pytest.raises(ActivityError):
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+
+
+def test_a_non_retryable_model_error_gets_no_retry_delay():
+    """A model error listed as non-retryable isn't attempted again, so its `retry_after` sets no `next_retry_delay`."""
+    error = ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='gpt-test', retry_after=7.0)
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors((ModelRateLimitError,)):
+            raise error
+    assert (raised.value.non_retryable, raised.value.next_retry_delay) == (True, None)
 
 
 def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(

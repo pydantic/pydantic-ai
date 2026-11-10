@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import re
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -18,19 +18,23 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
+    AgentStreamEvent,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
     RetryInfo,
+    RunContext,
     StructuredDict,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UploadedFile,
     UseEnumMemberDocstrings,
@@ -2252,6 +2256,157 @@ async def test_stream_tool_call(allow_model_requests: None):
             ),
         ]
     )
+
+
+@dataclass(frozen=True)
+class StreamedToolCallsCase:
+    id: str
+    chunks: list[list[tuple[int, str, str, str]]]
+    """Tool-call deltas per chunk, each as `(index, id, name, arguments)`."""
+    expected: list[tuple[str, str, str]]
+    """The response's tool calls, each as `(tool_name, args, tool_call_id)`."""
+
+
+STREAMED_TOOL_CALLS_CASES = [
+    StreamedToolCallsCase(
+        id='fragments_name_first',
+        chunks=[[(0, 'c1', 'search', '')], [(0, 'null', '', '{"query": "ver')], [(0, 'null', '', 'rous"}')]],
+        expected=[('search', '{"query": "verrous"}', 'c1')],
+    ),
+    StreamedToolCallsCase(
+        id='fragments_name_later',
+        chunks=[[(0, 'null', '', '{"query":')], [(0, 'c1', 'search', ' "verrous"}')]],
+        expected=[('search', '{"query": "verrous"}', 'c1')],
+    ),
+    StreamedToolCallsCase(
+        id='fragments_without_id',
+        chunks=[[(0, 'null', 'search', '{"query":')], [(0, 'null', '', ' "verrous"}')]],
+        expected=[('search', '{"query": "verrous"}', IsStr(regex=r'pyd_ai_.+'))],
+    ),
+    StreamedToolCallsCase(
+        id='interleaved_fragments',
+        chunks=[
+            [(0, 'c1', 'search', '{"query": '), (1, 'c2', 'lookup', '{"city": ')],
+            [(0, 'null', '', '"verrous"}'), (1, 'null', '', '"Paris"}')],
+        ],
+        expected=[('search', '{"query": "verrous"}', 'c1'), ('lookup', '{"city": "Paris"}', 'c2')],
+    ),
+    StreamedToolCallsCase(
+        id='whole_calls_in_separate_chunks',
+        chunks=[[(0, 'c1', 'search', '{"query": "verrous"}')], [(1, 'c2', 'lookup', '{"city": "Paris"}')]],
+        expected=[('search', '{"query": "verrous"}', 'c1'), ('lookup', '{"city": "Paris"}', 'c2')],
+    ),
+    StreamedToolCallsCase(
+        id='whole_call_without_arguments',
+        chunks=[[(0, 'c1', 'ping', '')]],
+        expected=[('ping', '', 'c1')],
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in STREAMED_TOOL_CALLS_CASES])
+async def test_stream_tool_call_deltas(allow_model_requests: None, case: StreamedToolCallsCase):
+    """Streamed tool-call deltas accumulate per wire `index`, in shapes `test_mistral_stream_parallel_tool_calls` doesn't record.
+
+    A mock stream, since no live model was seen sending these shapes. Continuation deltas carry an empty name and the
+    SDK-default `'null'` id, which must not replace the call's own.
+    """
+    # Built inside the test so importing this module does not require the mistral package.
+    tool_call_chunks = [
+        func_chunk(
+            [
+                MistralToolCall(index=index, id=call_id, function=MistralFunctionCall(name=name, arguments=arguments))
+                for index, call_id, name, arguments in deltas
+            ],
+            finish_reason='tool_calls' if n == len(case.chunks) - 1 else None,
+        )
+        for n, deltas in enumerate(case.chunks)
+    ]
+    mock_client = MockMistralAI.create_stream_mock(
+        [tool_call_chunks, [text_chunk('final response', finish_reason='stop')]]
+    )
+    agent = Agent(MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client)))
+
+    @agent.tool_plain
+    def search(query: str) -> str:
+        return 'found'
+
+    @agent.tool_plain
+    def lookup(city: str) -> str:
+        return 'found'
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    async with agent.run_stream('User prompt value') as result:
+        await result.get_output()
+
+    response = result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    assert [(call.tool_name, call.args, call.tool_call_id) for call in response.tool_calls] == case.expected
+
+
+PARALLEL_TOOL_CALLS_EXPECTATIONS: dict[str, tuple[list[tuple[str, dict[str, Any], str]], bool]] = {
+    'mistral-small-latest': snapshot(
+        (
+            [
+                ('get_weather', {'city': 'Paris'}, 'Fi65w8Plu'),
+                ('get_weather', {'city': 'London'}, 'NpJQUR1bV'),
+                ('get_time', {'tz': 'UTC'}, 'lPaisIfGU'),
+            ],
+            False,
+        )
+    ),
+    'zai-glm-5-3': snapshot(
+        (
+            [
+                ('get_weather', {'city': 'Paris'}, 'chatcmpl-tool-a3e7e88e93ca0b08'),
+                ('get_weather', {'city': 'London'}, 'chatcmpl-tool-9c49fd171e27c24f'),
+                ('get_time', {'tz': 'UTC'}, 'chatcmpl-tool-9a5a1060e45bc189'),
+            ],
+            True,
+        )
+    ),
+}
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize('model_name', ['mistral-small-latest', 'zai-glm-5-3'])
+async def test_mistral_stream_parallel_tool_calls(allow_model_requests: None, mistral_api_key: str, model_name: str):
+    """Parallel tool calls survive streaming, whether a model sends each call whole or in fragments.
+
+    `mistral-small-latest` sends every call whole, all in one chunk, each under its own `index`. `zai-glm-5-3` splits
+    each call across chunks under its `index`: continuation fragments carry an empty name and the SDK-default `'null'`
+    id, and one chunk ends one call and starts the next. The expectation pins whether the stream was fragmented.
+    """
+    agent = Agent(MistralModel(model_name, provider=MistralProvider(api_key=mistral_api_key)))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'Sunny in {city}.'
+
+    @agent.tool_plain
+    def get_time(tz: str) -> str:
+        return f'12:00 in {tz}.'
+
+    tool_call_deltas = 0
+
+    async def count_tool_call_deltas(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        nonlocal tool_call_deltas
+        async for event in stream:
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, ToolCallPartDelta):
+                tool_call_deltas += 1
+
+    result = await agent.run(
+        'Call get_weather for Paris, get_weather for London, and get_time for UTC. Call all three tools at once.',
+        event_stream_handler=count_tool_call_deltas,
+    )
+
+    response = result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    tool_calls = [(call.tool_name, call.args_as_dict(), call.tool_call_id) for call in response.tool_calls]
+    assert (tool_calls, tool_call_deltas > 0) == PARALLEL_TOOL_CALLS_EXPECTATIONS[model_name]
 
 
 async def test_stream_tool_call_with_retry(allow_model_requests: None):

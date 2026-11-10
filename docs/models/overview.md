@@ -299,11 +299,12 @@ these categories, whichever provider it came from:
 | [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] | The provider couldn't find the model, deployment or other resource the request names, e.g. an HTTP 404. A subclass of `ModelRequestRejectedError`. |
 
 A provider's own signal decides between categories that share a status code: a 429 is a rate limit unless the
-provider says the quota is exhausted, and a 503 is only unavailable unless the provider says it's overloaded. A 400 is
-a `ModelRequestRejectedError`, or one of its subclasses when the provider says why: a `ModelContextWindowExceededError`,
-a `ModelNotFoundError` (OpenAI's Responses API sends `model_not_found` as a 400), or a `ModelAuthenticationError` (the
-Gemini API sends `API_KEY_INVALID` as a 400). Exhausted credits are a `ModelQuotaExceededError` instead, even when the
-provider sends them as a 400, as Anthropic does.
+provider says the quota is exhausted (the Gemini API names the exceeded quotas in its `RESOURCE_EXHAUSTED` error, so
+its daily quota is a `ModelQuotaExceededError`), and a 503 is only unavailable unless the provider says it's
+overloaded. A 400 is a `ModelRequestRejectedError`, or one of its subclasses when the provider says why: a
+`ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAuthenticationError` (the Gemini API sends
+`API_KEY_INVALID` as a 400). Exhausted credits or disabled billing are a `ModelQuotaExceededError` instead, even when
+the provider sends them as a 400, as Anthropic and the Gemini API do.
 
 A request can also succeed while the response the provider sent in reply can't be used. The chat model adapters
 raise that as a model error too, before the agent sees the response, so it's handled like a failed request:
@@ -763,10 +764,12 @@ print(result.output)
     the token limit mid-thinking), and an empty or thinking-only response with a `'content_filter'` finish
     reason raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
     responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
-    regardless of finish reason — a tool call truncated mid-arguments is re-prompted like any other
+    regardless of finish reason: a tool call truncated mid-arguments is re-prompted like any other
     invalid-arguments failure, and only once its retry budget is exhausted does it surface as
     [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
-    `UnexpectedModelBehavior`).
+    `UnexpectedModelBehavior`). The exception is [`NativeOutput`][pydantic_ai.output.NativeOutput] or
+    [`PromptedOutput`][pydantic_ai.output.PromptedOutput] text cut off at `'length'` into JSON that doesn't parse,
+    which raises `UnexpectedModelBehavior` right away.
 
     All of these are raised from the agent loop, after `model.request()` has already returned
     successfully, so an exception-based `fallback_on` can't catch them: not the default
