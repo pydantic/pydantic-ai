@@ -43,7 +43,14 @@ from pydantic_ai.toolsets.function import FunctionToolsetTool
 from ._agent import DBOSParallelExecutionMode
 from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig, SnapshotStepReservation
 from ._operation_names import DBOSOperationNamer
-from ._utils import ChildWorkflowConfig, StepConfig, guard_enqueue_in_workflow, in_workflow_code, using_durable_sleep
+from ._utils import (
+    ChildWorkflowConfig,
+    StepConfig,
+    guard_enqueue_in_workflow,
+    in_workflow_code,
+    record_workflow_run,
+    using_durable_sleep,
+)
 
 if TYPE_CHECKING:
     from dbos import StepReservation
@@ -496,6 +503,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         mode = self._parallel_execution_mode
         if self.in_durable_context and ctx.workspace.attached and not self._child_workflow_toolsets:
             mode = 'sequential'
+        if self.in_durable_context:
+            record_workflow_run(ctx.run_id)
         key = (DBOS.workflow_id, ctx.run_id)
         reserve_events = (
             self.in_durable_context and self._event_stream_handler is not None and not self._in_legacy_workflow.get()

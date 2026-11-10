@@ -6262,11 +6262,31 @@ def record_ids(ctx: RunContext[object]) -> str:
     return 'ok'
 
 
+stable_ids_second_finished: dict[str | None, asyncio.Event] = {}
+
+
+@stable_ids_agent.instructions
+async def _third_waits_for_second(ctx: RunContext[object]) -> None:
+    # Recovery would fail if the concurrent runs started their steps in another order (see
+    # `test_dbos_recovery_rejects_another_concurrent_runs_steps`), so the third run starts its
+    # steps once the second has finished, in every execution.
+    if ctx.prompt == 'Third.':
+        await stable_ids_second_finished[DBOS.workflow_id].wait()
+
+
 @DBOS.workflow()
 async def stable_ids_workflow() -> list[tuple[str, str]]:
     first = await stable_ids_agent.run('First.')
+    second_finished = stable_ids_second_finished[DBOS.workflow_id] = asyncio.Event()
+
+    async def second() -> AgentRunResult[str]:
+        try:
+            return await stable_ids_agent.run('Second.')
+        finally:
+            second_finished.set()
+
     # Concurrent runs resolve their IDs before either starts a step.
-    results = [first, *await asyncio.gather(stable_ids_agent.run('Second.'), stable_ids_agent.run('Third.'))]
+    results = [first, *await asyncio.gather(second(), stable_ids_agent.run('Third.'))]
     if len(stable_ids_seen) == 3:
         raise _ProcessCrash
     return [(result.run_id, result.conversation_id) for result in results]
@@ -6288,6 +6308,96 @@ async def test_dbos_default_ids_survive_recovery(dbos: DBOS) -> None:
     handle = await DBOS.resume_workflow_async(workflow_id)
     assert sorted(tuple(ids) for ids in await handle.get_result()) == seen
     assert sorted(stable_ids_seen[3:]) == seen
+
+
+@dataclass
+class _Turns:
+    """Orders two concurrent runs' model requests: A's first, then B's; B's first on recovery."""
+
+    recovering: bool = False
+    a_requested: asyncio.Event = field(default_factory=asyncio.Event)
+    b_finished: asyncio.Event = field(default_factory=asyncio.Event)
+    requests: list[str] = field(default_factory=list[str])
+
+
+swap_turns = _Turns()
+
+
+def _answer_prompt(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    label = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
+    assert isinstance(label, str)
+    swap_turns.requests.append(label)
+    swap_turns.a_requested.set()
+    return ModelResponse(parts=[TextPart(f'answer for {label}')])
+
+
+swap_agent = Agent(FunctionModel(_answer_prompt), name='swap_agent', capabilities=[DBOSDurability()])
+
+
+@swap_agent.instructions
+async def _take_turns(ctx: RunContext[object]) -> str:
+    # Instructions are built in workflow code before each model-request step starts, so waiting here sets the
+    # order the two runs' steps start in.
+    if ctx.run_id == 'run-b' and not swap_turns.recovering:
+        await swap_turns.a_requested.wait()
+    if ctx.run_id == 'run-a' and swap_turns.recovering:
+        await swap_turns.b_finished.wait()
+    return 'Answer.'
+
+
+@DBOS.workflow()
+async def swap_workflow() -> list[str]:
+    async def run_b() -> AgentRunResult[str]:
+        try:
+            return await swap_agent.run('B', run_id='run-b')
+        finally:
+            if swap_turns.recovering:
+                swap_turns.b_finished.set()
+
+    results = await asyncio.gather(swap_agent.run('A', run_id='run-a'), run_b(), return_exceptions=True)
+    if not swap_turns.recovering:
+        raise _ProcessCrash
+    return [
+        result.output if isinstance(result, AgentRunResult) else f'{type(result).__name__}: {result}'
+        for result in results
+    ]
+
+
+@pytest.mark.parametrize('recorded_with_run_ids', [True, False])
+async def test_dbos_recovery_rejects_another_concurrent_runs_steps(
+    dbos: DBOS, monkeypatch: pytest.MonkeyPatch, recorded_with_run_ids: bool
+) -> None:
+    """A recovered step recorded by another concurrent run of the same agent fails the run instead of crossing results.
+
+    DBOS replays steps by position, checking only their names, so when the runs start their steps in a different
+    order on recovery, each run's step returns the response the other recorded. A step recorded before steps
+    carried their run's `run_id` has nothing to compare, so it recovers as it did before, with the results crossed.
+    """
+    global swap_turns
+    swap_turns = _Turns()
+    workflow_id = f'swap-{uuid.uuid4()}'
+    with monkeypatch.context() as patched:
+        if not recorded_with_run_ids:
+            # Stands in for a step recorded before steps were stamped: the step no longer recognizes the response.
+            patched.setattr('pydantic_ai.durable_exec.dbos._operation_backend.ModelResponse', type(None))
+        with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+            await swap_workflow()
+    assert swap_turns.requests == ['A', 'B']
+
+    swap_turns.recovering = True
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    outcomes = [outcome.replace(workflow_id, '<workflow>') for outcome in await handle.get_result()]
+    if recorded_with_run_ids:
+        assert outcomes == snapshot(
+            [
+                "UserError: Recovering DBOS workflow '<workflow>' replayed a model response that agent run 'run-b' recorded into agent run 'run-a'. DBOS replays steps by position, so concurrent runs of one agent in one workflow can swap their recorded steps on recovery. Give each concurrent run a workflow of its own: a `@DBOS.workflow` function that runs the agent once, or a tool with `child_workflow` metadata that runs a nested agent.",
+                "UserError: Recovering DBOS workflow '<workflow>' replayed a model response that agent run 'run-a' recorded into agent run 'run-b'. DBOS replays steps by position, so concurrent runs of one agent in one workflow can swap their recorded steps on recovery. Give each concurrent run a workflow of its own: a `@DBOS.workflow` function that runs the agent once, or a tool with `child_workflow` metadata that runs a nested agent.",
+            ]
+        )
+    else:
+        assert outcomes == ['answer for B', 'answer for A']
+    # Every step replayed: no model request ran again.
+    assert swap_turns.requests == ['A', 'B']
 
 
 deadline_agent = Agent(TestModel(), name='deadline_agent', capabilities=[DBOSDurability()])

@@ -36,7 +36,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 from ._operation_names import DBOSOperationNamer
-from ._utils import StepConfig
+from ._utils import StepConfig, reject_other_runs_response
 
 if TYPE_CHECKING:
     from dbos import StepOptions, StepReservation
@@ -200,7 +200,12 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                         model_request_parameters=model_request_parameters,
                         run_context=run_context,
                     )
-                    return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
+                    response = await operation.handler(cast(ParamsT, params))
+                    if isinstance(response, ModelResponse):
+                        # The run fills in `run_id` only after the step returns, so DBOS would record none to
+                        # check on recovery.
+                        response.run_id = response.run_id or run_context.run_id
+                    return operation.result_codec.dump(response)
 
                 step = model_step
 
@@ -213,6 +218,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                         model_params.model_request_parameters,
                         model_params.run_context,
                     )
+                    reject_other_runs_response(payload, model_params.run_context)
                     return operation.result_codec.load(payload)
 
                 dispatch: Callable[[Callable[..., Any], ParamsT], Any] = dispatch_model

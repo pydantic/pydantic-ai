@@ -293,7 +293,9 @@ Child workflows are only supported for async tools in a [`FunctionToolset`][pyda
 
 ### Concurrent Agent Runs
 
-Every run of an agent records its model requests and tool calls as steps with the same names, and DBOS replays a recovered workflow's steps in the order they start, checking only their names. When one workflow runs the same agent more than once at the same time, like `asyncio.gather(agent.run(...), agent.run(...))` or parallel tool calls that each run the same nested agent, the runs can start their steps in a different order during recovery than they originally did. Recovery then hands each run the results the other one recorded, and the workflow carries on with them.
+Every run of an agent records its model requests and tool calls as steps with the same names, and DBOS replays a recovered workflow's steps in the order they start, checking only their names. When one workflow runs the same agent more than once at the same time, like `asyncio.gather(agent.run(...), agent.run(...))` or parallel tool calls that each run the same nested agent, the runs can start their steps in a different order during recovery than they originally did, and each run's step then returns a response the other one recorded. Each model request step records its run's `run_id`, so the run raises a `UserError` instead of continuing with another run's response. Steps recorded by an earlier Pydantic AI version carry no `run_id`, so a workflow recorded before you upgrade carries on with the other run's responses.
+
+Runs of different agents in one workflow need a workflow per run too: their steps have different names, so a reordered recovery fails with DBOS's `DBOSUnexpectedStepError` instead of continuing silently.
 
 Give each concurrent run a workflow of its own, so its steps are recorded and replayed in a sequence of their own: call a `@DBOS.workflow` function that runs the agent once, or run a tool that runs a nested agent in a [child workflow](#child-workflows).
 
