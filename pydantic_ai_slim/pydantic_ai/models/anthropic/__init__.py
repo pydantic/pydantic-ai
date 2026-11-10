@@ -1842,7 +1842,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_settings,
             model_request_parameters,
             compaction=compaction,
-            cache_breakpoints_on_send=thread_record is not None and _may_use_thread(model_settings, compaction),
+            record_cache_breakpoints_on_send=(
+                thread_record is not None and _may_use_thread(model_settings, compaction)
+            ),
         )
         anthropic_profile = self.profile
         client = _with_max_retries(self.client, model_settings)
@@ -1927,7 +1929,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 model_settings,
                 model_request_parameters,
                 continues_thread=True,
-                cache_breakpoints_on_send=True,
+                record_cache_breakpoints_on_send=True,
             )
             thread = _Thread(
                 previous_message_id=previous_message_id,
@@ -2059,12 +2061,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         *,
         compaction: BetaCompactionConfigParam | None = None,
         continues_thread: bool = False,
-        cache_breakpoints_on_send: bool = False,
+        record_cache_breakpoints_on_send: bool = False,
     ) -> _PreparedMessagesCreate:
         """The `messages.create` parameters of a request.
 
-        With `cache_breakpoints_on_send`, the request's cache breakpoints are left for each attempt to record as it's
-        sent, rather than recorded here: in a message thread, a continue request leaves some of them out.
+        With `record_cache_breakpoints_on_send`, the request's cache breakpoints are left for each attempt to record
+        as it's sent, rather than recorded here: in a message thread, a continue request leaves some of them out.
         """
         model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
@@ -2103,9 +2105,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             anthropic_messages,
             tools,
             automatic_caching=auto_cache_control is not None,
-            record_breakpoints=current_model_request_span() is not None,
+            return_breakpoints=current_model_request_span() is not None,
         )
-        if not cache_breakpoints_on_send:
+        if not record_cache_breakpoints_on_send:
             _record_cache_breakpoints(cache_breakpoints)
         raise_earlier_breakpoint_ttls(system_prompt, anthropic_messages, tools, auto_cache_control)
         output_config = self._build_output_config(effort_request_parameters, model_settings)
@@ -2145,7 +2147,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             mcp_servers=mcp_servers,
             output_config=output_config,
             auto_cache_control=auto_cache_control,
-            cache_breakpoints=cache_breakpoints if cache_breakpoints_on_send else None,
+            cache_breakpoints=cache_breakpoints if record_cache_breakpoints_on_send else None,
             max_tokens=model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)),
             stop_sequences=stop_sequences,
             effective_thinking=effective_thinking,
@@ -3843,7 +3845,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tools: list[BetaToolUnionParam],
         *,
         automatic_caching: bool = False,
-        record_breakpoints: bool = False,
+        return_breakpoints: bool = False,
     ) -> tuple[list[str], list[str]] | None:
         """Limit the number of cache points in the request to Anthropic's maximum.
 
@@ -3853,7 +3855,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         is enabled, the server-applied breakpoint uses 1 of the available slots, reducing the budget for
         explicit breakpoints by one.
 
-        With `record_breakpoints`, returns the breakpoints the request asked for and the ones it kept, if it asked
+        With `return_breakpoints`, returns the breakpoints the request asked for and the ones it kept, if it asked
         for any.
 
         Raises:
@@ -3864,7 +3866,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             AnthropicModel._cache_breakpoints(
                 system_prompt, anthropic_messages, tools, automatic_caching=automatic_caching
             )
-            if record_breakpoints
+            if return_breakpoints
             else None
         )
         # Anthropic enforces a maximum of 4 cache points per request.
