@@ -976,11 +976,14 @@ def _is_harness_marker_part(part: ModelRequestPart) -> bool:
     return is_pinned(part) or is_receipt_part(part) or is_harness_data(part)
 
 
+def is_user_part(part: ModelRequestPart) -> bool:
+    """Whether *part* is a user prompt the user wrote, not a pin, receipt or harness capability's content."""
+    return isinstance(part, UserPromptPart) and not _is_harness_marker_part(part)
+
+
 def starts_user_turn(message: ModelMessage) -> bool:
     """Whether *message* is a `ModelRequest` carrying a user prompt, not only harness bookkeeping or data."""
-    return isinstance(message, ModelRequest) and any(
-        isinstance(part, UserPromptPart) and not _is_harness_marker_part(part) for part in message.parts
-    )
+    return isinstance(message, ModelRequest) and any(is_user_part(part) for part in message.parts)
 
 
 def answers_tool_call(message: ModelMessage) -> bool:

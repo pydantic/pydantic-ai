@@ -542,7 +542,9 @@ arguments of the cleared calls. A cleared call also loses its item ID (`ToolCall
 reason a clamped part does. A `load_capability` call keeps its argument, because Pydantic AI reads from
 it which capability is loaded. Set `exclude_tools` to a set of tool names whose results are never
 cleared, or `tools` to the names whose results are the only ones cleared; setting both raises a
-`UserError`. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
+`UserError`. The `keep_pairs` window counts every tool's calls before `tools` picks which results are
+cleared, so other tools' recent calls can push an older result of a listed tool out of it; `keep_turns`
+keeps by turn instead. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
 left intact (a small token floor), because their structured content is re-parsed on later requests and
 rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. `FileSystem`'s typed
 `read_file` results (`ReadFileReturnPart`) are cleared like any other result and keep their type, unless
@@ -590,8 +592,10 @@ agent = Agent(
 )
 ```
 
-The function runs once per result, when the result is cleared, and its return value is what the
-history stores; a result that is already cleared isn't passed to it again. Keep it deterministic: a
+The function runs when a result is cleared, and its return value is what the history stores; a
+result that is already cleared isn't passed to it again. With `min_clear_tokens`, it runs before the
+reclaim is measured, so a clear that reclaims too little is dropped and the function runs for the same
+results again on a later request. Keep it deterministic: a
 history cleared again from its original messages, as on a resumed or replayed run, has to come out the
 same, or the provider's prompt cache misses from the first result that differs. A cleared result is
 recognized by a mark in its `metadata`, so with a function, a result whose `metadata` is something

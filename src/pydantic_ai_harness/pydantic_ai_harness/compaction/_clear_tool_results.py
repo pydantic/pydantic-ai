@@ -105,8 +105,10 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     placeholder: str | Callable[[ToolReturnPart], str] = '[tool result cleared]'
     """Replacement content for a cleared tool result, or a function that builds it from the result.
 
-    A function is called once, when the result is cleared, and its return value is stored as the
-    result's content; an already-cleared result is not passed to it again. It must be deterministic:
+    A function is called when the result is cleared, and its return value is stored as the result's
+    content; an already-cleared result is not passed to it again. With `min_clear_tokens`, it's called
+    before the reclaim is measured, so a clear that reclaims too little is dropped and the function
+    is called for the same results again on a later request. It must be deterministic:
     the same result has to produce the same text on every run, or a history cleared again from its
     original (a resumed or replayed run) is sent with different content and the provider's prompt
     cache misses from that point on. A result whose `metadata` is something other than `None` or a
@@ -136,6 +138,8 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     tools: Sequence[str] | None = field(default=None, kw_only=True)
     """Tool names whose results are cleared; the results of other tools are kept. `None` clears every tool's.
 
+    The `keep_pairs` window counts every tool's calls before this decides which are cleared, so other
+    tools' recent calls can push an older listed result out of it; `keep_turns` keeps by turn instead.
     Mutually exclusive with `exclude_tools`."""
 
     keep_turns: int | None = field(default=None, kw_only=True)
