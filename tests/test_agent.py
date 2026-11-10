@@ -4936,6 +4936,56 @@ def test_text_output_function_validation_error_with_finish_reason_length_is_retr
     assert agent.run_sync('Hello').output == _City(name='Paris', population=2)
 
 
+@pytest.mark.parametrize('mode', ['run', 'iter'])
+async def test_truncated_output_tool_call_raises_without_retry(mode: str):
+    """Output tool arguments the token limit cut off would be cut off again on a retry with the same limit."""
+    calls = 0
+
+    def truncated(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, '{"name": "Paris", "popu')], finish_reason='length'
+        )
+
+    agent = Agent(FunctionModel(truncated), output_type=ToolOutput(_City), retries=3)
+    settings = ModelSettings(max_tokens=10)
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments\.',
+    ):
+        if mode == 'run':
+            await agent.run('Hello', model_settings=settings)
+        else:
+            async with agent.iter('Hello', model_settings=settings) as agent_run:
+                async for _ in agent_run:
+                    pass
+    assert calls == 1
+
+
+@pytest.mark.parametrize('rejected_by', ['schema', 'output_validator'])
+def test_output_tool_args_that_parse_but_are_rejected_with_finish_reason_length_are_retried(rejected_by: str):
+    """Only arguments cut off before they're complete are blamed on the token limit: arguments that parse are retried."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_name = info.output_tools[0].name
+        if len(messages) > 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name, '{"name": "Paris", "population": 3}')])
+        first = '{"name": "Paris"}' if rejected_by == 'schema' else '{"name": "Paris", "population": 2}'
+        return ModelResponse(parts=[ToolCallPart(tool_name, first)], finish_reason='length')
+
+    agent = Agent(FunctionModel(respond), output_type=ToolOutput(_City))
+
+    @agent.output_validator
+    def check(output: _City) -> _City:
+        if output.population < 3:
+            raise ModelRetry('Population is too small.')
+        return output
+
+    assert agent.run_sync('Hello').output == _City(name='Paris', population=3)
+
+
 def test_truncated_text_output_is_returned():
     """Plain text has no shape to validate, so text the token limit cut off is the output; `finish_reason` says so."""
 
