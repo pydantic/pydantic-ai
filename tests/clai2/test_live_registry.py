@@ -12,7 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from anyio import to_thread
+from anyio import CancelScope, from_thread, to_thread
 from pydantic import TypeAdapter
 
 from pydantic_clai2.cli import cli
@@ -461,6 +461,22 @@ async def test_failed_server_start_removes_socket(private_runtime: Path, monkeyp
             pass
     assert registry.socket_path is not None and not registry.socket_path.exists()
     assert list(private_runtime.iterdir()) == []
+
+
+async def test_cancelled_start_removes_socket(private_runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    socket_path = live_registry._socket_path  # pyright: ignore[reportPrivateUsage]
+
+    def cancel_then_resolve(directory: Path, pid: int) -> tuple[Path, int | None]:
+        from_thread.run_sync(scope.cancel)
+        return socket_path(directory, pid)
+
+    registry = LiveRegistry(lambda: [], directory=private_runtime)
+    monkeypatch.setattr(live_registry, '_socket_path', cancel_then_resolve)
+    with CancelScope() as scope:
+        async with registry.serving(subscribe):
+            pass
+    assert scope.cancelled_caught
+    assert registry.socket_path is not None and not registry.socket_path.exists()
 
 
 def test_sessions_command_rejects_windows(monkeypatch: pytest.MonkeyPatch) -> None:

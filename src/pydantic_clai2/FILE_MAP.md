@@ -9,7 +9,7 @@ what exists once on the first and what each session has on the second (see "Per 
 
 | File | Holds |
 |---|---|
-| `cli/cli.py` | argument parsing, startup, `--agent`, `--update` / `update` |
+| `cli/cli.py` | argument parsing, startup, `--agent`, `--update` / `update`, `sessions` |
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `cli/self_update.py` | `/update now`, `clai2 --update`, the update menu's check (`Updates.check`), and the status-row notice: PyPI (`stable`) or the `clai2-bleeding` GitHub release (`main`: sdists built from the `main` branch by `.github/workflows/clai2-bleeding.yml` with `scripts/build_bleeding.sh`, installed with `--overrides`, no git or GitHub API; `CLAI_BLEEDING_URL` points it elsewhere), reinstalled with `uv tool install --force --compile-bytecode`; `InstallProgress` tells plugins how the install goes, and `Relaunch` carries a `WebHandoff` so the new build serves the web UI again |
 | `app.py` | `chat`, the terminal app around the session it starts (startup resume, `/reload`, `/update` restarts) and the ones the web UI opens beside it (`_opener`), and `open_stock_agent`, the stock agent for code outside the terminal |
