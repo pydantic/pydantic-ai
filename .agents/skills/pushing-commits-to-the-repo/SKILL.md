@@ -36,7 +36,7 @@ Set the light model's effort from the PR's complexity.
 
 | Size label | Needs |
 |---|---|
-| S | CI green, `PR Review Checks` passed, and a clean douwebot approval. An obviously trivial S PR does not need douwebot. |
+| S | CI green, `PR Review Checks` passed, and a clean douwebot approval. An obviously trivial S PR needs CI green and `PR Review Checks` passed only. |
 | M, L, XL | CI green, `PR Review Checks` passed, and a clean douwebot approval. |
 
 Judge an S PR trivial only for string fixes or a clearly positive one-file docs update.
@@ -520,7 +520,7 @@ if the head changes, capture the new SHA and restart the loop.
    Address every douwebot comment, including non-blocking comments, using the same evidence-based triage.
    Address every `PR Review Checks` finding the same way, `medium` findings included.
    Its findings sit inline, keyed `<!-- pr-review-checks finding=… -->`, or in its review body when GitHub rejected inline comments.
-   A finding already posted on an earlier head is not posted again, but it still counts toward the status. Find it in the earlier `PR Review Checks` reviews.
+   An inline finding that an earlier run posted is not posted again, but it still counts toward the status. Find it in the earlier `PR Review Checks` threads.
    After you refute a `critical` or `high` finding, the status still fails. Ask a maintainer to apply `pr-review-checks:accepted` to the current head.
    For each comment:
    - **Valid** → fix it, run targeted verification, commit, apply the pre-push gate and its scope/exemptions, push, and
