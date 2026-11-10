@@ -22,6 +22,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.github_copilot import GitHubCopilotCredentials
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexOAuthFlow
 from pydantic_clai2 import chat
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.auth import CodexAuth, CodexCredentials, login_command
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
@@ -452,7 +453,11 @@ async def test_shell_runs_a_chain_of_codex_accounts(tmp_path: Path, monkeypatch:
     assert store.model_settings('chain:pool') == {'service_tier': 'priority'}
 
 
-async def test_shell_chain_falls_back_with_its_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('stock', [False, True])
+async def test_shell_chain_falls_back_with_its_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stock: bool
+) -> None:
+    """A stock agent binds `ModelFallback` itself, so its delegated tasks fall back too; another agent gets it per run."""
     store = SettingsStore(tmp_path / 'config.db')
     store.save_chain(name='pool', models=['openai-codex:test', 'openai-codex@work:test'])
     inputs(monkeypatch, ['/model chain:pool', '/fast', 'hello', '/exit'])
@@ -470,7 +475,7 @@ async def test_shell_chain_falls_back_with_its_settings(tmp_path: Path, monkeypa
     monkeypatch.setattr(CodexAuth, 'model', model)
     output = io.StringIO()
     await chat(
-        Agent(TestModel()),
+        create_stock_agent(TestModel()) if stock else Agent(TestModel()),
         deps=None,
         settings=Settings(model='test', session_namer=False),
         store=store,
