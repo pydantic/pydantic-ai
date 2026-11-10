@@ -201,7 +201,7 @@ Releases not listed below have no compatibility notes.
 - Make `wrap_*` hooks enclose complete stage lifecycles ([#7053](https://github.com/pydantic/pydantic-ai/pull/7053))
 - Re-raise model errors from Temporal model activities with their original type in workflow code ([#9580](https://github.com/pydantic/pydantic-ai/pull/9580))
 - End the run when a `BackgroundTools` tool raises an unexpected exception, as a sequential tool does ([#9434](https://github.com/pydantic/pydantic-ai/pull/9434))
-- Drop the [`SubAgents`][pydantic_ai_harness.subagents.SubAgents] `agent_folders` default-change warning: since v2.52.0 (#9023) the `agents` folder is not loaded by default, so pass `agent_folders='agents'` to keep loading it ([#9424](https://github.com/pydantic/pydantic-ai/pull/9424))
+- Drop the [`SubAgents`][pydantic_ai_harness.subagents.SubAgents] `agent_folders` default-change warning: since v2.52.0 ([#9023](https://github.com/pydantic/pydantic-ai/pull/9023)) the `agents` folder is not loaded by default, so pass `agent_folders='agents'` to keep loading it ([#9424](https://github.com/pydantic/pydantic-ai/pull/9424))
 
 ### [v2.53.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.53.0)
 
