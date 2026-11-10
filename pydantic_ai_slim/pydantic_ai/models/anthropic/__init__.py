@@ -1,15 +1,13 @@
 from __future__ import annotations as _annotations
 
 import base64
-import hashlib
-import json
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property, partial
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, assert_never, cast, overload
 
 from typing_extensions import TypedDict
 
@@ -20,7 +18,7 @@ from ..._instrumentation import current_model_request_span
 from ..._run_context import RunContext
 from ..._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
 from ..._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
-from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
+from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict, is_str_mapping
 from ...capabilities.abstract import AbstractCapability
 from ...exceptions import UserError
 from ...messages import (
@@ -112,7 +110,7 @@ from .. import (
 )
 from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
-from .._history_digest import Hasher, continuation_digest, history_hasher
+from .._history_digest import history_hasher
 from .._prompt_cache import (
     excess_cache_points,
     instruction_cache_boundaries,
@@ -352,6 +350,16 @@ try:
         mark_history_to_drop_stale_thinking_blocks_for_count_tokens,
         thinking_with_stale_block_history,
         warn_stale_thinking_block_recovery,
+    )
+    from ._threads import (
+        MESSAGE_THREADS_BETA,
+        Thread,
+        ThreadRecord,
+        continue_cache_breakpoints,
+        may_use_thread,
+        thread_continuation,
+        thread_fingerprint,
+        with_thread,
     )
 except ImportError as _import_error:
     raise ImportError(
@@ -849,7 +857,7 @@ def _build_extra_body(
     extra_body = model_settings.get('extra_body')
     if not fields:
         return extra_body
-    if not _is_str_mapping(extra_body):
+    if not is_str_mapping(extra_body):
         return fields
     merged = {**fields, **extra_body}
     if thinking_override is not None:
@@ -867,19 +875,12 @@ def _extra_body_thinking(model_settings: AnthropicModelSettings) -> dict[str, ob
     retried over.
     """
     extra_body = model_settings.get('extra_body')
-    if not _is_str_mapping(extra_body):
+    if not is_str_mapping(extra_body):
         return None
     thinking = extra_body.get('thinking')
-    if not _is_str_mapping(thinking):
+    if not is_str_mapping(thinking):
         return None
     return dict(thinking)
-
-
-def _is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
-    """Whether a value is a mapping whose keys are all strings."""
-    if not isinstance(value, Mapping):
-        return False
-    return all(isinstance(key, str) for key in value)  # pyright: ignore[reportUnknownVariableType]
 
 
 def _effective_thinking(
@@ -966,81 +967,6 @@ class _PreparedMessagesCreate:
     initial_effective_thinking: dict[str, object] | Omit
 
 
-MESSAGE_THREADS_BETA = 'message-threads-2026-08-12'
-
-# The fields a thread keeps from its create request (`system`, `tools`) or requires unchanged on every request.
-# `fallbacks` is fixed for a thread too; add it here once pydantic-ai sends it.
-_THREAD_FIXED_PARAMS = (
-    'system',
-    'tools',
-    'model',
-    'tool_choice',
-    'thinking',
-    'mcp_servers',
-    'context_management',
-    'output_config',
-    'cache_control',
-)
-
-
-def _thread_fingerprint(params: _MessageCreateParams, betas: set[str]) -> str:
-    """A digest of the fields a request must share with the thread's create request to continue it.
-
-    MCP authorization tokens may change between requests of a thread, so they're left out.
-    """
-    fixed: dict[str, object] = {name: params[name] for name in _THREAD_FIXED_PARAMS}
-    fixed['mcp_servers'] = [
-        {key: value for key, value in server.items() if key != 'authorization_token'}
-        for server in params['mcp_servers'] or ()
-    ]
-    if _is_str_mapping(extra_body := params['extra_body']) and 'thinking' in extra_body:
-        fixed['thinking'] = extra_body['thinking']
-    container = params['container']
-    fixed['skills'] = container.get('skills') if _is_str_mapping(container) else None
-    fixed['betas'] = sorted(betas)
-    serialized = json.dumps(fixed, sort_keys=True, default=lambda _omit: None)
-    return hashlib.sha256(serialized.encode()).hexdigest()
-
-
-@dataclass(kw_only=True)
-class _Thread:
-    """The `thread` of one request: a create request, or a continue request with only the new messages."""
-
-    previous_message_id: str | None = None
-    messages: list[BetaMessageParam] | None = None
-    cache_breakpoints: tuple[list[str], list[str]] | None = None
-    """The cache breakpoints of the request, which for a continue request are only those of the new messages."""
-
-    def apply(self, params: _MessageCreateParams) -> _MessageCreateParams:
-        extra_body = params['extra_body']
-        thread: dict[str, str] = {'type': 'create'}
-        params = {**params}
-        if self.previous_message_id is not None and self.messages is not None:
-            thread = {'type': 'continue', 'previous_message_id': self.previous_message_id}
-            # The thread keeps `system` and `tools`; sending either, even as `null`, is a 400.
-            params.update(messages=self.messages, system=OMIT, tools=OMIT)
-        params['extra_body'] = {**(extra_body if _is_str_mapping(extra_body) else {}), 'thread': thread}
-        return params
-
-
-def _continue_cache_breakpoints(
-    breakpoints: tuple[list[str], list[str]] | None,
-) -> tuple[list[str], list[str]] | None:
-    """The cache breakpoints of a continue request, from those of its new messages prepared on their own.
-
-    A continue request leaves out `system` and `tools`, so their breakpoints aren't in it.
-    """
-    requested, applied = (
-        [path for path in paths if not path.startswith(('system[', 'tools['))] for paths in breakpoints or ([], [])
-    )
-    return (requested, applied) if requested else None
-
-
-def _may_use_thread(model_settings: AnthropicModelSettings, compaction: BetaCompactionConfigParam | None) -> bool:
-    """Whether `anthropic_thread` applies to a request. A compaction request samples no reply, so it never uses one."""
-    return bool(model_settings.get('anthropic_thread')) and compaction is None
-
-
 def _record_cache_breakpoints(breakpoints: tuple[list[str], list[str]] | None) -> None:
     """Record a request's requested and applied cache breakpoints on its model-request span, if it has any."""
     span = current_model_request_span()
@@ -1048,75 +974,6 @@ def _record_cache_breakpoints(breakpoints: tuple[list[str], list[str]] | None) -
         requested, applied = breakpoints
         span.set_attribute('pydantic_ai.cache.requested_breakpoints', requested)
         span.set_attribute('pydantic_ai.cache.applied_breakpoints', applied)
-
-
-def _with_thread(
-    params: _MessageCreateParams, betas: set[str], thread: _Thread | None
-) -> tuple[_MessageCreateParams, set[str]]:
-    """`params` and `betas` for a request sent in `thread`, or unchanged when it's sent without one."""
-    if thread is None:
-        return params, betas
-    return thread.apply(params), betas | {MESSAGE_THREADS_BETA}
-
-
-@dataclass
-class _ThreadRecord:
-    """Set by `_messages_create` when its request was sent in a thread: the thread's fingerprint and the history.
-
-    The response is stamped with both: the fingerprint in its `provider_details`, and the digest of the history
-    with the response's own parts as its `history_digest`.
-    """
-
-    fingerprint: str | None = None
-    history: Hasher | None = None
-
-    def stamp(self, response: ModelResponse) -> ModelResponse:
-        """`response` with its thread recorded, if its request was sent in one."""
-        if self.fingerprint is None or self.history is None:
-            return response
-        details = {**(response.provider_details or {}), _THREAD_FINGERPRINT_KEY: self.fingerprint}
-        return replace(
-            response, provider_details=details, history_digest=continuation_digest(self.history, response.parts)
-        )
-
-
-_THREAD_FINGERPRINT_KEY = 'thread_fingerprint'
-
-
-def _thread_continuation(
-    model: AnthropicModel, messages: list[ModelMessage], fingerprint: str, history_digest_key: bytes | None
-) -> tuple[str, list[ModelMessage]] | None:
-    """The response ID to continue a thread from, and the messages after it, if the latest response allows it.
-
-    Only the most recent response counts, as each response ID can be continued once: a later response from
-    another model (say, through `FallbackModel`) wasn't stored in the thread. A refusal isn't continued, and
-    neither is a paused turn, which pydantic-ai resumes by sending it back.
-
-    The thread holds the response and the history before it as they were sent, so if a history processor or the
-    application has changed either since (trimmed, redacted or rewritten them), the digest no longer matches and a
-    new thread is started with the history as it is now. A response with no digest isn't continued: unlike
-    `OpenAIResponsesModel`, there are no responses from before digests were recorded to stay compatible with.
-    """
-    for index in range(len(messages) - 1, -1, -1):
-        response = messages[index]
-        if not isinstance(response, ModelResponse):
-            continue
-        details = response.provider_details or {}
-        new_messages = messages[index + 1 :]
-        if (
-            model.accepts_server_state(response)
-            and response.provider_response_id
-            and details.get(_THREAD_FINGERPRINT_KEY) == fingerprint
-            and response.history_digest is not None
-            and response.history_digest
-            == continuation_digest(history_hasher(messages[:index], history_digest_key), response.parts)
-            and response.finish_reason != 'content_filter'
-            and response.state == 'complete'
-            and new_messages
-        ):
-            return response.provider_response_id, new_messages
-        return None
-    return None
 
 
 def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
@@ -1477,7 +1334,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
-        thread_record = _ThreadRecord()
+        thread_record = ThreadRecord()
         response = await self._messages_create(
             messages, False, model_settings, model_request_parameters, thread_record=thread_record
         )
@@ -1620,7 +1477,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
-        thread_record = _ThreadRecord()
+        thread_record = ThreadRecord()
         response = await self._messages_create(
             messages, True, model_settings, model_request_parameters, thread_record=thread_record
         )
@@ -1795,7 +1652,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
-        thread_record: _ThreadRecord | None = None,
+        thread_record: ThreadRecord | None = None,
     ) -> AnthropicEventStream:
         pass
 
@@ -1808,7 +1665,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
-        thread_record: _ThreadRecord | None = None,
+        thread_record: ThreadRecord | None = None,
     ) -> BetaMessage | AnthropicEventStream:
         pass
 
@@ -1820,7 +1677,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         *,
         compaction: BetaCompactionConfigParam | None = None,
-        thread_record: _ThreadRecord | None = None,
+        thread_record: ThreadRecord | None = None,
     ) -> BetaMessage | AnthropicEventStream:
         """Calls the Anthropic API to create a message.
 
@@ -1842,9 +1699,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_settings,
             model_request_parameters,
             compaction=compaction,
-            record_cache_breakpoints_on_send=(
-                thread_record is not None and _may_use_thread(model_settings, compaction)
-            ),
+            record_cache_breakpoints_on_send=thread_record is not None and may_use_thread(model_settings, compaction),
         )
         anthropic_profile = self.profile
         client = _with_max_retries(self.client, model_settings)
@@ -1896,7 +1751,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_request_parameters: ModelRequestParameters,
         prepared: _PreparedMessagesCreate,
         create: Callable[..., Awaitable[BetaMessage | AnthropicEventStream]],
-        thread_record: _ThreadRecord | None,
+        thread_record: ThreadRecord | None,
         compaction: BetaCompactionConfigParam | None,
     ) -> BetaMessage | AnthropicEventStream:
         """Send the first attempt of a request, in a message thread when `anthropic_thread` is set.
@@ -1914,10 +1769,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             prepared.initial_betas,
             prepared.initial_thinking_override,
         )
-        if thread_record is None or not _may_use_thread(model_settings, compaction):
+        if thread_record is None or not may_use_thread(model_settings, compaction):
             return await create(*initial)
         params = self._messages_create_params(messages, model_settings, prepared, *initial[:2], initial[3])
-        fingerprint = _thread_fingerprint(params, prepared.initial_betas | {MESSAGE_THREADS_BETA})
+        fingerprint = thread_fingerprint(params, prepared.initial_betas | {MESSAGE_THREADS_BETA})
         if (
             thread := await self._continue_thread(messages, model_settings, model_request_parameters, fingerprint)
         ) is not None:
@@ -1931,7 +1786,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 thread_record.history = history_hasher(messages, self._history_digest_key)
                 return response
         try:
-            response = await create(*initial, _Thread(cache_breakpoints=prepared.cache_breakpoints))
+            response = await create(*initial, Thread(cache_breakpoints=prepared.cache_breakpoints))
         except APIStatusError as error:
             if not is_thread_unsupported_error(error):
                 raise
@@ -1947,9 +1802,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
         fingerprint: str,
-    ) -> _Thread | None:
+    ) -> Thread | None:
         """The continue request of a thread, if the history allows one and its new messages can be sent on their own."""
-        continuation = _thread_continuation(self, messages, fingerprint, self._history_digest_key)
+        continuation = thread_continuation(self, messages, fingerprint, self._history_digest_key)
         if continuation is None:
             return None
         previous_message_id, new_messages = continuation
@@ -1970,10 +1825,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # before it in them marks the end of the previous response, which a continue request can't send again.
             # A create request with the full history keeps the boundary where it was put.
             return None
-        return _Thread(
+        return Thread(
             previous_message_id=previous_message_id,
             messages=new_prepared.anthropic_messages,
-            cache_breakpoints=_continue_cache_breakpoints(new_prepared.cache_breakpoints),
+            cache_breakpoints=continue_cache_breakpoints(new_prepared.cache_breakpoints),
         )
 
     async def _create_message(
@@ -1987,13 +1842,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         thinking: BetaThinkingConfigParam | Omit,
         betas: set[str],
         thinking_override: dict[str, object] | None,
-        thread: _Thread | None = None,
+        thread: Thread | None = None,
     ) -> BetaMessage | AnthropicEventStream:
         """Send one attempt of `_messages_create`, with the container, thinking object and thread this attempt uses."""
         max_tokens = prepared.max_tokens
         anthropic_profile = self.profile
         _record_cache_breakpoints(prepared.cache_breakpoints if thread is None else thread.cache_breakpoints)
-        params, betas = _with_thread(
+        params, betas = with_thread(
             self._messages_create_params(
                 messages, model_settings, prepared, container_param, thinking, thinking_override
             ),
@@ -2468,7 +2323,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not self.profile.get('anthropic_accepts_file_and_container_ids', True):
             return None, False
         extra_body = model_settings.get('extra_body')
-        if not (_is_str_mapping(extra_body) and 'tools' in extra_body) and not provisions_code_execution(tools):
+        if not (is_str_mapping(extra_body) and 'tools' in extra_body) and not provisions_code_execution(tools):
             return None, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
         # Re-passing BetaContainerParams triggers a prefill rejection on some models
@@ -3041,7 +2896,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # callers. That keeps `_get_enabled_server_tool_names`, which rebuilds the tools through `_add_native_tools`,
         # filtering as if both were unset.
         extra_body = model_settings.get('extra_body')
-        if _is_str_mapping(extra_body) and 'tools' in extra_body:
+        if is_str_mapping(extra_body) and 'tools' in extra_body:
             return
         if (allowed_callers := model_settings.get('anthropic_web_tools_allowed_callers')) is not None:
             for web_tool in tools:

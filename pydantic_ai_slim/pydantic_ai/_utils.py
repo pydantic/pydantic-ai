@@ -22,6 +22,7 @@ from collections.abc import (
     Generator,
     Iterable,
     Iterator,
+    Mapping,
 )
 from concurrent.futures import Executor
 from contextlib import asynccontextmanager, contextmanager, suppress
@@ -1292,6 +1293,13 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
 def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
     return isinstance(obj, dict)
+
+
+def is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
+    """Whether a value is a mapping whose keys are all strings."""
+    if not isinstance(value, Mapping):
+        return False
+    return all(isinstance(key, str) for key in value)  # pyright: ignore[reportUnknownVariableType]
 
 
 def is_google_files_api_url(url: str) -> bool:
