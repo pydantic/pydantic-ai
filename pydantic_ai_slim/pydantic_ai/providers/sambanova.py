@@ -9,7 +9,11 @@ from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    _gpt_oss_schema_profile,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 try:
@@ -63,6 +67,7 @@ class SambaNovaProvider(_OpenAISDKProvider):
             'llama-': meta_model_profile,
             'qwen': qwen_model_profile,
             'mistral': mistral_model_profile,
+            'gpt-oss': _gpt_oss_schema_profile,
         }
 
         profile = None

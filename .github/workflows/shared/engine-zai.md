@@ -23,7 +23,7 @@
 #   imports:
 #     - shared/engine-zai.md
 imports:
-  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@764a75c329840605ed6ecced16f102823389c817
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@c9c896e9f097362c69cabf5312d345155aec9625
 runtimes:
   uv: {}
 # Keep existing configurable budgets. AWF also has a fixed 10,000-credit cap.
@@ -66,9 +66,8 @@ engine:
     GH_AW_HARNESS_MAX_RETRIES: "0"
   # One agent run at a time per workflow, on the shared Z.AI account. gh-aw applies this
   # group by default, but drops it for a workflow with `pull_request*` triggers.
-  # UI Security runs one review per PR, so reviews of different PRs run in parallel.
   concurrency:
-    group: "gh-aw-pydantic-ai-${{ github.workflow }}${{ github.workflow == 'Pydantic AI UI Security Review' && format('-{0}', github.event.pull_request.number || github.ref) || '' }}"
+    group: "gh-aw-pydantic-ai-${{ github.workflow }}"
     queue: max
 # gh-aw caps the agent job at 60 minutes and detection at 10 by default. Keep GitHub's
 # 360-minute job maximum, so each source's engine step budget fits, and a 20-minute detector.

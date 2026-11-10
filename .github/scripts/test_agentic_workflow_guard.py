@@ -35,6 +35,7 @@ from agentic_workflow_guard import (
     check_compiler_versions,
     check_daily_aic_guardrail,
     check_dangling_needs,
+    check_engine_sys_path_order,
     check_job_timeout_env,
     check_lock_regenerated,
     check_logfire_wiring,
@@ -1221,6 +1222,85 @@ jobs:
     assert check_daily_aic_guardrail(lock) == []
 
 
+# --- engine wrapper `sys.path` order (the pre-#12818 engine pin, #12815) --------
+
+
+def _harness_lock(resolve_agent: str) -> str:
+    """The harness step every lock compiles, around the wrapper's `PAI_AGENT` import branch."""
+    return f"""
+jobs:
+  agent:
+    steps:
+      - name: Write Pydantic AI harness script
+        run: |
+          cat <<'GHAW_HARNESS_SCRIPT_3c7b9f1a_EOF' > "${{RUNNER_TEMP}}/gh-aw/actions/pydantic-ai_harness.cjs"
+          const AGENT_MODULE = `import importlib
+          import os
+          import sys
+
+          _configured_agent = os.environ.get('PAI_AGENT', '').strip()
+          if _configured_agent:
+{resolve_agent}
+              agent = getattr(importlib.import_module(_module_name), _attribute)
+          `;
+          const DEFAULT_AGENT = "gh_aw_agent:agent";
+          GHAW_HARNESS_SCRIPT_3c7b9f1a_EOF
+"""
+
+
+def test_engine_sys_path_order_rejects_the_pre_12818_wrapper(tmp_path: Path):
+    """The wrapper every lock compiled from engine revision `764a75c329`."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        _harness_lock(
+            """\
+              sys.path.insert(0, os.getcwd())
+              _module_name, _separator, _attribute = _configured_agent.rpartition(':')"""
+        ),
+    )
+
+    violations = check_engine_sys_path_order(lock)
+
+    assert [v.check for v in violations] == ['engine-sys-path-order']
+    assert '#12818' in violations[0].message
+
+
+def test_engine_sys_path_order_rejects_the_pre_12818_wrapper_in_a_double_quoted_run(tmp_path: Path):
+    """A double-quoted `run` escapes the wrapper's line breaks, so only the parsed step has statement lines."""
+    run = (
+        'cat <<\'GHAW_HARNESS_SCRIPT_EOF\' > "${RUNNER_TEMP}/gh-aw/actions/pydantic-ai_harness.cjs"\n'
+        'const AGENT_MODULE = `import os\nimport sys\n\nsys.path.insert(0, os.getcwd())\n`;\n'
+        'GHAW_HARNESS_SCRIPT_EOF\n'
+    )
+    lock = _write(tmp_path / 'w.lock.yml', f'jobs:\n  agent:\n    steps:\n      - run: {json.dumps(run)}\n')
+
+    assert [v.check for v in check_engine_sys_path_order(lock)] == ['engine-sys-path-order']
+
+
+def test_engine_sys_path_order_accepts_the_12818_wrapper(tmp_path: Path):
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        _harness_lock(
+            """\
+              _module_name, _separator, _attribute = _configured_agent.rpartition(':')
+              # The checkout joins sys.path, after installed packages, only when nothing installed has the target's
+              # top-level name. sys.path.insert(0, ...) would put it first.
+              _top_level = _module_name.partition('.')[0]
+              if _top_level not in sys.modules and find_spec(_top_level) is None:
+                  sys.path.append(os.getcwd())"""
+        ),
+    )
+
+    assert check_engine_sys_path_order(lock) == []
+
+
+def test_engine_sys_path_order_rejects_a_lock_without_the_wrapper(tmp_path: Path):
+    """A renamed wrapper must fail the check rather than leave it passing on nothing."""
+    lock = _write(tmp_path / 'w.lock.yml', _harness_lock('').replace('const AGENT_MODULE', 'const WRAPPER'))
+
+    assert [v.check for v in check_engine_sys_path_order(lock)] == ['engine-sys-path-order']
+
+
 def test_compiler_version_compatibility_rejects_a_blocked_version(tmp_path: Path):
     lock = _write(tmp_path / 'w.lock.yml', '# gh-aw-metadata: {"compiler_version":"v0.83.4"}\njobs: {}\n')
 
@@ -1759,29 +1839,12 @@ Prompt
     }
 
 
-def test_provider_health_recovery_wiring_allows_ui_pull_request_only_model_canary(tmp_path: Path):
+def test_provider_health_recovery_input_must_be_an_optional_string(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
-    _write(
-        workflows / 'pydantic-ai-ui-security-review.md',
-        """---
-name: Z.AI
-imports:
-  - shared/engine-zai.md
-on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review]
-  workflow_dispatch: {}
----
-Prompt
-""",
-    )
     _write(
         workflows / 'shared' / 'provider-health.md',
         "job:\n  env:\n    PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}\n",
     )
-
-    assert check_provider_health_recovery_wiring(workflows) == []
-
     ordinary = _write(
         workflows / 'pydantic-ai-mini.md',
         """---

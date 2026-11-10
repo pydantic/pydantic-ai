@@ -520,7 +520,7 @@ def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSetting
 
 
 LatestAnthropicModelNames = Literal[
-    'claude-fable-5-1',
+    'claude-fable-5-2',
     'claude-opus-5-5',
     'claude-sonnet-5-5',
     'claude-haiku-5-5',
@@ -664,7 +664,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Diagnostics are free and don't affect caching, but Anthropic retains a short-lived fingerprint (hashes and
     token counts, never prompt content) for each request that carries them, and HIPAA-enabled organizations have
     requests using them rejected. They are only available on the Claude API, so the setting is ignored on Amazon
-    Bedrock, Google Cloud Vertex AI and Microsoft Foundry. Defaults to `False`.
+    Bedrock, Google Cloud Vertex AI and Microsoft Foundry. Defaults to `False`. The ID comes from the message
+    history, which [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent, so leave this off
+    with history from a client; see [Loading untrusted history](../../message-history.md#loading-untrusted-history).
     """
 
     anthropic_effort: AnthropicEffort | None
@@ -707,6 +709,11 @@ class AnthropicModelSettings(ModelSettings, total=False):
     or to a `BetaContainerParams` dict (e.g. `{'skills': [...]}` or
     `{'id': 'container_xxx', 'skills': [...]}`) when passing Skills to the Anthropic
     Skills beta.
+
+    Reuse from history trusts the message history for the `container_id`, which
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, set a
+    container id you saved on your server, or `False`; see
+    [Loading untrusted history](../../message-history.md#loading-untrusted-history).
     """
 
     anthropic_code_execution_tool_version: AnthropicCodeExecutionToolVersion | Literal['auto']
@@ -757,17 +764,19 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """List of Anthropic beta features to enable for API requests.
 
     Each item can be a known beta name (e.g. 'interleaved-thinking-2025-05-14') or a custom string.
-    Merged with auto-added betas (e.g. builtin tools) and any betas from an `anthropic-beta` header in
-    `extra_headers`, however its name is capitalized. See the Anthropic docs for available beta features.
+    Merged with auto-added betas (e.g. builtin tools), any betas from an `anthropic-beta` header in
+    `extra_headers`, however its name is capitalized, and those in the client's `default_headers`, except on
+    `AsyncAnthropicBedrock`, where Bedrock ignores them. See the Anthropic docs for available beta features.
     """
 
     anthropic_speed: Literal['standard', 'fast']
     """The inference speed mode for this request.
 
-    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6, 4.7, 4.8, and 5).
+    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6, 4.7, 4.8,
+    5, and 5.5, Fable 5.2, and Mythos 5.2).
     On unsupported models or clients, `anthropic_speed='fast'` is ignored with a `UserWarning`.
-    Fast mode is a research preview and only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
-    see [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
+    Fast mode is only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
+    see [Fast mode](../../models/anthropic.md#fast-mode) for each model's availability.
     Note: switching between `'fast'` and `'standard'` invalidates the prompt cache.
     """
 
@@ -1901,6 +1910,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return context_management
 
     @staticmethod
+    def _split_betas(header: str) -> set[str]:
+        """The betas a comma-separated `anthropic-beta` header value lists."""
+        return {stripped_beta for beta in header.split(',') if (stripped_beta := beta.strip())}
+
+    @staticmethod
     def _pop_beta_headers(extra_headers: dict[str, str]) -> set[str]:
         """Remove the `anthropic-beta` header from `extra_headers`, in any spelling, and return the betas it lists.
 
@@ -1909,12 +1923,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         names = [name for name in extra_headers if name.lower() == 'anthropic-beta']
         return {
-            stripped_beta
+            beta
             for name in names
             # A falsy value, such as `None` from an unset environment variable or the SDK's `omit`, names no betas.
             if (header := extra_headers.pop(name))
-            for beta in header.split(',')
-            if (stripped_beta := beta.strip())
+            for beta in AnthropicModel._split_betas(header)
         }
 
     def _get_betas_and_extra_headers(
@@ -1927,13 +1940,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
-        Handles merging custom `anthropic-beta` header from `extra_headers` into betas set,
-        auto-attaching the Files API beta when messages contain an Anthropic `UploadedFile`,
-        and ensuring `User-Agent` is set.
+        Starts from the betas in the client's `default_headers`, then merges a custom `anthropic-beta` header from
+        `extra_headers`, auto-attaches the Files API beta when messages contain an Anthropic `UploadedFile`, and
+        ensures `User-Agent` is set.
         """
         extra_headers = _with_default_user_agent(model_settings.get('extra_headers', {}))
 
-        betas: set[str] = set()
+        betas = self._client_default_betas()
 
         if model_settings.get('anthropic_context_management'):
             betas.add('compact-2026-01-12')
@@ -1958,6 +1971,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         betas.update(self._message_betas(model_settings, anthropic_profile, messages, model_request_parameters))
         return betas, extra_headers
+
+    def _client_default_betas(self) -> set[str]:
+        """The betas in the client's `default_headers`, which a request's own `anthropic-beta` header replaces.
+
+        The legacy Bedrock API reads betas from the request body alone, and the SDK moves only a request's own betas
+        there, so a beta in that client's headers never applies and isn't added.
+        """
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            return set()
+        beta_header = ''
+        for name, value in self.client.default_headers.items():
+            # The SDK folds header names case-insensitively, the last one winning, and drops one set to `omit`.
+            if name.lower() == 'anthropic-beta':
+                beta_header = value if isinstance(value, str) else ''
+        return self._split_betas(beta_header)
 
     def _message_betas(
         self,

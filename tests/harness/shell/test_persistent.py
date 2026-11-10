@@ -22,7 +22,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceError
+from pydantic_ai.workspaces import CommandResult, FileEntry, LocalWorkspaceBackend, WorkspaceCommand, WorkspaceError
 from pydantic_ai_harness.shell import (
     MAX_FOREGROUND_WAIT,
     RUN_SCOPED_TOOL_NAMES,
@@ -105,6 +105,35 @@ class Recorder(AbstractCapability[None]):
         return last
 
 
+class SlowReads(LocalWorkspaceBackend):
+    """Records each call, and answers each file read (a job's status) `delay` seconds late, as a remote workspace does."""
+
+    def __init__(self, working_dir: Path, delay: float) -> None:
+        super().__init__(working_dir)
+        self.delay = delay
+        self.calls: list[str] = []
+
+    async def read_bytes(self, path: str) -> bytes:
+        self.calls.append(f'read_bytes {Path(path).name}')
+        await anyio.sleep(self.delay)
+        return await super().read_bytes(path)
+
+    async def stat(self, path: str) -> FileEntry:
+        self.calls.append(f'stat {Path(path).name}')
+        return await super().stat(path)
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        self.calls.append('run')
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
 class TestToolSelection:
     async def test_default_tools_are_run_scoped(self, tmp_path: Path) -> None:
         model = TestModel(call_tools=[])
@@ -146,6 +175,23 @@ class TestShellTool:
             denied_env_patterns=['OPENAI_*'],
         )
         assert 'unset' in output and 'do-not-expose' not in output
+
+    async def test_foreground_wait_makes_the_same_calls_however_slow_the_workspace(self, tmp_path: Path) -> None:
+        # A durable engine returns a run's recorded workspace calls by position, so a recovered run, on a
+        # workspace slower or faster than the first time, must make the same calls to be given their results.
+        calls: list[list[str]] = []
+        for delay in (0, 0.2):
+            work = tmp_path / str(delay)
+            work.mkdir()
+            workspace = SlowReads(work, delay)
+            capability = Shell[None](denied_commands=[], tools=['shell'])
+            output = await call_tool(
+                [capability], 'shell', {'command': 'sleep 30', 'timeout': 0.3}, workspace=workspace
+            )
+            os.killpg(int(output.split('kill -- -')[1].split('`')[0]), signal.SIGKILL)
+            assert '"exit_code": null' in output
+            calls.append(workspace.calls)
+        assert calls[0] == calls[1]
 
     @pytest.mark.parametrize('metadata_exists', [False, True])
     async def test_job_files_live_in_the_git_ignored_metadata_directory(

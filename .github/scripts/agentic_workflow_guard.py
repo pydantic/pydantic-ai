@@ -35,6 +35,8 @@ budget before anyone noticed, documented in #6766:
 - `daily_aic_guardrail` — gh-aw's daily AI-credits guardrail listed the artifacts of every
   run from the past 24h on each activation, about 700 REST calls per CI Review activation,
   and exhausted the repo's `GITHUB_TOKEN` rate limit to total credits that were always 0.
+- `engine_sys_path_order` — #10347 imported an engine revision from before #12818, so
+  every lock's wrapper put the checkout ahead of installed packages on `sys.path` (#12815).
 - `compiler_version_compatibility` — the compiler version in every generated lock
   must not appear in gh-aw's live blocked-version policy.
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
@@ -122,6 +124,11 @@ DAILY_AIC_GUARDRAIL_SCRIPT = 'check_daily_aic_workflow_guardrail.cjs'
 HOST_RESULT_JOB = 'provider_health_record'
 # Expression context names are case-insensitive, and `secrets['X']` and `toJSON(secrets)` read the same context.
 SECRETS_CONTEXT = re.compile(r'\bsecrets\b', re.IGNORECASE)
+# The engine's Python wrapper is the `AGENT_MODULE` JS template literal in a step's `run`.
+# It must contain no `sys.path.insert(0, ...)` statement.
+ENGINE_WRAPPER_MODULE = re.compile(r'const AGENT_MODULE = `((?:\\.|[^`\\])*)`')
+SYS_PATH_PREPEND = re.compile(r'^\s*sys\.path\.insert\(\s*0\s*,', re.MULTILINE)
+
 # The agent-start recheck fetches the controller through the contents API with no `ref`,
 # which serves the default branch, then runs `check` from the file it fetched. A workspace
 # copy can come from the PR head or its base branch.
@@ -747,6 +754,34 @@ def check_daily_aic_guardrail(lock: Path) -> list[Violation]:
     ]
 
 
+def check_engine_sys_path_order(lock: Path) -> list[Violation]:
+    """No compiled engine wrapper (`AGENT_MODULE`) may contain a `sys.path.insert(0, ...)` statement.
+
+    The wrapper comes from the engine revision `shared/engine-zai.md` imports, so a lock
+    compiled from a revision before #12818 still puts the checkout first on `sys.path`.
+    """
+    workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+    wrappers: list[str] = []
+    for raw_job in _as_mapping(workflow.get('jobs')).values():
+        steps = _as_mapping(raw_job).get('steps')
+        for raw_step in steps if _is_object_sequence(steps) else ():
+            run = _as_mapping(raw_step).get('run')
+            if isinstance(run, str):
+                wrappers.extend(match.group(1) for match in ENGINE_WRAPPER_MODULE.finditer(run))
+    if not wrappers:
+        return [Violation(str(lock), 'engine-sys-path-order', 'Compiled lock has no engine wrapper (`AGENT_MODULE`).')]
+    if not any(SYS_PATH_PREPEND.search(wrapper) for wrapper in wrappers):
+        return []
+    return [
+        Violation(
+            str(lock),
+            'engine-sys-path-order',
+            'The compiled engine wrapper (`AGENT_MODULE`) contains a `sys.path.insert(0, ...)` statement. '
+            'Import an engine revision that includes #12818 in `shared/engine-zai.md` and recompile.',
+        )
+    ]
+
+
 def check_compiler_version_compatibility(locks: list[Path], compatibility: dict[str, Any]) -> list[Violation]:
     """Compiled gh-aw versions must not be revoked by the upstream runtime policy."""
     blocked_raw = compatibility.get('blockedVersions')
@@ -1136,10 +1171,6 @@ def check_provider_health_recovery_wiring(workflows_dir: Path = WORKFLOWS_DIR) -
     for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
         frontmatter = parse_frontmatter(source)
         if not _is_zai_workflow(frontmatter):
-            continue
-        # The UI review can reach its model only from a pull request event: its
-        # detect job needs `github.event.pull_request.number` before activation.
-        if source.name == 'pydantic-ai-ui-security-review.md':
             continue
         trigger = _as_mapping(_as_mapping(frontmatter.get('on')).get('workflow_dispatch'))
         recovery_input = _as_mapping(_as_mapping(trigger.get('inputs')).get('recovery_issue'))
@@ -1710,6 +1741,7 @@ def run_checks(
         violations += check_awf_binary_version(lock)
         violations += check_ai_credits_accounting(lock)
         violations += check_daily_aic_guardrail(lock)
+        violations += check_engine_sys_path_order(lock)
     for source in sources:
         violations += check_safe_output_job_max(source)
         violations += check_timeout_declared(source)
