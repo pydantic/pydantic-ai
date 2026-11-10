@@ -57,7 +57,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
-    _document_format_lookup,  # pyright: ignore[reportPrivateUsage]
+    _document_format,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     Model,
@@ -857,8 +857,8 @@ class XaiModel(Model[AsyncClient]):
         # then upload to xAI files API (skipped when these bytes were uploaded before)
         downloaded = await download_item(item, data_format='bytes')
         filename = item.identifier or 'document'
-        # Add the document extension for known media types
-        extension = _document_format_lookup.get(downloaded['data_type'])
+        # Add the document extension for the downloaded media type, when one is known
+        extension = _document_format(downloaded['data_type'])
         if extension:
             filename = f'{filename}.{extension}'
 
