@@ -54,7 +54,7 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
@@ -199,9 +199,9 @@ def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
 
-def _check_capability_storage(merged: Any) -> None:
-    assert merged.workspace.ref.id == str(_TMP_B)
-    assert merged._storage.backend is merged.workspace
+def _check_capability_storage(merged: CapabilityStorage[object]) -> None:
+    assert merged.workspace.ref == WorkspaceRef(provider='local', id=str(_TMP_B))
+    assert merged._storage.backend is merged.workspace  # pyright: ignore[reportPrivateUsage]
 
 
 def _check_advisor(merged: Any) -> None:
@@ -287,8 +287,8 @@ COMBINE_POLICY: dict[str, Policy] = {
     'CapabilityStorage': Combines(
         "a run keeps its capabilities' files in one place; the later location wins",
         lambda: (
-            CapabilityStorage[Any](LocalWorkspaceBackend(_TMP_A)),
-            CapabilityStorage[Any](LocalWorkspaceBackend(_TMP_B)),
+            CapabilityStorage[object](LocalWorkspaceBackend(_TMP_A)),
+            CapabilityStorage[object](LocalWorkspaceBackend(_TMP_B)),
         ),
         _check_capability_storage,
     ),
