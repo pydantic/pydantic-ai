@@ -146,7 +146,6 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
-    WorkspaceUnsupportedActionError,
 )
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
@@ -5214,7 +5213,6 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
         WorkspaceTimeoutError('slow'),
         WorkspaceOutputLimitError('loud', limit=1),
         WorkspaceReadOnlyError('read-only'),
-        WorkspaceUnsupportedActionError('no such action'),
         WorkspaceUnavailableError('gone'),
     ):
         assert await condition(None, None, _State(error)) is False
