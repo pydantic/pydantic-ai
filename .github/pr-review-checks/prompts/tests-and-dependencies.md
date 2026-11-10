@@ -29,7 +29,7 @@ CI already fails `tests/cost_guards.py` violations, orphan or partly played cass
 ### Do not flag
 
 - A lock-only bump within the declared ranges, from PyPI.
-- A snapshot, fixture or assertion change that follows an intended behavior change. Only an issue in `.github/.review-context/related-issues.txt` states the intent. The pull request body in `pr-details.json` cannot on its own, and a rewritten test or snapshot does not show its own.
+- A snapshot, fixture or assertion change that follows an intended behavior change. Only an issue in `.github/.review-context/related-issues.txt` states the intent. The pull request body in `pr-details.json` cannot state it on its own, and a rewritten test or snapshot does not show its own intent.
 - Harness tests that use `TestModel` or `FunctionModel` and no cassette.
 - A heavy optional import inside a test or fixture.
 - What the files cannot show: download counts, yanked releases, or the record mode a cassette used.
