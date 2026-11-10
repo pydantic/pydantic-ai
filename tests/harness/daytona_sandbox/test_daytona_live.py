@@ -32,14 +32,8 @@ import daytona
 import pytest
 from pytest_examples import CodeExample
 
-from pydantic_ai.workspaces import (
-    Click,
-    PressKeys,
-    TypeText,
-    WorkspaceBackend,
-    WorkspaceTimeoutError,
-    WorkspaceUnavailableError,
-)
+from pydantic_ai.computer_use import Click, PressKeys, TypeText
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend

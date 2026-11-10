@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.computer_use import Click
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import Click
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
 
 from .._fake_x_display import FakeDisplay
+from ..display_fakes import screen
 from .fake_sprites import SpriteTransport
 
 
@@ -24,8 +25,8 @@ async def test_a_desktop_sprite_drives_its_display(transport: SpriteTransport) -
 
     @agent.tool
     async def probe(ctx: RunContext[object]) -> str:
-        size = await ctx.workspace.display_size()
-        await ctx.workspace.act(Click(x=3, y=4))
+        size = await screen(ctx.workspace.backend).display_size()
+        await screen(ctx.workspace.backend).act(Click(x=3, y=4))
         assert ctx.workspace.ref is not None and sandbox.backend(ctx.workspace.ref).display is not None
         # A plain command gets `DISPLAY` too, so a program the agent starts from the shell opens on the desktop.
         shell_display = (await ctx.workspace.run('printf %s "$DISPLAY"', shell=True)).stdout

@@ -12,9 +12,10 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
 import pytest
 
-from pydantic_ai.workspaces import Click, PressKeys, TypeText, WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
+from pydantic_ai.computer_use import Click, PressKeys, TypeText
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-from pydantic_ai_harness._display import ManagedDisplay
+from pydantic_ai_harness.computer_use import Display
 from pydantic_ai_harness.docker_sandbox import DockerSandbox, DockerSandboxBackend
 
 LIVE_IMAGE = 'python:3.13-slim'
@@ -169,7 +170,7 @@ class TestLiveDockerDesktop(WorkspaceBackendSuite):
         assert await _typed(backend) == 'ab\n'
 
 
-async def _focused_typing_window(backend: WorkspaceBackend) -> ManagedDisplay:
+async def _focused_typing_window(backend: WorkspaceBackend) -> Display:
     """Start the display and an xterm that writes what it's typed to `typed.txt`, and focus it."""
     assert isinstance(backend, DockerSandboxBackend)
     display = backend.display

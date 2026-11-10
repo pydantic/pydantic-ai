@@ -6,6 +6,7 @@ import pytest
 
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
+    Click,
     ComputerCallPart,
     ComputerReturnPart,
     SafetyCheck,
@@ -24,7 +25,6 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.workspaces import Click
 
 SCREEN = BinaryImage(data=b'png', media_type='image/png')
 
@@ -34,7 +34,7 @@ def test_a_computer_call_is_promoted_and_reads_its_actions() -> None:
         parts=[
             ToolCallPart(
                 'my_computer',
-                {'actions': [{'type': 'click', 'x': 1, 'y': 2}]},
+                {'actions': [{'type': 'click', 'x': 1, 'y': 2}, {'type': 'screenshot'}]},
                 tool_kind=COMPUTER_KIND.id,
                 provider_name='openai',
                 provider_details={'safety_checks': [{'id': 'sc_1', 'code': 'malicious', 'message': 'Check it.'}]},
@@ -43,7 +43,7 @@ def test_a_computer_call_is_promoted_and_reads_its_actions() -> None:
     )
     call = response.parts[0]
     assert isinstance(call, ComputerCallPart)
-    assert call.actions == [Click(x=1, y=2)]
+    assert call.actions == [Click(x=1, y=2), Screenshot()]
     assert call.safety_checks == [SafetyCheck(code='malicious', message='Check it.', id='sc_1')]
     restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([response]))[0]
     assert isinstance(restored, ModelResponse) and restored.parts == response.parts
@@ -114,5 +114,18 @@ def test_computer_tool_needs_a_computer_tool_that_is_not_deferred(function_tools
         )
 
 
-def test_screenshot_is_a_computer_action() -> None:
-    assert ComputerCallPart('computer', {'actions': [{'type': 'screenshot'}]}).actions == [Screenshot()]
+def test_computer_tool_refuses_two_computer_tools_that_could_run_its_calls() -> None:
+    other = ToolDefinition(name='other_computer', tool_kind=COMPUTER_KIND)
+    with pytest.raises(UserError, match=r'needs one tool of each of the kinds .* more than one that is not deferred'):
+        _prepare(
+            ModelRequestParameters(
+                function_tools=[_computer_tool_def(), other],
+                native_tools=[ComputerTool(display_size=(1, 1), optional=True)],
+            )
+        )
+
+
+@pytest.mark.parametrize('size', [(0, 800), (1280, -1)])
+def test_computer_tool_refuses_a_display_size_that_is_not_positive(size: tuple[int, int]) -> None:
+    with pytest.raises(ValueError, match='must be two positive numbers'):
+        ComputerTool(display_size=size)

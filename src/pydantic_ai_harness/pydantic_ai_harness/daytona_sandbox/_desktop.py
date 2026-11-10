@@ -31,9 +31,8 @@ from typing import TYPE_CHECKING
 import anyio
 from daytona import ScreenshotOptions, ScreenshotRegion
 
-from pydantic_ai.workspaces import (
+from pydantic_ai.computer_use import (
     Click,
-    ComputerAction,
     Drag,
     HoldKeys,
     MouseDown,
@@ -44,11 +43,11 @@ from pydantic_ai.workspaces import (
     Region,
     Scroll,
     TypeText,
-    WorkspaceError,
-    WorkspaceUnsupportedActionError,
 )
+from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._display import png_from_base64
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
+from pydantic_ai_harness.computer_use import ComputerAction, UnsupportedActionError
 
 if TYPE_CHECKING:
     from daytona import AsyncComputerUse
@@ -109,7 +108,7 @@ _SHIFTED = dict(zip('~!@#$%^&*()_+{}|:"<>?', "`1234567890-=[]\\;',./"))
 
 def _button(button: str) -> str:
     if button not in _BUTTONS:
-        raise WorkspaceUnsupportedActionError(f"Daytona's desktop has no {button!r} mouse button.")
+        raise UnsupportedActionError(f"Daytona's desktop has no {button!r} mouse button.")
     return button
 
 
@@ -126,7 +125,7 @@ def _keys(keys: Sequence[str]) -> list[str]:
         elif key in _SHIFTED:
             names += ['shift', _SHIFTED[key]]
         else:
-            raise WorkspaceUnsupportedActionError(f"Daytona's desktop cannot press the key {key!r}.")
+            raise UnsupportedActionError(f"Daytona's desktop cannot press the key {key!r}.")
     return list(dict.fromkeys(names))
 
 
@@ -165,7 +164,7 @@ class DaytonaDesktop:
         scale = min(width / screen_width, height / screen_height, 1)
         if scale < 0.1:
             # Daytona scales by a tenth at the least, which would come back larger than asked.
-            raise WorkspaceUnsupportedActionError(
+            raise UnsupportedActionError(
                 f"Daytona's desktop cannot scale its {screen_width}x{screen_height} screen down to {width}x{height}."
             )
         options = ScreenshotOptions(fmt='png', scale=scale)
@@ -249,7 +248,7 @@ class DaytonaDesktop:
                 await mouse.scroll(x, y, direction, amount, modifiers=held, request_timeout=_REQUEST_TIMEOUT)
             case TypeText(text=text):
                 if any(ord(character) > 0xFFFF for character in text):
-                    raise WorkspaceUnsupportedActionError(
+                    raise UnsupportedActionError(
                         "Daytona's desktop cannot type emoji or other characters beyond U+FFFF."
                     )
                 await keyboard.type(text, request_timeout=_TYPE_TIMEOUT)
@@ -267,4 +266,4 @@ class DaytonaDesktop:
                 async with self._holding(_keys(keys)):
                     await anyio.sleep(seconds)
             case _:
-                raise WorkspaceUnsupportedActionError(f"Daytona's desktop cannot perform {action!r}.")
+                raise UnsupportedActionError(f"Daytona's desktop cannot perform {action!r}.")
