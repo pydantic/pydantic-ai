@@ -305,14 +305,18 @@ jobs:
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
+          .github/scripts/test_pr_guard.py
           .github/scripts/test_pr_gates.py
           .github/scripts/test_douwebot_config_approval.py
           .github/scripts/test_douwebot_usage_limit.py
           .github/scripts/test_douwebot_opencode_run.py
           .github/scripts/test_douwebot_opencode_result.py
+          .github/scripts/test_pr_review_checks.py
+          .github/scripts/test_run_pr_review_check.py
+          .github/scripts/test_publish_pr_review_checks.py
+          .github/scripts/test_gh_aw_opencode_detect.py
           .github/scripts/test_size_label.py
           .github/scripts/test_ci_content_classifier.py
-          .github/scripts/test_ui_security_detection.py
           .github/scripts/test_gh_aw_engine_pin_bump.py
           .github/scripts/test_clai2_web_bundle.py
           .github/scripts/test_shard_durations.py
@@ -983,10 +987,10 @@ jobs:
       # jitter; the per-test report on the same cells surfaces anything new over 1s. List the tests over a budget from a
       # run's `--durations` with `scripts/list_over_budget_tests.py`.
       PYTEST_TEST_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
-      # Per-module collection budget, also enforced by `tests/cost_guards.py`. The first module in a shard to import a
-      # dependency many modules share (`anthropic`, `openai`, `hypothesis`) is charged for it, up to 5s on these cells;
-      # 8s sits above that with headroom for runner jitter, and well below the 11-16s a module paid for importing
-      # `torch` at collection.
+      # Per-module collection budget, also enforced by `tests/cost_guards.py`. With it set, the guard imports the
+      # dependencies in its `SHARED_DEPENDENCIES` before collection, so each module is charged only for its own
+      # imports, not for being the first in its shard to import a shared one. 8s leaves headroom for runner jitter,
+      # and sits well below the 11-16s a module paid for importing `torch` at collection.
       PYTEST_COLLECT_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
       # `tests/harness/absurd` runs on Absurd's schema; an unreachable server fails rather than skips.
       ABSURD_REQUIRE_LIVE: "1"
@@ -1321,8 +1325,12 @@ jobs:
             uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
               "${runner[@]}" tests/durable_exec/test_durable_exec_contract_manifest.py
           fi
+          # Only modules that mention Temporal can hold `temporal` tests (`tests/harness/conftest.py` enforces it), so the
+          # workers don't spend over a minute collecting the rest of `tests/harness` just to deselect it.
+          mapfile -t temporal_modules < <(git grep -liE 'temporal' -- 'tests/harness/**/test_*.py' 'tests/harness/test_*.py')
+          (( ${#temporal_modules[@]} )) || { echo '::error::No harness module mentions Temporal.'; exit 1; }
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks --no-extra sentence-transformers' }} \
-            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
+            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal "${temporal_modules[@]}"
         env:
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
@@ -2022,8 +2030,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
     # A `pydantic-clai2`-only change skips every test job but `test`, a `pydantic-ai-harness`-only
-    # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too.
-    if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
+    # change skips `test-fastmcp-4`, and a skipped need would otherwise skip this job too. A test job
+    # cancelled by its own `timeout-minutes` uploads no coverage, and neither `failure()` nor `cancelled()`
+    # sees it, so without the `needs` check this job would report that job's lines as missing.
+    if: >-
+      ${{
+        !failure() && !cancelled() && !contains(needs.*.result, 'cancelled')
+        && needs.classify.outputs.content_only != 'true'
+      }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

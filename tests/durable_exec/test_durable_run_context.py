@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pytest
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.durable_exec import (
@@ -140,6 +141,41 @@ async def test_revalidate_function_call_rebuilds_the_tool_and_validated_argument
         await revalidate_function_call(
             toolset, ToolsetCallToolParams('gone', tool_args={}, ctx=ctx, tool=None), engine_spec=SPEC
         )
+
+
+class Job(BaseModel):
+    data: Any = None
+    dry_run: bool = False
+
+
+async def test_revalidate_function_call_reads_a_single_model_argument_as_it_was_validated():
+    """Arguments for a model with a field named after the tool's parameter come back as they were validated.
+
+    Validated, they're `{'data': Job(...)}`; transported, `{'data': {'data': ..., 'dry_run': True}}`, which also
+    reads as a `Job` whose `data` field holds everything else. A tool whose validator isn't the
+    toolset's own, which no engine produces, validates its arguments as given.
+    """
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain
+    def run_job(data: Job) -> str:  # pragma: no cover
+        return 'done'
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tool = (await toolset.get_tools(ctx))['run_job']
+    validated = tool.args_validator.validate_python({'data': {'path': '/reports'}, 'dry_run': True})
+    transported = JSON_CODEC.load(dict[str, Any], JSON_CODEC.dump(dict[str, Any], validated))
+
+    params = await revalidate_function_call(
+        toolset, ToolsetCallToolParams('run_job', tool_args=transported, ctx=ctx, tool=tool), engine_spec=SPEC
+    )
+    assert params.tool_args == {'data': Job(data={'path': '/reports'}, dry_run=True)}
+
+    foreign = replace(tool, args_validator=TypeAdapter(dict[str, Any]).validator)
+    params = await revalidate_function_call(
+        toolset, ToolsetCallToolParams('run_job', tool_args=transported, ctx=ctx, tool=foreign), engine_spec=SPEC
+    )
+    assert params.tool_args == transported
 
 
 async def test_validation_context_rebuilt_on_a_shallow_copy_leaves_the_original_rebuildable():

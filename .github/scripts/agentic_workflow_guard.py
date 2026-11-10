@@ -920,6 +920,9 @@ def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
     )
     violations: list[Violation] = []
     for engine_name, engine_value in shared_engines:
+        # `false` disables the gh-aw engine; its replacement uses no provider endpoint.
+        if engine_value is False:
+            continue
         engine_env = _as_mapping(_as_mapping(engine_value).get('env'))
         if engine_env.get('ANTHROPIC_BASE_URL') != endpoint or engine_env.get('ANTHROPIC_API_KEY') != credential:
             violations.append(
@@ -1129,10 +1132,6 @@ def check_provider_health_recovery_wiring(workflows_dir: Path = WORKFLOWS_DIR) -
     for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
         frontmatter = parse_frontmatter(source)
         if not _is_zai_workflow(frontmatter):
-            continue
-        # The UI review can reach its model only from a pull request event: its
-        # detect job needs `github.event.pull_request.number` before activation.
-        if source.name == 'pydantic-ai-ui-security-review.md':
             continue
         trigger = _as_mapping(_as_mapping(frontmatter.get('on')).get('workflow_dispatch'))
         recovery_input = _as_mapping(_as_mapping(trigger.get('inputs')).get('recovery_issue'))
