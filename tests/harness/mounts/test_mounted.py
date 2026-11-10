@@ -477,10 +477,10 @@ def test_the_durable_policy_names_the_mounts_but_not_their_keys() -> None:
 
 def test_the_durable_policy_of_a_function_is_the_function() -> None:
     def mounts(_: RunContext[None]) -> list[S3Mount]:
-        raise AssertionError('not called to build the policy')
+        raise AssertionError('not called to build the policy')  # pragma: no cover
 
     def other(_: RunContext[None]) -> list[S3Mount]:
-        raise AssertionError('not called to build the policy')
+        raise AssertionError('not called to build the policy')  # pragma: no cover
 
     def policy(function: Callable[[RunContext[None]], list[S3Mount]]) -> tuple[object, ...]:
         workspace = mounted(FakeWorkspace('box'), FakeRoot(), function, CTX)
