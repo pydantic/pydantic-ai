@@ -13,7 +13,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness.detect_loops import DetectLoops
-from tests.conftest import detach_dbos_logging, try_import, without_admin_server
+from tests.conftest import detach_dbos_logging, try_import
 
 from ._stuck_agent import NUDGE_METADATA, model_calls, nudges, read_file, stuck_model
 
@@ -38,7 +38,7 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         'name': 'durable_detect_loops',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
     }
-    instance = DBOS(config=without_admin_server(config))
+    instance = DBOS(config=config)
     DBOS.launch()
     try:
         yield instance
