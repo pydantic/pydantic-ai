@@ -37,15 +37,17 @@ _THREAD_FIXED_PARAMS = (
 def thread_fingerprint(params: _MessageCreateParams, betas: set[str]) -> str:
     """A digest of the fields a request must share with the thread's create request to continue it.
 
-    MCP authorization tokens may change between requests of a thread, so they're left out.
+    MCP authorization tokens may change between requests of a thread, so they're left out, unless `extra_body` sets
+    the servers.
     """
     fixed: dict[str, object] = {name: params[name] for name in _THREAD_FIXED_PARAMS}
     fixed['mcp_servers'] = [
         {key: value for key, value in server.items() if key != 'authorization_token'}
         for server in params['mcp_servers'] or ()
     ]
-    if is_str_mapping(extra_body := params['extra_body']) and 'thinking' in extra_body:
-        fixed['thinking'] = extra_body['thinking']
+    if is_str_mapping(extra_body := params['extra_body']):
+        # A field `extra_body` sets replaces the request's own on the wire, so the thread fixes that value instead.
+        fixed.update({name: extra_body[name] for name in _THREAD_FIXED_PARAMS if name in extra_body})
     container = params['container']
     fixed['skills'] = container.get('skills') if is_str_mapping(container) else None
     fixed['betas'] = sorted(betas)
@@ -64,13 +66,15 @@ class Thread:
 
     def apply(self, params: _MessageCreateParams) -> _MessageCreateParams:
         extra_body = params['extra_body']
+        body: dict[str, object] = {**extra_body} if is_str_mapping(extra_body) else {}
         thread: dict[str, str] = {'type': 'create'}
         params = {**params}
         if self.previous_message_id is not None and self.messages is not None:
             thread = {'type': 'continue', 'previous_message_id': self.previous_message_id}
-            # The thread keeps `system` and `tools`; sending either, even as `null`, is a 400.
+            # The thread keeps `system` and `tools`; sending either, even as `null` or through `extra_body`, is a 400.
             params.update(messages=self.messages, system=OMIT, tools=OMIT)
-        params['extra_body'] = {**(extra_body if is_str_mapping(extra_body) else {}), 'thread': thread}
+            body = {key: value for key, value in body.items() if key not in ('system', 'tools')}
+        params['extra_body'] = {**body, 'thread': thread}
         return params
 
 

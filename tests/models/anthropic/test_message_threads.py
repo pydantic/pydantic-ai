@@ -343,6 +343,37 @@ async def test_thinking_in_extra_body_is_fixed_for_the_thread(allow_model_reques
     assert [body['thread']['type'] for body in api.bodies] == ['create', 'continue', 'create']
 
 
+_WEB_SEARCH: dict[str, str] = {'type': 'web_search_20250305', 'name': 'web_search'}
+
+
+async def test_removed_tools_override_starts_a_new_thread(allow_model_requests: None):
+    """`tools` passed through `extra_body` are fixed for a thread: removing the override creates a new thread."""
+    api = _Api()
+    with_override: AnthropicModelSettings = {**_SETTINGS, 'extra_body': {'tools': [_WEB_SEARCH]}}
+    async with _model(api) as model:
+        agent = Agent(model)
+        first = await agent.run('Hi', model_settings=with_override)
+        await agent.run('Again', message_history=first.all_messages(), model_settings=_SETTINGS)
+
+    assert [body['thread']['type'] for body in api.bodies] == ['create', 'create']
+    assert 'tools' not in api.bodies[1]
+
+
+async def test_kept_tools_override_is_not_sent_on_continue(allow_model_requests: None):
+    """An unchanged `tools` override in `extra_body` continues the thread, which keeps the tools it was created with."""
+    api = _Api()
+    with_override: AnthropicModelSettings = {**_SETTINGS, 'extra_body': {'tools': [_WEB_SEARCH]}}
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=with_override)
+        first = await agent.run('Hi')
+        await agent.run('Again', message_history=first.all_messages())
+
+    create, cont = api.bodies
+    assert create['tools'] == [_WEB_SEARCH]
+    assert cont['thread']['type'] == 'continue'
+    assert 'tools' not in cont
+
+
 async def test_unsupported_request_is_sent_without_a_thread(allow_model_requests: None):
     """A request using something threads don't support is sent again without `thread`, and isn't continued from."""
     api = _Api(replies=[_thread_error(400, 'thread_unsupported_request')])
