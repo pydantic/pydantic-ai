@@ -40,9 +40,6 @@ with try_import() as imports_successful:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
     from pydantic_ai.durable_exec.dbos import DBOSDurability
-    from tests.harness.subagents.test_dbos import (
-        test_background_task_survives_recovery as original_test,
-    )
 
 pytestmark = [
     pytest.mark.xdist_group(name='harness-dbos'),
@@ -252,18 +249,16 @@ def _order_ok(order: list[str]) -> bool:
     ] and order.count('sub_agents.task_backgrounded') == 1
 
 
-@pytest.mark.parametrize('i', TRACED_CASES)
-async def test_traced_background_recovery(dbos: DBOS, traced: None, i: int) -> None:
-    TRACE.clear()
-    KIND_BY_ID.clear()
-    PENDING.clear()
-    BUFFERS.clear()
-    _T0[0] = time.perf_counter_ns()
-    events = EventKinds(kinds=TracedKinds())
+async def _scenario(dbos: DBOS, name: str, events: EventKinds) -> dict[str, Any]:
+    """`test_background_task_survives_recovery` under a workflow and agent name no other module registers.
+
+    The workflow returns a per-iteration token, so a recovered run that resolved another function by name shows up.
+    """
+    token = uuid.uuid4().hex
     worker = Agent(FunctionModel(background_worker), name='worker')
     agent = Agent(
         background_parent(),
-        name='subagents_background',
+        name=name,
         deps_type=type(None),
         capabilities=[
             SubAgents[None](agents=[SubAgent(worker)], task_control=TaskControl()),
@@ -272,47 +267,70 @@ async def test_traced_background_recovery(dbos: DBOS, traced: None, i: int) -> N
         ],
     )
 
-    @DBOS.workflow(name='subagents_background')
+    @DBOS.workflow(name=name)
     async def workflow() -> list[str]:
         events.kinds.clear()
-        return [(await agent.run('Delegate it')).output, *events.kinds]
+        return [token, (await agent.run('Delegate it')).output, *events.kinds]
 
     reset_worker()
     workflow_id = str(uuid.uuid4())
     note('=== FIRST RUN ===')
     with SetWorkflowID(workflow_id):
-        output, *kinds = await workflow()
+        first_token, output, *kinds = await workflow()
     note(f'=== FIRST RUN done kinds={kinds} {_leftovers()}')
     steps = await dbos.list_workflow_steps_async(workflow_id)
     note('=== RECOVERY ===')
     handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
-    recovered, *recovered_kinds = await handle.get_result(polling_interval_sec=0.01)
+    recovered_token, recovered, *recovered_kinds = await handle.get_result(polling_interval_sec=0.01)
     note(f'=== RECOVERY done kinds={recovered_kinds} {_leftovers()}')
     recovered_steps = await dbos.list_workflow_steps_async(handle.get_workflow_id())
 
-    failures = [name for name, order in (('first', kinds), ('recovered', recovered_kinds)) if not _order_ok(order)]
+    failures = [label for label, order in (('first', kinds), ('recovered', recovered_kinds)) if not _order_ok(order)]
     if WORKER_CALLS != ['worker']:
         failures.append(f'worker_calls={WORKER_CALLS}')
     if 'from the worker' not in output or 'from the worker' not in recovered:
         failures.append(f'outputs={output!r},{recovered!r}')
-    if failures or os.environ.get('DIAG_12956_PRINT'):
-        first_steps = [(step['function_id'], step['function_name']) for step in steps]
-        forked_steps = [(step['function_id'], step['function_name']) for step in recovered_steps]
+    identity = 'ok' if first_token == token and recovered_token == token else 'MISMATCH'
+    return {
+        'failures': failures,
+        'identity': identity,
+        'kinds': kinds,
+        'recovered_kinds': recovered_kinds,
+        'steps': [(step['function_id'], step['function_name']) for step in steps],
+        'recovered_steps': [(step['function_id'], step['function_name']) for step in recovered_steps],
+    }
+
+
+def _report(i: int, variant: str, result: dict[str, Any]) -> None:
+    if result['failures'] or result['identity'] != 'ok' or os.environ.get('DIAG_12956_PRINT'):
         report = '\n'.join(
             [
-                f'DIAG-12956 iteration={i} failing={failures}',
-                f'first kinds={kinds}',
-                f'recovered kinds={recovered_kinds}',
-                f'first steps={first_steps}',
-                f'forked steps={forked_steps}',
+                f'DIAG-12956 {variant} iteration={i} failing={result["failures"]} identity={result["identity"]}',
+                f'first kinds={result["kinds"]}',
+                f'recovered kinds={result["recovered_kinds"]}',
+                f'first steps={result["steps"]}',
+                f'forked steps={result["recovered_steps"]}',
                 *TRACE,
             ]
         )
         print(report)
-        if failures:
+        if result['failures'] or result['identity'] != 'ok':
             pytest.fail(report, pytrace=False)
+
+
+@pytest.mark.parametrize('i', TRACED_CASES)
+async def test_traced_background_recovery(dbos: DBOS, traced: None, i: int) -> None:
+    TRACE.clear()
+    KIND_BY_ID.clear()
+    PENDING.clear()
+    BUFFERS.clear()
+    _T0[0] = time.perf_counter_ns()
+    result = await _scenario(dbos, 'diag_12956_traced', EventKinds(kinds=TracedKinds()))
+    _report(i, 'traced', result)
 
 
 @pytest.mark.parametrize('i', UNTRACED_CASES)
 async def test_untraced_background_recovery(dbos: DBOS, i: int) -> None:
-    await original_test(dbos)
+    TRACE.clear()
+    result = await _scenario(dbos, 'diag_12956_untraced', EventKinds())
+    _report(i, 'untraced', result)
