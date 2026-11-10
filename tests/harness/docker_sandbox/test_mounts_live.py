@@ -220,3 +220,25 @@ async def test_fresh_keys_take_over_from_the_old_ones(minio: str, sandbox: Works
     await anyio.sleep(11)
     assert as_root(sandbox, 'cat /workspace/rotated/new.txt') == 'new'
     assert mount_of(sandbox, '/workspace/rotated') == before
+
+
+async def test_a_read_only_mount_refuses_writes(sandbox: WorkspaceRef) -> None:
+    mount = s3('readonly')
+    read_only = S3Mount(
+        path=mount.path,
+        url=mount.url,
+        access_key_id=mount.access_key_id,
+        secret_access_key=mount.secret_access_key,
+        expires_at=mount.expires_at,
+        endpoint=mount.endpoint,
+        region=mount.region,
+        read_only=True,
+    )
+
+    async def action(workspace: Workspace) -> tuple[int, str]:
+        result = await workspace.run('echo no > readonly/refused.txt', shell=True)
+        return result.exit_code, result.stderr
+
+    exit_code, stderr = await in_run(sandbox, [read_only], action)
+
+    assert exit_code != 0 and 'Read-only file system' in stderr
