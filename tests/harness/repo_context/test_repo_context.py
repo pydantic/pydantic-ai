@@ -644,6 +644,31 @@ project
 </context-file>\
 """)
 
+    @pytest.mark.parametrize(
+        ('home_dir_through_link', 'working_dir_through_link'), [(True, False), (True, True), (False, True)]
+    )
+    async def test_walk_up_stops_at_a_home_dir_spelled_through_a_symlink(
+        self, tmp_path: Path, home_dir_through_link: bool, working_dir_through_link: bool
+    ) -> None:
+        _write(tmp_path / 'AGENTS.md', 'above home')
+        _write(tmp_path / 'home' / 'AGENTS.md', 'home')
+        _write(tmp_path / 'home' / 'project' / 'AGENTS.md', 'project')
+        link = tmp_path / 'link'
+        link.symlink_to(tmp_path / 'home', target_is_directory=True)
+        working_dir = (link if working_dir_through_link else tmp_path / 'home') / 'project'
+        cap = RepoContext[object](home_dir=link if home_dir_through_link else tmp_path / 'home', nested_traversal=False)
+        ctx = _run_context(workspace=Workspace(LocalWorkspaceBackend(working_dir)))
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == snapshot("""\
+<context-file path="../AGENTS.md">
+home
+</context-file>
+
+<context-file path="AGENTS.md">
+project
+</context-file>\
+""")
+
     async def test_walk_up_loads_one_file_per_directory(self, tmp_path: Path) -> None:
         (tmp_path / '.git').mkdir()
         _write(tmp_path / 'AGENTS.md', 'repo agents')
@@ -908,6 +933,99 @@ class TestNestedTraversal:
         ]
         assert parts == [(UserPromptPart, 'go'), *note]
 
+    @pytest.mark.parametrize(
+        'call',
+        [
+            pytest.param(('write_file', {'path': 'sub/new.py', 'content': 'new'}), id='write'),
+            pytest.param(('edit_file', {'path': 'sub/one.py', 'old_text': 'one', 'new_text': 'two'}), id='edit'),
+        ],
+    )
+    async def test_writing_or_editing_a_file_surfaces_its_directory(
+        self, tmp_path: Path, call: tuple[str, dict[str, str]]
+    ) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name=call[0], json_args=json.dumps(call[1]), tool_call_id='call')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path, content_hashes=False),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == snapshot(
+            ['<context-file path="sub/AGENTS.md">\nNESTED BODY\n</context-file>']
+        )
+
+    @pytest.mark.parametrize(
+        ('call', 'notes'),
+        [
+            pytest.param(('write_file', {'path': 'sub/AGENTS.md', 'content': 'WRITTEN'}), snapshot([]), id='write'),
+            # A read can return a window of the file and an edit changes part of it, so the note still comes.
+            pytest.param(
+                ('read_file', {'path': 'sub/AGENTS.md'}),
+                snapshot(['<context-file path="sub/AGENTS.md">\nNESTED BODY\n</context-file>']),
+                id='read',
+            ),
+            pytest.param(
+                ('edit_file', {'path': 'sub/AGENTS.md', 'old_text': 'NESTED', 'new_text': 'EDITED'}),
+                snapshot(['<context-file path="sub/AGENTS.md">\nEDITED BODY\n</context-file>']),
+                id='edit',
+            ),
+        ],
+    )
+    async def test_only_writing_the_instruction_file_itself_counts_as_surfacing_it(
+        self, tmp_path: Path, call: tuple[str, dict[str, str]], notes: list[str]
+    ) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            returns = _tool_returns(messages)
+            if returns == 0:
+                yield {0: DeltaToolCall(name=call[0], json_args=json.dumps(call[1]), tool_call_id='call')}
+            elif returns == 1:
+                # Either way the directory now counts as surfaced, so a later read there adds nothing.
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"sub/one.py"}', tool_call_id='one')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path, content_hashes=False),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == notes
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='symlinks need privileges on Windows')
+    async def test_writing_the_instruction_file_through_a_symlink_counts_as_surfacing_it(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        (tmp_path / 'sub' / 'CLAUDE.md').symlink_to('AGENTS.md')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                args = json.dumps({'path': 'sub/CLAUDE.md', 'content': 'WRITTEN'})
+                yield {0: DeltaToolCall(name='write_file', json_args=args, tool_call_id='call')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=tmp_path, content_hashes=False),
+                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject='contents'),
+            ],
+        ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert _repo_notes(result.all_messages()) == []
+
     async def test_reading_a_deep_file_surfaces_every_directory_between_it_and_the_working_directory(
         self, tmp_path: Path
     ) -> None:
@@ -1081,6 +1199,114 @@ class TestNestedTraversal:
             ['<context-file path="AGENTS.md">\nWRITTEN DURING THE RUN\n</context-file>']
         )
 
+    async def test_no_budget_inlines_every_file(self, tmp_path: Path) -> None:
+        for name in 'ab':
+            _write(tmp_path / name / 'AGENTS.md', name.upper() * 20_000)
+            _write(tmp_path / name / 'x.py', 'x')
+        result = await self._read_files(tmp_path, ['a/x.py', 'b/x.py'], nested_max_chars=None)
+        notes = _repo_notes(result.all_messages())
+        assert [note.count('A') + note.count('B') >= 20_000 for note in notes] == [True, True]
+
+    async def test_contents_past_the_budget_are_surfaced_as_pointers(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'a' / 'AGENTS.md', 'A' * 10)
+        _write(tmp_path / 'b' / 'AGENTS.md', 'B' * 30)
+        _write(tmp_path / 'c' / 'AGENTS.md', 'C' * 10)
+        for name in 'abc':
+            _write(tmp_path / name / 'x.py', 'x')
+        result = await self._read_files(tmp_path, ['a/x.py', 'b/x.py', 'c/x.py'], nested_max_chars=25)
+        parts = [
+            (type(part), part.content if isinstance(part, SystemPromptPart) else _user_text(part))
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, SystemPromptPart | UserPromptPart) and part.content != 'go'
+        ]
+        assert parts == snapshot(
+            [
+                (
+                    UserPromptPart,
+                    """\
+<context-file path="a/AGENTS.md">
+AAAAAAAAAA
+</context-file>\
+""",
+                ),
+                (
+                    SystemPromptPart,
+                    'A directory you just accessed has an instruction file, not loaded here. Its path is in the `<context-file>` tag that follows. Read the file if it is relevant to your task.',
+                ),
+                (UserPromptPart, '<context-file path="b/AGENTS.md" />'),
+                (
+                    UserPromptPart,
+                    """\
+<context-file path="c/AGENTS.md">
+CCCCCCCCCC
+</context-file>\
+""",
+                ),
+            ]
+        )
+
+    async def test_notes_queued_by_one_read_count_against_the_budget_before_reaching_history(
+        self, tmp_path: Path
+    ) -> None:
+        # One deep read enqueues `a/` and `a/b/` together, so `a/`'s note isn't in history yet when `a/b/` is weighed.
+        _write(tmp_path / 'a' / 'AGENTS.md', 'A' * 20)
+        _write(tmp_path / 'a' / 'b' / 'AGENTS.md', 'B' * 20)
+        _write(tmp_path / 'a' / 'b' / 'x.py', 'x')
+        result = await self._read_files(tmp_path, ['a/b/x.py'], nested_max_chars=30)
+        assert _repo_notes(result.all_messages()) == snapshot(
+            [
+                """\
+<context-file path="a/AGENTS.md">
+AAAAAAAAAAAAAAAAAAAA
+</context-file>\
+""",
+                '<context-file path="a/b/AGENTS.md" />',
+            ]
+        )
+
+    async def test_budget_is_accepted_and_ignored_with_pointers(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
+        _write(tmp_path / 'sub' / 'one.py', 'one')
+        # Pointers inline nothing, so a budget smaller than the file is no error and changes nothing.
+        result = await self._read_files(tmp_path, ['sub/one.py'], nested_inject='pointer', nested_max_chars=5)
+        assert _repo_notes(result.all_messages()) == snapshot(['<context-file path="sub/AGENTS.md" />'])
+
+    async def test_a_later_run_counts_earlier_inlined_notes_against_the_budget(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'one' / 'AGENTS.md', 'O' * 20)
+        _write(tmp_path / 'two' / 'AGENTS.md', 'T' * 20)
+        _write(tmp_path / 'one' / 'x.py', 'x')
+        _write(tmp_path / 'two' / 'x.py', 'x')
+        first = await self._read_files(tmp_path, ['one/x.py'], nested_max_chars=30)
+        second = await self._read_files(
+            tmp_path, ['two/x.py'], nested_max_chars=30, message_history=first.all_messages()
+        )
+        assert _repo_notes(first.all_messages()) == snapshot(
+            ['<context-file path="one/AGENTS.md">\nOOOOOOOOOOOOOOOOOOOO\n</context-file>']
+        )
+        # The first run's note is still in the window, so it counts: 20 + 20 is past 30.
+        assert _repo_notes(second.new_messages()) == snapshot(['<context-file path="two/AGENTS.md" />'])
+
+    async def test_a_file_pointed_at_for_the_budget_is_inlined_once_a_compaction_appears(self, tmp_path: Path) -> None:
+        _write(tmp_path / 'one' / 'AGENTS.md', 'O' * 20)
+        _write(tmp_path / 'two' / 'AGENTS.md', 'T' * 20)
+        _write(tmp_path / 'one' / 'x.py', 'x')
+        _write(tmp_path / 'two' / 'x.py', 'x')
+        _write(tmp_path / 'two' / 'y.py', 'y')
+        first = await self._read_files(tmp_path, ['one/x.py', 'two/x.py'], nested_max_chars=30)
+        assert _repo_notes(first.all_messages())[1:] == snapshot(['<context-file path="two/AGENTS.md" />'])
+        compacted = [*first.all_messages(), ModelRequest(parts=[CompactionPart('The agent read one/ and two/.')])]
+        second = await self._read_files(tmp_path, ['two/y.py'], nested_max_chars=30, message_history=compacted)
+        # The compaction took the inlined note out of the window, so the budget has room again.
+        assert _repo_notes(second.new_messages()) == snapshot(
+            ['<context-file path="two/AGENTS.md">\nTTTTTTTTTTTTTTTTTTTT\n</context-file>']
+        )
+
+    def test_negative_budget_is_rejected(self) -> None:
+        with pytest.raises(UserError, match=r'`RepoContext\.nested_max_chars` must not be negative'):
+            RepoContext(nested_max_chars=-1)
+
     async def test_working_directory_file_is_surfaced_when_autoload_is_off(self, tmp_path: Path) -> None:
         _write(tmp_path / 'AGENTS.md', 'ROOT BODY')
         _write(tmp_path / 'README.md', 'readme')
@@ -1124,7 +1350,8 @@ class TestNestedTraversal:
             if isinstance(item, SystemPromptPart | TextContent)
         ]
         expected = {'origin': 'pydantic-ai-harness.repo_context.nested_note.v1', 'directory': str(tmp_path / 'sub')}
-        assert metadata == [expected] * (2 if nested_inject == 'pointer' else 1)
+        # An inlined note also records its size, which `nested_max_chars` counts across runs.
+        assert metadata == ([expected] * 2 if nested_inject == 'pointer' else [{**expected, 'chars': 11}])
 
     async def test_a_later_run_does_not_repeat_a_note_still_in_history(self, tmp_path: Path) -> None:
         _write(tmp_path / 'sub' / 'AGENTS.md', 'NESTED BODY')
@@ -1266,6 +1493,7 @@ class TestNestedTraversal:
         paths: list[str],
         *,
         nested_inject: Literal['pointer', 'contents'] = 'contents',
+        nested_max_chars: int | None = 32_000,
         message_history: list[ModelMessage] | None = None,
     ) -> AgentRunResult[str]:
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
@@ -1280,7 +1508,12 @@ class TestNestedTraversal:
             FunctionModel(stream_function=stream),
             capabilities=[
                 FileSystem(root_dir=root),
-                RepoContext(autoload_instructions=False, nested_traversal=True, nested_inject=nested_inject),
+                RepoContext(
+                    autoload_instructions=False,
+                    nested_traversal=True,
+                    nested_inject=nested_inject,
+                    nested_max_chars=nested_max_chars,
+                ),
             ],
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=root), message_history=message_history)
 
@@ -1353,7 +1586,7 @@ class TestNestedTraversal:
 
         with pytest.warns(
             HarnessDeprecationWarning,
-            match='Traversal detection now reacts to `FileReadEvent` and `DirectoryListedEvent`',
+            match='Traversal detection now reacts to `FileReadEvent`, `DirectoryListedEvent` and `FileWrittenEvent`',
         ):
             capability = RepoContext(
                 autoload_instructions=False,

@@ -1,0 +1,136 @@
+"""Run OpenCode with read-only tools; `main` runs the douwebot fallback review against the pinned PR checkout."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import tempfile
+from pathlib import Path
+
+from publish_douwebot_review import ReviewResult
+
+MODEL = 'opencode-go/deepseek-v4.1-flash'
+
+
+def check_symlinks(root: Path, *, skip_pr_head: bool = False) -> None:
+    """Reject links which escape their checkout, do not resolve, or form a cycle."""
+    root = root.resolve(strict=True)
+    for directory, directories, files in os.walk(root, followlinks=False):
+        if skip_pr_head and Path(directory) == root and 'pr-head' in directories:
+            directories.remove('pr-head')
+        if '.git' in directories:
+            directories.remove('.git')
+        for name in directories + files:
+            path = Path(directory) / name
+            if not path.is_symlink():
+                continue
+            try:
+                target = path.resolve(strict=True)
+            except (OSError, RuntimeError) as exc:
+                raise ValueError(f'Invalid symlink in review checkout: {path.relative_to(root)}') from exc
+            if not target.is_relative_to(root):
+                raise ValueError(f'Symlink escapes review checkout: {path.relative_to(root)}')
+            if target.is_dir() and path.parent.is_relative_to(target):
+                raise ValueError(f'Symlink loops through an ancestor: {path.relative_to(root)}')
+
+
+def read_only_config(*, agent: str, steps: int | None = None) -> dict[str, object]:
+    """Allow only the read, grep and glob tools, and only the OpenCode Go provider."""
+    # The wildcard deny covers external_directory for direct outside reads. OpenCode checks paths
+    # lexically, so callers run check_symlinks to reject links that could escape `cwd`.
+    permissions: list[dict[str, str]] = [
+        {'action': '*', 'resource': '*', 'effect': 'deny'},
+        *({'action': action, 'resource': '*', 'effect': 'allow'} for action in ('read', 'grep', 'glob')),
+    ]
+    policies: list[dict[str, str]] = [
+        {'action': 'provider.use', 'resource': '*', 'effect': 'deny'},
+        {'action': 'provider.use', 'resource': 'opencode-go', 'effect': 'allow'},
+        {'action': 'plugin.use', 'resource': '*', 'effect': 'deny'},
+        {'action': 'mcp.use', 'resource': '*', 'effect': 'deny'},
+        {'action': 'tool.use', 'resource': '*', 'effect': 'deny'},
+        *({'action': 'tool.use', 'resource': f'{action}:*', 'effect': 'allow'} for action in ('read', 'grep', 'glob')),
+    ]
+    agent_config: dict[str, object] = {'mode': 'primary', 'permissions': permissions}
+    if steps is not None:
+        agent_config['steps'] = steps
+    return {
+        'plugins': ['-opencode.browser'],
+        'snapshots': False,
+        'default_agent': agent,
+        'permissions': permissions,
+        'agents': {
+            agent: agent_config,
+            'title': {'model': MODEL},
+            'compaction': {'model': MODEL},
+        },
+        'policies': policies,
+    }
+
+
+def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: float | None = None) -> None:
+    """Run OpenCode in `cwd` with read, grep, and glob tools only, saving its event stream to `output`."""
+    api_key = os.environ['OPENCODE_API_KEY']
+    if not api_key:
+        raise ValueError('OPENCODE_API_KEY is empty')
+    runner_temp = Path(os.environ['RUNNER_TEMP'])
+
+    with tempfile.TemporaryDirectory(dir=runner_temp, prefix='opencode-') as temp:
+        temp_root = Path(temp)
+        config_dir = temp_root / 'config' / 'opencode'
+        config_dir.mkdir(parents=True)
+        (config_dir / 'opencode.json').write_text(json.dumps(read_only_config(agent=agent)), encoding='utf-8')
+        env = {
+            'HOME': str(temp_root),
+            'PATH': os.environ['PATH'],
+            'XDG_CONFIG_HOME': str(temp_root / 'config'),
+            'XDG_DATA_HOME': str(temp_root / 'data'),
+            'XDG_CACHE_HOME': str(temp_root / 'cache'),
+            'OPENCODE_API_KEY': api_key,
+        }
+        with output.open('w', encoding='utf-8') as stream:
+            subprocess.run(
+                ['opencode', 'run', '--standalone', '--model', MODEL, '--agent', agent, '--format', 'json'],
+                input=prompt,
+                text=True,
+                cwd=cwd,
+                env=env,
+                stdout=stream,
+                check=True,
+                timeout=timeout,
+            )
+
+
+def main() -> None:
+    """Run the reviewer and save its event stream for validation."""
+    workspace = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
+    check_symlinks(workspace, skip_pr_head=True)
+    check_symlinks(workspace / 'pr-head')
+    prompt = os.environ['REVIEW_PROMPT']
+    before, marker, after = prompt.partition('Use the `gh` CLI only when you need additional information')
+    if not marker:
+        raise ValueError('Review prompt is missing the GitHub tool guidance')
+    _, marker, after = after.partition('Be careful about loading large diffs')
+    if not marker:
+        raise ValueError('Review prompt is missing the diff guidance')
+    prompt = before + 'Live GitHub and Git commands are unavailable; use the prefetched context.\n\n' + marker + after
+    before, marker, after = prompt.partition('Before returning the structured result, run `gh pr view')
+    if not marker or '\n' not in after:
+        raise ValueError('Review prompt is missing the head-check guidance')
+    prompt = before + 'The trusted publisher checks the live PR head before publication.' + after[after.index('\n') :]
+    prompt += (
+        '\n\nOpenCode has read, grep, and glob tools only. Shell is unavailable. '
+        'If missing information prevents a complete review, return INCOMPLETE. '
+        'Return only one JSON object matching this schema: '
+        + json.dumps(ReviewResult.model_json_schema(), separators=(',', ':'))
+    )
+    run_read_only(
+        prompt,
+        cwd=workspace,
+        agent='reviewer',
+        output=Path(os.environ['RUNNER_TEMP']) / 'douwebot-opencode.ndjson',
+    )
+
+
+if __name__ == '__main__':
+    main()

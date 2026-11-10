@@ -98,6 +98,11 @@ for file in mimetypes.knownfiles:
         _mime_types.read(file)  # pragma: lax no cover
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
+# Office and OpenDocument types that Python's `mimetypes` only knows by default from 3.14
+_mime_types.add_type('application/vnd.oasis.opendocument.presentation', '.odp')
+_mime_types.add_type('application/vnd.oasis.opendocument.spreadsheet', '.ods')
+_mime_types.add_type('application/vnd.oasis.opendocument.text', '.odt')
+_mime_types.add_type('application/vnd.openxmlformats-officedocument.presentationml.presentation', '.pptx')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx')
 _mime_types.add_type('text/markdown', '.mdx')
@@ -616,16 +621,11 @@ class DocumentUrl(FileUrl):
         return mime_type
 
     @property
-    def format(self) -> DocumentFormat:
-        """The file format of the document.
-
-        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
-        """
-        media_type = self.media_type
-        try:
-            return _document_format_lookup[media_type]
-        except KeyError as e:
-            raise ValueError(f'Unknown document media type: {media_type}') from e
+    def format(self) -> str:
+        """The file format of the document, such as `'pdf'` or `'pptx'`: the extension its media type is known by."""
+        if format := _document_format(self.media_type):
+            return format
+        raise ValueError(f'Unknown document media type: {self.media_type}')
 
 
 @dataclass(repr=False)
@@ -918,23 +918,33 @@ class BinaryContent:
 
     @property
     def is_document(self) -> bool:
-        """Return `True` if the media type is a document type."""
-        return self.media_type in _document_format_lookup
+        """Return `True` if the media type is a document type.
+
+        A known document type is one, and so is any other media type that `mimetypes` knows a file extension for
+        and that isn't audio, image, video or text-like. Text-like content outside the known types (JSON, YAML,
+        XML, ...) is left to the model adapter, which inlines it as text where the API has no file part, and so is
+        a media type no extension is known for.
+        """
+        if self.media_type in _document_format_lookup:
+            return True
+        if self.is_audio or self.is_image or self.is_video or _utils.is_text_like_media_type(self.media_type):
+            return False
+        return _document_format(self.media_type) is not None
 
     @property
     def format(self) -> str:
         """The file format of the binary content."""
-        try:
-            if self.is_audio:
-                return _audio_format_lookup[self.media_type]
-            elif self.is_image:
-                return _image_format_lookup[self.media_type]
-            elif self.is_video:
-                return _video_format_lookup[self.media_type]
-            else:
-                return _document_format_lookup[self.media_type]
-        except KeyError as e:
-            raise ValueError(f'Unknown media type: {self.media_type}') from e
+        if self.is_audio:
+            format = _audio_format_lookup.get(self.media_type)
+        elif self.is_image:
+            format = _image_format_lookup.get(self.media_type)
+        elif self.is_video:
+            format = _video_format_lookup.get(self.media_type)
+        else:
+            format = _document_format(self.media_type)
+        if format is None:
+            raise ValueError(f'Unknown media type: {self.media_type}')
+        return format
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1520,6 +1530,26 @@ _document_format_lookup: dict[str, DocumentFormat] = {
     'application/msword': 'doc',
     'application/vnd.ms-excel': 'xls',
 }
+
+
+def _document_format(media_type: str) -> str | None:
+    """The file format of a document with `media_type`: the extension it's known by, without the dot, or `None`.
+
+    `_document_format_lookup` holds the formats model APIs expect for the types they name (Bedrock's `format`, the
+    `filename` OpenAI reads the type from); any other media type is looked up in `mimetypes`, so a document of any
+    type can be sent, and a model that doesn't read it rejects it. Where `mimetypes` knows several extensions, the
+    one spelling the subtype wins (`application/xml` is `xml`, not the `xsl` the stdlib lists first), then the first
+    known: `_mime_types` registers the stdlib's own table before the OS mime files and the Windows registry.
+    """
+    if format := _document_format_lookup.get(media_type):
+        return format
+    extensions = [extension.removeprefix('.') for extension in _mime_types.guess_all_extensions(media_type)]
+    if not extensions:
+        return None
+    subtype = media_type.partition('/')[2]
+    return subtype if subtype in extensions else extensions[0]
+
+
 _audio_format_lookup: dict[str, AudioFormat] = {
     'audio/mpeg': 'mp3',
     'audio/wav': 'wav',
@@ -3924,6 +3954,10 @@ class TextPart:
     """An optional identifier of the text part.
 
     When this field is set, `provider_name` is required to identify the provider that generated this data.
+
+    If you edit `content`, such as in a [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] processor, set
+    this to `None` too: the OpenAI Responses API uses its stored copy of an item sent with its ID and ignores the text
+    sent alongside.
     """
 
     provider_name: str | None = None
@@ -5001,10 +5035,9 @@ class ModelResponse:
 
     Unless the model was given a key, it's a plain SHA-256, which anyone holding the stored history
     can use to test guesses at content that was redacted from it later, such as a PIN or an account
-    number. If you redact history after it was sent, give the model a key. Don't just clear this
-    field: a response without one is trusted and continued from, and the provider still holds the
-    unredacted copy. If you do strip it, clear `provider_response_id` on the same responses too, so
-    nothing continues from them.
+    number. If you redact history after it was sent, give the model a key, or clear this field: a
+    response without one isn't continued from, and the full history is sent instead. Either way, clear
+    the [`id`][pydantic_ai.messages.TextPart.id] of a part you redact, or the provider uses its stored copy.
 
     Computing it serializes the whole history before the response on every request that continues
     server-side state, so it costs local work proportional to the conversation's length.
@@ -5922,6 +5955,16 @@ def sanitize_messages(
       `message_history` — a client-supplied compaction part would hide that server-side history.
       The [UI adapters](../ui/overview.md) apply this rule automatically when a run combines
       server-side `message_history` with client-submitted messages.
+
+    It keeps, as sent, the references to state the model provider holds:
+    [`ModelResponse.provider_response_id`][pydantic_ai.messages.ModelResponse.provider_response_id], and the
+    `conversation_id` and `container_id` keys of
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], along with
+    [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state]. The UI adapters' protocols don't carry
+    these, so history an adapter loads has none. Several model settings, and resuming a suspended response, act
+    on them with your provider credentials;
+    [Loading untrusted history](../message-history.md#loading-untrusted-history) lists them and what to do when
+    the history comes from a client.
 
     Args:
         messages: Messages to sanitize.

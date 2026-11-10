@@ -95,6 +95,9 @@ TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_tool_availabili
 CAPABILITY_LOAD_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_capability_load_delta'
 """Activity type for capabilities loaded from code stored as AG-UI ActivityMessages."""
 
+CONVERSATION_SAVED_EVENT_NAME: Final[str] = 'pydantic_ai_conversation_saved'
+"""Custom event name for the entries a `conversation_store` save stored, sent after the run."""
+
 MODEL_SETTINGS_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_model_settings_delta'
 """Activity type for changes to the thinking effort in effect stored as AG-UI ActivityMessages."""
 

@@ -231,9 +231,17 @@ async def test_anthropic_filters_unconfigured_native_tool_calls(
         ),
         pytest.param([WebSearchTool()], {'citations': True}, False, id='citations-web-search'),
         pytest.param([WebFetchTool()], {'citations': True}, False, id='citations-web-fetch'),
-        pytest.param([WebFetchTool(enable_citations=True)], None, False, id='web-fetch-enable-citations'),
         pytest.param(
-            [WebSearchTool(), WebFetchTool(enable_citations=True)], None, True, id='uncited-web-search-keeps-default'
+            [WebFetchTool(provider_settings={'anthropic': {'enable_citations': True}})],
+            None,
+            False,
+            id='web-fetch-enable-citations',
+        ),
+        pytest.param(
+            [WebSearchTool(), WebFetchTool(provider_settings={'anthropic': {'enable_citations': True}})],
+            None,
+            True,
+            id='uncited-web-search-keeps-default',
         ),
         pytest.param(
             [WebFetchTool()],
