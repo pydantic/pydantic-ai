@@ -14401,7 +14401,7 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                     input_tokens=78,
                     output_tokens=37,
                     output_reasoning_tokens=22,
-                    details={'is_byok': 0, 'reasoning_tokens': 22},
+                    details={'reasoning_tokens': 22},
                     cost=IsDecimal(gt=0),
                 ),
                 model_name='openai/gpt-oss-20b',

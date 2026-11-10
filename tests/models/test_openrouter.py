@@ -575,7 +575,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
         RunUsage(
             input_tokens=17,
             output_tokens=2177,
-            details={'is_byok': 0, 'reasoning_tokens': 960, 'image_tokens': 0},
+            details={'reasoning_tokens': 960, 'image_tokens': 0},
             output_reasoning_tokens=960,
             requests=1,
             cost=Decimal('0.00435825'),
@@ -595,6 +595,120 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
             'timestamp': IsDatetime(),
         }
     )
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+async def test_agent_usage_details_excludes_is_byok(allow_model_requests: None) -> None:
+    completions: list[dict[str, Any]] = [
+        {
+            'id': 'gen-1',
+            'object': 'chat.completion',
+            'created': 1704067200,
+            'model': 'anthropic/claude-haiku-4.5',
+            'provider': 'Anthropic',
+            'choices': [
+                {
+                    'index': 0,
+                    'finish_reason': 'tool_calls',
+                    'message': {
+                        'role': 'assistant',
+                        'content': None,
+                        'tool_calls': [
+                            {
+                                'id': 'call_1',
+                                'type': 'function',
+                                'function': {'name': 'lookup', 'arguments': '{}'},
+                            }
+                        ],
+                    },
+                }
+            ],
+            'usage': {
+                'prompt_tokens': 1,
+                'completion_tokens': 1,
+                'total_tokens': 2,
+                'is_byok': True,
+                'completion_tokens_details': {'reasoning_tokens': 1, 'image_tokens': 0},
+            },
+        },
+        {
+            'id': 'gen-2',
+            'object': 'chat.completion',
+            'created': 1704067200,
+            'model': 'anthropic/claude-haiku-4.5',
+            'provider': 'Anthropic',
+            'choices': [{'index': 0, 'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': 'Done.'}}],
+            'usage': {
+                'prompt_tokens': 2,
+                'completion_tokens': 1,
+                'total_tokens': 3,
+                'is_byok': True,
+                'completion_tokens_details': {'reasoning_tokens': 1, 'image_tokens': 0},
+            },
+        },
+    ]
+    responses_sent = 0
+
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        nonlocal responses_sent
+        response = completions[responses_sent]
+        responses_sent += 1
+        return httpx2.Response(200, json=response)
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://openrouter.example/api/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(OpenRouterModel('anthropic/claude-haiku-4.5', provider=OpenRouterProvider(openai_client=client)))
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'ok'
+
+        result = await agent.run('Look it up.')
+
+    assert responses_sent == 2
+    response_messages = [
+        message(result.all_messages(), ModelResponse, index=1),
+        message(result.all_messages(), ModelResponse, index=-1),
+    ]
+    assert [response.usage.details for response in response_messages] == [
+        {'reasoning_tokens': 1, 'image_tokens': 0},
+        {'reasoning_tokens': 1, 'image_tokens': 0},
+    ]
+    assert result.usage.details == {'reasoning_tokens': 2, 'image_tokens': 0}
+    assert 'gen_ai.usage.details.is_byok' not in result.usage.opentelemetry_attributes()
+    assert all(response.provider_details['is_byok'] is True for response in response_messages)
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+async def test_streaming_usage_details_excludes_is_byok(allow_model_requests: None) -> None:
+    stream_body = (
+        b'data: {"id":"gen-stream-1","object":"chat.completion.chunk","created":1704067200,"model":"anthropic/claude-haiku-4.5","provider":"Anthropic","choices":[{"index":0,"delta":{"role":"assistant","content":"Done."},"finish_reason":null}]}\n\n'
+        b'data: {"id":"gen-stream-1","object":"chat.completion.chunk","created":1704067200,"model":"anthropic/claude-haiku-4.5","provider":"Anthropic","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
+        b'data: {"id":"gen-stream-1","object":"chat.completion.chunk","created":1704067200,"model":"anthropic/claude-haiku-4.5","provider":"Anthropic","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2,"is_byok":true,"completion_tokens_details":{"reasoning_tokens":1,"image_tokens":0}}}\n\n'
+        b'data: [DONE]\n\n'
+    )
+
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=stream_body)
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://openrouter.example/api/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        agent = Agent(OpenRouterModel('anthropic/claude-haiku-4.5', provider=OpenRouterProvider(openai_client=client)))
+
+        async with agent.run_stream('Say hello.') as result:
+            await result.get_output()
+            usage = result.usage
+
+    assert usage.details == {'reasoning_tokens': 1, 'image_tokens': 0}
+    assert 'is_byok' not in usage.details
 
 
 async def test_openrouter_validate_non_json_response(openrouter_api_key: str) -> None:

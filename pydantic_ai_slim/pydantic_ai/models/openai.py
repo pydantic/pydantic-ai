@@ -7665,7 +7665,7 @@ def _map_usage(
         k: v
         for k, v in usage_data.items()
         if k not in {'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'total_tokens'}
-        if isinstance(v, int)
+        if isinstance(v, int) and not isinstance(v, bool)
     }
     response_data = dict(model=model, usage=usage_data)
     if isinstance(response_usage, responses.ResponseUsage):
