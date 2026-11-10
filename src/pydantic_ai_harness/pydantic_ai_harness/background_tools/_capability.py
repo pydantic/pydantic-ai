@@ -423,10 +423,11 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             # A pause ends the run without another model request, so no later step would take a result that
             # arrives after it: wait for every live task here. The end-of-run drain records their results
             # after a deferred-tool pause, and leaves them queued at a `PendingModelResponse` pause.
-            for outcome in self._arrived():
-                self._deliver(ctx, outcome)
             while self._live:
                 self._deliver(ctx, await self._outcomes.receive())
+            # A task sends its outcome before it stops counting as live, so several can still be buffered here.
+            for outcome in self._arrived():
+                self._deliver(ctx, outcome)
             return result
 
         for outcome in self._arrived():

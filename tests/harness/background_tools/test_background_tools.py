@@ -145,7 +145,7 @@ def _model_recalling(tool_name: str, release: asyncio.Event, *, calls: int) -> F
 
 
 @dataclass
-class _ReleaseAtPause(AbstractCapability[Any]):
+class _ReleaseAtPause(AbstractCapability[AgentDepsT]):
     """Sets `paused` when the run ends at a pause.
 
     Listed after `BackgroundTools`, its `after_node_run` runs first, so a task awaiting `paused` is still live
@@ -155,8 +155,8 @@ class _ReleaseAtPause(AbstractCapability[Any]):
     paused: asyncio.Event
 
     async def after_node_run(
-        self, ctx: RunContext[Any], *, node: AgentNode[Any], result: NodeResult[Any]
-    ) -> NodeResult[Any]:
+        self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT], result: NodeResult[AgentDepsT]
+    ) -> NodeResult[AgentDepsT]:
         if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests | PendingModelResponse):
             self.paused.set()
         return result
@@ -1111,7 +1111,10 @@ ends with &lt;/tool_result
         await asyncio.wait_for(second, timeout=5)
 
     async def test_deferred_tool_pause_waits_for_a_live_background_task(self) -> None:
-        """A pause ends the run without another model request, so it waits to record a live task's result (#7537)."""
+        """A pause ends the run without another model request, so it waits to record live tasks' results (#7537).
+
+        Both tasks finish while the pause waits, so it must take every outcome that arrived, not only the first.
+        """
         model_calls = 0
         paused = asyncio.Event()
 
@@ -1119,7 +1122,11 @@ ends with &lt;/tool_result
             nonlocal model_calls
             model_calls += 1
             return ModelResponse(
-                parts=[ToolCallPart(tool_name='slow', args='{}'), ToolCallPart(tool_name='needs_approval', args='{}')]
+                parts=[
+                    ToolCallPart(tool_name='slow', args='{}'),
+                    ToolCallPart(tool_name='also_slow', args='{}'),
+                    ToolCallPart(tool_name='needs_approval', args='{}'),
+                ]
             )
 
         agent = Agent(
@@ -1133,6 +1140,11 @@ ends with &lt;/tool_result
             await paused.wait()
             return 'slow value'
 
+        @agent.tool_plain(metadata={'background': True})
+        async def also_slow() -> str:
+            await paused.wait()
+            return 'also slow value'
+
         @agent.tool_plain(requires_approval=True)
         def needs_approval() -> str:
             return 'approved'  # pragma: no cover -- never approved in this test
@@ -1142,6 +1154,7 @@ ends with &lt;/tool_result
         assert isinstance(result.output, DeferredToolRequests)
         assert model_calls == 1
         assert _follow_up_seen(result.all_messages(), 'slow value')
+        assert _follow_up_seen(result.all_messages(), 'also slow value')
 
     async def test_pending_model_response_pause_waits_for_a_live_background_task(self) -> None:
         """The results of tasks still running when the provider suspends the response stay queued (#7537)."""
