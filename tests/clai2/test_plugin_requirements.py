@@ -494,9 +494,9 @@ def delegates(capabilities: Sequence[AgentCapability[None]]) -> bool:
     return any(isinstance(leaf, SubAgents) for leaf in leaves)
 
 
-def test_forks_report_setup_errors_like_the_foreground(tmp_path: Path) -> None:
+async def test_forks_report_setup_errors_like_the_foreground(tmp_path: Path) -> None:
     shell = coder_shell(tmp_path, io.StringIO(), sub_agents_tags=None)
-    assert shell.fork_session(None, []).on_setup_error == shell.capability_failed
+    assert (await shell.fork_session(None, [])).on_setup_error == shell.capability_failed
 
 
 async def test_coder_delegation_saved_by_another_build_is_ignored(tmp_path: Path) -> None:

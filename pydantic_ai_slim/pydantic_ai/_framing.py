@@ -17,7 +17,8 @@ tag, built-in or registered, in a data tag's body, and of `<system>` in the voic
 attribute values, and changes nothing else, so content that mentions none of them goes out exactly as
 written. On those models, user prompts and tool returns get the same treatment for `<system>` alone
 ([`neutralize_voice_tag`][pydantic_ai._framing.neutralize_voice_tag]), and the standing prompt says what
-the tag means ([`SYSTEM_VOICE_ANNOUNCEMENT`][pydantic_ai._framing.SYSTEM_VOICE_ANNOUNCEMENT]).
+the tag means ([`SYSTEM_VOICE_ANNOUNCEMENT`][pydantic_ai._framing.SYSTEM_VOICE_ANNOUNCEMENT]) from the
+first request whose history has a mid-conversation system prompt.
 
 `<context>` and `<context_diff>` elements carry an agent's append-mode instructions and the changes to them. In a
 conversation that has them, a user message, a tool result or a file whose text looks like one is followed by a note
@@ -84,9 +85,15 @@ SYSTEM_VOICE_ANNOUNCEMENT: Final = (
 )
 """Tells a model without mid-conversation system messages what the `<system>` voice tag means, in its standing prompt.
 
+By default it is added from the first request whose history has a mid-conversation system prompt, so an agent that
+never sends one keeps its standing prompt as written; the
+[`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] setting can add it always or never.
+
 The last clause holds because `<system>` tags in user prompts and tool returns are neutralized on those models, as
 `&lt;system>`. Saying so in the last clause keeps Grok 4.7 from reading a neutralized tag as the framework's voice
-(16 of 16 runs with the clause, 9 of 16 without it).
+(16 of 16 runs with the clause, 9 of 16 without it). Before the announcement, the conversation has no `<system>` block,
+so a neutralized `&lt;system>` has no framework voice to be mistaken for and needs no explaining. The neutralizing
+itself doesn't depend on the announcement and happens on every request.
 """
 
 

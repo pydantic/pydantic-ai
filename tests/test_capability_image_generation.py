@@ -160,7 +160,7 @@ class TestImageGenerationCapability:
             'defer_loading',
             'description',
         }
-        assert init_params == builtin_fields | {'dimensions'}
+        assert init_params == (builtin_fields - {'provider_settings'}) | {'dimensions'}
 
         # The spec-only constructor deliberately narrows runtime-only values, but must keep the
         # same parameter names so YAML/JSON configuration cannot drift from the Python API.
@@ -1444,7 +1444,7 @@ class TestImageGenerationCapability:
         """
         with pytest.warns(UserWarning, match=f'ignored direct-only setting.*{ignored}'):
             if native_form == 'instance':
-                ImageGeneration(native=ImageGenerationTool(quality='high'), **kwargs)
+                ImageGeneration(native=ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}}), **kwargs)
             else:
                 ImageGeneration(native=lambda ctx: None, **kwargs)
 
@@ -1474,13 +1474,35 @@ class TestImageGenerationCapability:
         assert tool.size is None
         assert tool.aspect_ratio is None
 
+    def test_image_generation_capability_fields_do_not_warn_and_stay_readable(self):
+        """Capability users get no deprecation warning, and the built tool's fields read as they always have."""
+        tool = ImageGeneration(
+            action='generate',
+            background='opaque',
+            input_fidelity='high',
+            moderation='low',
+            image_model='gpt-image-2',
+            quality='high',
+        ).get_native_tools()[0]
+
+        assert isinstance(tool, ImageGenerationTool)
+        assert (tool.action, tool.background, tool.input_fidelity, tool.moderation, tool.model, tool.quality) == (
+            'generate',
+            'opaque',
+            'high',
+            'low',
+            'gpt-image-2',
+            'high',
+        )
+        assert tool.provider_settings is None
+
     def test_image_generation_fallback_merges_custom_native_with_overrides(self):
         """A custom native instance produces a local fallback tool.
 
         What that fallback is actually handed is asserted through `agent.run` by
         `tests/test_fallback_native_factory.py::test_instance_native_config_is_merged_for_fallback`.
         """
-        custom_native = ImageGenerationTool(quality='high', size='1024x1024')
+        custom_native = ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}}, size='1024x1024')
         cap = ImageGeneration(
             native=custom_native,
             fallback_subagent_model='openai-responses:gpt-5.4',
@@ -1539,7 +1561,7 @@ class TestImageGenerationCapability:
     def test_image_generation_callable_native_with_fallback(self):
         """When native is a callable, the fallback local tool still gets created."""
         cap = ImageGeneration(
-            native=lambda ctx: ImageGenerationTool(quality='high'),
+            native=lambda ctx: ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}}),
             fallback_subagent_model='openai-responses:gpt-5.4',
         )
         # Callable native can't be resolved at init time, but the local fallback is still provided
@@ -1831,6 +1853,8 @@ class TestImageGenerationCapability:
     @pytest.mark.parametrize(
         'provider, model_name, suggestion',
         [
+            ('openai-responses', 'gpt-image-2.6-flare', 'openai-responses:gpt-5.5'),
+            ('openai-responses', 'gpt-image-2.6-sunburst', 'openai-responses:gpt-5.5'),
             ('openai-responses', 'gpt-image-2', 'openai-responses:gpt-5.5'),
             ('openai-responses', 'gpt-image-1.5', 'openai-responses:gpt-5.5'),
             ('openai-responses', 'gpt-image-1', 'openai-responses:gpt-5.4'),
@@ -1867,7 +1891,7 @@ class TestImageGenerationCapability:
             sent_bodies.append(_REQUEST_BODY_ADAPTER.validate_json(request.content))
 
         def native_factory(ctx: RunContext[Any]) -> ImageGenerationTool:
-            return ImageGenerationTool(quality='low')
+            return ImageGenerationTool(provider_settings={'openai': {'quality': 'low'}})
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             # If we see a tool return, the image was generated — return final text

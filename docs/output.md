@@ -886,6 +886,41 @@ When the model returns an empty response and `None` is an allowed output type, t
 !!! note
     When using [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] with an optional output type, an empty model response has no intermediate values to yield, so [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] produces an empty iterator in this case. Use [`get_output()`][pydantic_ai.result.StreamedRunResult.get_output] to retrieve the final `None` value instead.
 
+## Output cut off by the token limit {#truncated-output}
+
+A response that reaches the [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] model setting, or the model's own output limit, is cut off by the provider, and its [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] is `'length'`.
+
+Text output, such as `str` or a [`TextOutput`](#text-output) function, has no shape to check, so text that was cut off is the run's output like any other. When a complete answer matters, check the finish reason of the response it came from:
+
+```python {title="truncated_text_output.py"}
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def cut_off(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # A deterministic stand-in for a model that reaches `max_tokens` mid-sentence.
+    return ModelResponse(
+        parts=[TextPart('The three largest cities are Tokyo, Delhi and')], finish_reason='length'
+    )
+
+
+agent = Agent(FunctionModel(cut_off))
+result = agent.run_sync('Name the three largest cities.', model_settings={'max_tokens': 10})
+print(result.output)
+#> The three largest cities are Tokyo, Delhi and
+if result.response.finish_reason == 'length':
+    print('The answer was cut off.')
+    #> The answer was cut off.
+```
+
+Structured output is validated, so output that was cut off is usually caught:
+
+- With [`NativeOutput`](#native-output) or [`PromptedOutput`](#prompted-output), text that was cut off into JSON that doesn't parse raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with a message naming the token limit, in [`run()`][pydantic_ai.agent.AbstractAgent.run] and [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] alike. The model isn't asked to try again, as it would run into the same limit. Text that was cut off but still parses is validated as usual, so it's the output when it's valid, and is retried when the schema or an [output validator](#output-validator-functions) rejects it.
+- With [tool output](#tool-output), an output tool call whose arguments were cut off is sent back to the model like any other invalid arguments, and raises [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] once the [output retries](retries.md#output-retries) are used up.
+- A response that was cut off before it produced any output, say while the model was [thinking](capabilities/thinking.md), raises `UnexpectedModelBehavior`.
+
+To get the whole answer, raise `max_tokens` or ask for a shorter one.
+
 ## Streamed Results
 
 There two main challenges with streamed results:

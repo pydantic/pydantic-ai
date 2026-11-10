@@ -908,6 +908,8 @@ class SessionEntry:
     """Hidden from the sidebar unless it lists archived sessions too."""
     openable: bool
     """Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first."""
+    source: str | None = None
+    """The agent it was imported from, `Claude Code` or `Codex`; `None` for CLAI's own sessions."""
 
 
 @dataclass(frozen=True, kw_only=True)

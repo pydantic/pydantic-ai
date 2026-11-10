@@ -1048,7 +1048,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 the installed fastmcp is 3) to use for HTTP transports — useful for self-signed
                 certificates or custom connection pooling. Mutually exclusive with `headers`.
                 The toolset never closes a user-supplied client: the caller owns its lifecycle,
-                and the toolset can reconnect with it across runs.
+                and the toolset can reconnect with it across runs. Every run's session, including
+                with a function passed as `auth`, uses this client and so shares its cookie jar:
+                pass `verify` instead when runs act for different users.
 
         Raises:
             ValueError: If a pre-built `fastmcp.Client` is passed alongside any of the kwargs that
@@ -1205,14 +1207,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     @property
     def _explicit_id(self) -> str | None:
         return self._id if self._id_explicit else None
-
-    @property
-    def _appends_instructions_by_default(self) -> bool:
-        # The server instructions `get_instructions` returns append by the framework's choice. This is
-        # declared for the toolset, not for each block, so a subclass's own append blocks under the same
-        # `id` are silent too where appending isn't supported. So is a block a `DynamicToolset` with an
-        # `id` of its own keys anew, since only the toolset's own `id` is recognised.
-        return self.include_instructions
 
     @property
     def label(self) -> str:
