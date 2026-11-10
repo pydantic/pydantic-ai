@@ -135,7 +135,7 @@ workflow running its own agent doesn't wait for it or resolve its dependencies. 
 | `prompt-file` | | A prompt file, read relative to `working-directory`. |
 | `agent` | `pydantic_ai_harness.coder:coder_agent` | A `module:variable` target, or a `.yml`, `.yaml` or `.json` agent spec file. |
 | `model` | | A [model](models/overview.md) identifier such as `{{ openai:medium }}`. Overrides the model the agent carries. |
-| `python-version` | `3.12` | The Python the agent runs on: 3.10 or later, or 3.11 or later for the Harness, which the default agent comes from. |
+| `python-version` | `3.12` | The Python the agent runs on, 3.11 or later. |
 | `pip-install` | | Extra space-separated packages, such as the project your agent lives in. |
 | `pydantic-ai-version` | `>=2.44.0` | The `pydantic-ai-slim` version specifier to install. |
 | `harness-version` | | An exact `pydantic-ai-harness` version, installed whatever the agent is. |
