@@ -121,7 +121,10 @@ def default_render_duration_diff(old: float, new: float) -> str | None:
     if old == new:
         return None
 
-    abs_diff_str = _render_duration(new - old, True)
+    delta = new - old
+    if not math.isfinite(delta):
+        return None
+    abs_diff_str = _render_duration(delta, True)
     rel_diff_str = _render_relative(new, old, BASE_THRESHOLD)
     if rel_diff_str is None:
         return abs_diff_str
