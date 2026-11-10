@@ -372,13 +372,19 @@ def config_completions(args: list[str]) -> Iterable[str]:
     return ()
 
 
-PLUGINS_USAGE = 'Usage: plugins list|disable ID\nAdd, enable, or remove plugins with /plugins inside a CLAI session.'
+PLUGINS_USAGE = (
+    'Usage: plugins list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID'
+    '\nGit repositories can be installed only inside a CLAI session: /plugins add GIT_URL'
+)
+_SHELL_PLUGINS_USAGE = (
+    'Usage: plugins list|disable ID\nAdd, enable, or remove plugins with /plugins inside a CLAI session.'
+)
 
 
 def added_plugin(args: list[str]) -> PluginSettings:
     """The declaration `/plugins add ID MODULE[:ATTR] [JSON]` describes, without saving it."""
     if len(args) not in (3, 4) or args[0] != 'add':
-        raise ValueError('Usage: /plugins add ID MODULE[:ATTR] [JSON]')
+        raise ValueError(PLUGINS_USAGE)
     settings = TypeAdapter(dict[str, JsonValue]).validate_json(args[3]) if len(args) == 4 else {}
     return PluginSettings(id=args[1], factory=args[2], settings=settings)
 
@@ -404,5 +410,5 @@ def plugins_command(store: SettingsStore, args: list[str]) -> str:
         case ['add' | 'enable' | 'remove', *_]:
             raise _session_only('plugins', args)
         case _:
-            raise ValueError(PLUGINS_USAGE)
+            raise ValueError(_SHELL_PLUGINS_USAGE)
     return 'Saved. Applies when you restart CLAI.'

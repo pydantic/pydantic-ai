@@ -341,7 +341,7 @@ async def test_add_usage_mentions_git_urls(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     with pytest.raises(ValueError, match='Usage: /plugins add GIT_URL'):
         await harness.loader.command(['add'])
-    with pytest.raises(ValueError, match=r'Usage: /plugins add ID MODULE\[:ATTR\] \[JSON\]'):
+    with pytest.raises(ValueError, match=r'Usage: plugins list\|add ID MODULE\[:ATTR\] \[JSON\]'):
         await harness.loader.command(['add', 'one', 'module:Factory', '{}', 'extra'])
     assert harness.store.plugins() == []
 
