@@ -36,7 +36,8 @@ class RefineOutput(AbstractCapability[AgentDepsT]):
     agent = Agent('anthropic:claude-opus-5-5', capabilities=[RefineOutput()])
     ```
 
-    A run that ends for its caller to resume, and `Agent.run_stream()`, are not reviewed.
+    Not reviewed: a run that ends for its caller to resume, an output that did not come from a model
+    request, and `Agent.run_stream()`.
     """
 
     rounds: int = 1
@@ -63,9 +64,11 @@ class RefineOutput(AbstractCapability[AgentDepsT]):
         result: NodeResult[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
         # `Agent.run_stream()` ends through a node of its own, after which the run cannot continue.
+        # A response without a `model_id` came from no model request, like an input guardrail's refusal.
         if (
             self._rounds_started < self.rounds
             and isinstance(node, CallToolsNode)
+            and node.model_response.model_id is not None
             and isinstance(result, End)
             and not isinstance(result.data.output, DeferredToolRequests | PendingModelResponse)
         ):

@@ -781,9 +781,10 @@ print(agent.run_sync('Explain the change').output)
 - The instruction is a `SystemPromptPart` (conversation scope, so it stays in the history); find it by
   `metadata['origin'] == 'pydantic-ai-harness.refine_output.v1'`, never by text. Each run starts with no
   rounds used. The count is per-run state, so compaction that drops the instruction does not restart it.
-- Not reviewed: a run that returns `DeferredToolRequests` or `PendingModelResponse`, and `run_stream()`,
-  which ends at the first output it streams. Stream a refined run with `run(event_stream_handler=...)`
-  or `iter()`; the stream carries every answer, the first one included.
+- Not reviewed: a run that returns `DeferredToolRequests` or `PendingModelResponse`, an output no model
+  request produced (an `InputGuardrail` refusal), and `run_stream()`, which ends at the first output it
+  streams. Stream a refined run with `run(event_stream_handler=...)` or `iter()`; the stream carries
+  every answer, the first one included.
 - Several on one agent each count their own rounds and add their instructions to a round. Emits no spans.
 
 ## See also
