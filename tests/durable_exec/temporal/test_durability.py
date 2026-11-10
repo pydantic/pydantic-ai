@@ -1995,8 +1995,9 @@ def _ask_in_process(ctx: RunContext[None], requests: DeferredToolRequests, token
 _request_input_agent = Agent(
     FunctionModel(_approval_needed_fn),
     name='request_input_test',
+    deps_type=type(None),
     capabilities=[
-        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
         RequestInput[None](_ask_in_process, allow_non_durable_wait=True),
     ],
 )
