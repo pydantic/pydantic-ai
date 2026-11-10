@@ -31,10 +31,14 @@ TaskResultT = TypeVar('TaskResultT')
 
 
 async def _iter_completed_or_buffered(
-    pending: set[asyncio.Task[TaskResultT]],
+    tasks: Sequence[asyncio.Task[TaskResultT]],
     event_stream_buffer: list[_messages.AgentStreamEvent],
 ) -> AsyncIterator[_messages.AgentStreamEvent | asyncio.Task[TaskResultT]]:
     """Yield tasks as they complete, interleaving run events buffered while waiting.
+
+    Tasks that complete in the same wakeup are yielded in their order in `tasks`, not in the
+    iteration order of `asyncio.wait`'s `done` set, which follows task identity and differs between
+    runs. A durable runtime replaying the run then sees the same order the recording run saw.
 
     Buffered events (e.g. `ctx.emit` from a running tool) are yielded as soon as they land,
     so stream consumers see a progress event while the emitting tool is still running instead of
@@ -44,10 +48,11 @@ async def _iter_completed_or_buffered(
     A buffer that can't signal appends (a plain list revived from graph-state persistence) degrades
     to plain completion-order waiting, with buffered events surfacing at stream position instead.
     """
+    pending = set(tasks)
     if not isinstance(event_stream_buffer, EventStreamBuffer):
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
+            for task in sorted(done, key=tasks.index):
                 yield task
         return
 
@@ -74,7 +79,7 @@ async def _iter_completed_or_buffered(
             pending = {task for task in not_done if task is not signal_wait}
             while event_stream_buffer:
                 yield event_stream_buffer.pop(0)
-            for task in done:
+            for task in sorted(done, key=tasks.index):
                 yield task
     finally:
         waiters.remove(signal)
@@ -989,7 +994,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     # Even a barrier (or sole) call runs as a task, so events it emits
                     # surface to stream consumers while it is still executing.
                     async for item in _iter_completed_or_buffered(
-                        set(tasks_by_index.values()), self.ctx.state.event_stream_buffer
+                        list(tasks_by_index.values()), self.ctx.state.event_stream_buffer
                     ):
                         if not isinstance(item, asyncio.Task):
                             # A buffered run event; `parallel_ordered_events` only defers
@@ -1138,10 +1143,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
                 if validated.args_valid:
-                    if call in self.tool_calls_by_kind['external']:
-                        self.deferred_calls['external'].append(call)
-                    else:
-                        self.deferred_calls['unapproved'].append(call)
+                    self._route_deferred_call(call, validated.deferral)
                 else:
                     # Call execute_tool_call to raise the validation error inside a trace span;
                     # retry failures are already tracked by validate_tool_call() via failed_tools.
@@ -1151,6 +1153,22 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         part = tool_bound_retry_part(e) if isinstance(e, ToolRetryError) else e.tool_failed
                         self.output_parts.append(part)
                         yield _messages.FunctionToolResultEvent(part)
+
+    def _route_deferred_call(
+        self, call: _messages.ToolCallPart, deferral: exceptions.CallDeferred | exceptions.ApprovalRequired | None
+    ) -> None:
+        """Collect a validated call of a deferred kind, routed by the deferral its validation raised, if any.
+
+        A deferral raised during validation routes the call by its type, as one raised by the tool
+        function would; only a call that validation didn't defer goes by its tool's kind.
+        """
+        if deferral is None:
+            external = call in self.tool_calls_by_kind['external']
+        else:
+            external = isinstance(deferral, exceptions.CallDeferred)
+            if deferral.metadata is not None:
+                self.deferred_metadata[call.tool_call_id] = deferral.metadata
+        self.deferred_calls['external' if external else 'unapproved'].append(call)
 
     async def _resolve_deferred_calls(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
@@ -1392,7 +1410,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             for segment in segments:
                 tasks = [asyncio.create_task(run_one(i), name=self.tool_calls[i].tool_name) for i in segment]
                 try:
-                    async for item in _iter_completed_or_buffered(set(tasks), self.ctx.state.event_stream_buffer):
+                    async for item in _iter_completed_or_buffered(tasks, self.ctx.state.event_stream_buffer):
                         if not isinstance(item, asyncio.Task):
                             # A buffered run event; `parallel_ordered_events` only defers
                             # function-tool result events, so this streams live in both modes.

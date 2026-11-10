@@ -31,7 +31,7 @@ from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import Instrumentation, ModelFallback, ProcessEventStream
+from pydantic_ai.capabilities import Instrumentation, ModelFallback, ProcessEventStream, SetToolMetadata
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -82,7 +82,6 @@ from ._capability_operation import (
     collect_capability_operations,
     recover_capability,
 )
-from ._codec import IDENTITY_CODEC
 from ._operation import (
     CacheIdentity,
     CapabilityOperationId,
@@ -104,7 +103,6 @@ from ._operation import (
     ToolsetGetToolsParams,
     ToolsetKind,
     ToolsetValidateToolArgumentsId,
-    TypedResultCodec,
 )
 from ._operation_backend import (
     BoundDurableOperation,
@@ -202,6 +200,22 @@ def conversation_id_from_run_id(run_id: str) -> str:
     return str(uuid.uuid5(_CONVERSATION_ID_NAMESPACE, run_id))
 
 
+def selects_child_workflow(metadata: Mapping[str, Any] | None, key: str) -> bool:
+    """Whether tool metadata selects a child workflow with `{key: {'child_workflow': ...}}`."""
+    config = (metadata or {}).get(key)
+    return isinstance(config, dict) and 'child_workflow' in config
+
+
+def capability_selects_child_workflow(capability: AbstractCapability[Any], key: str) -> bool:
+    """Whether `capability` is a `SetToolMetadata` selecting child workflows, which can apply to tools in any toolset."""
+    return isinstance(capability, SetToolMetadata) and selects_child_workflow(capability.metadata, key)
+
+
+def toolset_selects_child_workflow(toolset: FunctionToolset[Any], key: str) -> bool:
+    """Whether a tool in `toolset` selects a child workflow in its own metadata."""
+    return any(selects_child_workflow(tool.metadata, key) for tool in toolset.tools.values())
+
+
 class _BoundModelOperations(NamedTuple):
     request: BoundDurableOperation[ModelRequestParams, Any, ModelResponse]
     request_stream: BoundDurableOperation[ModelRequestParams, Any, StreamedModelRequestResult]
@@ -296,6 +310,20 @@ def _as_capability(value: object, capability: AbstractCapability[Any]) -> object
     if isinstance(value, RunContext):
         return replace(cast(RunContext[Any], value), _capability=capability)
     return value
+
+
+def _operation_capability_id(capability: AbstractCapability[Any]) -> str | None:
+    """The `id` a capability's durable operations bind under, or `None` for an id-less one that opted out of binding."""
+    if capability.id is not None:
+        return capability.id
+    # A capability that rejects its own id-less durable runs opts out, so it keeps building without one.
+    if not capability._durable_operations_need_id:  # pyright: ignore[reportPrivateUsage]
+        return None
+    raise UserError(
+        f'Capability {type(capability).__name__!r} contributes durable operations and needs an explicit '
+        '`id` because persisted operation identity and worker-side recovery must remain stable. '
+        f"Construct it as `{type(capability).__name__}(id='...')`."
+    )
 
 
 class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
@@ -583,15 +611,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         backend = self.get_durable_operation_backend()
         for capability in leaf_capabilities(agent.root_capability):
             declarations = collect_capability_operations(capability)
-            if not declarations:
+            if not declarations or (capability_id := _operation_capability_id(capability)) is None:
                 continue
-            capability_id = capability.id
-            if capability_id is None:
-                raise UserError(
-                    f'Capability {type(capability).__name__!r} contributes durable operations and needs an explicit '
-                    '`id` because persisted operation identity and worker-side recovery must remain stable. '
-                    f"Construct it as `{type(capability).__name__}(id='...')`."
-                )
             for operation_name, declaration in declarations.items():
                 key = (capability_id, operation_name)
 
@@ -647,9 +668,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     handler=handler,
                     parameter_transport=backend.parameter_transports.capability_operation(declaration),
                     cache_identity=CapabilityCacheIdentity(),
-                    result_codec=TypedResultCodec(
+                    result_codec=self._typed_result_codec(
                         capability_operation_result_type(declaration.result_type),
-                        mode='identity' if self.engine_spec.codec is IDENTITY_CODEC else 'json',
                     ),
                     config_role='capability',
                 )
