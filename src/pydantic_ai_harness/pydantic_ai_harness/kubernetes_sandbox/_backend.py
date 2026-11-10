@@ -89,6 +89,9 @@ _API_SERVER_TIMEOUT = 10
 """Seconds to wait for the API server after a failure: to delete a claim that never became Ready, or
 to say whether a sandbox whose command failed still exists."""
 
+_SETUP_TIMEOUT = 60.0
+"""Seconds `working_dir()` waits for `pwd -P`, so a wedged pod or stalled tunnel fails instead of hanging."""
+
 _ARGUMENT_PREFIX = 'PYDANTIC_AI_HARNESS_ARG_'
 """Names the environment variables that carry a command's arguments into its script; unset before it runs."""
 
@@ -240,7 +243,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
     async def working_dir(self) -> str:
         if self._resolved_working_dir is None:
             # sandboxd has no API for its root directory, but commands start there (or in `working_dir`).
-            result = await self.run(['pwd', '-P'])
+            result = await self.run(['pwd', '-P'], timeout=_SETUP_TIMEOUT)
             if result.exit_code != 0 or not result.stdout.startswith('/'):
                 raise WorkspaceUnavailableError(
                     f'Could not read the sandbox working directory: {result.stderr.strip()}'
