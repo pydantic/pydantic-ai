@@ -73,9 +73,20 @@ def test_context_holds_only_this_checks_files(tmp_path: Path) -> None:
     (context / 'diff' / 'a.py.diff').write_text('NL:1 a')
     (context / 'diff' / 'b.py.diff').write_text('NL:1 b')
     (context / 'changed-files.txt').write_text('a.py\t+1 -0\tdiff/a.py.diff\nb.py\t+1 -0\tdiff/b.py.diff\n')
-    written = write_context('general', ['a.py'], tmp_path, base='base', head='head')
+    written = write_context('general', ['a.py'], tmp_path, base='base', head='head', author_trusted=True)
     assert (written / 'changed-files.txt').read_text() == 'a.py\t+1 -0\tdiff/a.py.diff\n'
     assert [path.name for path in (written / 'diff').rglob('*.diff')] == ['a.py.diff']
+
+
+@pytest.mark.parametrize('author_trusted', [True, False])
+def test_context_says_whether_the_author_has_write_access(tmp_path: Path, author_trusted: bool) -> None:
+    """A check can hold a rule to authors without write access, using the permission the gate resolved."""
+    context = tmp_path / '.github' / '.review-context'
+    context.mkdir(parents=True)
+    (context / 'pr-details.json').write_text('{"title": "t"}')
+    (context / 'changed-files.txt').write_text('')
+    written = write_context('general', [], tmp_path, base='base', head='head', author_trusted=author_trusted)
+    assert json.loads((written / 'pr-details.json').read_text()) == {'title': 't', 'author_trusted': author_trusted}
 
 
 def test_context_decodes_an_escaped_path(tmp_path: Path) -> None:
@@ -87,7 +98,7 @@ def test_context_decodes_an_escaped_path(tmp_path: Path) -> None:
     (context / 'pr-details.json').write_text('{}')
     (context / 'diff' / 'escaped.py.diff').write_text('NL:1 +x = 1')
     (context / 'changed-files.txt').write_bytes(f'{listed}\t+1 -0\tdiff/escaped.py.diff\n'.encode())
-    written = write_context('general', [path], tmp_path, base='base', head='head')
+    written = write_context('general', [path], tmp_path, base='base', head='head', author_trusted=True)
     assert (written / 'changed-files.txt').read_bytes().decode() == f'{listed}\t+1 -0\tdiff/escaped.py.diff\n'
 
 
@@ -98,7 +109,7 @@ def test_context_fails_closed_on_a_file_without_its_diff(tmp_path: Path) -> None
     (context / 'pr-details.json').write_text('{}')
     (context / 'changed-files.txt').write_text('')
     with pytest.raises(ValueError, match=r'a\.py'):
-        write_context('general', ['a.py'], tmp_path, base='base', head='head')
+        write_context('general', ['a.py'], tmp_path, base='base', head='head', author_trusted=True)
 
 
 def _git(repository: Path, *args: str) -> str:
@@ -129,7 +140,7 @@ def test_context_numbers_diffs_the_shared_context_leaves_out(tmp_path: Path) -> 
     context.mkdir(parents=True)
     (context / 'pr-details.json').write_text('{}')
     (context / 'changed-files.txt').write_text(''.join(f'{path}\t+1 -1\n' for path in paths))
-    written = write_context('tests-and-dependencies', paths, tmp_path, base=base, head='HEAD')
+    written = write_context('tests-and-dependencies', paths, tmp_path, base=base, head='HEAD', author_trusted=True)
     assert (written / 'changed-files.txt').read_text() == (
         'uv.lock\t+1 -1\tdiff/git/uv.lock.diff\n'
         'tests/cassettes/a/b.yaml\t+1 -1\tdiff/git/tests%2Fcassettes%2Fa%2Fb.yaml.diff\n'
@@ -165,7 +176,7 @@ def test_context_regenerates_a_diff_another_path_overwrote(tmp_path: Path) -> No
     shared = f'diff/{decoy}.diff'
     (context / shared).write_text('NL:1 +harmless = 1\n')
     (context / 'changed-files.txt').write_text(f'{source}\t+1 -1\t{shared}\n{decoy}\t+1 -0\t{shared}\n')
-    written = write_context('url-fetch', [source], tmp_path, base=base, head='HEAD')
+    written = write_context('url-fetch', [source], tmp_path, base=base, head='HEAD', author_trusted=True)
     regenerated = 'diff/git/' + quote(source, safe='') + '.diff'
     assert (written / 'changed-files.txt').read_text() == f'{source}\t+1 -1\t{regenerated}\n'
     assert (written / regenerated).read_text().endswith('OL:1 -allow_private = False\nNL:1 +allow_private = True\n')

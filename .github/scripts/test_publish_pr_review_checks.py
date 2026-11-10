@@ -21,6 +21,7 @@ from publish_pr_review_checks import (
     Actor,
     CheckResult,
     CommitStatus,
+    GateDecision,
     LivePullRequest,
     PullFile,
     ReviewFinding,
@@ -114,14 +115,14 @@ def _states(github: FakeGitHub) -> list[tuple[str, CommitStatus]]:
 def test_merge_group_passes_without_a_review() -> None:
     """Each head was reviewed before admission, so the queue must not wait out its timeout."""
     github = FakeGitHub()
-    assert not gate(github, {**ENV, 'MERGE_GROUP_SHA': GROUP})
+    assert not gate(github, {**ENV, 'MERGE_GROUP_SHA': GROUP}).review
     assert _states(github) == [(GROUP, 'success')]
 
 
 def test_author_with_write_access_is_reviewed() -> None:
     """A maintainer's pull request is reviewed at once and shows pending until published."""
     github = FakeGitHub()
-    assert gate(github, ENV)
+    assert gate(github, ENV) == GateDecision(review=True, author_trusted=True)
     assert _states(github) == [(HEAD, 'pending')]
 
 
@@ -133,7 +134,7 @@ def test_author_with_write_access_is_reviewed() -> None:
 def test_outside_author_waits_for_a_maintainer(labeled_by: Actor | None) -> None:
     """Without a write user's run label, the required status fails instead of passing unreviewed."""
     github = FakeGitHub(author=CONTRIBUTOR, labels=[RUN_LABEL] if labeled_by else [], labeled_by=labeled_by)
-    assert not gate(github, ENV)
+    assert not gate(github, ENV).review
     assert [(state, description) for _, state, description, _ in github.statuses] == [
         ('failure', f'Awaiting maintainer: a user with write access adds `{RUN_LABEL}`.')
     ]
@@ -143,14 +144,15 @@ def test_outside_author_waits_for_a_maintainer(labeled_by: Actor | None) -> None
 def test_run_label_from_a_write_user_starts_the_review(author: Actor) -> None:
     """An app's branch needs the label too: its content can come from outside text."""
     github = FakeGitHub(author=author, labels=[RUN_LABEL], labeled_by=MAINTAINER)
-    assert gate(github, {**ENV, 'EVENT_ACTION': 'labeled', 'EVENT_LABEL': RUN_LABEL})
+    decision = gate(github, {**ENV, 'EVENT_ACTION': 'labeled', 'EVENT_LABEL': RUN_LABEL})
+    assert decision == GateDecision(review=True, author_trusted=False)
     assert _states(github) == [(HEAD, 'pending')]
 
 
 def test_run_label_changes_nothing_for_a_trusted_author() -> None:
     """The label does not buy a second review of a head that was already reviewed."""
     github = FakeGitHub(labels=[RUN_LABEL], labeled_by=MAINTAINER)
-    assert not gate(github, {**ENV, 'EVENT_ACTION': 'labeled', 'EVENT_LABEL': RUN_LABEL})
+    assert not gate(github, {**ENV, 'EVENT_ACTION': 'labeled', 'EVENT_LABEL': RUN_LABEL}).review
     assert github.statuses == []
 
 
@@ -158,7 +160,7 @@ def test_acceptance_from_a_write_user_passes_this_head() -> None:
     """A maintainer can accept the findings on the current head, and nothing else."""
     github = FakeGitHub(labels=[ACCEPTED_LABEL])
     env = {**ENV, 'EVENT_ACTION': 'labeled', 'EVENT_LABEL': ACCEPTED_LABEL, 'EVENT_SENDER': 'maintainer'}
-    assert not gate(github, env)
+    assert not gate(github, env).review
     assert [(head, state, description) for head, state, description, _ in github.statuses] == [
         (HEAD, 'success', 'Findings accepted by @maintainer for this head.')
     ]
@@ -188,14 +190,14 @@ def test_acceptance_is_refused(labels: list[str], sender: str, sender_type: str)
 def test_a_new_review_removes_the_acceptance(action: str) -> None:
     """An acceptance covers only the status it replaced, so a push or a re-review of the same head ends it."""
     github = FakeGitHub(labels=[ACCEPTED_LABEL])
-    assert gate(github, {**ENV, 'EVENT_ACTION': action})
+    assert gate(github, {**ENV, 'EVENT_ACTION': action}).review
     assert github.removed == [ACCEPTED_LABEL]
 
 
 def test_moved_head_writes_nothing() -> None:
     """The event for the new head decides it."""
     github = FakeGitHub(head='c' * 40)
-    assert not gate(github, ENV)
+    assert not gate(github, ENV).review
     assert github.statuses == []
 
 

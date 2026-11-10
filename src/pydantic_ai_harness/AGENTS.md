@@ -143,7 +143,8 @@ Applies to docs, READMEs, docstrings, comments, commit messages, and PR text.
 
 ## Package management
 
-- Change dependencies only when required. Use `uv` and link an issue.
+- Change dependencies only when required. Use `uv`.
+- Link an issue for each dependency change when the pull request author lacks write access to the repository.
 
 ## Local verification
 
