@@ -459,8 +459,8 @@ Python up to 3.14.
 - `mounts=[S3Mount(path='data', url='s3://bucket/prefix/', access_key_id=..., secret_access_key=...,
   session_token=..., expires_at=..., endpoint=None, region=None, read_only=False)]` (from `pydantic_ai_harness`)
   shows a bucket at `<working_dir>/data` from the first command or file operation, through rclone run as root;
-  `endpoint=` for R2/MinIO. `mounts=` can be a function of `RunContext` returning the same mounts with fresh keys
-  (called again near expiry, in a thread); a plain list fails with `MountError` once `expires_at` passes. Needs
+  `endpoint=` for R2/MinIO. `mounts=` can be a function of `RunContext`, sync or async, returning the same mounts with
+  fresh keys (called again near expiry); a plain list's folder stops working once `expires_at` passes. Needs
   `docker_args=['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`, else
   `MountError`. A mount outlives the run; another bucket at the same folder is refused until the keys there expire.
   Overlapping paths or a bad `S3Mount` raise `UserError`. Code in the sandbox can read the keys: pass short-lived

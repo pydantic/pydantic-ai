@@ -42,7 +42,7 @@ result = agent.run_sync('Summarize the CSV files in reports/ into reports/summar
 
 `reports/` in the sandbox's working directory now shows the `2026/` prefix of the `acme-reports` bucket; `url='s3://acme-reports/'` shows the whole bucket. The folder is created if it's missing. Each mount needs a folder of its own: two mounts at the same folder, or one inside another, are refused with `UserError`. So is an `S3Mount` whose path leaves the working directory, whose URL is malformed, or whose `expires_at` has no time zone or has passed. `MountError` is for what goes wrong in the sandbox.
 
-`expires_at` is required, and is when the keys stop working. A plain list's keys are used until then; an operation after that raises `MountError`. For runs that may outlast the keys, pass a function instead.
+`expires_at` is required, and is when the keys stop working. A plain list's keys are used until then. After that the folder stops working, and commands that use it fail with rclone's error, while other commands and file operations carry on; a run that starts after the keys expire raises `MountError`. For runs that may outlast the keys, pass a function instead.
 
 ## Fresh keys for each run
 
@@ -115,7 +115,7 @@ agent = Agent(
 result = agent.run_sync('Tidy up the files in files/.', deps=Customer(id='c-1042'))
 ```
 
-The function is called from a worker thread each time the sandbox needs keys: before the run's first command or file operation, and before the first operation in the five minutes before the keys expire. Building the run's workspace doesn't call it, so a slow call to a key service delays only the first operation. Each call must return the same mounts, by path, bucket, endpoint, region and `read_only`, with only the keys changing; otherwise the operation raises `MountError`.
+The function can be sync or async; a sync one is called from a worker thread. It is called each time the sandbox needs keys: before the run's first command or file operation, and before the first operation in the five minutes before the keys expire. Building the run's workspace doesn't call it, so a slow call to a key service delays only the first operation. Each call must return the same mounts, by path, bucket, endpoint, region and `read_only`, with only the keys changing; otherwise the operation raises `UserError`.
 
 ## Cloudflare R2, MinIO and other S3-compatible stores
 
@@ -177,7 +177,7 @@ To clear mounts, destroy the sandbox. In a sandbox you keep, run `fusermount3 -u
 
 Before the run's first command or file operation, the sandbox runs a helper script as root. It installs FUSE and [rclone](https://rclone.org/) if the image lacks them, starts an rclone daemon, and mounts each bucket at its folder. Later calls only send the daemon new keys. The keys reach the helper on its standard input, never on a command line or in a log.
 
-The image needs `python3`. It needs `fusermount3`, or `apt-get` to install `fuse3`, and rclone v1.75.2 or later, or access to `downloads.rclone.org` to download that version (checked against its published checksum). Install both in your image to skip the first run's install.
+The image needs `python3`. It needs `fusermount3`, or `apt-get` to install `fuse3`, and rclone v1.75.2 or later in `/usr/local/bin`, `/usr/bin` or `/bin`, or access to `downloads.rclone.org` to download that version (checked against its published checksum). Install both in your image to skip the first run's install.
 
 Files belong to the owner of the working directory. Writes are cached on the sandbox's disk and uploaded a few seconds after the file is closed, so appends, in-place edits and renames work; a change made to the bucket from outside shows in the folder within about ten seconds.
 
@@ -198,6 +198,8 @@ The keys keep working after the run, through the mount and for anything else cod
 In Docker, `--cap-add SYS_ADMIN` and `apparmor:unconfined` give every command in the container more access to the kernel it shares with your machine, which makes it a weaker boundary, so add these flags only to containers that use mounts.
 
 The helper runs as root and makes the mount folder inside the working directory, which the agent's user owns. It checks the folder isn't a link and doesn't follow links that user puts in it, but a command running at the same moment as a mount can swap the folder for a link after that check. The helper then works in the folder the link points to: it can mount there, move files found there into `.pydantic-ai-recovered/`, or delete a file there named `.pydantic-ai-mount`. That matters only when commands run as a user that can't already become root, as in a Docker image with a non-root `USER`: there, treat the agent as able to reach root.
+
+The helper looks for `rclone`, `fusermount3` and `apt-get` only in folders root owns (`/usr/local/sbin`, `/usr/local/bin`, `/usr/sbin`, `/usr/bin`, `/sbin` and `/bin`), not on the image's `PATH`, which could list a folder the agent's user can write to.
 
 ## Telemetry
 

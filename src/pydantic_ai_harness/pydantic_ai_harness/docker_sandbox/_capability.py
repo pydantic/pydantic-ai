@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._mounts import S3Mount, mounted
@@ -68,8 +67,12 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     executable: str = 'docker'
     """The container CLI to run; `'podman'` works too. It is looked up on `PATH` once, when the capability is created."""
 
-    mounts: Sequence[S3Mount] | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]] = ()
-    """Buckets to show as folders in the container, or a function of the run returning them with fresh keys.
+    mounts: (
+        Sequence[S3Mount]
+        | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]]
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Sequence[S3Mount]]]
+    ) = ()
+    """Buckets to show as folders in the container, or a function of the run, sync or async, returning them with fresh keys.
 
     The container needs FUSE: give it `docker_args=['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN',
     '--security-opt', 'apparmor:unconfined']`.
@@ -88,30 +91,28 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
         *,
         id: str | None = None,
         description: str | None = None,
+        defer_loading: bool = False,
         image: str | None = None,
         working_dir: str | None = '/workspace',
         env: Mapping[str, str] | None = None,
         allow_internet_access: bool = True,
         docker_args: Sequence[str] = (),
         executable: str = 'docker',
-        **kwargs: Any,
     ) -> DockerSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
         Core reads this signature to generate the spec's JSON schema. `mounts` is left out: a spec can't hold keys.
         """
-        if 'mounts' in kwargs:
-            raise UserError('`mounts` holds keys, so an agent spec cannot set it. Pass it to `DockerSandbox` in code.')
         return cls(
             id=id,
             description=description,
+            defer_loading=defer_loading,
             image=image,
             working_dir=working_dir,
             env=env,
             allow_internet_access=allow_internet_access,
             docker_args=docker_args,
             executable=executable,
-            **kwargs,
         )
 
     def backend(self, ref: WorkspaceRef) -> DockerSandboxBackend:

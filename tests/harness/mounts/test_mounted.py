@@ -328,16 +328,40 @@ async def test_keys_shorter_lived_than_the_margin_are_used_until_they_expire(clo
     assert len(root.calls) == 1
 
 
-async def test_a_list_whose_keys_expired_is_refused(clock: Clock) -> None:
+async def test_a_list_whose_keys_expired_leaves_later_operations_alone(clock: Clock) -> None:
+    """Nothing could give a list fresh keys, so only commands that use the folder fail, with rclone's error."""
     root = FakeRoot()
     workspace = wrap(root, [s3()])
     await workspace.exists('data')
+
+    clock.now = NOW + timedelta(hours=2)
+    await workspace.exists('data')
+
+    assert len(root.calls) == 1
+
+
+async def test_a_run_that_starts_after_a_lists_keys_expired_is_refused(clock: Clock) -> None:
+    root = FakeRoot()
+    workspace = wrap(root, [s3()])
 
     clock.now = NOW + timedelta(hours=1)
     with pytest.raises(
         MountError, match=re.escape("The keys for mount 'data' have expired. Pass `mounts=` as a function")
     ):
         await workspace.exists('data')
+    assert root.calls == []
+
+
+async def test_an_async_function_is_awaited() -> None:
+    root = FakeRoot()
+
+    async def mounts(_: RunContext[None]) -> list[S3Mount]:
+        return [s3()]
+
+    workspace = mounted(FakeWorkspace('box'), root, mounts, CTX)
+    assert isinstance(workspace, Workspace)
+    await workspace.exists('data')
+
     assert len(root.calls) == 1
 
 
