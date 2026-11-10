@@ -181,6 +181,13 @@ Make only the changes the enumeration step surfaced. Resist scope creep. If you 
 
 **Assume the Gateway serves every new id on a provider it proxies.** Add each id's `gateway/` mirror to `KnownModelName` without probing the Gateway first. Never add a new id to `UNSUPPORTED_GATEWAY_MODEL_NAMES`. Until genai-prices has the id's price, the Gateway can refuse it with a 404 `No cost data available for model`; that gap closes without a Pydantic AI change. File one tracking issue per release instead, to confirm that the Gateway serves and prices each new id. Route it with the maintainer routing in the `file-followup-issue` skill. List every id of the release in it, including ids the curation rule keeps out of `KnownModelName`. List each Bedrock region prefix as its own id: Gateway support for one inference profile does not establish support for another. Name the weekly Gateway Model Health workflow (`.github/workflows/gateway-model-health.yml`) in the issue: it runs every `gateway/` id in `KnownModelName` live. Exclude an id only in a separate change, after the tracking issue confirms that the Gateway refuses it.
 
+**Assume Bedrock serves a new id that AWS gates per account.** AWS can list a model in `aws bedrock list-inference-profiles` while Converse still answers `AccessDeniedException: ... is not available for this account`. List the id anyway, as the curation rule picks it: the `global.` profile when it exists. Leave the capability gates in `providers/_bedrock_model_names.py` on their existing prefixes. File one Bedrock tracking issue for the probes to run once AWS grants access. Route it with the maintainer routing in the `file-followup-issue` skill. List these probes in it:
+
+- The id serves through `BedrockConverseModel` and the Bedrock Messages API.
+- Each gate whose prefix decision contradicts the AWS model card or Anthropic's Bedrock docs.
+
+Change a gate only after its probe passes. A GPT id on `bedrock:` is the exception: list it only after a successful Converse call, as the Bedrock landmines say.
+
 Docs examples name models through the aliases in `docs/model_aliases/aliases.json`, not model ids. Check the placement rules in `docs/model_aliases/AGENTS.md`. When they place the new model in an alias, repoint that alias in `aliases.json` instead of editing doc pages. Repoint it in the same PR; do not wait for the Gateway to serve the new id. Then update the README mirrors that `tests/test_docs_parity.py` and `tests/harness/test_docs_parity.py` flag. The harness capability READMEs and their `_capability.py` docstrings mirror doc pages that use the alias but are not parity-tested: `git grep` the old id and update those mirrors too.
 
 After edits:
@@ -215,7 +222,7 @@ check. Keep the model-specific evidence concise:
 - "Verified via probe / mirror of #NNNN" — explicit about which changes were API-verified vs assumed-by-mirror.
 - Flag pre-existing latent bugs found but deliberately not fixed.
 - Link the prior add-model PR for context.
-- Link the Gateway tracking issue from Step 6.
+- Link the Gateway tracking issue from Step 6, and the Bedrock tracking issue when Step 6 filed one.
 
 ## Provider-specific landmines
 
@@ -260,7 +267,7 @@ OpenAI image-model landmines:
 - **List Bedrock inference profiles, not only foundation models.** Claude Sonnet 5.5 launched with `global.anthropic.claude-sonnet-5-5` and no `us.` profile. Run `aws bedrock list-inference-profiles` and add only the profiles it returns.
 - **Tests:** profile-flag unit tests go in `tests/profiles/test_anthropic.py` (NOT `tests/models/test_anthropic.py`). Forced-tool-choice / `_prepare_tools_and_tool_choice` fallback tests go in `tests/models/test_tool_choice_unit.py`. The capability behaviors keyed on shared flags (sampling drop, budget-thinking reject, xhigh) are already covered by the opus-4-7/4-8 parametrized tests — adding the new id to those lists is redundant once a dedicated profile test asserts the flags.
 - **`tests/test_capability_spec.py::test_model_json_schema_with_capabilities`** snapshots the whole `KnownModelName` enum. Refresh it by running THAT TEST ALONE with `--inline-snapshot=fix` — running the whole file can pull in unrelated `snapshot()` blocks and abort the fix.
-- **`providers/bedrock.py` `bedrock_structured_output_unsupported`**: only relevant if the new id is actually served on Bedrock. A direct-API-only model (not in Bedrock's foundation-model list) doesn't belong there; don't add it speculatively just because the mirrored PR did.
+- **`providers/_bedrock_model_names.py` `bedrock_lacks_claude_structured_output`**: only relevant if the new id is actually served on Bedrock. A direct-API-only model (not in Bedrock's foundation-model list) doesn't belong there; don't add it speculatively just because the mirrored PR did.
 
 ### xAI (Grok)
 
