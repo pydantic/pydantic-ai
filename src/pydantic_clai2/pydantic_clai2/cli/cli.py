@@ -333,7 +333,8 @@ def _enter_worktree(*, name: str, headless: bool) -> 'Worktree':
         print(worktree.notice, file=sys.stderr)
     else:
         # Exit cleanup needs a terminal; piped input keeps even an unchanged checkout.
-        worktree = replace(worktree, remove_if_unchanged=worktree.created and sys.stdin.isatty())
+        terminal = sys.stdin.isatty()
+        worktree = replace(worktree, remove_if_unchanged=worktree.created and terminal, remove_if_pushed=terminal)
     os.chdir(worktree.path)
     return worktree
 
@@ -345,16 +346,23 @@ def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':
     worktree = current_worktree()
     if worktree is None or relaunched is None:
         return worktree
-    head, _, new_branch = relaunched.partition(' ')
+    head, _, kind = relaunched.partition(' ')
+    created, terminal = kind != 'reopened', sys.stdin.isatty()
     return replace(
-        worktree, head=head, created=True, new_branch=new_branch == 'new-branch', remove_if_unchanged=sys.stdin.isatty()
+        worktree,
+        head=head,
+        created=created,
+        new_branch=kind == 'new-branch',
+        remove_if_unchanged=created and terminal,
+        remove_if_pushed=terminal,
     )
 
 
 def _remember_worktree(worktree: 'Worktree | None') -> None:
-    """Hand a checkout exit would remove to the relaunched build, which starts without `--worktree`."""
-    if worktree is not None and worktree.remove_if_unchanged:
-        os.environ[_RELAUNCH_WORKTREE] = f'{worktree.head} new-branch' if worktree.new_branch else worktree.head
+    """Hand a checkout exit may remove to the relaunched build, which starts without `--worktree`."""
+    if worktree is not None and worktree.remove_if_pushed:
+        kind = ' new-branch' if worktree.new_branch else '' if worktree.created else ' reopened'
+        os.environ[_RELAUNCH_WORKTREE] = worktree.head + kind
 
 
 def relaunch_argv(

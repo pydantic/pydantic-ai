@@ -30,16 +30,19 @@ class Worktree:
     """Whether this launch also created `branch`, so exit deletes it with an unchanged checkout."""
     remove_if_unchanged: bool = False
     """Whether an interactive exit removes the checkout without asking when nothing changed."""
+    remove_if_pushed: bool = False
+    """Whether an interactive exit removes the checkout without asking when it is clean with no unpushed commits."""
 
     @property
     def notice(self) -> str:
         """The launch line naming the checkout and its branch."""
         opened = 'Worktree' if self.created else 'Reopened worktree'
-        on_exit = (
-            'Removed on exit if unchanged, or if clean and pushed.'
-            if self.remove_if_unchanged
-            else 'On interactive exit, removed if clean and pushed, otherwise kept unless removal is confirmed.'
-        )
+        if self.remove_if_unchanged:
+            on_exit = 'Removed on exit if unchanged, or if clean and pushed.'
+        elif self.remove_if_pushed:
+            on_exit = 'Removed on exit if clean and pushed, otherwise kept unless removal is confirmed.'
+        else:
+            on_exit = 'Kept unless removal is confirmed on exit.'
         return f'{opened}: {self.path} (branch: {self.branch}). {on_exit}'
 
 
@@ -240,12 +243,13 @@ def offer_worktree_cleanup(
 ) -> None:
     """After interactive shutdown, remove a checkout with nothing to lose, or offer to remove a changed one.
 
-    Nothing to lose is an unchanged checkout marked `remove_if_unchanged`, or a clean one whose commits
-    are all on a remote-tracking branch and that a readable saved choice does not keep. Uncommitted or
-    untracked files, or a commit other than the one at launch, count as changes. Other unchanged
-    checkouts are kept without asking. By default, a confirmed removal keeps the branch and dirty
-    files. A registered command owns explicitly confirmed removal for its repository only.
-    `read_remove_commands` reads configuration only when a changed checkout needs a prompt.
+    Nothing to lose is an unchanged checkout marked `remove_if_unchanged`, or a clean one marked
+    `remove_if_pushed` whose commits are all on a remote-tracking branch and that a readable saved
+    choice does not keep. Uncommitted or untracked files, or a commit other than the one at launch,
+    count as changes. Other unchanged checkouts are kept without asking. By default, a confirmed
+    removal keeps the branch and dirty files. A registered command owns explicitly confirmed removal
+    for its repository only. `read_remove_commands` reads configuration only when a changed checkout
+    needs a prompt.
     """
     if worktree is None or not sys.stdin.isatty():
         return
@@ -253,7 +257,11 @@ def offer_worktree_cleanup(
     try:
         clean = not _git('-C', root, 'status', '--porcelain')
         unchanged = clean and _git('-C', root, 'rev-parse', 'HEAD') == worktree.head
-        pushed = clean and not _git('-C', root, 'rev-list', '--max-count=1', 'HEAD', '--not', '--remotes')
+        pushed = (
+            clean
+            and worktree.remove_if_pushed
+            and not _git('-C', root, 'rev-list', '--max-count=1', 'HEAD', '--not', '--remotes')
+        )
     except (OSError, subprocess.CalledProcessError):
         return
     if unchanged and worktree.remove_if_unchanged:

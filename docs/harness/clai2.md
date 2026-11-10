@@ -136,9 +136,11 @@ names the retained branch or checkout for recovery.
 
 On interactive exit, CLAI removes an unchanged worktree this launch created and
 tries to delete its newly created branch with `git branch -d`. It also removes
-any worktree with no uncommitted or untracked files and no unpushed commits,
-keeping the branch. Other unchanged worktrees are kept. If the checkout changed,
-CLAI asks whether to remove it.
+a `--worktree` checkout with no uncommitted or untracked files and no unpushed commits,
+keeping the branch, unless a saved **No, don't ask again for this worktree**
+choice keeps it. Ignored files are deleted with the checkout; lock it with
+`git worktree lock PATH` to keep it. Other unchanged worktrees are kept. If the
+checkout changed, CLAI asks whether to remove it.
 Default Git removal keeps the branch and refuses dirty or locked checkouts.
 
 You can register a user-only `worktrees.remove_commands` entry for a repository.
