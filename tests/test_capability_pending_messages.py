@@ -2292,6 +2292,8 @@ async def test_enqueue_at_deferred_tool_pause_keeps_the_pause(case: str):
     async with agent.iter('Hello') as run:
         async for _ in run:
             pass
+        with pytest.raises(UserError, match='the agent run has ended'):
+            run.enqueue('after the pause')
 
     assert run.result is not None
     assert isinstance(run.result.output, DeferredToolRequests)
@@ -2347,6 +2349,8 @@ async def test_enqueue_at_pending_model_response_pause_keeps_the_pause():
     async with agent.iter('Hello') as run:
         async for _ in run:
             pass
+        with pytest.raises(UserError, match='the agent run has ended'):
+            run.enqueue('after the pause')
 
     assert run.result is not None
     assert isinstance(run.result.output, PendingModelResponse)

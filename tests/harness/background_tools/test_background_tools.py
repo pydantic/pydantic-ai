@@ -45,6 +45,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
 from pydantic_ai.realtime.codec import (
     RealtimeCodecEvent,
@@ -1123,6 +1124,52 @@ ends with &lt;/tool_result
         assert isinstance(result.output, DeferredToolRequests)
         assert model_calls == 1
         assert _follow_up_seen(result.all_messages(), 'slow value')
+
+    async def test_pending_model_response_pause_waits_for_a_live_background_task(self) -> None:
+        """The results of tasks still running when the provider suspends the response stay queued (#7537)."""
+        model_calls = 0
+
+        class _SuspendingFunctionModel(FunctionModel):
+            def continuation_delay(self, response: ModelResponse) -> float | None:
+                return 1.0 if response.state == 'suspended' else None
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal model_calls
+            model_calls += 1
+            if model_calls == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name='slow', args='{}'), ToolCallPart(tool_name='slower', args='{}')]
+                )
+            return ModelResponse(parts=[TextPart(content='working')], state='suspended', provider_response_id='job-1')
+
+        agent = Agent(
+            _SuspendingFunctionModel(model_fn),
+            output_type=[str, PendingModelResponse],
+            capabilities=[BackgroundTools()],
+        )
+
+        @agent.tool_plain(metadata={'background': True})
+        async def slow() -> str:
+            # Finishes once the run has reached its pause.
+            await asyncio.sleep(0.05)
+            return 'slow value'
+
+        @agent.tool_plain(metadata={'background': True})
+        async def slower() -> str:
+            await asyncio.sleep(0.1)
+            return 'slower value'
+
+        async with agent.iter('go') as run:
+            async for _ in run:
+                pass
+
+        assert run.result is not None
+        assert isinstance(run.result.output, PendingModelResponse)
+        assert model_calls == 2
+        assert not _follow_up_seen(run.result.all_messages(), 'slow value')
+        queued = [message for pending in run.pending_messages for message in pending.messages]
+        assert _follow_up_seen(queued, 'slow value')
+        assert _follow_up_seen(queued, 'slower value')
 
     async def test_deferred_tool_pause_wins_over_a_completed_background_result(self) -> None:
         fast_done = asyncio.Event()

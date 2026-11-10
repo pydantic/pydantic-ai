@@ -88,7 +88,7 @@ def drain_pending_messages_at_end(
     redirect. A pause always ends the run: when it pauses for deferred tools, every resulting
     message is appended to `ctx.messages` instead, unless a queued message is a `ModelResponse`;
     then, and at a [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] pause, the
-    queue is left as it is, readable on [`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages].
+    messages stay queued, readable on [`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages].
     Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] per drained
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order.
     """
@@ -98,9 +98,11 @@ def drain_pending_messages_at_end(
     # A pause hands control back to the caller and must stand: turning it into another model turn would
     # skip an approval or abandon a provider job. At a deferred-tool pause, queued requests are recorded
     # after the paused history; resuming it without `deferred_tool_results` raises rather than closing the
-    # paused calls. A queued `ModelResponse` would read as the paused response, so then the queue is left
-    # as it is, as it is at a `PendingModelResponse` pause, whose history must end on the pending response.
+    # paused calls. A queued `ModelResponse` would read as the paused response, so then the messages stay
+    # queued, as they do at a `PendingModelResponse` pause, whose history must end on the pending response.
+    # Either way the queue is closed, so `enqueue` raises once the run has ended.
     if isinstance(result.data.output, PendingModelResponse):
+        run_queue(ctx).close()
         return result
     if isinstance(result.data.output, DeferredToolRequests):
         for pending in run_queue(ctx).drain_at_pause() or ():
