@@ -20,6 +20,7 @@ from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
+from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
 from pydantic_ai_harness.media import (
     DiskMediaStore,
     MediaStore,
@@ -250,30 +251,35 @@ class InMemoryStepStore:
 
     async def save_snapshot(self, snapshot: ContinuableSnapshot) -> None:
         snaps = self._snapshots[snapshot.run_id]
-        if snapshot.idempotency_key is not None:
-            sequence = _snapshot_key_sequence(snapshot.idempotency_key)
-            high_water = self._snapshot_key_high_water.get(snapshot.run_id)
-            if sequence is not None and high_water is not None:
-                prior_sequence, keys_at_high_water = high_water
-                if sequence < prior_sequence or (
-                    sequence == prior_sequence and snapshot.idempotency_key in keys_at_high_water
-                ):
-                    return
-            if any(prior.idempotency_key == snapshot.idempotency_key for prior in snaps):
-                return
-            if sequence is not None:
-                # Only keys at the highest sequence are retained, bounding replay suppression
-                # independently of snapshot retention while rejecting every older operation.
-                if high_water is None or sequence > high_water[0]:
-                    self._snapshot_key_high_water[snapshot.run_id] = (sequence, {snapshot.idempotency_key})
-                else:
-                    high_water[1].add(snapshot.idempotency_key)
+        if snapshot.idempotency_key is not None and not self._admit_snapshot_key(
+            snapshot.run_id, snapshot.idempotency_key, snaps
+        ):
+            return
         snaps.append(snapshot)
         if self._max_snapshots_per_run is None or len(snaps) <= self._max_snapshots_per_run:
             return
         entries: list[tuple[int, SnapshotState]] = [(index, snap.state) for index, snap in enumerate(snaps)]
         retained = _retained_seqs(entries, self._max_snapshots_per_run)
         self._snapshots[snapshot.run_id] = [snap for index, snap in enumerate(snaps) if index in retained]
+
+    def _admit_snapshot_key(self, run_id: str, key: str, snaps: list[ContinuableSnapshot]) -> bool:
+        """Record `key` as saved for `run_id`, or return `False` when it replays an earlier or already-saved write."""
+        sequence = _snapshot_key_sequence(key)
+        high_water = self._snapshot_key_high_water.get(run_id)
+        if sequence is not None and high_water is not None:
+            prior_sequence, keys_at_high_water = high_water
+            if sequence < prior_sequence or (sequence == prior_sequence and key in keys_at_high_water):
+                return False
+        if any(prior.idempotency_key == key for prior in snaps):
+            return False
+        if sequence is not None:
+            # Only keys at the highest sequence are retained, bounding replay suppression
+            # independently of snapshot retention while rejecting every older operation.
+            if high_water is None or sequence > high_water[0]:
+                self._snapshot_key_high_water[run_id] = (sequence, {key})
+            else:
+                high_water[1].add(key)
+        return True
 
     async def latest_snapshot(self, *, run_id: str, include_interrupted: bool = False) -> ContinuableSnapshot | None:
         snaps = self._snapshots.get(run_id)
@@ -696,22 +702,10 @@ class FileStepStore:
         snap_dir = run_dir / 'snapshots'
         snap_dir.mkdir(parents=True, exist_ok=True)
         key_path = run_dir / 'snapshot-keys.jsonl'
-        if snapshot.idempotency_key is not None and key_path.exists():
-            recorded_keys = {
-                _STRING_ADAPTER.validate_json(raw)
-                for raw in key_path.read_text(encoding='utf-8').splitlines()
-                if raw.strip()
-            }
-            if snapshot.idempotency_key in recorded_keys:
-                return
-        if snapshot.idempotency_key is not None:
-            for path in snap_dir.glob('*.json'):
-                try:
-                    prior = _load_json_object(path.read_text(encoding='utf-8'))
-                except (FileNotFoundError, ValueError, ValidationError):
-                    continue
-                if prior.get('idempotency_key') == snapshot.idempotency_key:
-                    return
+        if snapshot.idempotency_key is not None and self._snapshot_key_saved(
+            key_path, snap_dir, snapshot.idempotency_key
+        ):
+            return
         payload: dict[str, object] = {
             'run_id': snapshot.run_id,
             'step_index': snapshot.step_index,
@@ -729,6 +723,26 @@ class FileStepStore:
             with key_path.open('a', encoding='utf-8') as fp:
                 fp.write(json.dumps(snapshot.idempotency_key) + '\n')
         self._sync_prune_snapshots(snap_dir)
+
+    @staticmethod
+    def _snapshot_key_saved(key_path: Path, snap_dir: Path, key: str) -> bool:
+        """Whether a snapshot with idempotency `key` was saved: in the key log, or in a snapshot file."""
+        if key_path.exists():
+            recorded_keys = {
+                _STRING_ADAPTER.validate_json(raw)
+                for raw in key_path.read_text(encoding='utf-8').splitlines()
+                if raw.strip()
+            }
+            if key in recorded_keys:
+                return True
+        for path in snap_dir.glob('*.json'):
+            try:
+                prior = _load_json_object(path.read_text(encoding='utf-8'))
+            except (FileNotFoundError, ValueError, ValidationError):
+                continue
+            if prior.get('idempotency_key') == key:
+                return True
+        return False
 
     def _sync_prune_snapshots(self, snap_dir: Path) -> None:
         """Drop snapshot files outside the retain set when bounded.
@@ -805,7 +819,9 @@ class FileStepStore:
         data, messages_json = loaded
         if self._media_store is not None:
             messages_json = await restore_media(messages_json, media_store=self._media_store)
-        messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(messages_json)
+        messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(
+            messages_json, context=STORED_HISTORY_CONTEXT
+        )
         timestamp_raw = data['timestamp']
         step_raw = data['step_index']
         if not (isinstance(timestamp_raw, str) and isinstance(step_raw, int)):
@@ -873,7 +889,9 @@ class FileStepStore:
                 messages_json = data['messages']
                 if self._media_store is not None:
                     messages_json = await restore_media(messages_json, media_store=self._media_store)
-                messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(messages_json)
+                messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(
+                    messages_json, context=STORED_HISTORY_CONTEXT
+                )
                 timestamp_raw = data['timestamp']
                 step_raw = data['step_index']
                 if not (isinstance(timestamp_raw, str) and isinstance(step_raw, int)):
@@ -1433,7 +1451,9 @@ class SqliteStepStore:
         messages_json: object = json.loads(messages_json_text)
         if self._media_store is not None:
             messages_json = await restore_media(messages_json, media_store=self._media_store)
-        messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(messages_json)
+        messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(
+            messages_json, context=STORED_HISTORY_CONTEXT
+        )
         return ContinuableSnapshot(
             run_id=run_id,
             step_index=step_index,
@@ -1506,7 +1526,9 @@ class SqliteStepStore:
                 messages_json: object = json.loads(messages_json_text)
                 if self._media_store is not None:
                     messages_json = await restore_media(messages_json, media_store=self._media_store)
-                messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(messages_json)
+                messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(
+                    messages_json, context=STORED_HISTORY_CONTEXT
+                )
                 snapshots.append(
                     ContinuableSnapshot(
                         run_id=run_id,

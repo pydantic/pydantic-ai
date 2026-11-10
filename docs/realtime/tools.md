@@ -304,6 +304,10 @@ use [`send(..., respond=False)`](turns.md#text-turns) instead. Delivered turns w
 prompt parts that holds `TextContent` is recorded as those parts, so their metadata, which isn't sent
 to the model, stays in history for the code that recognizes it, such as a background task's report.
 
+Until it's delivered, queued content can be [dequeued or given a new priority](../message-history.md#dequeuing-a-message-or-changing-its-priority)
+by its `enqueue_id`, with [`RealtimeSession.dequeue()`][pydantic_ai.realtime.RealtimeSession.dequeue] and
+[`RealtimeSession.set_enqueue_priority()`][pydantic_ai.realtime.RealtimeSession.set_enqueue_priority].
+
 `enqueue()` does not replace `send()`: it waits for the response in flight to finish, while
 [`send()`][pydantic_ai.realtime.RealtimeSession.send] delivers immediately, even while a tool call or
 response is in progress. Reach for `enqueue()` for a follow-up that should wait its turn, and for
