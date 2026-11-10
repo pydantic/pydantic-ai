@@ -203,6 +203,10 @@ async def test_native_compaction_keeps_the_standing_system_prompt():
         assert isinstance(system_prompt, SystemPromptPart) and system_prompt.content == 'You are a pirate.'
         [record] = result.compactions
         assert record.kept_from == 2
+        # The provider's compaction is the first part of the response after the standing system prompt.
+        assert (record.part_message_index, record.part_index) == (1, 0)
+        holder = result.all_messages()[record.part_message_index]
+        assert isinstance(holder, ModelResponse) and holder.parts[record.part_index] is record.part
     # The request sent after each compaction still opens with the system prompt, ahead of the provider's compaction.
     for sent in model.seen[1:]:
         opening = sent[0]
