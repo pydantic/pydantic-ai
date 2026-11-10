@@ -82,11 +82,25 @@ async def test_a_failed_build_says_why(docker: FakeDocker, container_dir: Path) 
     assert docker.images() == []
 
 
-async def test_the_display_starts_on_first_use_and_actions_go_to_it(docker: FakeDocker, container_dir: Path) -> None:
+@pytest.mark.parametrize(
+    'desktop, screen',
+    [(True, '-screen 0 1280x800x24'), ((1440, 900), '-screen 0 1440x900x24')],
+    ids=['default', 'sized'],
+)
+async def test_the_display_starts_on_first_use_and_actions_go_to_it(
+    docker: FakeDocker, container_dir: Path, desktop: bool | tuple[int, int], screen: str
+) -> None:
     docker.remove_display()
-    workspace = _screen(_desktop(container_dir, image='my-desktop'))
+    backend = DockerSandboxBackend(image='my-desktop', working_dir=str(container_dir), desktop=desktop)
+    workspace = _screen(backend)
 
     assert await workspace.display_size() == (1280, 800)
+    (start,) = (docker.bin_dir / 'xvfb-starts').read_text().splitlines()
+    assert screen in start
+    # Nothing has seen the display that just started, so an action waits for a screenshot of it.
+    with pytest.raises(WorkspaceError, match='The display was not running and started since the last screenshot'):
+        await workspace.act(Click(x=3, y=4))
+    await workspace.screenshot()
     await workspace.act(Click(x=3, y=4))
 
     assert docker.xvfb_starts == 1
@@ -99,17 +113,16 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(docker: Fake
 
 async def test_the_display_waits_for_the_window_manager(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display()
-    # A window manager that takes a moment to manage the screen, and `xprop` reporting it once it does.
+    # `xprop` reports no window manager the first time it is asked, and one the next.
     bin_dir = docker.bin_dir
-    (bin_dir / 'fluxbox').write_text(f'#!/bin/sh\nsleep 0.3; touch {bin_dir}/wm-up; exec sleep 2\n')
     (bin_dir / 'xprop').write_text(
-        f'#!/bin/sh\n[ -e {bin_dir}/wm-up ] && echo "_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1"\n'
+        f'#!/bin/sh\necho probe >> {bin_dir}/xprop-probes\n'
+        f'[ "$(wc -l < {bin_dir}/xprop-probes)" -ge 2 ] && echo "_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1"\n'
     )
-    for name in ('fluxbox', 'xprop'):
-        (bin_dir / name).chmod(0o755)
+    (bin_dir / 'xprop').chmod(0o755)
 
     await _screen(_desktop(container_dir, image='my-desktop')).display_size()
-    assert (bin_dir / 'wm-up').exists()
+    assert (bin_dir / 'xprop-probes').read_text().splitlines() == ['probe', 'probe']
 
 
 async def test_screenshots_zoom_scaling_and_the_pointer_come_from_the_display(
@@ -141,15 +154,6 @@ async def test_a_display_in_env_does_not_move_the_desktop(docker: FakeDocker, co
     assert {call.split(' ')[0] for call in docker.xdotool_calls} == {':1'}
 
 
-async def test_a_desktop_size_sets_the_display_it_starts(docker: FakeDocker, container_dir: Path) -> None:
-    docker.remove_display()
-    backend = DockerSandboxBackend(image='my-desktop', working_dir=str(container_dir), desktop=(1440, 900))
-    await _screen(backend).display_size()
-
-    (start,) = (docker.bin_dir / 'xvfb-starts').read_text().splitlines()
-    assert '-screen 0 1440x900x24' in start
-
-
 async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, container_dir: Path) -> None:
     backend = _desktop(container_dir, image='my-desktop')
     workspace = _screen(backend)
@@ -159,9 +163,10 @@ async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, con
     docker.remove_display()
     with pytest.raises(WorkspaceError):
         await workspace.act(Click(x=1, y=1))
-    # The next action starts the display again, and doesn't run on the new screen.
-    with pytest.raises(WorkspaceError, match='The display was not running and started for this action'):
+    # The next action starts the display again, and doesn't run on the new screen until a screenshot shows it.
+    with pytest.raises(WorkspaceError, match='The display was not running and started since the last screenshot'):
         await workspace.act(Click(x=1, y=1))
+    await workspace.screenshot()
     await workspace.act(Click(x=1, y=1))
 
     assert docker.xvfb_starts == 1
@@ -217,7 +222,7 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
     docker.remove_display(can_start=False)
     workspace = _screen(_desktop(container_dir, image='my-desktop'))
 
-    with pytest.raises(WorkspaceUnavailableError, match='it needs Xvfb, xdotool, scrot and setsid') as error:
+    with pytest.raises(WorkspaceUnavailableError, match='it needs Xvfb, xdotool, xwininfo, scrot and setsid') as error:
         await workspace.screenshot()
     assert 'the X server did not start' in str(error.value)
     assert 'Fatal server error' in str(error.value)
