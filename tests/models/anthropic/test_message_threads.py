@@ -374,6 +374,41 @@ async def test_kept_tools_override_is_not_sent_on_continue(allow_model_requests:
     assert 'tools' not in cont
 
 
+async def test_changed_skills_in_extra_body_start_a_new_thread(allow_model_requests: None):
+    """`container.skills` passed through `extra_body` is fixed for a thread, like that of `anthropic_container`."""
+    api = _Api()
+
+    def skills(skill_id: str) -> AnthropicModelSettings:
+        return {**_SETTINGS, 'extra_body': {'container': {'skills': [{'type': 'anthropic', 'skill_id': skill_id}]}}}
+
+    async with _model(api) as model:
+        agent = Agent(model)
+        first = await agent.run('Hi', model_settings=skills('pdf'))
+        await agent.run('Again', message_history=first.all_messages(), model_settings=skills('xlsx'))
+
+    assert api.bodies[1]['thread'] == {'type': 'create'}
+
+
+async def test_dropped_fallbacks_start_a_new_thread(allow_model_requests: None):
+    """Whether `fallbacks` is sent is fixed for a thread, but its value can change."""
+    api = _Api()
+
+    def fallbacks(*models: str) -> AnthropicModelSettings:
+        return (
+            {**_SETTINGS, 'extra_body': {'fallbacks': [{'model': model} for model in models]}} if models else _SETTINGS
+        )
+
+    async with _model(api) as model:
+        agent = Agent(model)
+        first = await agent.run('Hi', model_settings=fallbacks('claude-haiku-4-5'))
+        second = await agent.run(
+            'Again', message_history=first.all_messages(), model_settings=fallbacks('claude-opus-4-5')
+        )
+        await agent.run('More', message_history=second.all_messages(), model_settings=fallbacks())
+
+    assert [body['thread']['type'] for body in api.bodies] == ['create', 'continue', 'create']
+
+
 async def test_unsupported_request_is_sent_without_a_thread(allow_model_requests: None):
     """A request using something threads don't support is sent again without `thread`, and isn't continued from."""
     api = _Api(replies=[_thread_error(400, 'thread_unsupported_request')])

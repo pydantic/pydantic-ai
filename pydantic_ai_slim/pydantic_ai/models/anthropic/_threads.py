@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
 MESSAGE_THREADS_BETA = 'message-threads-2026-08-12'
 
 # The fields a thread keeps from its create request (`system`, `tools`) or requires unchanged on every request.
-# `fallbacks` is fixed for a thread too; add it here once pydantic-ai sends it.
+# The `skills` in `container`, and whether `fallbacks` is sent, are fixed too: see `thread_fingerprint`.
 _THREAD_FIXED_PARAMS = (
     'system',
     'tools',
@@ -38,18 +39,20 @@ def thread_fingerprint(params: _MessageCreateParams, betas: set[str]) -> str:
     """A digest of the fields a request must share with the thread's create request to continue it.
 
     MCP authorization tokens may change between requests of a thread, so they're left out, unless `extra_body` sets
-    the servers.
+    the servers. `fallbacks`, which only `extra_body` sends, may change too: only whether it's sent is fixed.
     """
     fixed: dict[str, object] = {name: params[name] for name in _THREAD_FIXED_PARAMS}
     fixed['mcp_servers'] = [
         {key: value for key, value in server.items() if key != 'authorization_token'}
         for server in params['mcp_servers'] or ()
     ]
-    if is_str_mapping(extra_body := params['extra_body']):
-        # A field `extra_body` sets replaces the request's own on the wire, so the thread fixes that value instead.
-        fixed.update({name: extra_body[name] for name in _THREAD_FIXED_PARAMS if name in extra_body})
-    container = params['container']
+    extra_body = params['extra_body']
+    overrides: Mapping[str, object] = extra_body if is_str_mapping(extra_body) else {}
+    # A field `extra_body` sets replaces the request's own on the wire, so the thread fixes that value instead.
+    fixed.update({name: overrides[name] for name in _THREAD_FIXED_PARAMS if name in overrides})
+    container = overrides.get('container', params['container'])
     fixed['skills'] = container.get('skills') if is_str_mapping(container) else None
+    fixed['fallbacks'] = 'fallbacks' in overrides
     fixed['betas'] = sorted(betas)
     serialized = json.dumps(fixed, sort_keys=True, default=lambda _omit: None)
     return hashlib.sha256(serialized.encode()).hexdigest()
