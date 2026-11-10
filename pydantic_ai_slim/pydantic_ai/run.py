@@ -124,7 +124,8 @@ def _rewritten(message: _messages.ModelMessage, original: _messages.ModelMessage
 
     A run fills in the fields the request lacks, and adds parts to it, like the system prompt it reinjects
     when the request opens the history it sends, or a `ModelSettingsDeltaPart` recording a settings change.
-    Changing or dropping one of the request's own parts rewrites it.
+    Any part added around the request's own parts, by the run or a capability, is saved with the request as
+    it was sent. Changing or dropping one of the request's own parts rewrites it.
     """
     filled = {name: getattr(message, name, None) for name in _STAMPED_FIELDS if getattr(original, name, False) is None}
     if (
