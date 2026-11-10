@@ -26,7 +26,7 @@ import time
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 import anyio
@@ -242,6 +242,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             applied to every command, including in an attached sandbox. `None` (the default) is
             `/root` on the default image, otherwise the image's own working directory.
         env: Environment variables every command gets; a command's own `env` is layered on top.
+        runtime: Modal's runtime for a newly created sandbox, `'gvisor'` or `'vm'`; `None` (the default) lets
+            Modal choose.
     """
 
     def __init__(
@@ -257,6 +259,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         idle_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        runtime: Literal['gvisor', 'vm'] | None = None,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'modal')
@@ -281,6 +284,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         self._idle_timeout = idle_timeout
         self._working_dir = absolute_path('working_dir', working_dir)
         self._env = dict(env) if env is not None else {}
+        self._runtime: Literal['gvisor', 'vm'] | None = runtime
         # `_working_dir` is what was configured (`None` for the image's); the protocol needs the
         # canonical absolute path, which only `pwd -P` in the sandbox can give.
         self._resolved_working_dir: str | None = None
@@ -511,6 +515,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                     env=variables,
                     timeout=self._sandbox_timeout,
                     idle_timeout=self._idle_timeout,
+                    runtime=self._runtime,
                     client=self._client,
                 )
         except Exception as error:

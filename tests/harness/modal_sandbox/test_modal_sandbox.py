@@ -89,6 +89,15 @@ async def test_backend_acquires_fresh_workspace_and_records_ref(fake_modal: Fake
     assert backend.ref == WorkspaceRef(provider='modal', id=native.object_id)
 
 
+async def test_the_runtime_reaches_a_new_sandbox(fake_modal: FakeModal) -> None:
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    workspace = ModalSandbox(runtime='vm').get_workspace(ctx, ref=None)
+    assert isinstance(workspace, ModalSandboxBackend)
+    await workspace.run(['true'])
+    await ModalSandboxBackend().run(['true'])
+    assert [create['runtime'] for create in fake_modal.create_kwargs] == ['vm', None]
+
+
 def test_root_package_exports_the_capability_and_backend() -> None:
     import pydantic_ai_harness
 
@@ -676,6 +685,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
         'id',
         'idle_timeout',
         'image',
+        'runtime',
         'sandbox_timeout',
         'warn_if_no_tools',
         'working_dir',
@@ -693,6 +703,7 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'idle_timeout': 60,
         'working_dir': '/work',
         'env': {'A': '1'},
+        'runtime': 'vm',
         'warn_if_no_tools': False,
     }
     assert ModalSandbox[None].from_spec(**spec_fields) == ModalSandbox(**spec_fields)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Never
+from typing import TYPE_CHECKING, Any, Literal, Never
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
@@ -189,6 +189,9 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command in the sandbox gets; a command's own `env` is layered on top."""
 
+    runtime: Literal['gvisor', 'vm'] | None = None
+    """Modal's runtime for a newly created sandbox, `'gvisor'` or `'vm'`; `None` lets Modal choose."""
+
     client: modal.Client | None = None
     """The `modal.Client` to create, attach and destroy with, such as one from `modal.Client.from_credentials`;
     Modal's client from the environment or config when `None`. A spec cannot set it.
@@ -228,6 +231,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         warn_if_no_tools: bool = True,
         workdir: str | None = None,
         client: modal.Client | None = None,
+        runtime: Literal['gvisor', 'vm'] | None = None,
         **removed_arguments: Never,
     ) -> None:
         # Hand-written, with the same parameters a dataclass would generate, so the previous
@@ -265,6 +269,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.idle_timeout = idle_timeout
         self.working_dir = working_dir
         self.env = env
+        self.runtime = runtime
         self.client = client
         self.warn_if_no_tools = warn_if_no_tools
         self._warned_no_tools = False
@@ -283,6 +288,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         idle_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        runtime: Literal['gvisor', 'vm'] | None = None,
         warn_if_no_tools: bool = True,
         **kwargs: Any,
     ) -> ModalSandbox[Any]:
@@ -305,6 +311,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             idle_timeout=idle_timeout,
             working_dir=working_dir,
             env=env,
+            runtime=runtime,
             warn_if_no_tools=warn_if_no_tools,
             **kwargs,
         )
@@ -335,6 +342,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             idle_timeout=self.idle_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            runtime=self.runtime,
             client=self.client,
         )
 
