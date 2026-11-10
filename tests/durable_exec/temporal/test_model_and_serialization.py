@@ -846,6 +846,45 @@ async def test_logfire_plugin_does_not_emit_spans_during_replay(
     assert len(capfire.exporter.exported_spans_as_dict()) > span_count
 
 
+def _recorded_metric_names(capfire: CaptureLogfire) -> set[str]:
+    """Names of the metrics recorded since the last collection."""
+    data = capfire.metrics_reader.get_metrics_data()
+    if data is None:
+        return set()
+    return {
+        metric.name
+        for resource_metrics in data.resource_metrics
+        for scope_metrics in resource_metrics.scope_metrics
+        for metric in scope_metrics.metrics
+    }
+
+
+async def test_replay_records_no_model_request_metrics(client_with_logfire: Client, capfire: CaptureLogfire) -> None:
+    """Replaying history re-runs workflow code, but the model requests it replays were metered when they ran."""
+    workflow_id = f'{ReplaySafeLogfireWorkflow.__name__}-metrics-{uuid.uuid4()}'
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[ReplaySafeLogfireWorkflow],
+        plugins=[AgentPlugin(replay_safe_logfire_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        await client_with_logfire.execute_workflow(
+            ReplaySafeLogfireWorkflow.run, args=['hello'], id=workflow_id, task_queue=TASK_QUEUE
+        )
+        history = await client_with_logfire.get_workflow_handle(workflow_id).fetch_history()
+    assert 'gen_ai.client.token.usage' in _recorded_metric_names(capfire)
+
+    await Replayer(
+        workflows=[ReplaySafeLogfireWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+        plugins=[LogfirePlugin()],
+    ).replay_workflow(history)
+
+    assert 'gen_ai.client.token.usage' not in _recorded_metric_names(capfire)
+
+
 image_agent = Agent(model, name='image_agent', output_type=BinaryImage)
 
 

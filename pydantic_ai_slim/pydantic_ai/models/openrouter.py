@@ -752,6 +752,7 @@ def _openrouter_settings_to_openai_settings(
     model_request_parameters: ModelRequestParameters,
     *,
     thinking_always_enabled: bool = False,
+    lowest_reasoning_effort: Literal['minimal', 'low'] = 'low',
 ) -> OpenAIChatModelSettings:
     """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
 
@@ -760,6 +761,8 @@ def _openrouter_settings_to_openai_settings(
         model_request_parameters: The 'ModelRequestParameters' object to use for the transformation.
         thinking_always_enabled: Whether the routed model always reasons, so `thinking=False` asks for its lowest
             effort instead of turning reasoning off.
+        lowest_reasoning_effort: The lowest effort the routed model accepts, sent for `thinking=False` when it
+            always reasons.
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
@@ -785,7 +788,7 @@ def _openrouter_settings_to_openai_settings(
         if thinking is False and thinking_always_enabled:
             # The routed model can't stop reasoning (OpenRouter rejects `effort='none'` with "Reasoning is
             # mandatory"), so it reasons as little as it can.
-            openrouter_reasoning = {'effort': 'low'}
+            openrouter_reasoning = {'effort': lowest_reasoning_effort}
         else:
             openrouter_reasoning = {'effort': _OPENROUTER_EFFORT_MAP[thinking]}
         if thinking is not False:
@@ -1226,6 +1229,7 @@ class OpenRouterModel(OpenAIChatModel):
             cast(OpenRouterModelSettings, merged_settings or {}),
             customized_parameters,
             thinking_always_enabled=self.profile.get('thinking_always_enabled', False),
+            lowest_reasoning_effort=self._resolved_profile.get('openrouter_lowest_reasoning_effort', 'low'),
         )
         return new_settings, customized_parameters
 

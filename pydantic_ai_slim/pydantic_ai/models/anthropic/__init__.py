@@ -520,7 +520,7 @@ def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSetting
 
 
 LatestAnthropicModelNames = Literal[
-    'claude-fable-5-1',
+    'claude-fable-5-2',
     'claude-opus-5-5',
     'claude-sonnet-5-5',
     'claude-haiku-5-5',
@@ -664,7 +664,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     Diagnostics are free and don't affect caching, but Anthropic retains a short-lived fingerprint (hashes and
     token counts, never prompt content) for each request that carries them, and HIPAA-enabled organizations have
     requests using them rejected. They are only available on the Claude API, so the setting is ignored on Amazon
-    Bedrock, Google Cloud Vertex AI and Microsoft Foundry. Defaults to `False`.
+    Bedrock, Google Cloud Vertex AI and Microsoft Foundry. Defaults to `False`. The ID comes from the message
+    history, which [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent, so leave this off
+    with history from a client; see [Loading untrusted history](../../message-history.md#loading-untrusted-history).
     """
 
     anthropic_effort: AnthropicEffort | None
@@ -707,6 +709,11 @@ class AnthropicModelSettings(ModelSettings, total=False):
     or to a `BetaContainerParams` dict (e.g. `{'skills': [...]}` or
     `{'id': 'container_xxx', 'skills': [...]}`) when passing Skills to the Anthropic
     Skills beta.
+
+    Reuse from history trusts the message history for the `container_id`, which
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, set a
+    container id you saved on your server, or `False`; see
+    [Loading untrusted history](../../message-history.md#loading-untrusted-history).
     """
 
     anthropic_code_execution_tool_version: AnthropicCodeExecutionToolVersion | Literal['auto']
@@ -765,10 +772,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     anthropic_speed: Literal['standard', 'fast']
     """The inference speed mode for this request.
 
-    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6, 4.7, 4.8, and 5).
+    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6, 4.7, 4.8,
+    5, and 5.5, Fable 5.2, and Mythos 5.2).
     On unsupported models or clients, `anthropic_speed='fast'` is ignored with a `UserWarning`.
-    Fast mode is a research preview and only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
-    see [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
+    Fast mode is only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
+    see [Fast mode](../../models/anthropic.md#fast-mode) for each model's availability.
+    A response that ran in fast mode records `'speed': 'fast'` in `provider_details`, which prices it at fast mode rates.
     Note: switching between `'fast'` and `'standard'` invalidates the prompt cache.
     """
 
