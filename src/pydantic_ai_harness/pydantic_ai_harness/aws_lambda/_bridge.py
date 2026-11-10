@@ -259,8 +259,8 @@ class _StepRequest:
 class _CallbackRequest:
     name: str
     callback_config: CallbackConfig
-    announce: Callable[[str], Awaitable[None]]
-    announce_config: StepConfig | None
+    ask: Callable[[str], Awaitable[str | None]]
+    ask_config: StepConfig | None
     loop: asyncio.AbstractEventLoop
     reply: Callable[[bool, Any], None]
     context: contextvars.Context
@@ -321,12 +321,12 @@ class StepBridge:
         name: str,
         *,
         callback_config: CallbackConfig,
-        announce: Callable[[str], Awaitable[None]],
-        announce_config: StepConfig | None,
-    ) -> Any:
-        """Create a Lambda callback, announce its ID in a step, and return its result. Runs on the agent loop.
+        ask: Callable[[str], Awaitable[str | None]],
+        ask_config: StepConfig | None,
+    ) -> str | None:
+        """Create a Lambda callback, pass its ID to `ask` in a step, and return the answer `ask` gives or else the callback's result.
 
-        This is what `DurableContext.wait_for_callback` does, without the child context it wraps the
+        Runs on the agent loop. Apart from the answer `ask` may give, this is what `DurableContext.wait_for_callback` does, without the child context it wraps the
         operations in: that way `Callback.result()` raises the SDK's `CallbackError` itself for a
         timed-out or failed callback on every supported SDK version, rather than a version-specific
         wrapper around it. An unanswered callback raises `SuspendExecution`, which ends the invocation
@@ -338,8 +338,8 @@ class StepBridge:
             lambda reply: _CallbackRequest(
                 name=name,
                 callback_config=callback_config,
-                announce=announce,
-                announce_config=announce_config,
+                ask=ask,
+                ask_config=ask_config,
                 loop=loop,
                 reply=reply,
                 context=contextvars.copy_context(),
@@ -416,15 +416,19 @@ class StepBridge:
             return item.context.run(self._wait_for_callback, item)
         return item.context.run(self._context.step, body, name=item.name, config=item.config)
 
-    def _wait_for_callback(self, request: _CallbackRequest) -> Any:
+    def _wait_for_callback(self, request: _CallbackRequest) -> str | None:
         callback = self._context.create_callback(name=request.name, config=request.callback_config)
-        announce_name = f'{request.name}.announce'
-        announce = functools.partial(request.announce, callback.callback_id)
-        self._context.step(
-            functools.partial(_run_step_body, request.loop, announce_name, announce),
-            name=announce_name,
-            config=request.announce_config,
+        ask_name = f'{request.name}.ask'
+        ask = functools.partial(request.ask, callback.callback_id)
+        answer = self._context.step(
+            functools.partial(_run_step_body, request.loop, ask_name, ask),
+            name=ask_name,
+            config=request.ask_config,
         )
+        if answer is not None:
+            # `ask` answered, and its step recorded the answer, so nothing waits on the callback. It stays
+            # open until its timeout, and resolving it has no effect on the run.
+            return answer
         return callback.result()
 
 

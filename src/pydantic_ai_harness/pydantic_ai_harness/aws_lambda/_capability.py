@@ -15,6 +15,7 @@ except ImportError as _import_error:
         '`pip install "pydantic-ai-harness[aws-lambda]"`'
     ) from _import_error
 
+import functools
 import math
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -24,7 +25,7 @@ from typing import Any, ClassVar
 from aws_durable_execution_sdk_python.config import CallbackConfig, Duration, StepConfig
 from aws_durable_execution_sdk_python.exceptions import CallbackError, ExecutionError
 from pydantic import JsonValue
-from pydantic_core import from_json
+from pydantic_core import from_json, to_json
 
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import WrapRunHandler
@@ -65,8 +66,8 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
     return value must survive that round trip. Control-flow signals (`ModelRetry`,
     `ApprovalRequired`, `CallDeferred`, `ToolFailed`) cross the boundary as values rather than
     exceptions, so approval and deferred-tool flows work inside a durable execution. With
-    `AwaitApproval` attached, a call that needs a person's decision waits on a Lambda callback
-    instead of ending the run.
+    `RequestInput` or harness `AskUser` attached, a call that needs an answer from outside waits on
+    a Lambda callback instead of ending the run.
 
     Example:
         ```python {test="skip"}
@@ -141,11 +142,11 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        """Let the run wait for external events, such as `AwaitApproval` decisions, through Lambda callbacks."""
+        """Let the run wait for external events, such as `RequestInput` answers, through Lambda callbacks."""
         bridge = current_bridge()
         if bridge is None:
             return await super().wrap_run(ctx, handler=handler)
-        waiter = _CallbackWaiter(bridge, agent_name=self.name, announce_config=self._operation_config.base_step_config)
+        waiter = _CallbackWaiter(bridge, agent_name=self.name, ask_config=self._operation_config.base_step_config)
         with external_event_scope(waiter):
             return await super().wrap_run(ctx, handler=handler)
 
@@ -153,16 +154,16 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
 class _CallbackWaiter(ExternalEventWaiter):
     """Waits for an external event with a Lambda callback: its ID is the resume token."""
 
-    def __init__(self, bridge: StepBridge, *, agent_name: str, announce_config: StepConfig | None) -> None:
+    def __init__(self, bridge: StepBridge, *, agent_name: str, ask_config: StepConfig | None) -> None:
         self._bridge = bridge
         self._agent_name = agent_name
-        self._announce_config = announce_config
+        self._ask_config = ask_config
 
     async def wait(
         self,
         name: str,
         *,
-        announce: Callable[[str], Awaitable[None]],
+        ask: Callable[[str], Awaitable[JsonValue]],
         timeout: timedelta | None,
     ) -> JsonValue:
         # Lambda times callbacks in whole seconds, and zero means no timeout, so round up.
@@ -172,13 +173,14 @@ class _CallbackWaiter(ExternalEventWaiter):
             result = await self._bridge.wait_for_callback(
                 callback_name,
                 callback_config=CallbackConfig(timeout=Duration(seconds=seconds)),
-                announce=announce,
-                announce_config=self._announce_config,
+                ask=functools.partial(_ask_for_json, ask),
+                ask_config=self._ask_config,
             )
         except CallbackError as error:
             raise ExternalEventError(str(error)) from error
-        # The `CallbackConfig` sets no `serdes`, so on SDK 1.x and 3.x `Callback.result()` returns the
-        # result as the resolver sent it (`PASS_THROUGH_SERDES`), or `None` when it sent none.
+        # An answer from `ask` is a JSON string, like a resolution: the `CallbackConfig` sets no `serdes`,
+        # so on SDK 1.x and 3.x `Callback.result()` returns the result as the resolver sent it
+        # (`PASS_THROUGH_SERDES`), or `None` when it sent none.
         if result is None:
             return None
         try:
@@ -187,3 +189,9 @@ class _CallbackWaiter(ExternalEventWaiter):
             raise UserError(
                 f'The result sent to {_ENGINE_NAME} callback {callback_name!r} is not valid JSON: {error}'
             ) from error
+
+
+async def _ask_for_json(ask: Callable[[str], Awaitable[JsonValue]], token: str) -> str | None:
+    """Call `ask`, and record an answer as the JSON string a resolver would send, so both are read back the same way."""
+    answer = await ask(token)
+    return None if answer is None else to_json(answer).decode()

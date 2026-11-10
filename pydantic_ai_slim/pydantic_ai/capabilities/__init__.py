@@ -35,7 +35,7 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
-from .await_approval import AwaitApproval
+from .request_input import RequestInput
 from .batch_model_requests import BatchModelRequests
 from .caching import Caching
 from .capability import Capability
@@ -177,7 +177,7 @@ __all__ = [
     'CombinedCapability',
     'DynamicCapability',
     'durable_operation',
-    'AwaitApproval',
+    'RequestInput',
     'HandleDeferredToolCalls',
     'HistoryProcessor',
     'HookTimeoutError',
