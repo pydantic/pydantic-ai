@@ -172,9 +172,17 @@ def _map_status_error(e: MistralError, model_name: str) -> ModelHTTPError:
 
 
 LatestMistralModelNames = Literal[
-    'mistral-large-latest', 'mistral-small-latest', 'codestral-latest', 'mistral-moderation-latest'
+    'mistral-large-latest',
+    'mistral-medium-latest',
+    'mistral-small-latest',
+    'magistral-medium-latest',
+    'magistral-small-latest',
+    'codestral-latest',
+    'ministral-14b-latest',
+    'ministral-8b-latest',
+    'ministral-3b-latest',
 ]
-"""Latest  Mistral models."""
+"""Latest Mistral models: `-latest` aliases are Mistral's canonical model ids."""
 
 MistralModelName = str | LatestMistralModelNames
 """Possible Mistral model names.

@@ -873,7 +873,7 @@ async def test_batch_error_suggests_a_known_model_for_an_unknown_one(allow_model
     """A batch whose model OpenAI doesn't know suggests a close known model, as a request on its own does."""
     api = _FakeBatchAPI(batch=_batch_json('validating'))
     model = OpenAIResponsesModel(
-        'gpt-4.1-nan',
+        'gpt-5.6-lun',
         provider=OpenAIProvider(
             openai_client=AsyncOpenAI(
                 api_key='k', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(api.handle))
@@ -882,12 +882,12 @@ async def test_batch_error_suggests_a_known_model_for_an_unknown_one(allow_model
     )
     request = _request()
     batch = await model.batch_create([await model.batch_encode(request)])
-    error = {'code': 'model_not_found', 'message': "The provided model 'gpt-4.1-nan' is not supported.", 'line': 1}
+    error = {'code': 'model_not_found', 'message': "The provided model 'gpt-5.6-lun' is not supported.", 'line': 1}
     api.batch = _batch_json('failed', errors={'object': 'list', 'data': [error]})
     [result] = await model.batch_results(await model.batch_status(batch))
     with pytest.raises(ModelHTTPError) as exc_info:
         model.batch_decode(result, request)
-    assert exc_info.value.suggested_model_id == 'openai:gpt-4.1-nano'
+    assert exc_info.value.suggested_model_id == 'openai:gpt-5.6-luna'
 
 
 async def test_batch_status_of_an_unknown_status_keeps_waiting(allow_model_requests: None) -> None:

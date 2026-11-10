@@ -6,7 +6,6 @@ on:
   # it checks out the default-branch controller, parses artifacts as data, and receives no Z.AI key.
   workflow_run:
     workflows:
-      - Pydantic AI Attention Triage
       - Pydantic AI Bug Hunter
       - Pydantic AI Community Demand
       - Pydantic AI Docs Drift
@@ -18,7 +17,6 @@ on:
       - Pydantic AI Round-Trip Sweep
       - Pydantic AI Stale Issues Finder
       - Pydantic AI Streaming Resilience Sweep
-      - Pydantic AI UI Security Review
       - Pydantic AI Weekly Agent Instructions Audit
     types: [completed]
   schedule:

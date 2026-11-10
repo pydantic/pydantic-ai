@@ -166,6 +166,14 @@ streams for longer than it isn't cut off by the server. A per-request [`timeout`
 doesn't change the header. To set a different server deadline, send the header yourself in
 [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers].
 
+A user-agent you send in `extra_headers`, in any spelling, replaces Pydantic AI's on
+[`GoogleModel`][pydantic_ai.models.google.GoogleModel] and
+[`GoogleImageGenerationModel`][pydantic_ai.images.google.GoogleImageGenerationModel] requests. `google-genai` puts its
+own label in front of it, so it goes out as one `user-agent: google-genai-sdk/… gl-python/… <your value>` header. It
+also replaces a user-agent set on a client you pass. If that client spells the header other than `user-agent`, as in
+`HttpOptions(headers={'User-Agent': ...})`, `google-genai` keeps its own lowercase `user-agent` beside it, so your value
+goes out on both lines.
+
 The Google providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
 
 ## HTTP Retries

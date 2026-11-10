@@ -569,6 +569,7 @@ def test_anthropic_falls_back_to_the_request_level_effort(settings: AnthropicMod
     [
         pytest.param('claude-opus-5-5', None, True, id='claude-api'),
         pytest.param('claude-fable-5-1', None, True, id='fable-5-1'),
+        pytest.param('claude-fable-5-2', None, True, id='fable-5-2'),
         pytest.param('claude-fable-5', None, False, id='fable-5'),
         pytest.param('claude-sonnet-5', None, False, id='sonnet-5'),
         pytest.param(

@@ -532,8 +532,22 @@ async def revalidate_function_call(
                 f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
                 f'Removing or renaming tools during an agent run is not supported with {engine_spec.engine_name}.'
             ) from exc
-    args = tool.args_validator.validate_python(params.tool_args, context=unit_validation_context(params.ctx))
+    args = revalidate_function_args(toolset, tool, params.tool_args, context=unit_validation_context(params.ctx))
     return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
+
+
+def revalidate_function_args(
+    toolset: FunctionToolset[Any], tool: ToolsetTool[Any], tool_args: dict[str, Any], *, context: Any = None
+) -> dict[str, Any]:
+    """Validate a function tool's already-validated arguments again after they crossed a durable boundary as JSON."""
+    if (
+        isinstance(tool, FunctionToolsetTool)
+        and (source := toolset.tools.get(tool.original_name or tool.tool_def.name)) is not None
+        # Only the source's own validator produced arguments in the shape `revalidate` expects.
+        and tool.args_validator is source.function_schema.validator
+    ):
+        return source.function_schema.revalidate(tool_args, context=context)
+    return tool.args_validator.validate_python(tool_args, context=context)
 
 
 @dataclass

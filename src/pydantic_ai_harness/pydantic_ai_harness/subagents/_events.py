@@ -334,7 +334,11 @@ BackgroundReason: TypeAlias = Literal['requested', 'auto', 'question']
 
 @dataclass(kw_only=True)
 class TaskBackgroundedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='task_backgrounded'):
-    """A task now runs in the background: the delegation tool returned a receipt, and its report arrives later."""
+    """A task now runs in the background: the delegation tool returned a receipt, and its report arrives later.
+
+    A `requested` task still running when the delegation tool gets its receipt, but settled before this event is
+    announced, as one replayed under durable execution can be, gets this event after its settle event.
+    """
 
     task_id: str
     """The task now running in the background."""

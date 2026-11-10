@@ -2,7 +2,7 @@
   "anthropic:small": "anthropic:claude-haiku-5-5",
   "anthropic:medium": "anthropic:claude-sonnet-5-5",
   "anthropic:large": "anthropic:claude-opus-5-5",
-  "anthropic:xlarge": "anthropic:claude-fable-5-1",
+  "anthropic:xlarge": "anthropic:claude-fable-5-2",
   "openai:small": "openai:gpt-6-luna",
   "openai:medium": "openai:gpt-6.1-sol",
   "openai:large": "openai:gpt-6-astra",
