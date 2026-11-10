@@ -3200,13 +3200,13 @@ class TestPublicPath:
         assert _summary_text(sent[-1]) == 'the summary'
 
     async def test_retries_field_absorbs_tool_call_imitations(self):
-        """`retries` raises the summary budget so consecutive tool-call imitations don't kill the run.
+        """`retries` raises the summary budget so consecutive tool-call imitations still produce a summary.
 
         The summary agent is toolless, so an emitted call is an unknown tool, which burns core's
         retry budget in one strike; at the default of 1 the second imitation raises
-        `UnexpectedModelBehavior` that escapes and kills the parent run, naming a tool the
-        summarizer never declared. The transcript it reads is full of calls to imitate, so a weak
-        summarizer model needs the budget raised from outside.
+        `UnexpectedModelBehavior`, and the automatic attempt is discarded without a summary. The
+        transcript it reads is full of calls to imitate, so a weak summarizer model needs the budget
+        raised from outside to get a summary at all.
         """
         responses = iter(
             [
