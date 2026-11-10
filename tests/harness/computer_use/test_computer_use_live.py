@@ -12,12 +12,12 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.workspaces import Click, PressKeys, TypeText
+from pydantic_ai.computer_use import Click, PressKeys, TypeText
 from pydantic_ai_harness.computer_use import ComputerUse
 from tests.models.conftest import content_blocks
 
 from ...conftest import RequestCapture, try_import
-from ...workspace_fakes import InMemoryProvider
+from ..display_fakes import ScreenProvider
 
 with try_import() as openai_installed:
     from pydantic_ai.models.openai import OpenAIResponsesModel
@@ -46,7 +46,7 @@ def _gpt(openai_api_key: str, capture: RequestCapture) -> OpenAIResponsesModel:
 async def test_gpt_drives_the_screen_through_the_native_computer_tool(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
-    provider = InMemoryProvider()
+    provider = ScreenProvider()
     agent = Agent(
         _gpt(openai_api_key, request_capture), capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]
     )
@@ -73,7 +73,7 @@ async def test_gpt_drives_the_screen_through_the_native_computer_tool(
 async def test_gpt_computer_calls_go_back_to_a_request_without_the_computer_tool(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
-    provider = InMemoryProvider()
+    provider = ScreenProvider()
     model = _gpt(openai_api_key, request_capture)
     result = await Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]).run(TASK)
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
@@ -96,7 +96,7 @@ async def test_gpt_continues_a_native_history_after_the_tool_opts_out(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
     """A run recorded with the native tool goes on with `ComputerUse(native=False)`, and the API accepts it."""
-    provider = InMemoryProvider()
+    provider = ScreenProvider()
     model = _gpt(openai_api_key, request_capture)
     capabilities = [provider.capability(), ComputerUse(settle_seconds=0)]
     result = await Agent(model, capabilities=capabilities).run(TASK)
@@ -136,7 +136,7 @@ def _tools(body: dict[str, Any]) -> list[dict[str, Any]]:
 async def test_claude_drives_the_screen_through_the_computer_toolset(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ) -> None:
-    provider = InMemoryProvider()
+    provider = ScreenProvider()
     model = _claude('claude-sonnet-5-5', anthropic_api_key, request_capture)
     await Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]).run(TASK)
 
@@ -160,7 +160,7 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
 async def test_claude_sonnet_4_6_gets_computer_20251124_sized_to_the_display(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ) -> None:
-    provider = InMemoryProvider()
+    provider = ScreenProvider()
     model = _claude('claude-sonnet-4-6', anthropic_api_key, request_capture)
     await Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]).run(TASK)
 

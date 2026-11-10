@@ -14,7 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai.workspaces import Click, PressKeys, TypeText, WorkspaceBackend, WorkspaceRef
+from pydantic_ai.computer_use import Click, PressKeys, TypeText
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 

@@ -13,7 +13,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, Tool, ToolCallPart, ToolDenied
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.computer_use import COMPUTER_KIND, ComputerCallPart, ComputerToolAction, SafetyCheck
+from pydantic_ai.computer_use import COMPUTER_KIND, Click, ComputerCallPart, ComputerToolAction, SafetyCheck
 from pydantic_ai.exceptions import ToolFailed
 from pydantic_ai.messages import (
     BinaryImage,
@@ -28,10 +28,10 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.workspaces import Click
 
+from ..computer_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, FakeComputer
 from ..conftest import try_import
-from ..workspace_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, InMemoryProvider, computer_capability
+from ..workspace_fakes import InMemoryProvider
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as imports_successful:
@@ -89,14 +89,14 @@ CHECK = {'id': 'cu_sc_1', 'code': 'malicious_instructions', 'message': 'The page
 async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them(
     allow_model_requests: None, approve: bool
 ) -> None:
-    provider = InMemoryProvider()
+    provider, computer = InMemoryProvider(), FakeComputer(requires_approval=True)
     client = MockOpenAIResponses.create_mock(
         [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}, safety_checks=[CHECK]), _done()]
     )
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
     agent = Agent(
         model,
-        capabilities=[computer_capability(requires_approval=True), provider.capability()],
+        capabilities=[computer, provider.capability()],
         output_type=[str, DeferredToolRequests],
         model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
     )
@@ -107,7 +107,7 @@ async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them
     # What an app shows the person deciding.
     assert isinstance(approval, ComputerCallPart)
     assert approval.safety_checks == [SafetyCheck(code=CHECK['code'], message=CHECK['message'], id=CHECK['id'])]
-    assert provider.actions == []
+    assert computer.actions == []
 
     decision = True if approve else ToolDenied('Not on this page.')
     resumed = await agent.run(
@@ -121,7 +121,7 @@ async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them
     (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
     if approve:
         assert output['acknowledged_safety_checks'] == [CHECK]
-        assert provider.actions == [Click(x=5, y=6)]
+        assert computer.actions == [Click(x=5, y=6)]
     else:
         assert 'acknowledged_safety_checks' not in output
         note = second['input'][second['input'].index(output) + 1]
@@ -129,7 +129,7 @@ async def test_a_reviewer_sees_the_safety_checks_and_approving_acknowledges_them
             'role': 'user',
             'content': '<tool_result tool_name="computer" tool_call_id="call_1">Not on this page.</tool_result>',
         }
-        assert provider.actions == []
+        assert computer.actions == []
 
 
 async def test_an_approved_call_in_a_conversation_acknowledges_its_safety_checks(allow_model_requests: None) -> None:
@@ -140,7 +140,7 @@ async def test_an_approved_call_in_a_conversation_acknowledges_its_safety_checks
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
     agent = Agent(
         model,
-        capabilities=[computer_capability(requires_approval=True), provider.capability()],
+        capabilities=[FakeComputer(requires_approval=True), provider.capability()],
         output_type=[str, DeferredToolRequests],
         model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_1'),
     )
@@ -230,7 +230,7 @@ async def test_a_result_whose_call_is_stored_server_side_is_a_computer_call_outp
     first.conversation = Conversation(id='conv_1')
     client = MockOpenAIResponses.create_mock([first, _done()])
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    agent = Agent(model, capabilities=[computer_capability(), provider.capability()], model_settings=settings)
+    agent = Agent(model, capabilities=[FakeComputer(), provider.capability()], model_settings=settings)
 
     assert (await agent.run('Go.')).output == 'done'
     _, second = get_mock_responses_kwargs(client)
@@ -311,7 +311,7 @@ async def test_the_native_tool_is_sent_and_a_call_with_no_actions_is_answered_wi
 ) -> None:
     client = MockOpenAIResponses.create_mock([_computer_call(), _done()])
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    result = await Agent(model, capabilities=[computer_capability(), InMemoryProvider().capability()]).run('Look.')
+    result = await Agent(model, capabilities=[FakeComputer(), InMemoryProvider().capability()]).run('Look.')
 
     (call_part,) = [p for message in result.all_messages() for p in message.parts if isinstance(p, ToolCallPart)]
     assert call_part.args_as_dict() == {'actions': [{'type': 'screenshot'}]}
@@ -327,14 +327,14 @@ async def test_the_native_tool_is_sent_and_a_call_with_no_actions_is_answered_wi
 
 async def test_a_refused_action_reaches_gpt_beside_the_screenshot(allow_model_requests: None) -> None:
     # Otherwise GPT would take the click on the read-only workspace to have run.
-    provider = InMemoryProvider()
+    provider, computer = InMemoryProvider(), FakeComputer()
     client = MockOpenAIResponses.create_mock(
         [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}), _done()]
     )
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    await Agent(model, capabilities=[computer_capability(), provider.capability(read_only=True)]).run('Go.')
+    await Agent(model, capabilities=[computer, provider.capability(read_only=True)]).run('Go.')
 
-    assert provider.actions == []
+    assert computer.actions == []
     _, second = get_mock_responses_kwargs(client)
     assert 'Ran 0 of 1 actions. The next one failed: ' in str(second['input'])
 
@@ -344,11 +344,11 @@ async def test_a_call_with_a_single_action_runs_it(allow_model_requests: None) -
     item = cast(resp.ResponseComputerToolCall, response.output[0])
     item.actions = None
     item.action = resp.response_computer_tool_call.ActionClick(type='click', x=5, y=6, button='left')
-    provider = InMemoryProvider()
+    provider, computer = InMemoryProvider(), FakeComputer()
     client = MockOpenAIResponses.create_mock([response, _done()])
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    await Agent(model, capabilities=[computer_capability(), provider.capability()]).run('Go.')
-    assert provider.actions == [Click(x=5, y=6)]
+    await Agent(model, capabilities=[computer, provider.capability()]).run('Go.')
+    assert computer.actions == [Click(x=5, y=6)]
 
 
 _DROPPED = '[Older screenshot removed to save context; the latest screenshot shows the current screen.]'
@@ -453,12 +453,12 @@ async def test_a_result_goes_out_as_a_computer_call_output_and_a_note_when_the_s
 async def test_an_incomplete_call_runs_nothing(allow_model_requests: None) -> None:
     response = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'})
     cast(resp.ResponseComputerToolCall, response.output[0]).status = 'incomplete'
-    provider = InMemoryProvider()
+    provider, computer = InMemoryProvider(), FakeComputer()
     client = MockOpenAIResponses.create_mock([response, _done()])
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    await Agent(model, capabilities=[computer_capability(), provider.capability()]).run('Go.')
+    await Agent(model, capabilities=[computer, provider.capability()]).run('Go.')
 
-    assert provider.actions == []
+    assert computer.actions == []
     _, second = get_mock_responses_kwargs(client)
     (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
     # OpenAI rejects an image whose chunk checksums don't match, failing the whole request.
@@ -471,10 +471,10 @@ async def test_an_action_with_a_field_that_does_not_map_runs_nothing(allow_model
         [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'duration_ms': 800}), _done()]
     )
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    provider = InMemoryProvider()
-    result = await Agent(model, capabilities=[computer_capability(), provider.capability()]).run('Go.')
+    provider, computer = InMemoryProvider(), FakeComputer()
+    result = await Agent(model, capabilities=[computer, provider.capability()]).run('Go.')
 
-    assert provider.actions == []
+    assert computer.actions == []
     call = next(part for part in result.all_messages()[1].parts if isinstance(part, ToolCallPart))
     assert call.args_as_dict() == {'actions': [{'type': 'click', 'unsupported_fields': ['duration_ms']}]}
 
@@ -526,7 +526,7 @@ async def test_a_model_without_the_native_tool_or_a_tool_that_opts_out_gets_a_fu
 ) -> None:
     client = MockOpenAIResponses.create_mock(_done())
     model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client), profile=profile)
-    capabilities = [computer_capability(native=native), InMemoryProvider().capability()]
+    capabilities = [FakeComputer(native=native), InMemoryProvider().capability()]
     await Agent(model, capabilities=capabilities).run('Go.')
 
     (request,) = get_mock_responses_kwargs(client)
@@ -545,7 +545,7 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
         ),
         ModelRequest(parts=[ToolReturnPart('computer', ['Ran 1 action.'], tool_call_id='toolu_1')]),
     ]
-    agent = Agent(model, capabilities=[computer_capability(), InMemoryProvider().capability()])
+    agent = Agent(model, capabilities=[FakeComputer(), InMemoryProvider().capability()])
     await agent.run('Go on.', message_history=history)
 
     (request,) = get_mock_responses_kwargs(client)

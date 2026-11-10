@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Never
 
-from .computer import ComputerAction
 from .protocol import WorkspaceCommand, WorkspaceReadOnlyError
 from .workspace import WrapperWorkspace
 
@@ -13,16 +12,15 @@ __all__ = ('ReadOnlyWorkspace',)
 
 
 _READ_ONLY_REASON = (
-    'This workspace is read-only: running commands, modifying files, and acting on the display are disabled. '
-    'Reading files, listing directories, checking that paths exist, and taking screenshots are allowed.'
+    'This workspace is read-only: running commands and modifying files are disabled. '
+    'Reading files, listing directories, and checking that paths exist are allowed.'
 )
 
 
 class ReadOnlyWorkspace(WrapperWorkspace):
-    """A [`Workspace`][pydantic_ai.workspaces.Workspace] that allows reads and refuses changes.
+    """A [`Workspace`][pydantic_ai.workspaces.Workspace] that allows reads and refuses commands and file changes.
 
-    It refuses file changes, display actions, and commands, since they could change files. This restricts the
-    workspace API; it is not isolation.
+    Commands are refused too, since they could change files. This restricts the workspace API; it is not isolation.
     """
 
     @property
@@ -46,7 +44,4 @@ class ReadOnlyWorkspace(WrapperWorkspace):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> Never:
-        raise WorkspaceReadOnlyError(_READ_ONLY_REASON)
-
-    async def act(self, action: ComputerAction) -> Never:
         raise WorkspaceReadOnlyError(_READ_ONLY_REASON)

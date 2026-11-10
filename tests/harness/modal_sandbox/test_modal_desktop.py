@@ -5,11 +5,12 @@ from __future__ import annotations
 import warnings
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.computer_use import Click
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import Click
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxNoToolsWarning
 
 from .._fake_x_display import FakeDisplay
+from ..display_fakes import screen
 from .fake_modal import FakeImage, FakeModal
 
 
@@ -22,8 +23,8 @@ async def test_a_desktop_sandbox_has_the_display_programs_and_drives_its_display
     # Named like `ComputerUse`'s tool, which counts as using the sandbox.
     @agent.tool(name='computer')
     async def computer(ctx: RunContext[object]) -> str:
-        size = await ctx.workspace.display_size()
-        await ctx.workspace.act(Click(x=3, y=4))
+        size = await screen(ctx.workspace.backend).display_size()
+        await screen(ctx.workspace.backend).act(Click(x=3, y=4))
         await ctx.workspace.run(['true'])
         assert ctx.workspace.ref is not None and sandbox.backend(ctx.workspace.ref).display is not None
         return 'x'.join(map(str, size))

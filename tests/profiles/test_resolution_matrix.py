@@ -254,7 +254,8 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
-            'computer_use_screenshot_limit': (1568, 1150000),
+            'computer_use_screenshot_max_side': 1568,
+            'computer_use_screenshot_max_pixels': 1150000,
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
@@ -298,7 +299,8 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'anthropic_supports_task_budgets': True,
-            'computer_use_screenshot_limit': (2576, 3600000),
+            'computer_use_screenshot_max_side': 2576,
+            'computer_use_screenshot_max_pixels': 3600000,
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
@@ -332,7 +334,8 @@ def test_anthropic_claude_haiku_4_5():
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
-            'computer_use_screenshot_limit': (1568, 1150000),
+            'computer_use_screenshot_max_side': 1568,
+            'computer_use_screenshot_max_pixels': 1150000,
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
@@ -394,7 +397,8 @@ def test_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_max_reasoning_effort': False,
-            'computer_use_screenshot_limit': (2560, 3686400),
+            'computer_use_screenshot_max_side': 2560,
+            'computer_use_screenshot_max_pixels': 3686400,
             'openai_supports_computer_tool': True,
             'openai_supports_phase': True,
             'tool_addition_mode': 'with_definitions',
@@ -417,7 +421,8 @@ def test_openai_gpt_5_4_nano(model_name: str):
     assert expected is not None
     expected['supported_native_tools'] -= {ToolSearchTool}
     expected['openai_supports_computer_tool'] = False
-    del expected['computer_use_screenshot_limit']
+    del expected['computer_use_screenshot_max_side']
+    del expected['computer_use_screenshot_max_pixels']
     assert _normalize(OpenAIProvider.model_profile(model_name)) == expected
 
 
@@ -453,7 +458,8 @@ def test_openai_gpt_5_6():
             'tool_addition_mode': 'with_definitions',
             'openai_supports_computer_tool': True,
             'openai_supports_phase': True,
-            'computer_use_screenshot_limit': (2560, 3686400),
+            'computer_use_screenshot_max_side': 2560,
+            'computer_use_screenshot_max_pixels': 3686400,
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': True,
             'openai_supports_prompt_cache_breakpoints': True,
@@ -501,7 +507,8 @@ def test_openai_gpt_6_astra():
             'openai_supports_computer_tool': True,
             'openai_supports_phase': True,
             'openai_responses_tool_choice_accepts_additional_tools': True,
-            'computer_use_screenshot_limit': (2560, 3686400),
+            'computer_use_screenshot_max_side': 2560,
+            'computer_use_screenshot_max_pixels': 3686400,
             'openai_responses_supports_max_reasoning_effort': True,
             'openai_supports_prompt_cache_breakpoints': True,
             'openai_reasoning_efforts': frozenset({'high', 'low', 'max', 'medium', 'xhigh'}),
@@ -726,7 +733,8 @@ def test_openai_codex_gpt_5_6():
             'openai_supports_phase': True,
             'openai_supports_computer_tool': False,
             'openai_supports_minimal_reasoning_effort': False,
-            'computer_use_screenshot_limit': (2560, 3686400),
+            'computer_use_screenshot_max_side': 2560,
+            'computer_use_screenshot_max_pixels': 3686400,
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
@@ -987,7 +995,8 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'bedrock_thinking_variant': 'anthropic',
-            'computer_use_screenshot_limit': (1568, 1150000),
+            'computer_use_screenshot_max_side': 1568,
+            'computer_use_screenshot_max_pixels': 1150000,
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
             'supports_video_input': False,
@@ -1069,7 +1078,8 @@ def test_bedrock_anthropic_with_geo_prefix():
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'bedrock_thinking_variant': 'anthropic',
-            'computer_use_screenshot_limit': (1568, 1150000),
+            'computer_use_screenshot_max_side': 1568,
+            'computer_use_screenshot_max_pixels': 1150000,
             'tool_deferral_mode': 'standalone',
             'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
             'supports_video_input': False,
@@ -1408,7 +1418,8 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
-            'computer_use_screenshot_limit': (1568, 1150000),
+            'computer_use_screenshot_max_side': 1568,
+            'computer_use_screenshot_max_pixels': 1150000,
             'tool_deferral_mode': 'standalone',
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -1443,7 +1454,8 @@ def test_openrouter_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_chat_supports_file_urls': True,
             'openai_supports_encrypted_reasoning_content': True,
-            'computer_use_screenshot_limit': (2560, 3686400),
+            'computer_use_screenshot_max_side': 2560,
+            'computer_use_screenshot_max_pixels': 3686400,
             'openai_supports_reasoning': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
@@ -1654,7 +1666,8 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
-            'computer_use_screenshot_limit': (1568, 1150000),
+            'computer_use_screenshot_max_side': 1568,
+            'computer_use_screenshot_max_pixels': 1150000,
             'openai_chat_supports_max_completion_tokens': True,
             'openai_chat_thinking_field': 'reasoning_text',
         }
@@ -1680,7 +1693,8 @@ def test_github_copilot_openai_gpt_5_4():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
-            'computer_use_screenshot_limit': (2560, 3686400),
+            'computer_use_screenshot_max_side': 2560,
+            'computer_use_screenshot_max_pixels': 3686400,
             'openai_chat_supports_max_completion_tokens': True,
         }
     )
@@ -1921,7 +1935,8 @@ def test_azure_openai_gpt_5():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
-            'computer_use_screenshot_limit': (2560, 3686400),
+            'computer_use_screenshot_max_side': 2560,
+            'computer_use_screenshot_max_pixels': 3686400,
             'openai_supports_computer_tool': True,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
@@ -2306,7 +2321,8 @@ def test_litellm_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
-            'computer_use_screenshot_limit': (2560, 3686400),
+            'computer_use_screenshot_max_side': 2560,
+            'computer_use_screenshot_max_pixels': 3686400,
         }
     )
 
@@ -2536,7 +2552,8 @@ def test_github_openai_bare_name():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
-            'computer_use_screenshot_limit': (2560, 3686400),
+            'computer_use_screenshot_max_side': 2560,
+            'computer_use_screenshot_max_pixels': 3686400,
         }
     )
 
@@ -2614,7 +2631,8 @@ def test_vercel_anthropic_claude_sonnet():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
-            'computer_use_screenshot_limit': (1568, 1150000),
+            'computer_use_screenshot_max_side': 1568,
+            'computer_use_screenshot_max_pixels': 1150000,
         }
     )
 
@@ -2638,7 +2656,8 @@ def test_vercel_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
-            'computer_use_screenshot_limit': (2560, 3686400),
+            'computer_use_screenshot_max_side': 2560,
+            'computer_use_screenshot_max_pixels': 3686400,
         }
     )
 
@@ -2742,7 +2761,8 @@ def test_heroku_returns_openai_transformer():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
-            'computer_use_screenshot_limit': (1568, 1150000),
+            'computer_use_screenshot_max_side': 1568,
+            'computer_use_screenshot_max_pixels': 1150000,
         }
     )
 

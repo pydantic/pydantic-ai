@@ -42,7 +42,6 @@ from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
     SupportsCommands,
-    SupportsDisplay,
     SupportsFilesystem,
     Workspace,
     WorkspaceBackend,
@@ -52,7 +51,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import ManagedDisplay, desktop_size
+from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -63,6 +62,7 @@ from pydantic_ai_harness._workspace_provider import (
     stop_shielded,
 )
 from pydantic_ai_harness._x11 import DISPLAY, start_x_server, x11_display
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
@@ -365,7 +365,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
                 self._desktop_size,
                 _START_DESKTOP,
                 lambda: f'E2B sandbox {self.ref.id if self.ref else "(not created)"}',
-                screen_key=lambda: self.ref,
             )
         )
         self._setsid: bool | None = None
@@ -816,7 +815,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
                         logger.debug('Could not remove E2B stop claim %s', claim, exc_info=True)
 
     @property
-    def display(self) -> ManagedDisplay | None:
+    def display(self) -> Display | None:
         """The sandbox's desktop, when created with `desktop=True`."""
         return self._display
 

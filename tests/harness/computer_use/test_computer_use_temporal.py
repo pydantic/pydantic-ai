@@ -8,9 +8,9 @@ from uuid import uuid4
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.computer_use import Click
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.workspaces import Click
 
 pytest.importorskip('temporalio')
 
@@ -25,11 +25,11 @@ from pydantic_ai_harness.computer_use import ComputerUse
 from tests.harness._temporal import skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
-from ...workspace_fakes import InMemoryProvider
+from ..display_fakes import ScreenProvider
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), skip_temporal_sandbox_on_314]
 
-_provider = InMemoryProvider(in_unit=activity.in_activity)
+_provider = ScreenProvider(in_unit=activity.in_activity)
 
 
 def _model(messages: list[ModelMessage], info: object) -> ModelResponse:
