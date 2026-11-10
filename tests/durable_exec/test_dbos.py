@@ -6287,6 +6287,7 @@ async def stable_ids_workflow() -> list[tuple[str, str]]:
 
     # Concurrent runs resolve their IDs before either starts a step.
     results = [first, *await asyncio.gather(second(), stable_ids_agent.run('Third.'))]
+    del stable_ids_second_finished[DBOS.workflow_id]
     if len(stable_ids_seen) == 3:
         raise _ProcessCrash
     return [(result.run_id, result.conversation_id) for result in results]
