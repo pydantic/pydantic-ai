@@ -243,18 +243,28 @@ failure through GitHub's latest-per-context commit statuses. Rerun an existing c
 default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
 branch-selectable dispatch to this privileged workflow. Workflows and scripts remain owned in `.github/CODEOWNERS`.
 
-# Code owners approve dependency and CI config changes
+# Code owners review dependency, CI config and durable runtime changes
 
-`.github/CODEOWNERS` owns every `pyproject.toml` and `uv.lock`, `.github/workflows/`,
-`.github/actions/`, `.github/scripts/`, `.pre-commit-config.yaml`, `Makefile`, and itself. The
-`main` ruleset requires an approving review from a code owner on a PR that changes any of them, and
-dismisses it when a later push changes the diff. GitHub enforces both, so no workflow keeps the
-approval current.
+`.github/CODEOWNERS` owns three scopes:
 
-- A PR's author cannot approve it, so an owner's own PR needs another owner. An owner who pushes
-  to someone else's PR can still approve that push.
-- GitHub reads `CODEOWNERS` from the PR's base branch. A PR that edits it is judged by the
-  current owners.
+- **Dependency and build config**, owned by `@DouweM`, `@adtyavrdhn`, `@mpfaffenberger` and
+  `@dsfaccini`: every `pyproject.toml` and `uv.lock`, `.pre-commit-config.yaml` and `Makefile`.
+- **Everything under `.github/`**, owned by `@dsfaccini` only: workflows, actions, scripts and the
+  rest of the directory. `CODEOWNERS` itself is the exception: `@DouweM` and `@adtyavrdhn` own it
+  too, so the durable runtime owners see every ownership change.
+- **The durable runtime and its deep harness integrations**, owned by `@DouweM` and `@adtyavrdhn`
+  only: the runtime under `pydantic_ai_slim/pydantic_ai/durable_exec/`, every harness durable
+  engine (a `BaseDurabilityCapability` subclass), the harness's shared durable helper, and the
+  `SubAgents` code that runs a delegated agent run inside a durable unit. Other capabilities that
+  use `@durable_operation` or check for durable execution stay outside this scope. `CODEOWNERS`
+  lists the exact paths.
+
+GitHub requests a review from the owners of each path a PR changes. That request is not a merge
+gate. The `main` ruleset has no `pull_request` rule, so it does not require code-owner review, and
+the ruleset is meant to stay that way. Do not describe an owner's approval as required for a merge.
+
+GitHub reads `CODEOWNERS` from the PR's base branch, so a PR that edits it requests review from the
+current owners.
 
 # Agentic workflows (`gh-aw`)
 
