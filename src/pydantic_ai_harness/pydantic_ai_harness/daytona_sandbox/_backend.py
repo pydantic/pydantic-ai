@@ -24,7 +24,6 @@ from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
     SupportsCommands,
-    SupportsDisplay,
     SupportsFilesystem,
     SupportsRealpath,
     WorkspaceBackend,
@@ -44,6 +43,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
     from daytona import AsyncDaytona, AsyncSandbox
@@ -480,9 +480,7 @@ class DaytonaSandboxBackend(
         # runs on display `:0` (checked live).
         self._env = {**({'DISPLAY': ':0'} if self._desktop_size else {}), **(env or {})}
         self._display = (
-            None
-            if self._desktop_size is None
-            else ManagedDisplay(self._start_display, scope=self._display_scope, screen_key=lambda: self.ref)
+            None if self._desktop_size is None else ManagedDisplay(self._start_display, scope=self._display_scope)
         )
         self._working_dir = absolute_path('working_dir', working_dir)
         # `working_dir()` must return a canonical absolute path, resolved once with `pwd -P`.
@@ -843,7 +841,7 @@ class DaytonaSandboxBackend(
             return True
 
     @property
-    def display(self) -> ManagedDisplay | None:
+    def display(self) -> Display | None:
         """The sandbox's desktop, when created with `desktop=True`."""
         return self._display
 

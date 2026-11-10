@@ -359,8 +359,12 @@ for example so GPT can zoom).
 
 Reading a run: calls and results are `ComputerCallPart` (`actions`, `safety_checks`) and `ComputerReturnPart`
 (`result`, a `ComputerResult`; `screenshot`) from `pydantic_ai.computer_use`; match them with `isinstance`, not the
-tool name. Each finished call emits `ActionsPerformedEvent` (`performed`, `error`, `screenshot_size`), and
-`DisplayRestartedEvent` when the display restarted since the previous call's screenshot, in the `computer_use` namespace.
+tool name. Each finished call emits `ActionsPerformedEvent` (`result`, the call's `ComputerResult`) in the
+`computer_use` namespace.
+
+A workspace backend with a screen implements `SupportsDisplay` (a `display` property returning a `Display` or `None`);
+`Display` and its optional `SupportsZoom`, `SupportsScaledScreenshot` and `SupportsCursorPosition` live in
+`pydantic_ai_harness.computer_use`, not in core `pydantic_ai.workspaces`.
 
 Gotchas:
 
@@ -369,7 +373,7 @@ Gotchas:
   flagged call ends the run with an error.
 - Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
   pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one.
-- A screen larger than the model takes (profile `computer_use_screenshot_limit`) is sent scaled
+- A screen larger than the model takes (profile `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`) is sent scaled
   down if the display can scale screenshots; otherwise the run stops with an error. 1280x800 fits every model.
 - Under durable execution each `computer` call is one unit that runs at most once; a lost one tells the model to take
   a screenshot first. Temporal and Render never repeat a call; DBOS, and Prefect when a flow is run again, can repeat
