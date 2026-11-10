@@ -110,6 +110,18 @@ class TestLiveDocker(WorkspaceBackendSuite):
 
         assert (await backend.run(_ALIVE.format(f'/proc/{pid}/status'), shell=True)).exit_code != 0
 
+    async def test_a_timeout_leaves_a_process_that_started_its_own_session(self, backend: WorkspaceBackend) -> None:
+        assert isinstance(backend, DockerSandboxBackend)
+        detached = "setsid sh -c 'echo $$ > detached.pid; exec sleep 300' > /dev/null 2>&1"
+        with pytest.raises(WorkspaceTimeoutError):
+            await backend.run(f'{detached} & echo $$ > child.pid; exec sleep 300', shell=True, timeout=2)
+        child = (await backend.run(['cat', 'child.pid'])).stdout.strip()
+        survivor = (await backend.run(['cat', 'detached.pid'])).stdout.strip()
+        assert child.isdigit() and survivor.isdigit()
+
+        assert (await backend.run(_ALIVE.format(f'/proc/{child}/status'), shell=True)).exit_code != 0
+        assert (await backend.run(_ALIVE.format(f'/proc/{survivor}/status'), shell=True)).exit_code == 0
+
     async def test_new_containers_get_a_process_limit_docker_args_can_replace(
         self, created: list[WorkspaceBackend]
     ) -> None:

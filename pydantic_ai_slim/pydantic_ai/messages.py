@@ -4,6 +4,7 @@ import base64
 import dataclasses
 import difflib
 import hashlib
+import json
 import mimetypes
 import os
 import re
@@ -11,6 +12,7 @@ import sys
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Mapping, Sequence
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import KW_ONLY, InitVar, dataclass, field, replace
 from datetime import datetime, timedelta
@@ -42,6 +44,7 @@ import pydantic_core
 from genai_prices import types as genai_types
 from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic_core import PydanticCustomError
 from typing_extensions import TypeAliasType, TypedDict, TypeVar, deprecated
 
 from pydantic_ai._genai_prices import calculate_price_for_usage
@@ -95,6 +98,11 @@ for file in mimetypes.knownfiles:
         _mime_types.read(file)  # pragma: lax no cover
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
+# Office and OpenDocument types that Python's `mimetypes` only knows by default from 3.14
+_mime_types.add_type('application/vnd.oasis.opendocument.presentation', '.odp')
+_mime_types.add_type('application/vnd.oasis.opendocument.spreadsheet', '.ods')
+_mime_types.add_type('application/vnd.oasis.opendocument.text', '.odt')
+_mime_types.add_type('application/vnd.openxmlformats-officedocument.presentationml.presentation', '.pptx')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx')
 _mime_types.add_type('text/markdown', '.mdx')
@@ -377,7 +385,7 @@ class FileUrl(ABC):
     def _serialize(self, handler: pydantic.SerializerFunctionWrapHandler, info: pydantic.SerializationInfo):
         # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
         try:
-            return handler(self)
+            dumped = handler(self)
         except ValueError:
             try:
                 self.media_type
@@ -385,6 +393,9 @@ class FileUrl(ABC):
                 pass
             else:
                 raise
+        else:
+            _record_file(dumped)
+            return dumped
         # A URL with no usable extension and no given media type: `media_type` raises, and the computed field
         # reads it before any serializer of its own could step in. Dumping must not raise, or a history that
         # ran can't be saved or sent to a frontend (https://github.com/pydantic/pydantic-ai/issues/8388).
@@ -396,6 +407,7 @@ class FileUrl(ABC):
             del serialized['media_type']
         else:
             serialized['media_type'] = None
+        _record_file(serialized)
         return serialized
 
     @abstractmethod
@@ -609,16 +621,11 @@ class DocumentUrl(FileUrl):
         return mime_type
 
     @property
-    def format(self) -> DocumentFormat:
-        """The file format of the document.
-
-        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
-        """
-        media_type = self.media_type
-        try:
-            return _document_format_lookup[media_type]
-        except KeyError as e:
-            raise ValueError(f'Unknown document media type: {media_type}') from e
+    def format(self) -> str:
+        """The file format of the document, such as `'pdf'` or `'pptx'`: the extension its media type is known by."""
+        if format := _document_format(self.media_type):
+            return format
+        raise ValueError(f'Unknown document media type: {self.media_type}')
 
 
 @dataclass(repr=False)
@@ -911,23 +918,33 @@ class BinaryContent:
 
     @property
     def is_document(self) -> bool:
-        """Return `True` if the media type is a document type."""
-        return self.media_type in _document_format_lookup
+        """Return `True` if the media type is a document type.
+
+        A known document type is one, and so is any other media type that `mimetypes` knows a file extension for
+        and that isn't audio, image, video or text-like. Text-like content outside the known types (JSON, YAML,
+        XML, ...) is left to the model adapter, which inlines it as text where the API has no file part, and so is
+        a media type no extension is known for.
+        """
+        if self.media_type in _document_format_lookup:
+            return True
+        if self.is_audio or self.is_image or self.is_video or _utils.is_text_like_media_type(self.media_type):
+            return False
+        return _document_format(self.media_type) is not None
 
     @property
     def format(self) -> str:
         """The file format of the binary content."""
-        try:
-            if self.is_audio:
-                return _audio_format_lookup[self.media_type]
-            elif self.is_image:
-                return _image_format_lookup[self.media_type]
-            elif self.is_video:
-                return _video_format_lookup[self.media_type]
-            else:
-                return _document_format_lookup[self.media_type]
-        except KeyError as e:
-            raise ValueError(f'Unknown media type: {self.media_type}') from e
+        if self.is_audio:
+            format = _audio_format_lookup.get(self.media_type)
+        elif self.is_image:
+            format = _image_format_lookup.get(self.media_type)
+        elif self.is_video:
+            format = _video_format_lookup.get(self.media_type)
+        else:
+            format = _document_format(self.media_type)
+        if format is None:
+            raise ValueError(f'Unknown media type: {self.media_type}')
+        return format
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1144,6 +1161,13 @@ class UploadedFile:
         """
         return self._identifier or _multi_modal_content_identifier(self.file_id)
 
+    @pydantic.model_serializer(mode='wrap')
+    def _serialize(self, handler: pydantic.SerializerFunctionWrapHandler):
+        # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
+        serialized = handler(self)
+        _record_file(serialized)
+        return serialized
+
     @property
     def format(self) -> str:
         """A general-purpose media-type-to-format mapping.
@@ -1204,6 +1228,247 @@ _NOT_USER_CONTENT = (
 )
 
 
+_FILE_DIGESTS_KEY = 'content_file_digests'
+"""The key a tool result records the files its content holds under when serialized; see `_RecordsContentFiles`."""
+
+
+class _Unrecorded:
+    """The file record of a tool result serialized before records existed."""
+
+
+_UNRECORDED = _Unrecorded()
+
+
+class _RebuildAll:
+    """The file record of a tool result saved before records existed, loaded with `rebuild_unrecorded_tool_files`."""
+
+
+_REBUILD_ALL = _RebuildAll()
+
+
+@dataclass
+class _ContentFileRecord:
+    """What serializing a tool result's content found, for the result to write next to it."""
+
+    digests: list[str] = field(default_factory=list[str])
+    needed: bool = False
+
+
+_dumped_file_digests: ContextVar[list[str] | None] = ContextVar('_dumped_file_digests', default=None)
+"""Collects the digests of the file items serialized while a tool result's content is."""
+
+_content_file_record: ContextVar[_ContentFileRecord | None] = ContextVar('_content_file_record', default=None)
+"""The record of the tool result being serialized, which its content's serializer fills."""
+
+_loaded_file_digests: ContextVar[frozenset[str] | _Unrecorded | _RebuildAll | None] = ContextVar(
+    '_loaded_file_digests', default=None
+)
+"""The file record of the tool result being validated, or `None` outside one."""
+
+
+def _file_digest(serialized: Mapping[str, Any]) -> str | None:
+    """A digest of a file item's serialized form, or `None` for one that has no JSON form.
+
+    The digest is taken of the item's default JSON form, so it is the same for a JSON dump, a python dump,
+    and a python dump encoded as JSON later. A file item with no JSON form, such as one whose
+    `vendor_metadata` holds an arbitrary object, isn't recorded, so it loads as a mapping rather than
+    making the dump fail.
+    """
+    try:
+        jsonable = pydantic_core.to_jsonable_python(serialized)
+        canonical = json.dumps(jsonable, sort_keys=True, separators=(',', ':'))
+    except (TypeError, ValueError, pydantic_core.PydanticSerializationError):
+        return None
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _record_file(serialized: Any) -> None:
+    """Record a file item serialized in a tool result's content, so validating the result rebuilds it."""
+    digests = _dumped_file_digests.get()
+    if digests is not None and isinstance(serialized, Mapping):
+        digest = _file_digest(cast(Mapping[str, Any], serialized))
+        if digest is not None:
+            digests.append(digest)
+
+
+class _OwnSerializer:
+    """A class's own pydantic serializer, built on first use, so serializing an instance by inference uses it.
+
+    `pydantic_core.to_json` and `to_jsonable_python`, and the converters that call them, such as Temporal's,
+    serialize a plain dataclass field by field and skip its serializer decorators. A pydantic dataclass
+    carries `__pydantic_serializer__`, which inference uses instead; this gives a plain dataclass the same,
+    so its tool result content is serialized with its file record either way.
+    """
+
+    def __init__(self) -> None:
+        self._serializers: dict[type, pydantic_core.SchemaSerializer] = {}
+
+    def __get__(self, instance: object, owner: type) -> pydantic_core.SchemaSerializer:
+        if (serializer := self._serializers.get(owner)) is not None:
+            return serializer
+        # The same bytes encoding as `ModelMessagesTypeAdapter`, so a history dumps the same either way.
+        # `TypeAdapter` takes no config for a dataclass, so the config goes to the serializer itself.
+        serializer = self._serializers[owner] = pydantic_core.SchemaSerializer(
+            pydantic.TypeAdapter(owner).core_schema, pydantic_core.core_schema.CoreConfig(ser_json_bytes='base64')
+        )
+        return serializer
+
+
+class _RecordsContentFiles:
+    """Keep the file items in a tool result's content, and only those, file items across serialization.
+
+    A tool result is arbitrary data: a mapping a tool returns can spell out the serialized form of one of
+    our file items, and is then indistinguishable from one in a dump. Rebuilding such a mapping as a file
+    would hand back something other than what the tool returned: an item of ours, sent to the model as a
+    file, without the keys its type doesn't declare.
+
+    So a tool result records the digest of each file item its content held when serialized, under
+    `content_file_digests`, next to the content where the data can't reach it. It writes the record, empty
+    if need be, whenever the content isn't a scalar, so a missing record means history saved before records
+    existed. On validation, a mapping in the content claiming a URL or uploaded-file `kind` is rebuilt as
+    that item only if its digest is in the record (see `_check_file_provenance`); otherwise it stays a
+    mapping, with the keys the tool put in it. A mapping identical to a recorded item is that item, and is
+    rebuilt too: it can only ever be a file the application itself serialized in the content.
+
+    The content is the field a subclass names in `_content_field`. Files elsewhere, such as in `metadata`
+    or `ToolReturn.content`, aren't recorded. An object held in the content is part of it, so a file anywhere
+    inside one, even in a nested result's `metadata`, is recorded with the content.
+
+    Serializing costs a few Python calls per tool result and one per file item, and validating one per tool
+    result and one per mapping claiming a file `kind`: never one per node, which
+    `test_tool_return_content_json_paths_make_no_per_node_python_calls` pins.
+    """
+
+    _content_field: ClassVar[str]
+    __pydantic_serializer__: ClassVar[Any] = _OwnSerializer()
+
+    @pydantic.field_serializer('content', 'return_value', 'result', mode='wrap', check_fields=False)
+    def _serialize_content_recording_files(
+        self, value: Any, handler: pydantic.SerializerFunctionWrapHandler, info: pydantic.FieldSerializationInfo
+    ):
+        # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
+        record = _content_file_record.get()
+        if record is None or info.field_name != self._content_field:
+            return handler(value)
+        record.needed = not isinstance(value, str | int | float | bool | None)
+        outer_digests = _dumped_file_digests.get()
+        token = _dumped_file_digests.set(record.digests)
+        try:
+            return handler(value)
+        finally:
+            _dumped_file_digests.reset(token)
+            # A result nested in another one's content is part of that content, and so are its files.
+            if outer_digests is not None:
+                outer_digests.extend(record.digests)
+
+    @pydantic.model_serializer(mode='wrap')
+    def _serialize_recording_files(self, handler: pydantic.SerializerFunctionWrapHandler):
+        # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
+        record = _ContentFileRecord()
+        token = _content_file_record.set(record)
+        try:
+            serialized = handler(self)
+        finally:
+            _content_file_record.reset(token)
+        if record.needed and isinstance(serialized, dict):
+            return {**cast(dict[str, Any], serialized), _FILE_DIGESTS_KEY: sorted(set(record.digests))}
+        return serialized
+
+    @pydantic.model_validator(mode='wrap')
+    @classmethod
+    def _validate_recorded_files(
+        cls, value: Any, handler: pydantic.ModelWrapValidatorHandler[Any], info: pydantic.ValidationInfo
+    ) -> Any:
+        if not isinstance(value, Mapping):
+            return handler(value)
+        mapping = cast(Mapping[str, Any], value)
+        digests = mapping.get(_FILE_DIGESTS_KEY)
+        own: frozenset[str] | None = None
+        if isinstance(digests, list):
+            entries = cast(list[Any], digests)
+            if not all(isinstance(digest, str) for digest in entries):
+                raise PydanticCustomError('invalid_file_record', '`content_file_digests` must be a list of strings')
+            own = frozenset(cast(list[str], entries))
+        enclosing = _loaded_file_digests.get()
+        record: frozenset[str] | _Unrecorded | _RebuildAll
+        if isinstance(enclosing, frozenset):
+            # A result nested in another one's content was serialized into that content, so the enclosing
+            # record already holds its files. Its own record, which the enclosing data could have written,
+            # can only narrow that.
+            record = enclosing if own is None else enclosing & own
+        elif isinstance(enclosing, _Unrecorded):
+            record = _UNRECORDED
+        elif own is not None:
+            record = own
+        elif isinstance(enclosing, _RebuildAll) or _rebuilds_unrecorded_tool_files(info.context):
+            # History saved before records existed: its file-shaped data is rebuilt only when the caller asks.
+            record = _REBUILD_ALL
+        else:
+            record = _UNRECORDED
+        token = _loaded_file_digests.set(record)
+        try:
+            return handler({key: item for key, item in mapping.items() if key != _FILE_DIGESTS_KEY})
+        finally:
+            _loaded_file_digests.reset(token)
+
+
+_JOURNAL_CONTEXT: Mapping[str, Any] = {'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}
+"""The validation context durable execution decodes its own journal with.
+
+A journal entry written before tool results recorded their files carries no record, and the worker that
+wrote it is the application's own, so it loads as it did then rather than losing files mid-run.
+"""
+
+
+def _rebuilds_unrecorded_tool_files(context: Any) -> bool:
+    """Whether a validation context carries `{'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}`."""
+    if not isinstance(context, Mapping):
+        return False
+    options = cast(Mapping[str, Any], context).get('pydantic_ai')
+    return (
+        isinstance(options, Mapping) and cast(Mapping[str, Any], options).get('rebuild_unrecorded_tool_files') is True
+    )
+
+
+def _check_file_provenance(value: Any) -> Any:
+    """Let a mapping claiming a file `kind` in a tool result validate as that file only if the result recorded it.
+
+    Outside a tool result (a user prompt, or a UI adapter rehydrating a client-side tool's output on
+    purpose), and for an instance of ours, this passes the value through.
+
+    History saved before records existed can't tell its files from mappings shaped like them. In it, such a
+    mapping is rebuilt only into what a client-submitted file may be after `sanitize_messages`: an HTTP(S)
+    URL with `force_download` reset. An `UploadedFile` or a non-HTTP URL stays a mapping.
+    """
+    record = _loaded_file_digests.get()
+    if record is None or isinstance(record, _RebuildAll) or not isinstance(value, Mapping):
+        return value
+    mapping = cast(Mapping[str, Any], value)
+    if isinstance(record, _Unrecorded):
+        url = mapping.get('url')
+        if mapping.get('kind') == 'uploaded-file' or not (
+            isinstance(url, str) and urlparse(url).scheme.lower() in ('http', 'https')
+        ):
+            raise PydanticCustomError('unrecorded_file', 'Not a file this tool result recorded')
+        if mapping.get('force_download', False) is not False:
+            return {**mapping, 'force_download': False}
+        return mapping
+    # Only a mapping with no keys beyond those a dump of its kind writes can be a recorded item, so anything
+    # else is told apart without serializing and hashing it, which nested data would otherwise pay per level.
+    if record and set(mapping) <= _FILE_ITEM_KEYS.get(mapping.get('kind'), frozenset()):
+        if _file_digest(mapping) in record:
+            return mapping
+    raise PydanticCustomError('unrecorded_file', 'Not a file this tool result recorded')
+
+
+_FILE_URL_ITEM_KEYS = frozenset({'url', 'force_download', 'vendor_metadata', 'kind', 'media_type', 'identifier'})
+_FILE_ITEM_KEYS: dict[Any, frozenset[str]] = {
+    **{kind: _FILE_URL_ITEM_KEYS for kind in ('image-url', 'audio-url', 'document-url', 'video-url')},
+    'uploaded-file': frozenset({'file_id', 'provider_name', 'vendor_metadata', 'kind', 'media_type', 'identifier'}),
+}
+"""The keys a dump of each recorded file kind can write; `test_file_item_keys_match_their_dumps` pins them."""
+
+
 _ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
 """Type variable for the return value type in `ToolReturn[T]`.
 
@@ -1214,13 +1479,15 @@ schema is generated from the inner type.
 
 
 @dataclass(repr=False)
-class ToolReturn(Generic[_ToolReturnValueT]):
+class ToolReturn(_RecordsContentFiles, Generic[_ToolReturnValueT]):
     """A structured tool return that separates the tool result from additional content sent to the model.
 
     Can be parameterized with a type to enable return schema generation:
     - `ToolReturn[User]` — generates a return schema for `User`
     - `ToolReturn` (bare) — no return schema generated
     """
+
+    _content_field: ClassVar[str] = 'return_value'
 
     return_value: ToolReturnContent
     """The return value to be used in the tool response."""
@@ -1263,6 +1530,26 @@ _document_format_lookup: dict[str, DocumentFormat] = {
     'application/msword': 'doc',
     'application/vnd.ms-excel': 'xls',
 }
+
+
+def _document_format(media_type: str) -> str | None:
+    """The file format of a document with `media_type`: the extension it's known by, without the dot, or `None`.
+
+    `_document_format_lookup` holds the formats model APIs expect for the types they name (Bedrock's `format`, the
+    `filename` OpenAI reads the type from); any other media type is looked up in `mimetypes`, so a document of any
+    type can be sent, and a model that doesn't read it rejects it. Where `mimetypes` knows several extensions, the
+    one spelling the subtype wins (`application/xml` is `xml`, not the `xsl` the stdlib lists first), then the first
+    known: `_mime_types` registers the stdlib's own table before the OS mime files and the Windows registry.
+    """
+    if format := _document_format_lookup.get(media_type):
+        return format
+    extensions = [extension.removeprefix('.') for extension in _mime_types.guess_all_extensions(media_type)]
+    if not extensions:
+        return None
+    subtype = media_type.partition('/')[2]
+    return subtype if subtype in extensions else extensions[0]
+
+
 _audio_format_lookup: dict[str, AudioFormat] = {
     'audio/mpeg': 'mp3',
     'audio/wav': 'wav',
@@ -1523,10 +1810,12 @@ class _RequireUrlMediaType:
     ) -> pydantic_core.CoreSchema:
         schema = deepcopy(handler(source_type))
         assert schema['type'] == 'tagged-union', schema['type']
-        for kind in _FILE_URL_KINDS:
+        check_provenance = pydantic_core.core_schema.no_info_plain_validator_function(_check_file_provenance)
+        for kind in (*_FILE_URL_KINDS, UploadedFile.kind):
             choice = schema['choices'][kind]
             assert isinstance(choice, dict), choice
-            schema['choices'][kind] = pydantic_core.core_schema.chain_schema([cls._carries_media_type(), choice])
+            gates = [check_provenance, cls._carries_media_type()] if kind in _FILE_URL_KINDS else [check_provenance]
+            schema['choices'][kind] = pydantic_core.core_schema.chain_schema([*gates, choice])
         return schema
 
     @classmethod
@@ -1542,7 +1831,7 @@ class _RequireUrlMediaType:
         """
         assert schema['type'] == 'tagged-union', schema['type']
         choices = dict(schema['choices'])
-        for kind in _FILE_URL_KINDS:
+        for kind in (*_FILE_URL_KINDS, UploadedFile.kind):
             gated = choices[kind]
             assert isinstance(gated, dict) and gated['type'] == 'chain', gated
             choices[kind] = gated['steps'][-1]
@@ -2075,12 +2364,14 @@ def _tool_result_provenance_tags(tool_name: str, tool_call_id: str, file_identif
 
 
 @dataclass(repr=False)
-class BaseToolReturnPart(Generic[ContentT_co]):
+class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
     """Base class for tool return parts.
 
     Generic in the shape of [`typed_content`][pydantic_ai.messages.BaseToolReturnPart.typed_content], which a
     [typed tool part](../tools-advanced.md#typed-tool-parts) declares through its kind.
     """
+
+    _content_field: ClassVar[str] = 'content'
 
     tool_name: str
     """The name of the tool that was called."""
@@ -3663,6 +3954,10 @@ class TextPart:
     """An optional identifier of the text part.
 
     When this field is set, `provider_name` is required to identify the provider that generated this data.
+
+    If you edit `content`, such as in a [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] processor, set
+    this to `None` too: the OpenAI Responses API uses its stored copy of an item sent with its ID and ignores the text
+    sent alongside.
     """
 
     provider_name: str | None = None
@@ -4740,10 +5035,9 @@ class ModelResponse:
 
     Unless the model was given a key, it's a plain SHA-256, which anyone holding the stored history
     can use to test guesses at content that was redacted from it later, such as a PIN or an account
-    number. If you redact history after it was sent, give the model a key. Don't just clear this
-    field: a response without one is trusted and continued from, and the provider still holds the
-    unredacted copy. If you do strip it, clear `provider_response_id` on the same responses too, so
-    nothing continues from them.
+    number. If you redact history after it was sent, give the model a key, or clear this field: a
+    response without one isn't continued from, and the full history is sent instead. Either way, clear
+    the [`id`][pydantic_ai.messages.TextPart.id] of a part you redact, or the provider uses its stored copy.
 
     Computing it serializes the whole history before the response on every request that continues
     server-side state, so it costs local work proportional to the conversation's length.
@@ -5639,7 +5933,9 @@ def sanitize_messages(
       keep state there that they act on in later runs, so it is only honored on trusted server-side
       `message_history`. On client-held history that state is computed again where it's needed: a
       file [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] described is described
-      again, for example.
+      again, for example. A request holding an [on-demand capability](../capabilities/on-demand.md)'s load is
+      marked there instead, so the next request states the capability's current instructions on it again, where
+      server-held history states them.
     - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
       `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
       correspond to a paused agent run and shouldn't be executed.
@@ -5659,6 +5955,16 @@ def sanitize_messages(
       `message_history` — a client-supplied compaction part would hide that server-side history.
       The [UI adapters](../ui/overview.md) apply this rule automatically when a run combines
       server-side `message_history` with client-submitted messages.
+
+    It keeps, as sent, the references to state the model provider holds:
+    [`ModelResponse.provider_response_id`][pydantic_ai.messages.ModelResponse.provider_response_id], and the
+    `conversation_id` and `container_id` keys of
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], along with
+    [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state]. The UI adapters' protocols don't carry
+    these, so history an adapter loads has none. Several model settings, and resuming a suspended response, act
+    on them with your provider credentials;
+    [Loading untrusted history](../message-history.md#loading-untrusted-history) lists them and what to do when
+    the history comes from a client.
 
     Args:
         messages: Messages to sanitize.
@@ -5792,7 +6098,7 @@ def _sanitize_request(context: _SanitizeMessagesContext, message: ModelRequest) 
     # Reset silently: every request an agent run records carries the agent's own instructions, so
     # a warning would fire on every turn of a normal round trip, and agent runs never send them.
     instructions = None if context.strip_instructions else message.instructions
-    metadata = _without_reserved_metadata(message, context.reserved_metadata_messages)
+    metadata = _sanitized_request_metadata(message, new_request_parts, context.reserved_metadata_messages)
     return replace(message, parts=new_request_parts, instructions=instructions, metadata=metadata)
 
 
@@ -5901,6 +6207,26 @@ def _warn_sanitized(context: _SanitizeMessagesContext) -> None:
         )
 
 
+_UNSTATED_LOADS_KEY = 'unstated_loads'
+"""Marks a request from untrusted history that holds a capability load, in the reserved namespace.
+
+The history came from a client, which doesn't keep the framework's instruction records, so a load it holds with no
+statement of the capability's instructions after it lost that statement: the next request restores it there. Only
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] sets it, after dropping the client's own reserved
+metadata, so server-held history never carries it and is never rewritten.
+"""
+
+
+def _sanitized_request_metadata(
+    request: ModelRequest, parts: Sequence[ModelRequestPart], stripped: list[ModelMessage]
+) -> dict[str, Any] | None:
+    """The metadata of an untrusted request keeping `parts`: without the reserved key, marked if it holds a load."""
+    metadata = _without_reserved_metadata(request, stripped)
+    if not any(isinstance(part, (LoadCapabilityReturnPart, CapabilityLoadDeltaPart)) for part in parts):
+        return metadata
+    return {**(metadata or {}), _PYDANTIC_AI_METADATA_KEY: {_UNSTATED_LOADS_KEY: True}}
+
+
 def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessage]) -> dict[str, Any] | None:
     """Return the metadata of an untrusted message without the reserved `__pydantic_ai__` key.
 
@@ -5909,7 +6235,9 @@ def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessag
     metadata = message.metadata
     if metadata is None or _PYDANTIC_AI_METADATA_KEY not in metadata:
         return metadata
-    stripped.append(message)
+    # History sanitized before carries only `sanitize_messages`' own mark, which it sets again where it applies.
+    if metadata[_PYDANTIC_AI_METADATA_KEY] != {_UNSTATED_LOADS_KEY: True}:
+        stripped.append(message)
     return {key: value for key, value in metadata.items() if key != _PYDANTIC_AI_METADATA_KEY} or None
 
 

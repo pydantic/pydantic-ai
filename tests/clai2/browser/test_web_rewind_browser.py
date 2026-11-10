@@ -3,14 +3,17 @@
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
+import anyio
 import pytest
 from anyio.from_thread import start_blocking_portal
+from anyio.to_thread import run_sync
 from playwright.async_api import Page, expect
 
 from pydantic_ai import Agent, models
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from tests.clai2.browser.conftest import Serve
+from tests.clai2.test_live_runtimes import until
 from tests.clai2.test_web import TOKEN
 from tests.clai2.test_web_sessions import Fleet
 
@@ -34,6 +37,17 @@ def echo_model() -> FunctionModel:
 class RewindUI:
     url: str
     session: str
+    fleet: Fleet
+
+    async def wait_until_idle(self) -> None:
+        """Wait for the session to finish its turn's end, until when it refuses a rewind though the page reads `ready` (#12603)."""
+        fleet, runtime = self.fleet, self.fleet.runtimes['echo']
+
+        async def idle_or_hung() -> None:
+            with anyio.fail_after(300):
+                await until(fleet.launch.process.live, lambda: runtime.idle)
+
+        await run_sync(lambda: fleet.portal.call(idle_or_hung))
 
 
 @pytest.fixture(scope='module')
@@ -51,7 +65,7 @@ def rewind_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterato
             portal.call(fleet.runtimes['echo'].session.commit_messages, saved)
             assert fleet.post(f'/api/sessions/{session}/rename', {'title': 'Browser Rewind'}).status_code == 204
             with serve(fleet) as url:
-                yield RewindUI(url=url, session=session)
+                yield RewindUI(url=url, session=session, fleet=fleet)
         finally:
             fleet.exit()
 
@@ -77,6 +91,7 @@ async def test_edit_and_retry_go_on_from_an_earlier_prompt(page: Page, rewind_ui
     editor = first.get_by_role('textbox', name='Edit prompt')
     await expect(editor).to_have_value('A')
     await editor.fill("A'")
+    await rewind_ui.wait_until_idle()
     async with page.expect_response(f'**/api/sessions/{rewind_ui.session}/rewind/*') as rewound:
         await editor.press('Enter')
     assert (await rewound.value).status == 204
@@ -86,6 +101,7 @@ async def test_edit_and_retry_go_on_from_an_earlier_prompt(page: Page, rewind_ui
 
     first = page.locator('.user-row').first
     await first.hover()
+    await rewind_ui.wait_until_idle()
     async with page.expect_response(f'**/api/sessions/{rewind_ui.session}/rewind/*') as retried:
         await first.get_by_role('button', name='Retry prompt').click()
     assert (await retried.value).status == 204

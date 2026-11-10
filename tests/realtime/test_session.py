@@ -24,7 +24,7 @@ from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._agent_graph import resolve_conversation_id
-from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, NativeTool, WebFetch
 from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import (
@@ -97,6 +97,7 @@ from pydantic_ai.realtime._session import (
     _AUDIO_TAP_MAX_CHUNKS,  # pyright: ignore[reportPrivateUsage]
     _AUDIO_TAP_SECONDS,  # pyright: ignore[reportPrivateUsage]
     _pending_message_text,  # pyright: ignore[reportPrivateUsage]
+    _RealtimePendingMessages,  # pyright: ignore[reportPrivateUsage]
     _TapView,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.realtime._utils import (
@@ -940,7 +941,6 @@ async def test_closing_an_unstarted_view_releases_its_tap() -> None:
         assert session._audio_tap_drops == 0  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.usefixtures('young_gc')
 async def test_abandoned_unstarted_view_releases_its_tap() -> None:
     chunks = [bytes([index]) for index in range(40)]
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
@@ -8654,6 +8654,65 @@ async def test_session_enqueue_when_idle_follows_asap() -> None:
 
     assert [item for item in conn.sent if isinstance(item, str)] == ['soon', 'idle']
     assert conn.sent_before_each_done == [['soon'], ['soon', 'idle']]
+
+
+async def test_session_set_enqueue_priority_wakes_delivery() -> None:
+    """Promoting a `when_idle` item to `'asap'` starts a delivery, as enqueueing it at `'asap'` would.
+
+    Each `when_idle` drain backs off while an `'asap'` item is queued, so without a wake-up both items
+    would stay queued with nothing left to deliver them.
+    """
+    conn = _RespondingConnection(replies=2)
+    agent: Agent[None, str] = Agent()
+
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            assert session.enqueue('later', priority='when_idle') is not None
+            promoted = session.enqueue('now', priority='when_idle')
+            assert promoted is not None
+            assert session.set_enqueue_priority(promoted, 'asap') is True
+            assert session.set_enqueue_priority('never-queued', 'asap') is False
+            events = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['now', 'later']
+    assert [event.enqueue_id for event in events if isinstance(event, EnqueuedMessagesEvent)][0] == promoted
+
+
+async def test_session_dequeue_before_delivery() -> None:
+    """A dequeued item is never sent; the item queued behind it still is."""
+    conn = _RespondingConnection(replies=1)
+    agent: Agent[None, str] = Agent()
+
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            dropped = session.enqueue('never mind')
+            assert dropped is not None
+            assert session.enqueue('still wanted', priority='when_idle') is not None
+            assert session.dequeue(dropped) is True
+            assert session.dequeue(dropped) is False
+            _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['still wanted']
+
+
+def test_realtime_queue_dequeue_wakes_when_idle_delivery() -> None:
+    """A dequeue wakes a `when_idle` drain, which may have backed off for the `'asap'` item just removed.
+
+    A unit test: a `when_idle` drain running between that item's enqueue and its own drain can't be
+    scheduled deterministically through the session.
+    """
+    queue = _RealtimePendingMessages()
+    woken: list[PendingMessagePriority] = []
+    queue.bind(woken.append)
+    pending = PendingMessage.from_content('steer')
+    assert pending is not None
+    queue.append(pending)
+    woken.clear()
+
+    assert queue.dequeue('never-queued') is False
+    assert woken == []
+    assert queue.dequeue(pending.enqueue_id) is True
+    assert woken == ['when_idle']
 
 
 async def test_session_enqueue_requires_entered_session() -> None:

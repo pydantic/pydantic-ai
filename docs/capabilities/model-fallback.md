@@ -154,7 +154,7 @@ A few things to know about falling back on refusals:
 
 ## Falling back when the output is cut off {#token-limit}
 
-A response that reaches the [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] model setting, or the model's own output limit, is cut off, with a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `'length'`. Models differ in how much they write for the same request, so another one may answer within the limit. `ModelFallback` moves on from a cut-off response by default, because without it a cut-off text answer is the run's output and looks complete. Naming [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] in `fallback_on`, as the default does, is what turns this on, as `ContentFilterError` does for refusals.
+A response that reaches the [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] model setting, or the model's own output limit, is cut off, with a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `'length'`. Models differ in how much they write for the same request, so another one may answer within the limit. `ModelFallback` moves on from a cut-off response by default, because without it a cut-off text answer is [the run's output](../output.md#truncated-output) and looks complete. Naming [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] in `fallback_on`, as the default does, is what turns this on, as `ContentFilterError` does for refusals.
 
 ```python {title="model_fallback_on_token_limit.py"}
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
@@ -189,7 +189,7 @@ A few things to know about falling back on cut-off responses:
 - **Every cut-off response falls back**, whatever it holds: text, which the agent can't tell from a complete answer, structured output or tool call arguments that may fail validation, and the rare one whose output is complete but still reached the limit, such as tool calls that all parse. A response that reached the limit is one the model didn't finish, the way a refusal's partial output is one the provider says to discard.
 - **When every model is cut off, the run raises.** `ModelFallback` raises [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup], where without it the last cut-off text would have been the output. Raise `max_tokens` if that happens often.
 - **A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] doesn't fall back on cut-off responses by default.** Name `OutputTokenLimitExceeded` in its `fallback_on`.
-- **A [streamed](#streaming) cut-off response isn't fallen back from.** Its finish reason is only known once it has been streamed, so it's accepted, without a warning, and the agent then handles it as it would without `ModelFallback`.
+- **A [streamed](#streaming) cut-off response isn't fallen back from.** Its finish reason is only known once it has been streamed, so it's accepted, without a warning, and the agent then handles it [as it would](../output.md#truncated-output) without `ModelFallback`.
 - **`IncompleteToolCall` doesn't stand for cut-off responses.** It's the `OutputTokenLimitExceeded` the agent raises for a tool call whose arguments were cut off; name `OutputTokenLimitExceeded` itself.
 
 ## In agent specs {#agent-specs}

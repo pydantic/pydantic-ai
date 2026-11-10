@@ -217,7 +217,7 @@ To let the users of an open-source or local app run it on their own ChatGPT plan
 | `WebFetch` | URL fetching — native when supported, custom fallback | Yes |
 | `ImageGeneration` | Image generation — native when supported, direct fallback via an image model name or `ImageGenerator` | Yes |
 | `MCP` | MCP server — native when supported, direct connection | Yes |
-| `LocalWorkspace` | A `ctx.workspace` on this machine (host subprocesses and files, no isolation); `read_only=True` refuses commands and changes; `authority='user'` or `'none'` marks its files as not the operator's | Yes |
+| `LocalWorkspace` | A `ctx.workspace` on this machine (host subprocesses and files, no isolation); `read_only=True` refuses commands and changes; `authority='user'` or `'none'` marks its files as not the operator's, `path_authority={path: level}` per directory or file | Yes |
 | `FileUnderstanding` | Replaces files the serving model's profile rejects with descriptions written by `fallback_subagent_model`, judged per attempt (each `ModelFallback` candidate by its own profile) | Yes |
 | `PrepareTools` | Filters or modifies tool definitions per step | No |
 | `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |
