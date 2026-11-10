@@ -1073,12 +1073,30 @@ class TestSpritesSandbox:
         assert transport.execs[0].process.wait(timeout=1) == -signal.SIGKILL
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
 
-    async def test_timeout_keeps_partial_stderr_and_removes_capture(self, transport: SpriteTransport) -> None:
+    async def test_timeout_keeps_partial_stderr_and_removes_capture(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         backend = SpritesSandboxBackend()
         await backend.get_sandbox()
-        with pytest.raises(WorkspaceTimeoutError) as caught:
-            await backend.run('printf ready >&2; exec sleep 5', shell=True, timeout=0.3)
-        assert caught.value.stderr == 'ready'
+        # The deadline reads the event loop's clock, which only passes it once the command has written its stderr.
+        loop = asyncio.get_running_loop()
+        real_loop_time = loop.time
+        skipped = 0.0
+        monkeypatch.setattr(loop, 'time', lambda: real_loop_time() + skipped)
+
+        async def run() -> None:
+            with pytest.raises(WorkspaceTimeoutError) as caught:
+                await backend.run('printf ready >&2; exec sleep 7200', shell=True, timeout=3600)
+            assert caught.value.stderr == 'ready'
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(run)
+            await transport.exec_started.wait()
+            capture = Path(transport.execs[0].query['cmd'][4])
+            with anyio.fail_after(300):
+                while not capture.exists() or capture.read_text(encoding='utf-8') != 'ready':
+                    await anyio.sleep(0.01)
+            skipped = 3600.0
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
 
     async def test_timeout_reads_stderr_back_over_a_slow_exec(
@@ -1172,10 +1190,10 @@ class TestSpritesSandbox:
         assert not Path(socket.query['cmd'][4]).exists()
         assert (await backend.run('echo oops >&2', shell=True)).stderr == 'oops\n'
 
-    @pytest.mark.parametrize('timeout', [0, -1, float('inf')])
-    async def test_invalid_timeout(self, transport: SpriteTransport, timeout: float) -> None:
-        with pytest.raises(ValueError, match='timeout'):
-            await SpritesSandboxBackend().run(['true'], timeout=timeout)
+    @pytest.mark.parametrize('timeout', [0, -1, float('inf'), '5'])
+    async def test_invalid_timeout(self, transport: SpriteTransport, timeout: object) -> None:
+        with pytest.raises(ValueError, match=r'^timeout must be a positive finite number or None, got '):
+            await SpritesSandboxBackend().run(['true'], timeout=timeout)  # pyright: ignore[reportArgumentType]
 
     def test_run_signature_matches_the_protocol(self) -> None:
         assert inspect.signature(SpritesSandboxBackend.run) == inspect.signature(SupportsCommands.run)

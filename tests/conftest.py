@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import ast
 import asyncio
 import dataclasses
-import gc
 import importlib.util
 import logging
 import os
@@ -18,7 +17,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from functools import cache
+from importlib.metadata import version
 from pathlib import Path
+from time import monotonic
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
@@ -29,6 +30,7 @@ import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from cassetter import Cassette, RecordMode
 from coverage import Coverage
+from packaging.version import Version
 from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 
@@ -62,7 +64,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from . import cassette_hooks, cost_guards
+from . import cassette_hooks, cost_guards, gc_isolation
 from ._inline_snapshot import Builder, Custom, customize
 from .cassette_utils import check_cache_prefix_stability
 from .function_model_prefix import RequestRecorder, check_function_model_prefix_stability, patch_models
@@ -114,11 +116,22 @@ __all__ = (
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
+_test_started_at = monotonic()
+"""When the running test's setup began, as a `monotonic()` reading. `IsNow` allows for the time since then."""
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup() -> None:
+    global _test_started_at
+    _test_started_at = monotonic()
+
+
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 
 def pytest_configure(config: pytest.Config) -> None:
     config.pluginmanager.register(cost_guards, cost_guards.PLUGIN_NAME)
+    config.pluginmanager.register(gc_isolation, gc_isolation.PLUGIN_NAME)
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
@@ -145,6 +158,7 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
 
 if TYPE_CHECKING:
     from blockbuster import BlockBuster
+    from dbos import DBOSConfig
     from pluggy import Result
 
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -160,6 +174,10 @@ if TYPE_CHECKING:
     def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
     def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
     def IsList(*args: T, **kwargs: Any) -> list[T]: ...
+
+    class _DBOS2Config(DBOSConfig, total=False):
+        run_admin_server: bool
+
 else:
     from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsNumeric, IsStr
 
@@ -167,9 +185,9 @@ else:
         allowed_types = Decimal
 
     def IsNow(*args: Any, **kwargs: Any):
-        # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
-        if 'delta' not in kwargs:  # pragma: no branch
-            kwargs['delta'] = 10
+        # This allows for the time since the test began, so a runner that stalls between making a timestamp and building
+        # this comparison can't fail the test. One older than the test by more than `delta` still fails.
+        kwargs['delta'] = kwargs.get('delta', 10) + (monotonic() - _test_started_at)
         return _IsNow(*args, **kwargs)
 
     class IsSameStr(IsStr):
@@ -246,6 +264,19 @@ def strip_logfire_metrics(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for span in spans:
         span.get('attributes', {}).pop('logfire.metrics', None)
     return spans
+
+
+_GOOGLE_GENAI_USER_AGENT_LABEL = re.compile(r'google-genai-sdk/\S+ gl-python/\S+')
+
+
+def google_user_agents(request: httpx2.Request) -> list[str]:
+    """The request's user-agent lines, with google-genai's version label as `google-genai` and ours as `pydantic-ai`."""
+    return [
+        _GOOGLE_GENAI_USER_AGENT_LABEL.sub('google-genai', value).replace(
+            pydantic_ai.models.get_user_agent(), 'pydantic-ai'
+        )
+        for value in request.headers.get_list('user-agent')
+    ]
 
 
 SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
@@ -567,6 +598,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
             'os.listdir',
             'os.getcwd',
             'os.path.abspath',
+            'os.readlink',
             'os.read',
             'os.remove',
             'os.unlink',
@@ -577,6 +609,100 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ),
     # The test blocks the agent loop on purpose, to check a run that never starts.
     ('threading.Lock.acquire', 'tests/harness/aws_lambda/test_aws_lambda.py', 'block_loop'),
+    # pydantic-clai2 reads keys once the event loop reports the terminal readable, and writes output straight to it.
+    ('os.read', 'prompt_toolkit/input/posix_utils.py', 'read'),
+    ('os.read', 'pydantic_clai2/cli/shell_terminal.py', '_key'),
+    ('os.write', 'pydantic_clai2/cli/shell_terminal.py', 'pass_through'),
+    ('os.write', 'pydantic_clai2/cli/self_update.py', '_print_line'),
+    # On Windows, the socket pair that lets Ctrl+C wake the loop connects over loopback, once per turn.
+    ('socket.socket.accept', 'pydantic_clai2/ui/prompt/interrupts.py', '_wake'),
+    # Rich writes each render to its console's file: the terminal, `os.devnull` for a background agent, or a test's file.
+    ('io.TextIOWrapper.write', 'rich/console.py', '_write_buffer'),
+    ('io.BufferedWriter.write', 'rich/console.py', '_write_buffer'),
+    # `logging` handlers write each record synchronously, to a stream or to CLAI's telemetry log file.
+    ('io.TextIOWrapper.write', 'logging/__init__.py', 'emit'),
+    ('io.BufferedWriter.write', 'logging/__init__.py', 'emit'),
+    # prompt-toolkit's `FileHistory` reads the input history when a prompt opens, and appends each entry it accepts.
+    *(
+        (func, 'prompt_toolkit/history.py', ('load_history_strings', 'store_string'))
+        for func in ('os.stat', 'io.BufferedReader.read', 'io.BufferedWriter.write')
+    ),
+    # Pygments looks plugin lexers up in installed packages' metadata when a code block names a language it doesn't ship.
+    *((func, 'pygments/plugin.py', 'iter_entry_points') for func in ('os.stat', 'os.listdir', 'io.TextIOWrapper.read')),
+    # FastAPI finds an endpoint's source file the first time it serves the route, and caches it.
+    ('os.stat', 'fastapi/routing.py', '_extract_endpoint_context'),
+    # beartype's import hook writes a module's bytecode cache the first time it imports it.
+    ('io.BufferedWriter.write', 'beartype/claw/_importlib/_clawimpfileloader.py', 'get_code'),
+    # Whether a process still runs is read from `/proc`, which the kernel serves from memory.
+    ('io.TextIOWrapper.read', 'pydantic_ai_harness/step_persistence/conversations.py', '_process_started'),
+    # Configuring logfire at session start waits for the instance it replaces to shut down.
+    ('threading.Lock.acquire', 'pydantic_clai2/builtin_plugins/logfire.py', '__init__'),
+    # A module's first import runs its top-level code, which can read files such as its package's metadata, and waits
+    # for the module's lock while another thread, such as CLAI's import warm-up, imports it. The frames belong to
+    # importlib rather than the importing module, so these exemptions apply to every suite, not only `tests/clai2`.
+    ('io.TextIOWrapper.read', '<frozen importlib._bootstrap>', '_find_and_load'),
+    ('os.listdir', '<frozen importlib._bootstrap>', '_find_and_load'),
+    ('threading.Lock.acquire', '<frozen importlib._bootstrap>', ('_find_and_load', '_lock_unlock_module')),
+    # A session, and a plugin host built outside the shell, work in the current directory unless given one.
+    ('os.getcwd', 'pydantic_clai2/runtime/session.py', '__init__'),
+    ('os.getcwd', 'pydantic_clai2/plugins/__init__.py', 'workspace'),
+    # The test's model holds another writer's lock on the session database open on purpose, on its own connection.
+    ('sqlite3.Connection.execute', 'tests/clai2/test_sessions.py', 'model'),
+]
+
+
+# pydantic-clai2 keeps its settings, credentials, plugins, and logs in small local files and SQLite databases, which its
+# commands, menus, and startup read and write synchronously. These modules hold nothing but such stores. Every file and
+# database call beneath one of their functions is exempt, so list only synchronous code that does its own I/O. They are
+# exempt even where async code calls them on the event loop, as making the stores async is a separate redesign.
+BLOCKBUSTER_LOCAL_STORES: tuple[str, ...] = (
+    'src/pydantic_clai2/pydantic_clai2/config/credential_store.py',
+    'src/pydantic_clai2/pydantic_clai2/config/settings_store.py',
+    'src/pydantic_clai2/pydantic_clai2/mcp/store.py',
+    'src/pydantic_clai2/pydantic_clai2/builtin_plugins/workspaces/registry.py',
+    'src/pydantic_clai2/pydantic_clai2/ui/prompt/input_history.py',
+    'src/pydantic_clai2/pydantic_clai2/ui/telemetry_log.py',
+)
+
+
+# Synchronous functions elsewhere that do file and database I/O of their own, as (file, functions). Every file and
+# database call beneath them is exempt too, so never list an async function, nor a function an async function calls on
+# the event loop: offload that call instead. Most listed here have synchronous callers, such as menus that run in a
+# thread and tests that set up state. The deliberate exceptions, which async code still calls on the event loop, are
+# shell construction and plugin loading at startup and in `/plugins`, with the welcome banner and version they show,
+# since making them async is the same separate redesign as for the stores, and the status row's `spinners.json` read.
+BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
+    # pydantic-clai2's commands, menus, and sign-ins check and update its own small files in the user's folders.
+    ('pydantic_clai2/config/api_keys.py', ('save_key', 'load_keys')),
+    ('pydantic_clai2/config/project_settings.py', ('_present', 'load_project_settings')),
+    ('pydantic_clai2/ui/menus/key_menu.py', 'storage'),
+    ('pydantic_clai2/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
+    ('pydantic_clai2/builtin_plugins/logfire.py', 'credentials'),
+    ('pydantic_clai2/builtin_plugins/logfire_destination.py', ('remember', 'remembered')),
+    # The status row reads `spinners.json` on each repaint, so an edit shows on the next frame.
+    ('pydantic_clai2/ui/rendering/spinners.py', '_user_text'),
+    # A pasted path is checked to be an image file, which is then read and decoded, once per paste.
+    ('pydantic_clai2/ui/prompt/image_input.py', ('pasted_paths', '<genexpr>', 'read_image')),
+    # Plugins load from local files: their folder is created and listed, and each module read and imported, at load.
+    (
+        'pydantic_clai2/plugins/process_plugins.py',
+        ('_discover', 'project_files', 'import_module'),
+    ),
+    ('pydantic_clai2/plugins/factories.py', 'import_file'),
+    ('pydantic_clai2/plugins/describe.py', ('describe', '_source')),
+    # Installed packages' metadata, logfire's configuration, and the banner's font are read once per process or session,
+    # and logfire records a plugin that fails to load with its traceback, which reads the source files it quotes.
+    ('pydantic_clai2/cli/self_update.py', 'installed'),
+    ('pydantic_clai2/models/model_catalog.py', 'check_installed'),
+    ('pydantic_clai2/builtin_plugins/logfire.py', '__init__'),
+    ('pydantic_clai2/ui/telemetry.py', 'log_error'),
+    ('pydantic_clai2/ui/rendering/branding.py', 'print_banner'),
+    # Tests' stand-ins, and the plugins tests write, set up or record what happened in small files.
+    ('tests/clai2/test_live_runtimes.py', 'folder'),
+    ('tests/clai2/test_shell_passthrough.py', 'hold'),
+    ('tests/clai2/test_plugin_git_cleanup.py', 'readonly_pack'),
+    ('/lifecycle_probe.py', 'record'),
+    ('/cwd_probe.py', 'get_capabilities'),
 ]
 
 
@@ -588,6 +714,7 @@ BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
     'tests/harness/boxlite_sandbox/fake_boxlite.py',
     'tests/harness/daytona_sandbox/fake_daytona.py',
     'tests/harness/e2b_sandbox/fake_e2b.py',
+    'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
     'tests/harness/render_sandbox/workspace_helpers.py',
 )
 
@@ -599,6 +726,16 @@ def _function_names(path: str) -> tuple[str, ...]:
     return tuple(sorted(defined | {'<lambda>', '<genexpr>'}))
 
 
+def _blockbuster_packages() -> list[str]:
+    """The shipped packages the detector scans. The harness and CLAI aren't installed in every CI lane (`pydantic-evals`)."""
+    optional = [
+        package
+        for package in ('pydantic_ai_harness', 'pydantic_clai2')
+        if importlib.util.find_spec(package) is not None
+    ]
+    return ['pydantic_ai', *optional, 'pydantic_graph', 'pydantic_evals', 'clai']
+
+
 def _configure_blockbuster(
     exemptions: Sequence[tuple[str, str, str | tuple[str, ...]]] = BLOCKBUSTER_EXEMPTIONS,
     excluded_modules: tuple[str, ...] = (),
@@ -607,18 +744,18 @@ def _configure_blockbuster(
     # must remain unaffected by that instrumentation.
     from blockbuster import BlockBuster
 
-    # The harness isn't installed in every CI lane (the `pydantic-evals` one, say).
-    harness = ['pydantic_ai_harness'] if importlib.util.find_spec('pydantic_ai_harness') is not None else []
-    bb = BlockBuster(
-        ['pydantic_ai', *harness, 'pydantic_graph', 'pydantic_evals', 'clai'],
-        excluded_modules=excluded_modules or None,
-    )
+    bb = BlockBuster(_blockbuster_packages(), excluded_modules=excluded_modules or None)
     for func, filename, functions in exemptions:
         bb.functions[func].can_block_in(filename, functions)
     for path in BLOCKBUSTER_TEST_DOUBLES:
         functions = _function_names(path)
         for function in bb.functions.values():
             function.can_block_in(path, functions)
+    local_io = [function for name, function in bb.functions.items() if name.startswith(('os.', 'io.', 'sqlite3.'))]
+    local_files = [*BLOCKBUSTER_LOCAL_FILES, *((path, _function_names(path)) for path in BLOCKBUSTER_LOCAL_STORES)]
+    for filename, functions in local_files:
+        for function in local_io:
+            function.can_block_in(filename, functions)
     return bb
 
 
@@ -693,6 +830,18 @@ def detach_dbos_logging() -> None:
             logger.removeHandler(handler)
         for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
             logger.removeFilter(log_filter)
+
+
+def without_admin_server(config: DBOSConfig) -> DBOSConfig:
+    """Set `run_admin_server` to `False` on DBOS 2.x, which otherwise starts an admin server on port 3001.
+
+    DBOS 3.x has neither the admin server nor the key, so there this returns `config` unchanged.
+    Drop it once the `dbos` extra requires 3.0.
+    """
+    if Version(version('dbos')) >= Version('3'):
+        return config
+    dbos_2_config: _DBOS2Config = {**config, 'run_admin_server': False}
+    return dbos_2_config
 
 
 @pytest.fixture
@@ -836,41 +985,16 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
         asyncio.set_event_loop(original_loop)
 
 
-@pytest.fixture
-def young_gc() -> Iterator[None]:
-    """Limit the test's garbage collections to the objects it creates.
-
-    A full collection walks every object the worker has accumulated, which takes seconds per call
-    late in a CI run, whether the test calls `gc.collect()` or allocates enough to trigger one.
-    Freezing everything that exists before the test keeps it out of the collector's reach until
-    teardown, so collections stay cheap, and garbage leaked by an earlier test can't be finalized
-    (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
-    """
-    gc.freeze()
-    try:
-        yield
-    finally:
-        gc.unfreeze()
-
-
 @contextmanager
 def no_leaked_tasks(loop: asyncio.AbstractEventLoop | None = None) -> Generator[None]:
     """Fail if a task started inside the block is still running at its end.
 
-    Freezes every existing object out of the cyclic collector's reach for the block, as `young_gc` does, so an
-    earlier test's garbage can't be finalized here and queue tasks on the running loop. Tasks already running at
-    entry are ignored. Pass `loop` when the test drives that loop itself instead of running on it.
-
-    Don't use it in a test that requests `young_gc`: `gc.unfreeze()` thaws every frozen object, so leaving the
-    block would undo the fixture's freeze for the rest of the test.
+    Tasks already running at entry are ignored. Pass `loop` when the test drives that loop itself instead of running
+    on it.
     """
-    gc.freeze()
-    try:
-        before = asyncio.all_tasks(loop)
-        yield
-        assert asyncio.all_tasks(loop) - before == set()
-    finally:
-        gc.unfreeze()
+    before = asyncio.all_tasks(loop)
+    yield
+    assert asyncio.all_tasks(loop) - before == set()
 
 
 @pytest.fixture(autouse=True)
@@ -970,11 +1094,6 @@ def prefect_test_server() -> Iterator[None]:
         monkeypatch.setattr(prefect.testing.utilities, '_find_available_port', _reserve_loopback_port)
         with prefect_test_harness(server_startup_timeout=120):
             yield
-    # Prefect's test server leaves client sockets for GC on Python 3.14; collect them here, where the
-    # warning is expected, rather than in whichever test the collector happens to run in.
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', message='unclosed.*socket', category=ResourceWarning)
-        gc.collect()
 
 
 def raise_if_exception(e: Any) -> None:

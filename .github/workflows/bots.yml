@@ -265,8 +265,15 @@ jobs:
             | [$reviews[0][][]
                 | select(.user.login == "github-actions[bot]" and .user.type == "Bot" and .commit_id == $head)
                 | (.body // "") as $body
-                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + " -->\\z"))
-                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40} -->\\z"; "")) as $verdict
+                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + "( engine=(claude|opencode))? -->\\z"))
+                | (($body | capture(" engine=(?<engine>claude|opencode) -->\\z") | .engine) // "") as $engine
+                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40}( engine=(claude|opencode))? -->\\z"; "")) as $marked
+                | (if $engine == "claude" then "\n\nReviewer: Claude Code (claude-opus-5-5)"
+                   elif $engine == "opencode" then "\n\nReviewer: OpenCode (opencode-go/deepseek-v4.1-flash)"
+                   else "" end) as $attribution
+                | (if $attribution == "" then $marked
+                   elif $marked | endswith($attribution) then $marked | rtrimstr($attribution)
+                   else $marked + "\nMissing engine attribution" end) as $verdict
                 | select($verdict | startswith("Review incomplete.") | not)
                 | select(.id as $id | any($commented[]; . == $id) or ($verdict != "No blocking findings." and $verdict != "Blocking findings are recorded inline."))
                 | .html_url]
@@ -298,6 +305,7 @@ jobs:
       actions: read
     outputs:
       result: ${{ steps.review.outputs.structured_output }}
+      fallback: ${{ steps.usage-limit.outputs.fallback }}
     steps:
       # Two checkouts, and the split is the security design, not a convenience.
       #
@@ -348,7 +356,8 @@ jobs:
           # v7 refuses a fork ref under `pull_request_target` without this.
           allow-unsafe-pr-checkout: true
 
-      - name: Check for modified config files
+      - &douwebot-config-guard
+        name: Check for modified config files
         if: github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         # Backstop to the checkout split above, which is the primary defence: the
         # base ref owns the workspace root, so the fork's config is no longer the
@@ -424,7 +433,8 @@ jobs:
       - name: Install bubblewrap
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
 
-      - name: Validate one-head maintainer request
+      - &douwebot-approval-guard
+        name: Validate one-head maintainer request
         if: github.event.action == 'labeled' && github.event.label.name == 'douwebot:review-agent-config'
         run: |
           if [[ "$EVENT_ACTION" != 'labeled' || "$EVENT_LABEL" != "$APPROVAL_LABEL" ]]; then
@@ -477,7 +487,10 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
 
+      # continue-on-error keeps the job alive only long enough to classify this step.
+      # The next step fails the job unless the execution file is a subscription-limit rejection.
       - id: review
+        continue-on-error: true
         uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
         env:
           # Native tracing exports from Claude itself, retaining subprocess credential scrubbing.
@@ -525,7 +538,7 @@ jobs:
             --json-schema '{"$defs":{"Finding":{"description":"One inline finding; GitHub validates the position against the pinned diff.","properties":{"path":{"title":"Path","type":"string"},"line":{"exclusiveMinimum":0,"title":"Line","type":"integer"},"side":{"enum":["LEFT","RIGHT"],"title":"Side","type":"string"},"body":{"minLength":1,"title":"Body","type":"string"}},"required":["path","line","side","body"],"title":"Finding","type":"object"}},"description":"Structured review judgment; source identity is supplied by the host.","properties":{"verdict":{"enum":["APPROVE","REQUEST_CHANGES","INCOMPLETE"],"title":"Verdict","type":"string"},"comments":{"items":{"$ref":"#/$defs/Finding"},"title":"Comments","type":"array"},"discussion":{"title":"Discussion","type":"string"}},"required":["verdict","comments","discussion"],"title":"ReviewResult","type":"object"}'
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh api repos/${{ github.repository }}/pulls/comments/:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(ls:*),Bash(tree:*),Bash(grep:*),WebSearch,WebFetch"
 
-          prompt: |
+          prompt: &douwebot-prompt |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
             PR AUTHOR: ${{ github.event.pull_request.user.login }} (${{ github.event.pull_request.author_association }})
@@ -564,7 +577,7 @@ jobs:
             - `.github/.review-context/agents-md.txt` — directory-specific `AGENTS.md` files for changed directories
             - `agent_docs/index.md` - repo-wide coding guidelines
 
-            The diff is split into per-file diffs under `.github/.review-context/diff/` (excluding `uv.lock` and cassettes), that you can read on demand and in parallel.
+            The diff is split into per-file diffs under `.github/.review-context/diff/` (excluding each `uv.lock` and the `.yaml` cassettes under a `cassettes/` directory below the root), that you can read on demand and in parallel.
             The diffs include function-level context (`git diff -W`), so you can see the full function/method being modified without needing to read the source file separately.
             A Python hunk covers its enclosing function or method, not the whole class.
             When a hunk changes a method of a class in a sibling family, read the full class from `pr-head/` to see its sibling methods.
@@ -627,9 +640,82 @@ jobs:
 
             It bears repeating that you are the first line of defense against low-quality contributions and maintainer headaches, and you have a big role in ensuring that every contribution to this project meets or exceeds the high standards that the Pydantic brand is known and loved for.
 
+      - id: usage-limit
+        name: Detect Claude subscription limit
+        if: steps.review.outcome == 'failure'
+        env:
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_REF: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh api -H 'Accept: application/vnd.github.raw+json' "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/douwebot_usage_limit.py?ref=${TRUSTED_REF}" > "$RUNNER_TEMP/douwebot_usage_limit.py"
+          python3 -I "$RUNNER_TEMP/douwebot_usage_limit.py"
+
+  douwebot-opencode:
+    name: douwebot-opencode
+    needs: review
+    if: needs.review.result == 'success' && needs.review.outputs.fallback == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      actions: read
+    outputs:
+      result: ${{ steps.result.outputs.result }}
+    steps:
+      - name: Checkout base ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr-head
+          fetch-depth: 0
+          persist-credentials: false
+          allow-unsafe-pr-checkout: true
+
+      - *douwebot-config-guard
+      - *douwebot-approval-guard
+
+      - name: Gather PR context
+        run: |
+          gh api "repos/${REPO}/contents/scripts/gather-review-context.sh?ref=${BASE_REF}" --jq .content | base64 -d > /tmp/gather-review-context.sh
+          bash /tmp/gather-review-context.sh "$PR_NUMBER" "$REPO"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_DIR: pr-head
+
+      - name: Set up OpenCode and review tools
+        uses: ./.github/actions/setup-douwebot-tools
+
+      - name: Review with OpenCode Go
+        run: |
+          export PATH="$RUNNER_TEMP/douwebot-tools/bin:$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin:$PATH"
+          python3 .github/scripts/douwebot_opencode_run.py
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          REVIEW_PROMPT: *douwebot-prompt
+          PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
+
+      - id: result
+        name: Validate completed review
+        run: python3 .github/scripts/douwebot_opencode_result.py "$RUNNER_TEMP/douwebot-opencode.ndjson"
+        env:
+          PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
+
   publish-review:
     name: Publish douwebot review
-    needs: [prior-findings, review]
+    needs: [prior-findings, review, douwebot-opencode]
     if: always() && (needs.review.result != 'skipped' || needs.prior-findings.outputs.review_url != '')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -640,11 +726,12 @@ jobs:
     steps:
       - name: Publish structured review from trusted default-branch code
         id: publish
-        if: needs.review.result == 'success'
+        if: needs.review.result == 'success' && (needs.review.outputs.fallback != 'true' || needs.douwebot-opencode.result == 'success')
         env:
           GH_TOKEN: ${{ github.token }}
           TRUSTED_REF: ${{ github.event.repository.default_branch }}
-          REVIEW_RESULT: ${{ needs.review.outputs.result }}
+          REVIEW_RESULT: ${{ needs.review.outputs.fallback == 'true' && needs.douwebot-opencode.outputs.result || needs.review.outputs.result }}
+          REVIEW_ENGINE: ${{ needs.review.outputs.fallback == 'true' && 'opencode' || 'claude' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -672,7 +759,7 @@ jobs:
       # identical from the PR: the label is gone either way and no comment lands.
       # A silent breakage went unnoticed for three weeks that way.
       - name: Report review failure
-        if: always() && (needs.review.result == 'failure' || steps.publish.outcome == 'failure') && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
+        if: always() && (needs.review.result == 'failure' || needs.douwebot-opencode.result == 'failure' || steps.publish.outcome == 'failure') && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
             "The \`douwebot\` run failed — see [the run](${RUN_URL}) for why. This is not a verdict on this PR. If the cause was transient, re-apply the \`douwebot\` label to retry."
@@ -681,7 +768,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Report approval request failure
-        if: always() && (needs.review.result == 'failure' || steps.publish.outcome == 'failure') && github.event.action == 'labeled' && github.event.label.name == 'douwebot:review-agent-config'
+        if: always() && (needs.review.result == 'failure' || needs.douwebot-opencode.result == 'failure' || steps.publish.outcome == 'failure') && github.event.action == 'labeled' && github.event.label.name == 'douwebot:review-agent-config'
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
             "The \`douwebot:review-agent-config\` run failed — see [the run](${RUN_URL}) for why. This is not a verdict on this PR. To retry, remove and reapply the label; the original event cannot be rerun."

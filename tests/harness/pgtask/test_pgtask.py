@@ -13,6 +13,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 
 import anyio
 import pytest
+from pydantic import ValidationError
 
 pytest.importorskip('pgtask')
 pytest.importorskip('fastmcp')
@@ -711,6 +712,28 @@ class TestCrashMidRun:
 
 
 class TestCapabilityOperation:
+    async def test_undecodable_checkpoint_raises_decode_error(self, pgtask_db: PGTaskDatabase) -> None:
+        class Reader(AbstractCapability[object]):
+            id = 'reader'
+
+            async def before_run(self, ctx: RunContext[object]) -> None:
+                await self.read(ctx)
+
+            @durable_operation('read')
+            async def read(self, ctx: RunContext[object]) -> int:  # pragma: no cover
+                pytest.fail('The checkpointed operation must not run again')
+
+        agent = Agent(_make_model(), name='cap', capabilities=[Reader(), PGTaskDurability()])
+
+        async def body(attempt: int) -> None:
+            with pytest.raises(CheckpointDecodeError) as exc_info:
+                await agent.run('hi')
+            assert isinstance(exc_info.value.__cause__, ValidationError)
+
+        await run_in_task(
+            pgtask_db, body, seed={('cap__capability__reader.read', 0): {'value': 'invalid', 'usage_delta': {}}}
+        )
+
     async def test_operation_is_checkpointed_and_replayed(self, pgtask_db: PGTaskDatabase) -> None:
         calls: list[str] = []
 
