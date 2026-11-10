@@ -1,5 +1,5 @@
 {
-  "against": "v2.66.0",
+  "against": "v2.67.0",
   "reason": "Harness 0.x: the maintainer-approved design for #12307 makes FallbackCompaction recover from UnexpectedModelBehavior by default, including exhausted summary retries. Set fallback_on=(ModelAPIError, FallbackExceptionGroup) to keep the old exception selection.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12655"
 }
