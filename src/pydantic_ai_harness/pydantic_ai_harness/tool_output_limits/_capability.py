@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     ToolReturnContent,
     ToolSearchReturnPart,
     UserContent,
+    is_multi_modal_content,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
@@ -96,6 +97,17 @@ def _spills(action: Action | None) -> bool:
 def _default_bands() -> list[Band]:
     """Spill to the store, falling back to truncation when the store write fails."""
     return [Band(over=_DEFAULT_THRESHOLD, action=Spill(then=Truncate()))]
+
+
+def _contains_multi_modal_content(value: object) -> bool:
+    """Check a value and list contents without propagating TypeGuard narrowing to the caller."""
+    return is_multi_modal_content(value) or (
+        isinstance(value, list)
+        and any(
+            is_multi_modal_content(item)
+            for item in value  # pyright: ignore[reportUnknownVariableType]
+        )
+    )
 
 
 @dataclass
@@ -346,7 +358,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
         if isinstance(return_value, BaseException):
             return original
-
+        # Structured media must not be serialized and reduced as text.
+        multimodal_value: object = return_value
+        if _contains_multi_modal_content(multimodal_value):
+            return original
         bands = self._per_tool.get(call.tool_name, self._bands)
         value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
         value_text, value_handle = await self._reduce(ctx, call, bands, value_unit)

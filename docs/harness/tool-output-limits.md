@@ -37,6 +37,12 @@ That tool is bounded: `offset >= 0`, `limit` clamped to a built-in line cap, the
 capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
 hang the host with catastrophic backtracking.
 
+## Return-value and content handling
+
+Text return values and text content use the configured bands. Multimodal return values,
+including mixed text/media lists, pass through unchanged as structured content. Non-text
+`content` that overflows remains unreduced with the existing warning.
+
 ## Usage
 
 Construct an `Agent` with `ToolOutputLimits()` in its `capabilities`. With no arguments it

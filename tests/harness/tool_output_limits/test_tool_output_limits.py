@@ -1287,6 +1287,49 @@ class TestAgentIntegration:
         returns = [p.content for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
         assert returns == ['{"blob":"____"}']
 
+    async def test_multimodal_return_value_passes_through_untruncated(self):
+        image_data = b'\x89PNG\r\n\x1a\n' + b'x' * (100_000 - len(b'\x89PNG\r\n\x1a\n'))
+        requests: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            requests.append(messages.copy())
+            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='read_image', args='{}', tool_call_id='read-image')])
+
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=10))])],
+        )
+
+        @agent.tool_plain
+        def read_image() -> BinaryContent:
+            return BinaryContent(data=image_data, media_type='image/png')
+
+        result = await agent.run('read image')
+
+        result_return = next(
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'read_image'
+        )
+        followup_return = next(
+            part
+            for message in requests[1]
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'read_image'
+        )
+        for tool_return in (result_return, followup_return):
+            value = tool_return.content
+            assert (isinstance(value, BinaryContent) and value.data == image_data) or (
+                isinstance(value, list)
+                and any(
+                    isinstance(item, BinaryContent) and item.data == image_data
+                    for item in value  # pyright: ignore[reportUnknownVariableType]
+                )
+            )
+
     async def test_small_output_untouched(self, tmp_path: Path, anyio_backend: str):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=10_000, action=Spill())], store=LocalFileStore(base_dir=tmp_path)

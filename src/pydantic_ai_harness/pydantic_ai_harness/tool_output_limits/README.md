@@ -29,13 +29,11 @@ spills are exempt too ([Reading spills with `FileSystem`](#reading-spills-with-f
 `load_capability` and `search_tools` returns are never reduced either: core reads them back from
 history to know which on-demand capabilities are loaded and which tools are revealed.
 
-### Both `return_value` and `content` are reduced
+### Return-value and content handling
 
-A `ToolReturn` carries a `return_value` and an optional `content` that core renders as a
-separate, model-visible part which also persists in history. This capability measures and
-reduces both with the same band logic (they spill to distinct handles). Text `content` is
-reduced in place; non-text `content` (multimodal parts) that overflows is left unreduced with
-a `warnings.warn`, since it cannot be safely truncated.
+Text return values and text content use the configured bands. Multimodal return values,
+including mixed text/media lists, pass through unchanged as structured content. Non-text
+`content` that overflows remains unreduced with the existing warning.
 
 ### `ToolReturn.metadata` is preserved
 

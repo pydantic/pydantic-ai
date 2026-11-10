@@ -12,7 +12,14 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability, LocalWorkspace, local_workspace
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    BinaryContent,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -156,6 +163,49 @@ async def test_no_workspace_fails_the_run_naming_coder() -> None:
         await Agent(TestModel(), capabilities=[Coder()]).run('go')
     assert 'from pydantic_ai.capabilities import LocalWorkspace' in str(raised.value)
     assert '- LocalWorkspace: .' in str(raised.value)
+
+
+async def test_coder_read_file_large_image_reaches_model_multimodal(tmp_path: Path) -> None:
+    png_signature = b'\x89PNG\r\n\x1a\n'
+    image_data = png_signature + b'x' * (100_000 - len(png_signature))
+    (tmp_path / 'large.png').write_bytes(image_data)
+    requests: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        requests.append(messages.copy())
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='read_file', args={'path': 'large.png'}, tool_call_id='read-large-image')]
+        )
+
+    agent = Agent[object](
+        FunctionModel(respond),
+        capabilities=[LocalWorkspace(tmp_path), Coder[object](repo_context=False)],
+    )
+    result = await agent.run('read large.png')
+
+    result_return = next(
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'read_file'
+    )
+    followup_return = next(
+        part
+        for message in requests[1]
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'read_file'
+    )
+    for tool_return in (result_return, followup_return):
+        value = tool_return.content
+        assert (isinstance(value, BinaryContent) and value.data == image_data) or (
+            isinstance(value, list)
+            and any(
+                isinstance(item, BinaryContent) and item.data == image_data
+                for item in value  # pyright: ignore[reportUnknownVariableType]
+            )
+        )
 
 
 CONTROL_TOOLS = {'list_tasks', 'message_task', 'answer_task', 'cancel_task'}
