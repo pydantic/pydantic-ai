@@ -13,7 +13,22 @@ Salesforce, or Zendesk. Each instance is scoped to one linked account, which is 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![Inside your agent, the StackOne capability connects to StackOne's MCP endpoint at api.stackone.com/mcp with your API key and an x-account-id header naming one linked account, and StackOne runs actions against that account's provider, such as BambooHR or Salesforce. In the default search_execute mode the model sees two tools: one ending in _search_actions that returns action ids, and one ending in _execute_action that runs an action by id. Passing actions switches to individual mode, with one tool per matching action, such as bamboohr_list_employees.](../img/harness/stackone.svg)
+```mermaid
+flowchart TB
+    accTitle: StackOne: run actions in a user's linked business apps
+    accDescr: Inside your agent, the StackOne capability connects to StackOne's MCP endpoint at api.stackone.com/mcp with your API key and an x-account-id header naming one linked account, and StackOne runs actions against that account's provider, such as BambooHR or Salesforce. In the default search_execute mode the model sees two tools: one ending in _search_actions that returns action ids, and one ending in _execute_action that runs an action by id. Passing actions switches to individual mode, with one tool per matching action, such as bamboohr_list_employees.
+    subgraph agent["Your agent"]
+        model(["model"])
+        stackone["StackOne()<br/>*_search_actions,<br/>*_execute_action"]:::capability
+    end
+    mcp["StackOne MCP<br/>api.stackone.com/mcp"]:::external
+    account["linked account<br/>such as BambooHR<br/>or Salesforce"]:::external
+    model <-->|"search, then execute"| stackone
+    stackone <-->|"API key, x-account-id"| mcp
+    mcp <-->|"action, result"| account
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Before you start
 

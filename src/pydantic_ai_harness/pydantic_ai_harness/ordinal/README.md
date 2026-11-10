@@ -8,7 +8,22 @@ user's workspaces.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![Inside your agent, the Ordinal capability connects to Ordinal's hosted MCP server at app.tryordinal.com/mcp with an OAuth access token. The model sees the server's tool names unchanged. It starts with ordinal_get_workspace_context, which returns the workspaceSlug every other Ordinal tool needs. Wrapping the toolset with approval_required() pauses calls that publish or schedule posts for review.](https://pydantic.dev/docs/ai/img/harness/ordinal.svg)
+```mermaid
+flowchart TB
+    accTitle: Ordinal: draft, schedule and analyze social posts through Ordinal's MCP server
+    accDescr: Inside your agent, the Ordinal capability connects to Ordinal's hosted MCP server at app.tryordinal.com/mcp with an OAuth access token. The model sees the server's tool names unchanged. It starts with ordinal_get_workspace_context, which returns the workspaceSlug every other Ordinal tool needs. Wrapping the toolset with approval_required() pauses calls that publish or schedule posts for review.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        cap["Ordinal()<br/>ordinal_get_workspace_context:<br/>workspaceSlug for other tools"]:::capability
+    end
+    server["Ordinal MCP server<br/>app.tryordinal.com/mcp"]:::external
+    model <-->|"tool call, result"| cap
+    auth -->|"token for each run"| cap
+    cap <-->|"OAuth access token"| server
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Before you start
 

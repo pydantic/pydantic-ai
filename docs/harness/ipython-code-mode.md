@@ -14,7 +14,24 @@ description: "Let a local Pydantic AI agent run Python and call its tools from a
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls run_code with Python. The code runs in a separate IPython kernel process with full CPython and any installed package, such as pandas. Each call it makes to an agent tool, here get_sales, goes back to the agent over the Jupyter stdin channel and runs one at a time; the value of the last expression goes back to the model. Variables stay in the kernel for the next run_code call, each call has a 60 second timeout, and the kernel is not a sandbox: the code has the user's files, network and environment variables.](../img/harness/ipython-code-mode.svg)
+```mermaid
+flowchart TB
+    accTitle: IPython Code Mode: run_code in a local IPython kernel
+    accDescr: The model calls run_code with Python. The code runs in a separate IPython kernel process with full CPython and any installed package, such as pandas. Each call it makes to an agent tool, here get_sales, goes back to the agent over the Jupyter stdin channel and runs one at a time; the value of the last expression goes back to the model. Variables stay in the kernel for the next run_code call, each call has a 60 second timeout, and the kernel is not a sandbox: the code has the user's files, network and environment variables.
+    subgraph agent["Your agent"]
+        model(["model"])
+        mode["IPythonCodeMode()<br/>run_code"]:::capability
+        tool["your tool<br/>get_sales"]
+    end
+    kernel["IPython kernel process<br/>full CPython<br/>state kept between calls"]:::external
+    host["your files, network and<br/>environment variables"]
+    model <-->|"tool call, result"| mode
+    mode <-->|"Python code, last value"| kernel
+    kernel <-->|"one call at a time,<br/>over the stdin channel"| tool
+    kernel -->|"not a sandbox"| host
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Code Mode or IPython Code Mode
 

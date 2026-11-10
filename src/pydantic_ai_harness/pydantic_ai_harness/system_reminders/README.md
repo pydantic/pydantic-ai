@@ -14,7 +14,23 @@ Re-inject behavioral guidance mid-run to counter instruction fade -- without mov
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/system_reminders/)
 
-![SystemReminders runs in the before_model_request hook. A Reminder with interval=3 fires on requests 3 and 6. When it fires, the reminder is added at the tail of that request, after the cache breakpoint, so the cached prefix of tools, instructions and conversation is reused. The next request does not show it again.](https://pydantic.dev/docs/ai/img/harness/system-reminders.svg)
+```mermaid
+flowchart TB
+    accTitle: System Reminders: restate guidance late in a long run
+    accDescr: SystemReminders runs in the before_model_request hook. A Reminder with interval=3 fires on requests 3 and 6. When it fires, the reminder is added at the tail of that request, after the cache breakpoint, so the cached prefix of tools, instructions and conversation is reused. The next request does not show it again.
+    loop["agent loop"]
+    cap["SystemReminders()<br/>before_model_request"]:::capability
+    subgraph request["Model request"]
+        prefix["cached prefix<br/>tools, instructions,<br/>conversation"]
+        tail["reminder at the tail,<br/>after cache breakpoint,<br/>this request only"]:::capability
+    end
+    model(["model"])
+    loop --> prefix
+    loop -->|"before each request"| cap
+    cap -.->|"Reminder(interval=3):<br/>on requests 3 and 6"| tail
+    request --> model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 

@@ -5,7 +5,24 @@ It works in the run's workspace, on this machine or in a sandbox. It is a regula
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![Coder is a bundle of other capabilities. FileSystem gives the model read_file, write_file, edit_file, list_files and grep; Shell gives it shell; SubAgents gives it delegate_task, which hands a sub-task to a fresh run of the same agent; RepoContext loads AGENTS.md and CLAUDE.md into the instructions. Plumbing the model never calls clears old tool results, caps tool output at 64,000 characters, repairs malformed tool arguments and turns on prompt caching. All of it works in the run's workspace: a LocalWorkspace on this machine or a cloud sandbox.](https://pydantic.dev/docs/ai/img/harness/coder.svg)
+```mermaid
+flowchart LR
+    accTitle: Coder: a coding agent assembled from harness capabilities
+    accDescr: Coder is a bundle of other capabilities. FileSystem gives the model read_file, write_file, edit_file, list_files and grep; Shell gives it shell; SubAgents gives it delegate_task, which hands a sub-task to a fresh run of the same agent; RepoContext loads AGENTS.md and CLAUDE.md into the instructions. Plumbing the model never calls clears old tool results, caps tool output at 64,000 characters, repairs malformed tool arguments and turns on prompt caching. All of it works in the run's workspace: a LocalWorkspace on this machine or a cloud sandbox.
+    model(["model"])
+    subgraph coder["Coder()"]
+        direction LR
+        fs["FileSystem<br/>read_file, write_file,<br/>edit_file, list_files, grep"]:::capability
+        shell["Shell<br/>shell"]:::capability
+        sub["SubAgents<br/>delegate_task"]:::capability
+        repo["RepoContext<br/>AGENTS.md,<br/>CLAUDE.md"]:::capability
+    end
+    workspace["workspace<br/>LocalWorkspace('.')<br/>or a cloud sandbox"]:::external
+    model <--> coder
+    coder --> workspace
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Usage
 

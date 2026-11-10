@@ -38,7 +38,30 @@ not what this page builds. Here the agent is a Python
 the inner driver of its copilot engine (and pi on Node); it has no effect on an
 import-based engine like this one, so it is not part of the configuration below.
 
-![A new issue triggers the compiled gh-aw workflow. Its agent job runs the pydantic-ai engine in a container behind an egress firewall: the engine starts clai2 with your agent, named by PAI_AGENT, plus the workflow model and prompt. Model requests go through gh-aw's api-proxy, which holds the provider key, and the agent's GitHub and safe-output tools, such as github_issue_read and safeoutputs_add_comment, come from gh-aw's MCP gateway. After a threat-detection job checks the output, a separate add-comment job posts the comment with its own token.](../img/harness/gh-aw.svg)
+```mermaid
+flowchart TB
+    accTitle: gh-aw: your Pydantic AI agent as a GitHub Agentic Workflow
+    accDescr: A new issue triggers the compiled gh-aw workflow. Its agent job runs the pydantic-ai engine in a container behind an egress firewall: the engine starts clai2 with your agent, named by PAI_AGENT, plus the workflow model and prompt. Model requests go through gh-aw's api-proxy, which holds the provider key, and the agent's GitHub and safe-output tools, such as github_issue_read and safeoutputs_add_comment, come from gh-aw's MCP gateway. After a threat-detection job checks the output, a separate add-comment job posts the comment with its own token.
+    issue["issue opened"]:::external
+    subgraph job["Agent job: container behind egress firewall"]
+        engine["pydantic-ai engine<br/>starts clai2"]:::capability
+        agent["your Agent<br/>named by PAI_AGENT"]
+    end
+    proxy["api-proxy<br/>holds the<br/>provider key"]:::external
+    gateway["MCP gateway<br/>github_issue_read,<br/>safeoutputs_add_comment"]:::external
+    detect["threat<br/>detection job"]:::external
+    model(["model"])
+    comment["add-comment job<br/>posts the comment<br/>with its own token"]:::external
+    issue -->|"triggers"| engine
+    engine -->|"imports and runs"| agent
+    agent -->|"placeholder token"| proxy
+    proxy -->|"model requests"| model
+    agent <-->|"tool calls"| gateway
+    agent -->|"output"| detect
+    detect --> comment
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Prerequisites
 

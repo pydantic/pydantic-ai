@@ -14,7 +14,23 @@ processes that keep running across the runs of a conversation.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls Shell tools: run_command, start_command, check_command and stop_command, or the opt-in shell tool. Before a command runs, its executable is checked against allowed_commands or denied_commands, its shell operators against denied_operators, and interactive commands are blocked; then it runs as a process in the workspace's working directory with only the workspace's environment plus Shell(env=). Four example calls show pytest running and returning labelled output, rm rejected by the default denylist, a dev server started in the background with an ID, and that ID used to check on or stop it.](../img/harness/shell.svg)
+```mermaid
+flowchart TB
+    accTitle: Shell: run commands in the workspace, with guardrails
+    accDescr: The model calls Shell tools: run_command, start_command, check_command and stop_command, or the opt-in shell tool. Before a command runs, its executable is checked against allowed_commands or denied_commands, its shell operators against denied_operators, and interactive commands are blocked; then it runs as a process in the workspace's working directory with only the workspace's environment plus Shell(env=). Four example calls show pytest running and returning labelled output, rm rejected by the default denylist, a dev server started in the background with an ID, and that ID used to check on or stop it.
+    model(["model"])
+    shell["Shell()<br/>run_command,<br/>start_command"]:::capability
+    checks["checks the executable,<br/>shell operators and<br/>interactive commands"]:::capability
+    process["workspace process<br/>its working directory<br/>and environment"]:::external
+    rejected["denied_commands,<br/>such as rm by default:<br/>the model gets a retry"]:::blocked
+    model <-->|"tool call, result"| shell
+    shell -->|"before it runs"| checks
+    checks -->|"runs"| process
+    checks -.-x|"rejects"| rejected
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 

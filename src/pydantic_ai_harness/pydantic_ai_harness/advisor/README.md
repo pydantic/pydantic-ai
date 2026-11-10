@@ -6,7 +6,22 @@ Give an executor model a way to consult a separate advisor model before it answe
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![Advisor gives the executor model an advisor tool. On the local path, calling advisor(prompt) runs a separate agent with the advisor model, and its answer comes back as the tool result. When the executor and advisor are both on Anthropic, or both on OpenRouter, the provider's native AdvisorTool runs the consultation inside the model request instead.](https://pydantic.dev/docs/ai/img/harness/advisor.svg)
+```mermaid
+flowchart TB
+    accTitle: Advisor: let the model consult a second model
+    accDescr: Advisor gives the executor model an advisor tool. On the local path, calling advisor(prompt) runs a separate agent with the advisor model, and its answer comes back as the tool result. When the executor and advisor are both on Anthropic, or both on OpenRouter, the provider's native AdvisorTool runs the consultation inside the model request instead.
+    executor(["executor model"])
+    advisor["Advisor()<br/>advisor tool"]:::capability
+    run["advisor agent run<br/>own instructions,<br/>no access to your tools"]:::capability
+    advmodel(["advisor model"])
+    native["AdvisorTool<br/>the provider runs it<br/>in the model request"]:::external
+    executor <-->|"consultation, answer"| advisor
+    advisor -->|"local fallback:<br/>any other pairing"| run
+    run <-->|"prompt, answer"| advmodel
+    advisor -->|"native: same provider,<br/>Anthropic or OpenRouter"| native
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Usage
 

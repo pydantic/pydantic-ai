@@ -11,7 +11,27 @@ description: Connect a Pydantic AI agent to Grain's hosted MCP server to search 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![Inside your agent, the Grain capability connects to Grain's hosted MCP server at api.grain.com/_/mcp with an OAuth access token, and the model sees the server's tools under the grain_ prefix. It connects when the run starts, even with defer_loading=True, so an invalid or expired token raises httpx.HTTPStatusError with status 401; return None from the auth function to give that run no Grain tools instead. read_only=True drops tools the server does not mark read-only.](../img/harness/grain.svg)
+```mermaid
+flowchart TB
+    accTitle: Grain: meetings, transcripts and notes through Grain's MCP server
+    accDescr: Inside your agent, the Grain capability connects to Grain's hosted MCP server at api.grain.com/_/mcp with an OAuth access token, and the model sees the server's tools under the grain_ prefix. It connects when the run starts, even with defer_loading=True, so an invalid or expired token raises httpx.HTTPStatusError with status 401; return None from the auth function to give that run no Grain tools instead. read_only=True drops tools the server does not mark read-only.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        grain["Grain()<br/>grain_&lt;tool&gt;"]:::capability
+    end
+    dropped["tools not marked<br/>read-only, with<br/>read_only=True"]:::blocked
+    server["Grain MCP server<br/>api.grain.com/_/mcp"]:::external
+    expired["invalid or expired token:<br/>401, the run raises"]:::blocked
+    model <-->|"tool call, result"| grain
+    auth -->|"token for each run"| grain
+    grain <-->|"tools/call,<br/>OAuth Bearer token"| server
+    grain -.-x|"drops"| dropped
+    server -.-x|"rejects when<br/>the run starts"| expired
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Before you start
 

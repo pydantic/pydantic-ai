@@ -17,7 +17,21 @@ checkpointing, a resumed run would repeat every model request and tool call.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![A Lambda handler decorated with durable_execution and durable_agent_handler runs an agent named support that has the AWSLambdaDurability capability. In the first invocation, each model request and tool call runs as a durable step, and Lambda records its result in the checkpoint log under a step name such as support__model.request; the invocation times out during the second model request. The resumed invocation runs the handler again from the top: the two completed steps return their recorded results without calling the model or the tool again, and only the unfinished model request runs, is recorded, and finishes the run.](../img/harness/aws-lambda.svg)
+```mermaid
+sequenceDiagram
+    accTitle: AWS Lambda Durability: resume an agent run from its last completed step
+    accDescr: A Lambda handler decorated with durable_execution and durable_agent_handler runs an agent named support that has the AWSLambdaDurability capability. In the first invocation, each model request and tool call runs as a durable step, and Lambda records its result in the checkpoint log under a step name such as support__model.request; the invocation times out during the second model request. The resumed invocation runs the handler again from the top: the two completed steps return their recorded results without calling the model or the tool again, and only the unfinished model request runs, is recorded, and finishes the run.
+    participant one as Invocation 1
+    participant log as Checkpoint log
+    participant two as Invocation 2
+    Note over one,two: AWSLambdaDurability() runs each model request<br/>and tool call as a durable step
+    one->>log: model request<br/>recorded
+    one->>log: get_weather call<br/>recorded
+    one->>one: model request<br/>times out
+    log-->>two: model request<br/>replayed, not run again
+    log-->>two: get_weather call<br/>replayed, not run again
+    two->>log: model request<br/>runs now and is recorded
+```
 
 ## Installation
 

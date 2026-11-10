@@ -9,7 +9,25 @@ changes. The key you connect with decides what those tools can reach.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![Inside your agent, the PostHog capability connects to PostHog's hosted MCP server at mcp.posthog.com/mcp with a personal API key as a bearer token. By default the server offers one command-driven tool, which the model sees as posthog_posthog. The features option is sent as a ?features= query that limits the server to those feature groups, and read_only=True sends the x-posthog-read-only header so the server drops every tool that makes changes.](https://pydantic.dev/docs/ai/img/harness/posthog.svg)
+```mermaid
+flowchart TB
+    accTitle: PostHog: analytics, SQL and feature flags through PostHog's MCP server
+    accDescr: Inside your agent, the PostHog capability connects to PostHog's hosted MCP server at mcp.posthog.com/mcp with a personal API key as a bearer token. By default the server offers one command-driven tool, which the model sees as posthog_posthog. The features option is sent as a ?features= query that limits the server to those feature groups, and read_only=True sends the x-posthog-read-only header so the server drops every tool that makes changes.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        posthog["PostHog()<br/>posthog_posthog,<br/>posthog_&lt;tool&gt;"]:::capability
+    end
+    server["PostHog MCP server<br/>mcp.posthog.com/mcp"]:::external
+    dropped["tools that make<br/>changes, with<br/>read_only=True"]:::blocked
+    model <-->|"tool call, result"| posthog
+    auth -->|"key for each run"| posthog
+    posthog <-->|"Bearer token,<br/>?features= query,<br/>x-posthog-read-only"| server
+    server -.-x|"drops"| dropped
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Before you start
 

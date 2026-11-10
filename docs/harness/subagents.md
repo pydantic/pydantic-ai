@@ -11,7 +11,22 @@ description: "Let a Pydantic AI agent delegate tasks to named subagents through 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The parent model calls delegate_task with an agent name and a self-contained task. SubAgents checks that the name is in the roster, that the delegate has calls left in its max_calls budget and that the tree is not deeper than max_depth, then runs that agent, such as researcher, writer or self, in its own run with its own message history and the parent's deps, usage and workspace. The child's output comes back as the tool result; a timeout or an exhausted budget comes back as a steering message, and a child error as a retry.](../img/harness/subagents.svg)
+```mermaid
+flowchart TB
+    accTitle: Subagents: hand a task to another agent run
+    accDescr: The parent model calls delegate_task with an agent name and a self-contained task. SubAgents checks that the name is in the roster, that the delegate has calls left in its max_calls budget and that the tree is not deeper than max_depth, then runs that agent, such as researcher, writer or self, in its own run with its own message history and the parent's deps, usage and workspace. The child's output comes back as the tool result; a timeout or an exhausted budget comes back as a steering message, and a child error as a retry.
+    model(["parent model"])
+    subagents["SubAgents()<br/>delegate_task"]:::capability
+    child["researcher, writer or self<br/>a new run with its<br/>own message history"]
+    refused["unknown agent name,<br/>max_calls used up,<br/>or max_depth reached"]:::blocked
+    stopped["timeout_seconds or<br/>usage_limits reached,<br/>or the child failed"]:::blocked
+    model <-->|"tool call, result"| subagents
+    subagents <-->|"task, str(result.output)"| child
+    subagents -.-x|"does not run the child"| refused
+    child -.-x|"stopped early"| stopped
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 

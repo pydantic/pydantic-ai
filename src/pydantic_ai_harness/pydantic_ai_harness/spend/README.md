@@ -4,7 +4,26 @@ Track what an agent costs, and stop it when a budget is gone.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/spend/)
 
-![SpendLimits checks budgets around each model request. Before a request, before_model_request reads every budget window from the spend store and lets the request through while all are under their ceilings. After the response, wrap_model_request prices it and adds the cost to each window. When a later request finds the day window spent, SpendLimitExceeded is raised and the request is not sent. The store can be in memory, Redis or PostgreSQL, so several workers can share one counter.](https://pydantic.dev/docs/ai/img/harness/spend.svg)
+```mermaid
+flowchart TB
+    accTitle: Spend: budgets that outlast one run
+    accDescr: SpendLimits checks budgets around each model request. Before a request, before_model_request reads every budget window from the spend store and lets the request through while all are under their ceilings. After the response, wrap_model_request prices it and adds the cost to each window. When a later request finds the day window spent, SpendLimitExceeded is raised and the request is not sent. The store can be in memory, Redis or PostgreSQL, so several workers can share one counter.
+    run["agent run"]
+    before["SpendLimits()<br/>before_model_request"]:::capability
+    model(["model"])
+    refused["SpendLimitExceeded<br/>request is not sent"]:::blocked
+    wrap["SpendLimits()<br/>wrap_model_request"]:::capability
+    store[("spend store<br/>in memory, Redis<br/>or PostgreSQL")]:::external
+    run -->|"each model request"| before
+    before -->|"all under ceiling"| model
+    before -.-x|"a window is spent"| refused
+    model -->|"response"| wrap
+    before <-->|"reads every window"| store
+    wrap -->|"adds its price<br/>to each window"| store
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 

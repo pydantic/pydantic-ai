@@ -6,7 +6,24 @@ Run your agent's commands and file edits in a persistent [Fly.io Sprite](https:/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SpritesSandbox's get_workspace hook gives the run a persistent Fly.io Sprite as ctx.workspace, so each command and file operation goes over the Sprites API, authenticated with SPRITE_TOKEN, and runs in the Sprite as the sprite user; output comes back to the tool. The first use creates the Sprite, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. A Sprite has no lifetime limit: it sleeps when idle, keeps its files and installed packages, and wakes on the next command.](https://pydantic.dev/docs/ai/img/harness/sprites-sandbox.svg)
+```mermaid
+flowchart TB
+    accTitle: Sprites Sandbox: your agent's commands run in a persistent Fly.io Sprite
+    accDescr: The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. SpritesSandbox's get_workspace hook gives the run a persistent Fly.io Sprite as ctx.workspace, so each command and file operation goes over the Sprites API, authenticated with SPRITE_TOKEN, and runs in the Sprite as the sprite user; output comes back to the tool. The first use creates the Sprite, its WorkspaceRef is saved in the message history and on the result, a later run reattaches with it, and destroy(ref) deletes it. A Sprite has no lifetime limit: it sleeps when idle, keeps its files and installed packages, and wakes on the next command.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history,<br/>result.workspace.ref"]
+        sprites["SpritesSandbox()<br/>get_workspace hands<br/>the run a Sprite"]:::capability
+    end
+    sandbox["Fly.io Sprite<br/>sleeps when idle,<br/>deleted by destroy(ref)"]:::external
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| sprites
+    ref -.->|"a later run reattaches,<br/>waking it if asleep"| sprites
+    sprites <-->|"Sprites API,<br/>SPRITE_TOKEN"| sandbox
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Install
 

@@ -17,7 +17,26 @@ scripts/run-mutmut.sh results
 scripts/run-mutmut.sh show <mutant-name>
 ```
 
-![mutmut makes small changes, called mutants, to the filesystem and shell toolset sources and runs the test suite against each one. A mutant that makes a test fail is killed. A mutant that survives is triaged: either a test is missing and should be written, or the change is an equivalent mutant that no test could tell apart from the original, such as a mutated default parameter that the mutmut wrapper never uses.](../img/harness/mutation-testing.svg)
+```mermaid
+flowchart TB
+    accTitle: Mutation testing: check that the tests pin the behavior down
+    accDescr: mutmut makes small changes, called mutants, to the filesystem and shell toolset sources and runs the test suite against each one. A mutant that makes a test fail is killed. A mutant that survives is triaged: either a test is missing and should be written, or the change is an equivalent mutant that no test could tell apart from the original, such as a mutated default parameter that the mutmut wrapper never uses.
+    code["filesystem/_toolset.py<br/>shell/_toolset.py"]
+    subgraph mutmut["mutmut, per mutant"]
+        mutant["mutant<br/>one small change, such<br/>as a flipped condition"]
+        tests["test suite<br/>runs against<br/>the mutated code"]
+    end
+    killed["killed"]
+    survived["survived<br/>triage each one"]
+    missing["missing test<br/>write one that kills it"]
+    equivalent["equivalent mutant<br/>no test could tell it<br/>from the original"]
+    code --> mutant
+    mutant --> tests
+    tests -->|"a test failed"| killed
+    tests -->|"no test failed"| survived
+    survived --> missing
+    survived --> equivalent
+```
 
 ## Interpreting survivors
 

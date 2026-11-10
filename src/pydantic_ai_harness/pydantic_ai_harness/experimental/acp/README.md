@@ -23,7 +23,24 @@ Expose a Pydantic AI agent to editors and terminal UIs over the [Agent Client Pr
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/experimental/acp/)
 
-![An editor such as Zed launches the agent script as a subprocess and talks to it over stdio with ACP JSON-RPC messages. session/new carries the workspace directory, and session_config roots the FileSystem and Shell tools there. session/prompt starts an agent run, and session/update streams its text and tool calls back so the editor shows them as messages and diffs. A tool that requires approval sends session/request_permission and waits as pending until the user allows or rejects it.](https://pydantic.dev/docs/ai/img/harness/acp.svg)
+```mermaid
+sequenceDiagram
+    accTitle: ACP: serve an agent to Zed and other editors
+    accDescr: An editor such as Zed launches the agent script as a subprocess and talks to it over stdio with ACP JSON-RPC messages. session/new carries the workspace directory, and session_config roots the FileSystem and Shell tools there. session/prompt starts an agent run, and session/update streams its text and tool calls back so the editor shows them as messages and diffs. A tool that requires approval sends session/request_permission and waits as pending until the user allows or rejects it.
+    participant editor as Editor
+    participant acp as run_acp_stdio
+    participant agent as Agent
+    editor->>acp: launches the script
+    editor->>acp: session/new, with cwd
+    Note over acp: session_config roots the tools at cwd
+    editor->>acp: session/prompt
+    acp->>agent: agent.run
+    agent-->>acp: text, tool calls
+    acp-->>editor: session/update
+    agent-->>acp: pending tool call
+    acp->>editor: session/request_permission
+    editor-->>acp: allow or reject
+```
 
 ## The problem
 

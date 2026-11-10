@@ -8,7 +8,27 @@ Let an agent read and send Slack messages, browse channels, and work with canvas
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![Inside your agent, the Slack capability connects to Slack's hosted MCP server at mcp.slack.com/mcp with a Slack user token (xoxp-); bot tokens (xoxb-) are not accepted. The model sees the server's tool names unchanged, such as slack_send_message, and messages it posts appear as that user. Your auth function returns the token for each run.](../img/harness/slack.svg)
+```mermaid
+flowchart TB
+    accTitle: Slack: read and send messages through Slack's MCP server
+    accDescr: Inside your agent, the Slack capability connects to Slack's hosted MCP server at mcp.slack.com/mcp with a Slack user token (xoxp-); bot tokens (xoxb-) are not accepted. The model sees the server's tool names unchanged, such as slack_send_message, and messages it posts appear as that user. Your auth function returns the token for each run.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        slack["Slack()<br/>slack_send_message,<br/>slack_&lt;tool&gt;"]:::capability
+    end
+    dropped["tools not marked<br/>read-only, with<br/>read_only=True"]:::blocked
+    server["Slack MCP server<br/>mcp.slack.com/mcp"]:::external
+    rejected["xoxb- bot token"]:::blocked
+    model <-->|"tool call, result"| slack
+    auth -->|"token for each run"| slack
+    slack <-->|"Bearer xoxp- user token"| server
+    slack -.-x|"drops"| dropped
+    server -.-x|"rejects"| rejected
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Install and connect
 

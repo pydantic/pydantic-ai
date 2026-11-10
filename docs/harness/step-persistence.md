@@ -13,7 +13,25 @@ A snapshot holds the run's message history, not everything around it: capability
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![An agent run with StepPersistence writes to a step store as it goes: before_run writes a RunRecord, after_model_request appends a model_request_completed event, after_tool_execute marks a tool effect completed, and after_node_run saves a complete snapshot of the message history. When the worker crashes during a second tool call, that tool effect stays at started, so it reads as unknown after the crash. Later, in any process, your code finds the run with list_runs, loads the latest complete snapshot with continue_run, and passes its messages to a new Agent.run.](../img/harness/step-persistence.svg)
+```mermaid
+sequenceDiagram
+    accTitle: Step Persistence: save a run so you can continue or fork it later
+    accDescr: An agent run with StepPersistence writes to a step store as it goes: before_run writes a RunRecord, after_model_request appends a model_request_completed event, after_tool_execute marks a tool effect completed, and after_node_run saves a complete snapshot of the message history. When the worker crashes during a second tool call, that tool effect stays at started, so it reads as unknown after the crash. Later, in any process, your code finds the run with list_runs, loads the latest complete snapshot with continue_run, and passes its messages to a new Agent.run.
+    participant agent as Agent run
+    participant store as Step store
+    participant code as Your code, later
+    Note over agent,store: StepPersistence() hooks
+    agent->>store: before_run<br/>RunRecord
+    agent->>store: after_model_request<br/>event appended
+    agent->>store: after_tool_execute<br/>tool effect completed
+    agent->>store: after_node_run<br/>complete snapshot
+    agent->>store: before_tool_execute<br/>tool effect started
+    agent->>agent: worker crashes
+    code->>store: list_runs
+    code->>store: continue_run
+    store-->>code: latest complete<br/>snapshot
+    code->>agent: new Agent.run, message_history=history
+```
 
 ## What it gives you
 

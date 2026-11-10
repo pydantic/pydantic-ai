@@ -26,7 +26,27 @@ JavaScript-rendered SPAs, and interactive multi-step flows.
     capability runs its own browser, so a session opened by one is not visible
     to the other.
 
-![The model drives a real Chromium browser itself, one tool call per action, using the eighteen tools PlaywrightBrowser adds, such as navigate, snapshot, click and type_text. Chromium starts on the first browser call and closes when the run ends. Every request passes an egress guard that enforces allowed_domains and refuses private addresses. Each tool returns the page text, trimmed to a token budget, or a screenshot as image content.](../img/harness/playwright.svg)
+```mermaid
+flowchart TB
+    accTitle: Playwright Browser: the model drives a real browser
+    accDescr: The model drives a real Chromium browser itself, one tool call per action, using the eighteen tools PlaywrightBrowser adds, such as navigate, snapshot, click and type_text. Chromium starts on the first browser call and closes when the run ends. Every request passes an egress guard that enforces allowed_domains and refuses private addresses. Each tool returns the page text, trimmed to a token budget, or a screenshot as image content.
+    model(["model"])
+    browser["PlaywrightBrowser()<br/>navigate, snapshot, click<br/>and 15 more tools"]:::capability
+    chromium["Chromium<br/>starts on the first call,<br/>closes at run end"]:::external
+    guard["egress guard"]:::capability
+    web["allowed sites<br/>on the web"]:::external
+    offlist["navigation and<br/>data requests<br/>to other domains"]:::blocked
+    private["loopback, private<br/>and metadata<br/>addresses"]:::blocked
+    model <-->|"one tool call per action,<br/>page text or screenshot"| browser
+    browser <--> chromium
+    chromium -->|"every request"| guard
+    guard --> web
+    guard -.-x|"allowed_domains"| offlist
+    guard -.-x|"block_private_addresses"| private
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Installation
 

@@ -24,7 +24,24 @@ Why it exists: a conversation that carries images, audio, or other `BinaryConten
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![externalize_media walks the JSON form of a message history. Each binary or text payload at or above threshold_bytes is written to a MediaStore with put and replaced by a media+sha256:// URI derived from its hash, so the same image referenced twice is stored once. restore_media reads each URI back with get and puts the original payload in place. Disk, SQLite, S3, MongoDB and PostgreSQL stores are available.](../img/harness/media.svg)
+```mermaid
+flowchart TB
+    accTitle: Media Externalization: store large payloads once, keep a URI in the history
+    accDescr: externalize_media walks the JSON form of a message history. Each binary or text payload at or above threshold_bytes is written to a MediaStore with put and replaced by a media+sha256:// URI derived from its hash, so the same image referenced twice is stored once. restore_media reads each URI back with get and puts the original payload in place. Disk, SQLite, S3, MongoDB and PostgreSQL stores are available.
+    history["message history<br/>binary and text payloads"]
+    ext["externalize_media<br/>payloads at or above<br/>threshold_bytes"]:::capability
+    store[("MediaStore<br/>disk, SQLite, S3,<br/>MongoDB or PostgreSQL")]:::external
+    lean["lean history<br/>media+sha256:// URIs"]
+    restore["restore_media"]:::capability
+    history --> ext
+    ext -->|"put, once per hash"| store
+    ext -->|"URI replaces payload"| lean
+    lean --> restore
+    restore <-->|"get"| store
+    restore -->|"payloads back in place"| history
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Consumers
 

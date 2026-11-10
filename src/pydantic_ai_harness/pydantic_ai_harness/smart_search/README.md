@@ -8,7 +8,29 @@ System One API, or TypeSafe's Jev, is the recommended judge.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![The model calls smart_search with a plain-English query. SmartSearch lists the files in the workspace with rg --files, chunks them into snippets, shortlists up to 128 snippets with BM25, and sends each one to the judge model you chose. Snippets whose relevance reaches the threshold come back to the model as a SmartSearchResult with file, line range and a short excerpt, plus coverage figures and warnings.](https://pydantic.dev/docs/ai/img/harness/smart-search.svg)
+```mermaid
+flowchart TB
+    accTitle: Smart Search: find code by what it does
+    accDescr: The model calls smart_search with a plain-English query. SmartSearch lists the files in the workspace with rg --files, chunks them into snippets, shortlists up to 128 snippets with BM25, and sends each one to the judge model you chose. Snippets whose relevance reaches the threshold come back to the model as a SmartSearchResult with file, line range and a short excerpt, plus coverage figures and warnings.
+    model(["model"])
+    subgraph search["SmartSearch()"]
+        files["List files<br/>under directory"]:::capability
+        chunk["Chunk<br/>files into snippets"]:::capability
+        shortlist["Shortlist with BM25<br/>128 by default"]:::capability
+        judge["Judge<br/>relevance &gt;= threshold"]:::capability
+    end
+    workspace["run workspace<br/>LocalWorkspace<br/>or a sandbox"]:::external
+    judgemodel(["judge model<br/>one request per snippet"])
+    model -->|"smart_search query"| files
+    files <-->|"rg --files"| workspace
+    files --> chunk
+    chunk --> shortlist
+    shortlist --> judge
+    judge <--> judgemodel
+    judge -->|"SmartSearchResult"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## The problem
 

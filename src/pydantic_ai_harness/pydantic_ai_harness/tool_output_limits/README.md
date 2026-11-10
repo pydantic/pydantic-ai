@@ -8,7 +8,24 @@ form persist. The reduction is not recomputed per request.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/tool_output_limits/)
 
-![ToolOutputLimits runs in the after_tool_execute hook, on a tool result before it enters the history. With the default band, a 48,000-character result is spilled: the full payload is written to the workspace store under .pydantic-ai-harness/tool-output/, and the model gets a short marker with the handle and a head and tail preview. The model reads slices back with the read_tool_result tool.](https://pydantic.dev/docs/ai/img/harness/tool-output-limits.svg)
+```mermaid
+flowchart TB
+    accTitle: Tool Output Limits: reduce large tool results once, when they arrive
+    accDescr: ToolOutputLimits runs in the after_tool_execute hook, on a tool result before it enters the history. With the default band, a 48,000-character result is spilled: the full payload is written to the workspace store under .pydantic-ai-harness/tool-output/, and the model gets a short marker with the handle and a head and tail preview. The model reads slices back with the read_tool_result tool.
+    model(["model"])
+    tool["your tool"]
+    limits["ToolOutputLimits()<br/>default band: Spill at<br/>10,000 characters"]:::capability
+    store[("WorkspaceStore<br/>.pydantic-ai-harness/<br/>tool-output/")]:::external
+    reader["read_tool_result"]:::capability
+    model -->|"tool call"| tool
+    tool -->|"after_tool_execute"| limits
+    limits -->|"full payload"| store
+    limits -->|"marker, handle, preview"| model
+    model <-->|"handle, a slice"| reader
+    reader <-->|"reads"| store
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## The three modes
 

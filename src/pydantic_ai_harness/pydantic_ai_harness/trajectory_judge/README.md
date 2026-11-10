@@ -7,7 +7,22 @@ Watch a live agent run with a second model, and steer it back on course mid-run.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/trajectory_judge/)
 
-![TrajectoryJudge starts an evaluation from the after_model_request hook every 20 model requests. The most recent window of the transcript goes to a judge model, which runs alongside the agent instead of blocking it. The judge returns AllGood, and nothing happens, or Steer(message=...), which is enqueued and delivered on the next model request as a framework note plus the message in a judge_feedback element.](https://pydantic.dev/docs/ai/img/harness/trajectory-judge.svg)
+```mermaid
+flowchart TB
+    accTitle: Trajectory Judge: a second model reviews the run while it runs
+    accDescr: TrajectoryJudge starts an evaluation from the after_model_request hook every 20 model requests. The most recent window of the transcript goes to a judge model, which runs alongside the agent instead of blocking it. The judge returns AllGood, and nothing happens, or Steer(message=...), which is enqueued and delivered on the next model request as a framework note plus the message in a judge_feedback element.
+    model(["model"])
+    judge["TrajectoryJudge(every=20)<br/>after_model_request hook"]:::capability
+    reviewer(["judge model<br/>runs alongside<br/>the agent"])
+    steer["Steer(message=...)<br/>enqueued"]:::capability
+    good["AllGood<br/>nothing happens"]
+    model -->|"every 20 model requests"| judge
+    judge -.->|"recent window<br/>of the transcript"| reviewer
+    reviewer --> steer
+    reviewer --> good
+    steer -->|"delivered on<br/>the next request"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 

@@ -14,7 +14,21 @@ Let a second model approve the low-risk tool calls that need approval, and leave
 !!! tip "Approval Reviewer or Tool Call Judge?"
     Both ask a second model one yes/no question about a tool call, but give it opposite powers. Use [Tool Call Judge](tool-call-judge.md) when you want a model to say no: its `yes` blocks a call, whether or not a person is watching. Use Approval Reviewer when you want a model to say yes on a person's behalf: it reviews only calls that already need approval, its `no` approves the call, and everything else still goes to the person. A judge cannot do the second job, because it runs when a call executes, after the person has already approved it.
 
-![ApprovalReviewer runs in the handle_deferred_tool_calls hook, on tool calls that need approval. A second model is asked one risk question about the call run_shell(command="find . -name '*.py' | wc -l"). A no approves the call and it runs in the same run step; a yes, unsure or a failed review leaves the call for a person, as it would be without the reviewer.](../img/harness/approval-reviewer.svg)
+```mermaid
+flowchart TB
+    accTitle: Approval Reviewer: a second model approves low-risk calls
+    accDescr: ApprovalReviewer runs in the handle_deferred_tool_calls hook, on tool calls that need approval. A second model is asked one risk question about the call run_shell(command="find . -name '*.py' | wc -l"). A no approves the call and it runs in the same run step; a yes, unsure or a failed review leaves the call for a person, as it would be without the reviewer.
+    model(["model"])
+    reviewer["ApprovalReviewer()<br/>handle_deferred_tool_calls<br/>hook"]:::capability
+    second(["reviewer model"])
+    tool["your tool<br/>runs in the same<br/>run step"]
+    person(["person<br/>approves or denies"])
+    model -->|"tool call that<br/>needs approval"| reviewer
+    reviewer <-->|"one risk<br/>question"| second
+    reviewer -->|"no: approved"| tool
+    reviewer -->|"yes, unsure or<br/>failed review"| person
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 

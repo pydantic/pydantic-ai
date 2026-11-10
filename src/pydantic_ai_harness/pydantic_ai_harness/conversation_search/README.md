@@ -26,7 +26,23 @@ async def ask(question: str, conversation_id: str) -> str:
     return result.output
 ```
 
-![StepPersistence saves the full message history to a step store at every step. When compaction later drops messages from the live context, the model can call search_conversation_history. ConversationSearch keeps only runs with the calling run's conversation_id, replays their complete snapshots from the store to recover the original messages, ranks them with BM25, and returns the best excerpts with the messages around them.](https://pydantic.dev/docs/ai/img/harness/conversation-search.svg)
+```mermaid
+flowchart TB
+    accTitle: Conversation Search: recall what compaction dropped
+    accDescr: StepPersistence saves the full message history to a step store at every step. When compaction later drops messages from the live context, the model can call search_conversation_history. ConversationSearch keeps only runs with the calling run's conversation_id, replays their complete snapshots from the store to recover the original messages, ranks them with BM25, and returns the best excerpts with the messages around them.
+    model(["model"])
+    search["ConversationSearch()<br/>search_conversation_history"]:::capability
+    persist["StepPersistence"]
+    store[("step store<br/>snapshots of each step,<br/>before compaction too")]:::external
+    other["other conversations<br/>scope='conversation'"]:::blocked
+    model <-->|"query,<br/>BM25-ranked excerpts"| search
+    persist -->|"saves the full history"| store
+    search -->|"replays complete<br/>snapshots"| store
+    search -.-x|"not searched"| other
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Why
 

@@ -8,7 +8,22 @@ signed-in user's workspace.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![Inside your agent, the DayAI capability connects to Day AI's hosted MCP server at day.ai/api/mcp with an OAuth access token, and the model sees the server's tools under the day_ai_ prefix. The server marks no tool read-only, so there is no read_only option. Wrapping the capability's toolset with approval_required() pauses every Day AI tool call until you approve it.](https://pydantic.dev/docs/ai/img/harness/day-ai.svg)
+```mermaid
+flowchart TB
+    accTitle: Day AI: CRM records and meeting context through Day AI's MCP server
+    accDescr: Inside your agent, the DayAI capability connects to Day AI's hosted MCP server at day.ai/api/mcp with an OAuth access token, and the model sees the server's tools under the day_ai_ prefix. The server marks no tool read-only, so there is no read_only option. Wrapping the capability's toolset with approval_required() pauses every Day AI tool call until you approve it.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        dayai["DayAI()<br/>day_ai_&lt;tool&gt;"]:::capability
+    end
+    server["Day AI MCP server<br/>day.ai/api/mcp"]:::external
+    model <-->|"tool call, result"| dayai
+    auth -->|"token for each run"| dayai
+    dayai <-->|"tools/call,<br/>OAuth Bearer token"| server
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Before you start
 

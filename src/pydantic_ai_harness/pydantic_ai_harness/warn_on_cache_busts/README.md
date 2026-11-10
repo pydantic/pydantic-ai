@@ -36,7 +36,21 @@ every request.
 Providers report cache reads and writes in `RequestUsage.cache_read_tokens` and
 `cache_write_tokens`, so the monitor works the same on every provider that reports them.
 
-![WarnOnCacheBusts runs in the after_model_request hook and only observes. For each response it compares cache_read_tokens with the cacheable prefix the conversation has established. Requests 2 to 4 read back the whole prefix; request 5 reads back 4K of an established 40K, so it emits a CacheBustWarning with reason unexpected. Collapses explained by an expired cache, compaction or unreported usage do not warn.](https://pydantic.dev/docs/ai/img/harness/warn-on-cache-busts.svg)
+```mermaid
+flowchart TB
+    accTitle: Warn On Cache Busts: notice when the prompt cache stops hitting
+    accDescr: WarnOnCacheBusts runs in the after_model_request hook and only observes. For each response it compares cache_read_tokens with the cacheable prefix the conversation has established. Requests 2 to 4 read back the whole prefix; request 5 reads back 4K of an established 40K, so it emits a CacheBustWarning with reason unexpected. Collapses explained by an expired cache, compaction or unreported usage do not warn.
+    model(["model"])
+    cap["WarnOnCacheBusts()<br/>after_model_request"]:::capability
+    reason{"reason?"}
+    warning["CacheBustWarning"]:::capability
+    quiet["no warning"]
+    model -->|"each response"| cap
+    cap -->|"cache_read_tokens<br/>falls short of the<br/>established prefix"| reason
+    reason -->|"unexpected, unknown"| warning
+    reason -->|"ttl_expired, compacted,<br/>unreported"| quiet
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 

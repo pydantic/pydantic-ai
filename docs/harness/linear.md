@@ -8,7 +8,26 @@ Let an agent read and change Linear issues, projects, teams, and comments throug
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![Inside your agent, the Linear capability connects to Linear's hosted MCP server with a bearer token, and the model sees the server's tools under the linear_ prefix, such as linear_list_issues. Your auth function returns the token for each run from its deps. With read_only=True the capability connects to the read-only endpoint, mcp.linear.app/mcp/readonly, instead of mcp.linear.app/mcp.](../img/harness/linear.svg)
+```mermaid
+flowchart TB
+    accTitle: Linear: issue, project and comment tools from Linear's MCP server
+    accDescr: Inside your agent, the Linear capability connects to Linear's hosted MCP server with a bearer token, and the model sees the server's tools under the linear_ prefix, such as linear_list_issues. Your auth function returns the token for each run from its deps. With read_only=True the capability connects to the read-only endpoint, mcp.linear.app/mcp/readonly, instead of mcp.linear.app/mcp.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        linear["Linear()<br/>linear_list_issues,<br/>linear_&lt;tool&gt;"]:::capability
+    end
+    subgraph server["Linear MCP server"]
+        full["mcp.linear.app/mcp"]:::external
+        readonly["mcp.linear.app/mcp/readonly"]:::external
+    end
+    model <-->|"tool call, result"| linear
+    auth -->|"token for each run"| linear
+    linear <-->|"Bearer token,<br/>by default"| full
+    linear <-->|"Bearer token,<br/>read_only=True"| readonly
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Install and connect
 

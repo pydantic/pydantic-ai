@@ -10,7 +10,20 @@ or incomplete JSON. Use this capability on its own or through [Coder](coder.md),
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![RepairToolArguments runs in the before_tool_validate hook, after the model makes a tool call and before Pydantic AI validates its arguments. Malformed JSON such as {'path': 'a.py', 'limit': 10, with single quotes, a trailing comma and a missing brace is repaired by json-repair into valid JSON, which then goes through normal schema validation. Valid arguments pass through unchanged.](../img/harness/repair-tool-arguments.svg)
+```mermaid
+flowchart TB
+    accTitle: Repair Tool Arguments: fix malformed JSON before validation
+    accDescr: RepairToolArguments runs in the before_tool_validate hook, after the model makes a tool call and before Pydantic AI validates its arguments. Malformed JSON such as {'path': 'a.py', 'limit': 10, with single quotes, a trailing comma and a missing brace is repaired by json-repair into valid JSON, which then goes through normal schema validation. Valid arguments pass through unchanged.
+    model(["model"])
+    repair["RepairToolArguments()<br/>before_tool_validate<br/>json-repair fixes syntax"]:::capability
+    validate["validate args<br/>against the schema"]
+    tool["your tool"]
+    model -->|"tool call, JSON args"| repair
+    repair -->|"repaired if malformed,<br/>unchanged if valid"| validate
+    validate --> tool
+    tool -->|"tool result, next request"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## Usage
 
