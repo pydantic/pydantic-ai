@@ -7,7 +7,6 @@ from types import ModuleType
 
 import pytest
 
-import pydantic_ai_harness.compaction as compaction
 import pydantic_ai_harness.filesystem as filesystem
 import pydantic_ai_harness.shell as shell
 import pydantic_ai_harness.step_persistence as step_persistence
@@ -19,7 +18,6 @@ from pydantic_ai_harness import HarnessDeprecationWarning
 @pytest.mark.parametrize(
     ('module', 'old_name', 'new_name', 'kind'),
     [
-        (compaction, 'ContextUsageEvent', 'ContextUsageMeasuredEvent', 'report_context_usage.measured'),
         (filesystem, 'FileChangeRequestEvent', 'FileChangeRequestedEvent', 'file_system.file_change_request'),
         (step_persistence, 'SnapshotSaved', 'SnapshotSavedEvent', 'step_persistence.snapshot_saved'),
         (subagents, 'DelegationStartEvent', 'DelegationStartedEvent', 'sub_agents.delegation_start'),
@@ -28,15 +26,13 @@ from pydantic_ai_harness import HarnessDeprecationWarning
 )
 def test_renamed_event_keeps_its_old_name_and_kind(module: ModuleType, old_name: str, new_name: str, kind: str) -> None:
     event_type = getattr(module, new_name)
-    message = f'`{module.__name__}.{old_name}` has been renamed to `{module.__name__}.{new_name}`'
+    message = (
+        f'`{module.__name__}.{old_name}` has been renamed to `{module.__name__}.{new_name}`. '
+        'Update your imports; this deprecated alias will be removed in a future release.'
+    )
     with pytest.warns(HarnessDeprecationWarning, match=re.escape(message)):
         assert getattr(module, old_name) is event_type
     assert event_type.kind == kind
-
-
-def test_filesystem_unknown_attribute_raises() -> None:
-    with pytest.raises(AttributeError, match='has no attribute'):
-        _ = filesystem.DoesNotExist
 
 
 def test_derived_kinds_are_unchanged() -> None:

@@ -13,6 +13,7 @@ import anyio
 import anyio.to_thread
 import pytest
 
+import pydantic_ai_harness.filesystem as filesystem
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import (
@@ -1036,3 +1037,8 @@ class TestFileChangeRequests:
 
         assert (tmp_path / 'direct.txt').read_text() == 'bye\n'
         assert (tmp_path / 'made').is_dir()
+
+
+def test_unknown_attribute_raises() -> None:
+    with pytest.raises(AttributeError, match='has no attribute'):
+        _ = filesystem.DoesNotExist
