@@ -1159,7 +1159,6 @@ ends with &lt;/tool_result
         @agent.tool_plain(metadata={'background': True})
         async def slower() -> str:
             await suspending.wait()
-            await asyncio.sleep(0.01)
             return 'slower value'
 
         async with agent.iter('go') as run:
