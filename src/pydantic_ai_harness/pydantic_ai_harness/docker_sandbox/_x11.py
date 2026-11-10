@@ -8,10 +8,8 @@ from contextlib import suppress
 
 import anyio
 
-from pydantic_ai.workspaces import (
+from pydantic_ai.computer_use import (
     Click,
-    CommandResult,
-    ComputerAction,
     Drag,
     HoldKeys,
     MouseDown,
@@ -21,14 +19,12 @@ from pydantic_ai.workspaces import (
     PressKeys,
     Region,
     Scroll,
-    SupportsCommands,
     TypeText,
-    WorkspaceError,
-    WorkspaceUnavailableError,
-    WorkspaceUnsupportedActionError,
 )
+from pydantic_ai.workspaces import CommandResult, SupportsCommands, WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness._display import ManagedDisplay, png_from_base64
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
+from pydantic_ai_harness.computer_use import ComputerAction, UnsupportedActionError
 
 _BUTTONS: dict[str, str] = {'left': '1', 'middle': '2', 'right': '3', 'back': '8', 'forward': '9'}
 
@@ -145,7 +141,7 @@ def _keysym(key: str) -> str:
         return key
     # Validation refuses other names; refusing them here too keeps out one xdotool would read as a command, such as
     # `exec`.
-    raise WorkspaceUnsupportedActionError(f'The display cannot press the key {key!r}.')
+    raise UnsupportedActionError(f'The display cannot press the key {key!r}.')
 
 
 def _character(character: str) -> str:
@@ -155,7 +151,7 @@ def _character(character: str) -> str:
     application that reads the keymap after the keystroke, such as Chrome, then gets a different character or none.
     """
     if not character.isascii():
-        raise WorkspaceUnsupportedActionError(f'The display can only type ASCII characters, not {character!r}.')
+        raise UnsupportedActionError(f'The display can only type ASCII characters, not {character!r}.')
     if character == '\n':
         return 'Return'  # `xdotool type` sends Linefeed, which browsers ignore
     if character == '\t':
@@ -183,8 +179,6 @@ def x11_display(
     size: tuple[int, int],
     script: str,
     where: Callable[[], str],
-    *,
-    screen_key: Callable[[], object | None],
 ) -> ManagedDisplay:
     """A backend's display on an X server that `script` starts at the size `$1` names, unless one answers.
 
@@ -204,7 +198,7 @@ def x11_display(
             display.started_fresh()
         return X11Computer(backend)
 
-    display = ManagedDisplay(start, screen_key=screen_key)
+    display = ManagedDisplay(start)
     return display
 
 
@@ -248,7 +242,7 @@ class X11Computer:
             raise
         # xdotool skips a key name the display doesn't know and still succeeds.
         if 'No such key name' in result.stderr:
-            raise WorkspaceUnsupportedActionError(f'The display cannot press that key: {result.stderr.strip()}')
+            raise UnsupportedActionError(f'The display cannot press that key: {result.stderr.strip()}')
 
     async def _capture(self, script: str, *args: str) -> bytes:
         """Run a capture script with `args` and read the PNG it prints as base64."""
@@ -321,4 +315,4 @@ class X11Computer:
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys)
             case _:
-                raise WorkspaceUnsupportedActionError(f'The display cannot perform {action!r}.')
+                raise UnsupportedActionError(f'The display cannot perform {action!r}.')

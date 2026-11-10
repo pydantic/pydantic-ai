@@ -8,21 +8,19 @@ from __future__ import annotations
 import anyio
 import pytest
 
-from pydantic_ai.workspaces import (
-    Click,
-    ComputerAction,
-    Point,
-    PressKeys,
-    Region,
-    SupportsRestartCount,
-    WorkspaceError,
-    WorkspaceTimeoutError,
-    WorkspaceUnavailableError,
-    WorkspaceUnsupportedActionError,
-)
+from pydantic_ai.computer_use import Click, Point, PressKeys, Region
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness._display import ManagedDisplay
+from pydantic_ai_harness.computer_use import (
+    ComputerAction,
+    Display,
+    SupportsCursorPosition,
+    SupportsScaledScreenshot,
+    SupportsZoom,
+    UnsupportedActionError,
+)
 
-from ..workspace_fakes import FAKE_SCREENSHOT
+from .display_fakes import FAKE_SCREENSHOT
 
 
 class FakeDriver:
@@ -59,7 +57,7 @@ class FakeDriver:
     async def act(self, action: ComputerAction) -> None:
         self._maybe_fail()
         if self._refuse is not None and isinstance(action, self._refuse):
-            raise WorkspaceUnsupportedActionError('the fake display refuses it')
+            raise UnsupportedActionError('the fake display refuses it')
         self.acted.append(action)
 
     async def zoom(self, region: Region) -> bytes:
@@ -131,28 +129,18 @@ async def test_an_action_does_not_run_on_a_display_that_started_for_it() -> None
     assert (driver.acted, driver.starts) == ([Click(x=2, y=2)], 1)
 
 
-async def test_a_new_display_launched_after_one_ran_counts_as_a_restart() -> None:
-    """`ComputerUse` compares the count around each call to report a restart; the first launch isn't one."""
-    driver = FakeDriver()
-
-    async def start() -> FakeDriver:
-        display.started_fresh()
-        return await driver.start()
-
-    display = ManagedDisplay(start)
-    assert isinstance(display, SupportsRestartCount)
-    await display.screenshot()
-    assert display.restart_count == 0
-    # The display stopped: the look fails, and its retry launches a new one.
-    driver.failures.append(RuntimeError('the X server is gone'))
-    await display.screenshot()
-    assert (display.restart_count, driver.starts) == (1, 2)
+def test_it_is_a_display_with_every_optional_ability() -> None:
+    display = ManagedDisplay(FakeDriver().start)
+    assert all(
+        isinstance(display, protocol)
+        for protocol in (Display, SupportsZoom, SupportsScaledScreenshot, SupportsCursorPosition)
+    )
 
 
 async def test_a_refused_action_keeps_the_display() -> None:
     driver = FakeDriver(refuse=PressKeys)
     display = ManagedDisplay(driver.start)
-    with pytest.raises(WorkspaceUnsupportedActionError):
+    with pytest.raises(UnsupportedActionError):
         await display.act(PressKeys(keys=('a',)))
     await display.act(Click(x=1, y=1))
     assert driver.starts == 1

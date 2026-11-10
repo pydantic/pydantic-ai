@@ -48,8 +48,7 @@ in an `on_run_error` hook, as shown for [E2B](../e2b_sandbox/#clean-up).
 | `DockerSandbox(desktop=True)` | A container on your machine |
 | [`DaytonaSandbox(desktop=True)`](../daytona_sandbox/#give-the-agent-a-desktop) | A Daytona cloud sandbox |
 
-To give your own sandbox a screen, implement [`SupportsDisplay`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.SupportsDisplay); see
-[Controlling a display](https://pydantic.dev/docs/ai/core-concepts/workspace/#controlling-a-display).
+To give your own sandbox a screen, see [Giving a workspace a screen](#giving-a-workspace-a-screen).
 
 On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access) workspace the agent can take screenshots but not act.
 
@@ -89,16 +88,16 @@ handler such as [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/tools-t
 
 ## Screen size
 
-Some models only take screenshots up to a size, set by `computer_use_screenshot_limit` in their profile:
+Some models only take screenshots up to a size, set by `computer_use_screenshot_max_side` and
+`computer_use_screenshot_max_pixels` in their profile:
 
 - Claude Opus 4.7, Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side.
 - Earlier Claude models: 1568 pixels and about 1.15 megapixels.
 - GPT: 2560x1440. It clicks less accurately on a larger screen.
 
 A 1280x800 screen fits every model. On a larger screen, `ComputerUse` sends a scaled-down screenshot and scales the
-model's positions back up, if the display can scale screenshots
-([`SupportsScaledScreenshot`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.SupportsScaledScreenshot)). If it can't, the run stops with an
-error naming the largest size that fits.
+model's positions back up, if the display can scale screenshots (`SupportsScaledScreenshot`). If it can't, the run
+stops with an error naming the largest size that fits.
 
 ## When something goes wrong
 
@@ -117,8 +116,7 @@ the `computer_use` namespace, read with `@agent.on_event` or `run_stream_events(
 
 | Event | Payload |
 |---|---|
-| `ActionsPerformedEvent` | `performed`, `error`, `screenshot_size` |
-| `DisplayRestartedEvent` | none: the display restarted since the previous call's screenshot or during this call, so what was on screen may be gone |
+| `ActionsPerformedEvent` | `result`, the call's `ComputerResult`, and `tool_call_id` |
 
 They are emitted once per call, also under durable execution. The same facts stay in the history: the `computer`
 tool's results are `ComputerReturnPart`s, whose `result` is the call's `ComputerResult`, and a call a provider
@@ -138,8 +136,7 @@ no telemetry spans; core already traces the tool call.
   deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
 - On Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure
   [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads).
-- If the display restarts, the model isn't told; its next screenshot shows the new screen. The app gets a
-  `DisplayRestartedEvent` from displays that report restarts, such as the Docker sandbox's desktop.
+- If the display restarts, the model isn't told; its next screenshot shows the new screen.
 - [Instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-binary-content) records every screenshot. Pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
 - [`Advisor(forward_history=True)`](../advisor/) forwards every screenshot; Anthropic refuses one past 600 images.
@@ -148,3 +145,41 @@ no telemetry spans; core already traces the tool call.
 ## API reference
 
 ::: pydantic_ai_harness.computer_use.ComputerUse
+
+## Giving a workspace a screen
+
+`ComputerUse` drives the display of the run's workspace backend: a backend with a screen implements
+`SupportsDisplay`, a `display` property that returns a `Display`, or `None` when there's no screen. It must not do
+I/O, and must return the same object every time.
+
+A `Display` has three methods: `display_size()`, `screenshot()` (PNG bytes), and `act()`, which runs one
+`ComputerAction` such as a click or a key press, in screenshot pixels. A display can also implement:
+
+- `SupportsZoom`: capture part of the screen at full resolution.
+- `SupportsScaledScreenshot`: capture the whole screen smaller, for a model with a screenshot size limit.
+- `SupportsCursorPosition`: report where the pointer is.
+
+Without one of these, the model is told the action failed. Raise `UnsupportedActionError` for any action the display
+can't do exactly, including action types added later. The protocols are structural, so a display needs no imports
+from here:
+
+```python {title="my_display.py"}
+from pydantic_ai.computer_use import Click
+from pydantic_ai_harness.computer_use import ComputerAction, Display, UnsupportedActionError
+
+
+class MyDisplay:
+    async def display_size(self) -> tuple[int, int]:
+        return (1280, 800)
+
+    async def screenshot(self) -> bytes:
+        raise NotImplementedError  # capture the screen as PNG bytes
+
+    async def act(self, action: ComputerAction) -> None:
+        if not isinstance(action, Click):
+            raise UnsupportedActionError(f'this display cannot {action.type}')
+        # click at (action.x, action.y), or at the pointer when they're `None`
+
+
+assert isinstance(MyDisplay(), Display)
+```

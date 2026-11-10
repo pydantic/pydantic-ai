@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from ...workspace_fakes import FAKE_SCREENSHOT
+from ..display_fakes import FAKE_SCREENSHOT
 
 # `flaky-image` fails only its first pull, `unstartable-image` creates a container
 # that fails to start, `--fake-hang` makes the first `run` hang before it creates anything so a create can be
