@@ -66,12 +66,13 @@ class ComputerUseWorkflow(PydanticAIWorkflow):
         ]
 
 
-def _computer_calls(history: WorkflowHistory) -> list[int]:
-    """The retry limit of each activity a `computer` call ran as."""
+def _activities(history: WorkflowHistory, operation: str) -> list[tuple[int, int]]:
+    """The retry limit and start-to-close timeout in seconds of each activity `operation` ran as."""
     return [
-        attributes.retry_policy.maximum_attempts
+        (attributes.retry_policy.maximum_attempts, attributes.start_to_close_timeout.ToSeconds())
         for event in history.events
-        if (attributes := event.activity_task_scheduled_event_attributes).activity_type.name.endswith('computer__call')
+        if event.HasField('activity_task_scheduled_event_attributes')
+        and (attributes := event.activity_task_scheduled_event_attributes).activity_type.name.endswith(operation)
     ]
 
 
@@ -89,7 +90,8 @@ async def test_each_call_is_one_activity_that_runs_once_and_replays_without_acti
                 'Click.',
                 id=workflow_id,
                 task_queue='computer-use',
-                execution_timeout=timedelta(seconds=60),
+                # Longer than the activities' own timeouts, so the workflow's deadline doesn't cut them short.
+                execution_timeout=timedelta(minutes=20),
             )
         history = await client.get_workflow_handle(workflow_id).fetch_history()
 
@@ -100,7 +102,11 @@ async def test_each_call_is_one_activity_that_runs_once_and_replays_without_acti
         'acting again.'
     )
     assert _provider.actions == [Click(x=0, y=1), Click(x=0, y=2)]
-    assert _computer_calls(history) == [1, 1]
+    # A call acts, so it runs at most once, with time for 20 long actions.
+    assert _activities(history, 'computer__call') == [(1, 900), (1, 900)]
+    # Reading the size for the native tool may start the screen, which can install it first.
+    sizes = _activities(history, 'computer__display_size')
+    assert sizes and {timeout for _, timeout in sizes} == {600}
 
     await Replayer(
         workflows=[ComputerUseWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=runner

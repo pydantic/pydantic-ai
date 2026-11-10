@@ -34,12 +34,12 @@ from pytest_examples import CodeExample
 
 from pydantic_ai.computer_use import Click, PressKeys, TypeText
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceTimeoutError, WorkspaceUnavailableError
-from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
+from ..display_contract import check_display_contract
 from .conftest import LIVE_AUTO_STOP_INTERVAL
 
 pytestmark = pytest.mark.daytona_live
@@ -291,8 +291,9 @@ async def test_commands_get_a_usable_environment(client: daytona.AsyncDaytona) -
         assert result.stdout.splitlines() == ['1', path]
 
 
-class TestLiveDaytonaDesktop(WorkspaceBackendSuite):
-    """Runs the workspace rules, the display ones included, against a sandbox started with a desktop."""
+class TestLiveDaytonaDesktop:
+    """Runs the display against a sandbox started with a desktop. Commands and files are the module's other tests':
+    a desktop sandbox runs them the same way."""
 
     @pytest.fixture(scope='class')
     @classmethod
@@ -313,6 +314,8 @@ class TestLiveDaytonaDesktop(WorkspaceBackendSuite):
         display = backend.display
         assert display is not None
         assert await display.display_size() == (1280, 800)
+        await display.screenshot()  # an action waits for a screenshot of a desktop that just started
+        await check_display_contract(display)
         await backend.run(
             'setsid xfce4-terminal --geometry 60x10+100+100 -x sh -c "touch ready; cat > typed.txt" >/dev/null 2>&1 &',
             shell=True,
