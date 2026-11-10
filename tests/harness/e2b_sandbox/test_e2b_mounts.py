@@ -15,7 +15,7 @@ from e2b.exceptions import NotFoundException, SandboxException
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef
 from pydantic_ai_harness import MountError
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
-from tests.harness.mounts.probing import bucket, probing
+from tests.harness.mounts.sandbox_fixtures import bucket, probing
 
 from .fake_e2b import FakeE2B, FakeSandbox
 

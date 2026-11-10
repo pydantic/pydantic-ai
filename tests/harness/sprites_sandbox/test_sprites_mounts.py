@@ -18,7 +18,7 @@ import pytest
 
 from pydantic_ai_harness import MountError
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
-from tests.harness.mounts.probing import bucket, probing
+from tests.harness.mounts.sandbox_fixtures import bucket, probing
 
 from .fake_sprites import SpriteTransport
 

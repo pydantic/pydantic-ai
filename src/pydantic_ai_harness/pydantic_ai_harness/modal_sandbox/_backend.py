@@ -785,12 +785,12 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         """Run `argv` with `stdin` as its input, which reaches no command line or log; Modal runs commands as root."""
         # gVisor shows a `/dev/fuse` but refuses to mount one, so the kernel's name (`4.19.0-gvisor`) is what tells;
         # the input is read first, so it never waits on a pipe nothing reads.
-        gvisor = 86
-        fuse_check = f'case "$(uname -r)" in *gvisor*) head -n 1 > /dev/null; exit {gvisor} ;; esac; exec "$@"'
+        gvisor_exit = 86
+        fuse_check = f'case "$(uname -r)" in *gvisor*) head -n 1 > /dev/null; exit {gvisor_exit} ;; esac; exec "$@"'
         sandbox = await self.get_sandbox()
         async with self._mapped_errors(sandbox, 'Could not mount storage in the Modal sandbox'):
-            # Modal stops the helper if its own alarm never fires, before the caller stops waiting for it, so a
-            # helper never outlives the call that started it.
+            # Modal stops the helper after 1830 seconds, if its own alarm never fired, before the mount call's
+            # 1860-second wait ends.
             process = await sandbox.exec.aio(
                 'sh', '-c', fuse_check, 'sh', *argv, timeout=DEADLINE_SECONDS + 30, workdir='/', text=False
             )
@@ -798,7 +798,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             process.stdin.write_eof()
             await process.stdin.drain.aio()
             stdout, stderr, exit_code, _ = await _collect_output(process, ['', ''], anyio.Event())
-        if exit_code == gvisor:
+        if exit_code == gvisor_exit:
             raise MountError(
                 f'Modal sandbox {sandbox.object_id} runs on gVisor, which cannot mount the FUSE file systems mounts '
                 "use. Create it on Modal's VM runtime: `ModalSandbox(runtime='vm')`."

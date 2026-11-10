@@ -61,7 +61,6 @@ dbos = ["pydantic-ai-slim[dbos]=={{ major }}.{{ minor }}.{{ patch }}{% if distan
 logfire = ["logfire>=4.31.0", "pydantic-ai-slim[spec]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-handlebars>=0.2.1"]
 render = ["render>=1.6.0"]
 # 1.6.0 added `Sandbox.create(runtime=...)`, which `ModalSandbox(runtime=...)` passes on.
-# 1.6.0 added `Sandbox.create(runtime=...)`, which `ModalSandbox(runtime=...)` passes on.
 modal = ["modal>=1.6.0"]
 e2b = ["e2b>=2.48.0"]
 sprites = ["sprites-py>=0.7.0,<0.8"]

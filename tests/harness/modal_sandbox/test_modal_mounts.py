@@ -15,7 +15,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness import MountError
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
-from tests.harness.mounts.probing import bucket, probing
+from tests.harness.mounts.sandbox_fixtures import bucket, probing
 
 from .fake_modal import FakeModal, FakeSandbox
 
