@@ -9,7 +9,7 @@ Run your agent's commands and file edits in a [BoxLite](https://github.com/boxli
 ```mermaid
 flowchart TB
     accTitle: BoxLite Sandbox: your agent's commands run in a local micro-VM
-    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools. As ctx.workspace, BoxLiteSandbox's runtime in your process runs commands and file operations in a BoxLite micro-VM (own kernel, filesystem, kept until destroy(ref)), and a later run reattaches by the WorkspaceRef. With allow_internet_access=True the VM reaches only hosts in allowed_hosts, by default none.
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools. As ctx.workspace, BoxLiteSandbox's runtime in your process runs commands and file operations in a BoxLite micro-VM (own kernel, filesystem, kept until destroy(ref)), and a later run reattaches by the WorkspaceRef. By default the VM cannot connect to any host. With allow_internet_access=True and allowed_hosts it reaches only the listed hosts.
     subgraph machine["Your machine"]
         model(["model"])
         tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
