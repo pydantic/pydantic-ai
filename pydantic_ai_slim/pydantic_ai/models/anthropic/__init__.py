@@ -378,7 +378,7 @@ __all__ = (
     'bash_code_execution_tool_result_content_ta',
     'code_execution_tool_result_content_ta',
     'text_editor_code_execution_tool_result_content_ta',
-    'web_search_tool_result_content_ta',
+    'web_search_tool_result_content_ta', 'ComputerResult',
 )
 
 # Fast mode is not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.
@@ -2249,6 +2249,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         native_computer = self._native_computer(model_request_parameters)
         computer_blocks: list[dict[str, Any]] = []
         computer_index = 0
+        # The other tools called between the batch's calls, which would run out of order if the batch ran as one.
+        between: list[str] = []
+        split: dict[str, list[str]] = {}
         for item in response.content:
             if isinstance(item, BetaTextBlock):
                 if citations := map_citations(item.citations or [], item.text, fetched_pages):
@@ -2314,7 +2317,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     if not computer_blocks:
                         computer_index = len(items)
                     computer_blocks.append(block)
+                    if between:
+                        split[item.id] = between
+                        between = []
                     continue
+                if computer_blocks:
+                    between.append(item.name)
                 items.append(
                     ToolCallPart(
                         tool_name=item.name,
@@ -2325,8 +2333,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if native_computer and computer_blocks:
             # A response's toolset member calls are one batch, run in order and stopped at the first failure, so they
-            # become one `computer` call where the first of them was, whatever other blocks sit between them.
-            items.insert(computer_index, native_computer.call_part(computer_blocks, self.system))
+            # become one `computer` call where the first of them was. Text may sit between them; another tool call
+            # can't, as it would then run after calls Claude made after it.
+            items.insert(computer_index, native_computer.call_part(computer_blocks, self.system, split=split))
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] | None = None
@@ -3817,7 +3826,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         The calls that ran get `OK` and what their actions returned, such as a zoom's image, and the last of
         them the screenshot, since an error result can hold only text; the failed call gets its error and the rest
-        Anthropic's not-executed text. A failed or denied result doesn't say which calls ran, so each gets its text.
+        Anthropic's not-executed text. When the first call failed, it carries the screenshot instead, so it says it
+        failed in its text rather than as an error. A failed or denied result doesn't say which calls ran, and nor
+        does one without its outcome, such as one a UI rebuilt, so each call gets its text.
         """
 
         def result(block: ComputerBlock, is_error: bool, *content: beta_tool_result_block_param.Content):
@@ -3836,19 +3847,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Each member may have become several actions, such as a key sequence.
         counts = replay['computer_action_counts']
         ends = list(itertools.accumulate(counts))
-        outcome = part.result if isinstance(part, ComputerReturnPart) else None
-        # A result without its outcome, such as one rebuilt by a UI, reads as every call having run, and the last
-        # one carries the summary, which says if one failed.
-        known = outcome is not None
-        metadata: ComputerResult = outcome if outcome is not None else {'performed': ends[-1]}
-        performed = metadata.get('performed', ends[-1])
-        error = metadata.get('error')
+        metadata = part.result if isinstance(part, ComputerReturnPart) else None
         # The content is a summary, what each action that returns something returned, then the screen (or the note
-        # that replaced it in this request).
-        content = part.content_items(mode='str')
+        # that replaced it in this request). Read as validated, content stored as a JSON string reads as its list.
+        typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
+        content: list[Any] = list(typed) if typed is not None else part.content_items(mode='str')
         outputs = list(content[1:-1])
         screen = content[-1] if len(content) > 1 else None
-        if metadata.get('changed') or (screen is None and not known):
+        if metadata is None or metadata.get('changed'):
             # Not an outcome of these calls, such as text a guardrail returned instead, or a call changed before it
             # ran: each call gets the summary rather than `OK`, and the last one the rest.
             summary = await self._map_tool_result_item(content[0], map_context)
@@ -3857,6 +3863,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 result(block, False, summary, *(rest if index == len(blocks) - 1 else []))
                 for index, block in enumerate(blocks)
             ]
+        performed = metadata.get('performed', ends[-1])
+        error = metadata.get('error')
         last_ran = max((index for index, end in enumerate(ends) if end <= performed), default=-1)
         results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
         for index, (block, count) in enumerate(zip(blocks, counts)):
@@ -3872,14 +3880,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     text = ' '.join(item for item in (content[0], screen) if isinstance(item, str))
                     results.append(result(block, False, BetaTextBlockParam(text=text, type='text'), *returned))
                 elif index == last_ran and screen is not None:
-                    ok = BetaTextBlockParam(text='OK' if known else str(content[0]), type='text')
+                    ok = BetaTextBlockParam(text='OK', type='text')
                     results.append(
                         result(block, False, ok, *returned, await self._map_tool_result_item(screen, map_context))
                     )
                 else:
                     results.append(result(block, False, BetaTextBlockParam(text='OK', type='text'), *returned))
             elif start <= performed and error is not None:
-                results.append(result(block, True, BetaTextBlockParam(text=error, type='text')))
+                failed = BetaTextBlockParam(text=f'Failed: {error}', type='text')
+                if last_ran == -1 and screen is not None and not isinstance(screen, str):
+                    # Nothing before it ran to carry the screen, and an error result can't hold an image.
+                    results.append(result(block, False, failed, await self._map_tool_result_item(screen, map_context)))
+                else:
+                    results.append(result(block, True, BetaTextBlockParam(text=error, type='text')))
             else:
                 results.append(result(block, True, BetaTextBlockParam(text=COMPUTER_NOT_EXECUTED, type='text')))
         return results
