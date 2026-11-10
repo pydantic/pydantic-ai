@@ -63,7 +63,9 @@ from pydantic_ai_harness._sub_agent_output import (
 # Set while a workflow script is executing, so `get_tools` hides `run_workflow` from sub-agents
 # running inside it -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
 # schedules, so concurrently-dispatched sub-agents inherit this flag (the capability is asyncio-only).
-_in_workflow: contextvars.ContextVar[bool] = contextvars.ContextVar('pydantic_ai_harness_in_workflow', default=False)
+_in_workflow: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    'pydantic_ai_harness.dynamic_workflow.in_workflow', default=False
+)
 
 
 class WorkflowResourceLimits(TypedDict, total=False):

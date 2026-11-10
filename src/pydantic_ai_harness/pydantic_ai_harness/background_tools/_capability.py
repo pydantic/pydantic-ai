@@ -66,7 +66,9 @@ _RUN_IN_BACKGROUND_SCHEMA = {
     'description': 'Set to true to keep working and get the result later as a follow-up message.',
 }
 
-_backgrounded_call: ContextVar[ToolCallPart | None] = ContextVar('_backgrounded_call', default=None)
+_backgrounded_call: ContextVar[ToolCallPart | None] = ContextVar(
+    'pydantic_ai_harness.background_tools.backgrounded_call', default=None
+)
 """The tool call a background task is running, so another `BackgroundTools` instance does not schedule it again."""
 
 
