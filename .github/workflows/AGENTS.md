@@ -28,14 +28,6 @@ nothing: `douwebot` is an on-demand deep pass on top of `CI Review`, requested w
 PR warrants a second opinion. Do not reintroduce a gate from one onto the other — the
 previous label-as-switch design left a window in which a push got *neither* reviewer.
 
-`Pydantic AI UI Security Review` audits the UI-adapter and CLAI 2 web UI trust boundaries.
-It never owns the merge-gate verdict.
-
-A PR whose head branch is listed in the `UI_SECURITY_REVIEW_SKIP_BRANCHES` repository
-variable skips this review, and the skipped check reports as success. Separate branch names with
-commas and no spaces. Remove a branch from the list once its PR merges or closes: an entry
-left in the list also exempts any later branch with that name, compared case-insensitively.
-
 `eligibility` skips a request made before `CI` has passed on the head. An approval is
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the
 `final-review` label: to retry a skipped request, remove and reapply it. A head that
@@ -65,16 +57,15 @@ one threat-detection pass outside the agent slot. The shim withholds `noop` from
 `CI Review` model, so this step writes the run's only `noop`. Keep `safe-outputs.noop`
 enabled for it.
 
-Both review workflows require a formal review from this run on the reviewed head.
-Their completion validator rejects placeholder noops and missing-data signals alone.
+`CI Review` requires a formal review from this run on the reviewed head.
+Its completion validator rejects placeholder noops and missing-data signals alone.
 After safe outputs, the [host verifier](shared/review-publication.md) checks GitHub for the exact workflow marker, run URL and head.
 A missing publication fails the workflow and marks the current PR head with its failure label.
 A host-verified closed PR or changed head needs no review and cannot alter the newer head's label.
-UI Security uses a formal `COMMENT` even with no new findings; incomplete coverage is `SECURITY: INCOMPLETE`.
 
 gh-aw drops its default agent group for a workflow with `pull_request*` triggers, so
 `shared/engine-zai.md` sets `engine.concurrency` for every importer: one agent run at a
-time per workflow, and one per PR for `Pydantic AI UI Security Review`. A workflow cannot override it. gh-aw allows one `engine` across a
+time per workflow. A workflow cannot override it. gh-aw allows one `engine` across a
 workflow and its imports, and strict mode rejects secrets in a workflow's own
 `engine.env`.
 
@@ -124,10 +115,10 @@ and because the compiler makes custom jobs depend on `activation`, the named job
 agent skip with it. A job skipped by `if:` reports as success, so the whole thing goes
 green while never having run.
 
-That is not hypothetical: `pydantic-ai-ui-security-review` shipped this way and its agent
-never fired once, reporting false-green on every PR (#6766). Both it and
-`pydantic-ai-pr-review` now carry the prompt-body reference and a comment saying why.
-After changing either, check the recompiled lock: `activation.needs` must list the job,
+That is not hypothetical: the former `pydantic-ai-ui-security-review` shipped this way and its
+agent never fired once, reporting false-green on every PR (#6766). `pydantic-ai-pr-review`
+carries the prompt-body reference and a comment saying why. After changing it, check the
+recompiled lock: `activation.needs` must list the job,
 and the job itself must **not** have `needs: activation`.
 
 # A PR that edits `bots.yml` cannot test its own change
@@ -150,8 +141,16 @@ ref and therefore does test itself.
 author is trusted. Everything here executes with repository credentials, so an edit from
 outside the org is a supply-chain change rather than an ordinary code review — a
 maintainer carries legitimate ones forward in their own PR (#7024 is the case that
-prompted the guard). **It only blocks merge once it is marked a required check in repo
-settings**; until then it is advisory.
+prompted the guard).
+
+**Its job, `.github Directory Guard`, is the merge gate for `.github/`.** It blocks only once the
+`main` ruleset lists it as a required status check; until then it is advisory.
+
+A required check must also report on every merge group, or the queue waits until the check times
+out. The guard therefore runs on `merge_group` and passes there without reading anything: each PR
+was judged on its head before it could be enqueued. Keep the job name. GitHub matches required
+checks by job name across events. The concurrency group falls back to the merge group's head SHA,
+because a merge group has no PR number and a shared group would cancel the other groups.
 
 **The author's resolved repository permission is the only trust signal**, and the two
 shortcuts it replaces are both unsound — the same reasoning `bots.yml`'s agent-config
@@ -218,12 +217,14 @@ receipt, so `CI Review` cannot stand in for douwebot even though both can use th
 Maintainer-authorized protected-configuration reviews satisfy the same rule.
 A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine.
 
-`pr-review-gates-events.yml` observes reviews and inline-comment changes with a read-only token,
-including on forks. Its completion wakes `PR Review Gates`, which also runs on PR edits, pushes,
-reopening, label changes and PR Bots completion. The latter covers writes by `GITHUB_TOKEN`, which
-cannot trigger review or label workflows. The publisher binds each wake-up to the unique open PR
-GitHub reports for its exact head SHA and repository. It ignores titles and artifacts, and a stale
-or ambiguous event cannot write statuses to another head. Fork observers may need contributor approval.
+`pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews and
+inline-comment changes with a read-only token, including on forks. Its completion wakes
+`PR Review Gates`, which also runs on PR Bots completion. The latter covers writes by `GITHUB_TOKEN`,
+which cannot trigger the observer. Do not add a `pull_request_target` trigger to `PR Review Gates`:
+GitHub blocks that event by default in public repositories (#12961). The publisher binds each
+wake-up to the unique open PR GitHub reports for its exact head SHA and repository. It ignores
+titles and artifacts, and a stale or ambiguous event cannot write statuses to another head. Fork
+observers may need contributor approval.
 
 The `Gate: …` commit statuses carry the review verdict. The publisher job succeeds after publishing
 those statuses, including a failing verdict for an unmet requirement. The job fails on publisher errors.
@@ -233,18 +234,85 @@ failure through GitHub's latest-per-context commit statuses. Rerun an existing c
 default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
 branch-selectable dispatch to this privileged workflow. Workflows and scripts remain owned in `.github/CODEOWNERS`.
 
-# Code owners approve dependency and CI config changes
+# `PR Review Checks` reviews every pull request head
 
-`.github/CODEOWNERS` owns every `pyproject.toml` and `uv.lock`, `.github/workflows/`,
-`.github/actions/`, `.github/scripts/`, `.pre-commit-config.yaml`, `Makefile`, and itself. The
-`main` ruleset requires an approving review from a code owner on a PR that changes any of them, and
-dismisses it when a later push changes the diff. GitHub enforces both, so no workflow keeps the
-approval current.
+`pr-review-checks.yml` runs default-branch code on `pull_request_target` and publishes one
+`PR Review Checks` commit status on the PR head. The status carries the verdict, not a job
+conclusion: under `pull_request_target` the jobs' check runs attach to the default-branch commit.
+Name no job `PR Review Checks`, because a check run with that name also matches the required context.
+The status blocks merge only while the `main` ruleset lists `PR Review Checks` as a required check.
 
-- A PR's author cannot approve it, so an owner's own PR needs another owner. An owner who pushes
-  to someone else's PR can still approve that push.
-- GitHub reads `CODEOWNERS` from the PR's base branch. A PR that edits it is judged by the
-  current owners.
+- `gate` reads the author's repository permission. An app, or an author without `write` or `admin`,
+  gets a failing "Awaiting maintainer" status until a `User` with write access applies
+  `pr-review-checks:run`. The label stays valid across pushes; the gate checks who applied it last.
+- `detect` runs `pr_review_checks.py` on the head's `git diff`, read as data, and starts one review
+  job per selected check. A check selects the files under its trigger paths, and can also select a
+  file whose changed lines match its diff tokens. A check's joint paths select it without making it
+  the file's owner. The `general` check reviews every changed source, workflow and configuration
+  file that no selected check owns by path. The `tests-and-dependencies`
+  check owns tests, cassettes, dependency manifests and lockfiles, and holds them to the
+  repository's testing and dependency rules rather than the security rubric. The `general` check
+  also reviews `THREAT_MODEL.md`, every `AGENTS.md` and `CLAUDE.md`, every file under an
+  `agent_docs/`, `.agents/`, `.claude/` or `.opencode/` directory, and a file renamed from one, even
+  when another check owns them. These are the instruction layer the review job strips from the
+  head. A change only to the documentation `is_content` lists selects nothing and passes. Files
+  under `.github/` always get a review, a generated `*.lock.yml` included: Actions runs the lock,
+  and nothing checks that it matches its `.md` source.
+- Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash` and only read, grep and glob,
+  in the douwebot layout: the head is confined to `pr-head/` and its agent instruction files are
+  deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts
+  and the gathered PR context, so the model can trace callers. The check's `max_steps` and
+  `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
+  tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
+  set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
+  with its outcome, steps, tokens and duration. OpenCode's spans carry no prompt or completion text
+  and no token counts. A vulnerability that already exists on the default branch goes only to the
+  private triage Slack webhook, escaped and quoted in a code block because the model wrote it. Result
+  artifacts are public, so they carry no private report. A
+  review job also leaves out a finding on a file outside its check or on a line the pull request did
+  not add or remove, and its result keeps only how many it dropped of each severity.
+- `publish` validates every finding against its check's files, and drops a finding on a line outside
+  GitHub's patch for its file. The job log counts every dropped finding. A dropped `critical` or
+  `high` finding marks its check `INCOMPLETE`, including one on a file whose patch GitHub omitted. A
+  dropped `medium` finding leaves the verdict unchanged.
+  When there are findings, it posts one `COMMENT` review with each check's usage and the receipt
+  `<!-- pr-review-checks run=… head=… -->`, which douwebot's clean approval gate does not count as a
+  douwebot finding. Each inline finding carries a hidden key built from its check, path, side,
+  line text, severity and body. The review leaves out a finding whose key an earlier run already
+  posted, and says how many it left out; the status still counts it. The job summary always carries
+  the usage table. A `critical` or `high` finding,
+  an `INCOMPLETE` check, or a check without a result fails the status. `medium` findings do not.
+- A `User` with write access applies `pr-review-checks:accepted` to pass the current head despite its
+  findings. Every event that reviews the head again, a push included, removes the label; apply it
+  again after that review.
+- Drafts are reviewed like any other pull request. A merge group gets success without a review.
+
+To add a check, add a `SpecialistCheck` entry in `pr_review_checks.py` and its prompt
+fragment in `.github/pr-review-checks/prompts/`. The workflow needs no change. Like `bots.yml`, a
+PR cannot test its own change to this workflow or its scripts.
+
+# Code owners review dependency, CI config and durable runtime changes
+
+`.github/CODEOWNERS` owns three scopes:
+
+- **Dependency and build config**, owned by `@DouweM`, `@adtyavrdhn`, `@mpfaffenberger` and
+  `@dsfaccini`: every `pyproject.toml` and `uv.lock`, `.pre-commit-config.yaml` and `Makefile`.
+- **Everything under `.github/`**, owned by `@dsfaccini` only: workflows, actions, scripts and the
+  rest of the directory. `CODEOWNERS` itself is the exception: `@DouweM` and `@adtyavrdhn` own it
+  too, so the durable runtime owners see every ownership change.
+- **The durable runtime and its deep harness integrations**, owned by `@DouweM` and `@adtyavrdhn`
+  only: the runtime under `pydantic_ai_slim/pydantic_ai/durable_exec/`, every harness durable
+  engine (a `BaseDurabilityCapability` subclass), the harness's shared durable helper, and the
+  `SubAgents` code that runs a delegated agent run inside a durable unit. Other capabilities that
+  use `@durable_operation` or check for durable execution stay outside this scope. `CODEOWNERS`
+  lists the exact paths.
+
+GitHub requests a review from the owners of each path a PR changes. That request is not a merge
+gate. The `main` ruleset has no `pull_request` rule, so it does not require code-owner review, and
+the ruleset is meant to stay that way. Do not describe an owner's approval as required for a merge.
+
+GitHub reads `CODEOWNERS` from the PR's base branch, so a PR that edits it requests review from the
+current owners.
 
 # Agentic workflows (`gh-aw`)
 
@@ -274,6 +342,25 @@ such source with a comment naming that set. Every other workflow gets an unrestr
 
 - **Recompilation is required for anything the lock bakes in:** a source's frontmatter (`on:` triggers, `permissions`, `tools`, `safe-outputs`, jobs, path/`detect` filters) and its `imports:` shared fragments (`shared/*.md`) are inlined into the lock at compile time.
 - **Exception — runtime-resolved prompts need no recompile.** Agent prompts under `shared/prompts/` are fetched at run time (via the `fetch-dynamic-prompt` action / a Logfire-managed variable), not baked into the lock, so editing one takes effect on the next run without recompiling.
+
+## OpenCode threat detection
+
+gh-aw runs threat detection only on its Copilot, Claude and Codex engines.
+`shared/engine-zai.md` sets `safe-outputs.threat-detection.engine: false` and runs our own detector as detection post-steps.
+`.github/scripts/gh_aw_opencode_detect.py` runs OpenCode with `opencode-go/deepseek-v4.1-flash` and `OPENCODE_API_KEY`.
+The post-steps check the script out at `github.workflow_sha` and install OpenCode with `setup-douwebot-tools`.
+
+- Keep the detector step's id `detection_agentic_execution`. gh-aw's conclusion step reads that step's outcome.
+- The detector sends the prompt gh-aw renders to `GH_AW_PROMPT`. It checks the agent's outputs, never the PR under review.
+- OpenCode runs with douwebot's read-only lockdown in `/tmp/gh-aw/threat-detection`. It cannot read the repository workspace.
+- A valid verdict writes `detection_result.json` without reasons and `detection_result_full.json` with them.
+- An invalid verdict writes `THREAT_DETECTION_STATUS: reason=invalid_report_exhausted` to `detection.log`, which concludes as `parse_error`.
+  An OpenCode failure is retried `GH_AW_HARNESS_MAX_RETRIES` times. It then writes `reason=engine_error`, which concludes as `agent_failure`.
+  An invalid verdict is not retried.
+  A run that reaches the script's deadline, two minutes before the step's 15, writes `reason=engine_timeout`, which concludes as `agent_failure`, and stops.
+  Warn mode turns each of these three into a `warning` and a comment on the `[aw] Detection Runs` tracker.
+- Keep gh-aw's `threat-detect` install: its conclusion step runs `threat-detect conclude`.
+  gh-aw v1.2.1 also installs AWF, its container images and the Copilot CLI in the detection job. The detector uses none of them.
 
 ## Weekly agent instructions audit
 
@@ -345,8 +432,7 @@ first pre-agent step, before any workspace script runs:
   acted on. The monitor never reads a failure of these steps as a setup failure. A recheck
   that errors opens no incident, like an error in the `provider_health` job.
 - A blocked decision fails the agent job before the engine step. Do not write a `noop`
-  instead: `detection` runs on any agent output and would still send requests to the
-  blocked provider.
+  instead: `detection` runs on any agent output and would still spend a detection pass.
 
 A blocked recheck concludes the run as `failure`. For **CI Review**, `flag_failed_review`
 then labels the PR `ci-review-failed`. Keep `ZAI_API_KEY` in the `provider_health` job and
@@ -442,10 +528,6 @@ For **CI Review**, provide `aw_context` as JSON with `item_type` set to
 `pull_request` and `item_number` set to the PR number. Verify the fresh run executed
 the agent and model.
 
-For **Pydantic AI UI Security Review**, use a fresh eligible pull request event.
-Manual dispatch does not provide `github.event.pull_request.number`, which this
-workflow requires to run its agent and publish results.
-
 For workflow incidents, and task incidents the hourly run does not retire, inspect the
 affected host stage and output, link that evidence to the incident, and close it manually.
 A green run that skips the model or affected stage is not proof.
@@ -468,7 +550,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 |---|---|---|
 | `dangling-needs` | any `if:`, `outputs:`, `env:`, `with:` or `run:` referencing `needs.<job>` where `<job>` isn't a dependency of that job (outside `if:`, only inside `${{ }}` — elsewhere the text is literal) | The expression evaluates to empty rather than failing. In `if:` that skips the job or step — and **a job skipped by `if:` reports success**, so the required check stays green while the agent never runs. In `outputs:`/`env:`/`with:`/`run:` nothing skips at all: the step runs with an empty value, so a wrong action call or shell variable goes through looking healthy. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
 | `provider-health-*` | a Z.AI source missing the shared gate, generic failure-as-issue or failed-job reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
-| `provider-engine-config` | a shared threat-detection engine or workflow-local engine override whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
+| `provider-engine-config` | a shared threat-detection engine other than `false`, or a workflow-local engine override, whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
 | `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |
 | `prompt-path-outside-workspace` | prompt text pointing at `/tmp/gh-aw/...` | Outside the agent's file-tool root — `Read` rejects it and the agent burns turns rediscovering the file. Stage context under `$GITHUB_WORKSPACE`. |
