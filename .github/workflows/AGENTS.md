@@ -291,6 +291,24 @@ To add a check, add a `SpecialistCheck` entry in `pr_review_checks.py` and its p
 fragment in `.github/pr-review-checks/prompts/`. The workflow needs no change. Like `bots.yml`, a
 PR cannot test its own change to this workflow or its scripts.
 
+# A copy of the repository picks the `CI` Linux runner
+
+The `CI_LINUX_RUNNER` repository variable sets the runner label of `check` and of every Linux job
+it depends on, including the jobs of `clai2-web.yml` and `latest-versions-canary.yml`. A fork or
+other copy sets it when GitHub's standard runners are too small or unavailable for those jobs.
+Leave it unset in pydantic/pydantic-ai: unset, each job runs on its fallback label,
+`ubuntu-24.04` for `test-all-extras` and `ubuntu-latest` for the rest.
+
+- Set it to one static label. Each job's `runs-on` reads the value as that job's only label.
+- Choose a runner that matches GitHub's Ubuntu 24.04 image. `test-all-extras` starts the
+  image's PostgreSQL 16, and several harness integration jobs start Docker containers.
+- GitHub passes no configuration variables to a run for a pull request from a fork. Those runs
+  use the fallback labels.
+- The macOS and Windows legs of `test-clai2-clipboard` stay on GitHub's runners.
+
+The release and docs-deploy jobs run only in pydantic/pydantic-ai, so a tag pushed to a copy
+starts none of them.
+
 # Code owners review dependency, CI config and durable runtime changes
 
 `.github/CODEOWNERS` owns three scopes:
