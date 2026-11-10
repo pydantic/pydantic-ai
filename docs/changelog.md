@@ -23,7 +23,7 @@ Functionality deprecated in a V2 release keeps working until V3, and using it ra
 
 If you're upgrading across several V2 minor releases at once, these are the changes since v2.0.0 that can make existing code behave differently. Each one is listed under the release that shipped it, newest first, with a link to its pull request. They come from the "Compatibility Notes" section of each release's notes on [GitHub Releases](https://github.com/pydantic/pydantic-ai/releases), which also lists the bug fixes and features of each release.
 
-Releases not listed below have no compatibility notes.
+Release notes have had a Compatibility Notes section since v2.33.0, so for v2.1.0 through v2.32.2, read each release's notes on GitHub Releases. Later releases not listed below have no compatibility notes.
 
 ### [v2.66.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.66.0)
 
