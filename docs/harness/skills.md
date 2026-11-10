@@ -277,10 +277,16 @@ are also accepted.
 `when_to_use` is not one of them: its text is appended to the skill's
 description in the model's catalog, so the model sees when to load the skill.
 Multiline values keep their line breaks, with continuation lines indented
-inside the catalog entry. Migration: skills whose frontmatter sets
-`when_to_use` no longer contribute to the aggregated `UserWarning`, and their
-catalog descriptions grow by the field's text. A host asserting the catalog's
-exact text for a skill that sets it must update the assertion.
+inside the catalog entry. Write the whole trigger clause, since it's appended
+as written:
+
+```markdown
+---
+name: review
+description: Review a pull request.
+when_to_use: Use when the user asks for a review or a second opinion on a diff.
+---
+```
 
 To keep a skill's tools hidden until the skill is loaded, define that skill as
 an [on-demand capability with its tools](../capabilities/on-demand.md#hide-tools-until-loaded)

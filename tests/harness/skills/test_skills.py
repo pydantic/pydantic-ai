@@ -583,21 +583,15 @@ class TestSkillValidation:
 
         with warnings.catch_warnings():
             warnings.simplefilter('error')
+            catalog = await Skills('skills').load(LocalWorkspaceBackend(tmp_path))
             run = await _run(Skills('skills'), tmp_path)
 
+        assert catalog.skills[0].when_to_use == (
+            'Use when the task is ambiguous or exploratory,\nor when a second opinion is welcome.'
+        )
         assert run.instructions == _catalog(
             '- review: Review. Use when the task is ambiguous or exploratory,\n  or when a second opinion is welcome.'
         )
-
-    async def test_when_to_use_is_no_longer_reported_as_an_unimplemented_field(self, tmp_path: Path) -> None:
-        library = tmp_path / 'skills'
-        _write_skill(library, 'review', frontmatter='description: Review.\nwhen_to_use: Use when a review is due.')
-
-        with warnings.catch_warnings():
-            warnings.simplefilter('error')
-            run = await _run(Skills('skills'), tmp_path)
-
-        assert run.instructions == _catalog('- review: Review. Use when a review is due.')
 
     async def test_blank_when_to_use_is_unset(self, tmp_path: Path) -> None:
         library = tmp_path / 'skills'
@@ -608,14 +602,6 @@ class TestSkillValidation:
 
         assert catalog.skills[0].when_to_use is None
         assert run.instructions == _catalog('- review: Review.')
-
-    async def test_loaded_skill_definition_carries_when_to_use(self, tmp_path: Path) -> None:
-        library = tmp_path / 'skills'
-        _write_skill(library, 'review', frontmatter='description: Review.\nwhen_to_use: Use when a review is due.')
-
-        catalog = await Skills('skills').load(LocalWorkspaceBackend(tmp_path))
-
-        assert catalog.skills[0].when_to_use == 'Use when a review is due.'
 
     async def test_disable_model_invocation_leaves_the_skill_out_of_the_models_catalog(self, tmp_path: Path) -> None:
         library = tmp_path / 'skills'

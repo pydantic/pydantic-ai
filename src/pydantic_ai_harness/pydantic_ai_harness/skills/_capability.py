@@ -73,7 +73,7 @@ class Skills(AbstractCapability[AgentDepsT]):
     from a workspace of their own. A run with neither fails at its start.
 
     Each selected immediate child containing `SKILL.md` becomes a deferred capability named after
-    the skill: the model sees its name and description, and loads its Markdown body, with the
+    the skill: the model sees its name, description and `when_to_use`, and loads its Markdown body, with the
     skill's directory in the run's workspace, with `load_capability`. Bundled files are not loaded
     or executed. Descriptions longer than the Agent Skills limit are preserved and emit a warning.
     A skill found twice, through a symlink or as a byte-identical `SKILL.md`, counts once. A skill
