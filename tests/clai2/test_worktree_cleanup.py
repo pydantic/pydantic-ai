@@ -1,4 +1,4 @@
-"""Worktree shutdown removes an unchanged checkout CLAI created, and keeps changed work unless removal is confirmed."""
+"""Worktree shutdown removes a checkout with nothing to lose, and keeps unpushed work unless removal is confirmed."""
 
 import io
 import os
@@ -152,6 +152,15 @@ def checkout(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
+def origin(repo: Path) -> Path:
+    """A remote of `repo` that nothing has been pushed to."""
+    origin = repo.parent / 'origin.git'
+    git(repo, 'init', '--bare', str(origin))
+    git(repo, 'remote', 'add', 'origin', str(origin))
+    return origin
+
+
+@pytest.fixture
 def launched(checkout: Path) -> Worktree:
     """The hand-made checkout as CLAI saw it at launch, with a commit made since."""
     worktree = Worktree(path=checkout, branch='feature', head=git(checkout, 'rev-parse', 'HEAD'), created=False)
@@ -170,9 +179,12 @@ def created(repo: Path, monkeypatch: pytest.MonkeyPatch) -> Worktree:
 
 
 def test_notice_names_what_exit_does(created: Worktree) -> None:
-    assert created.notice == f'Worktree: {created.path} (branch: clai-task). Removed on exit if unchanged.'
+    opened = f'Worktree: {created.path} (branch: clai-task).'
+    assert created.notice == f'{opened} Removed on exit if unchanged, or if clean and pushed.'
     kept = replace(created, remove_if_unchanged=False)
-    assert kept.notice == f'Worktree: {created.path} (branch: clai-task). Kept unless removal is confirmed on exit.'
+    assert kept.notice == (
+        f'{opened} Kept on exit while it has uncommitted or unpushed work, unless removal is confirmed.'
+    )
 
 
 def test_unchanged_checkout_is_kept_unless_marked(created: Worktree, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -709,6 +721,62 @@ def test_changed_created_checkout_still_asks(
     assert created.path.exists()
     assert git(created.path, 'branch', '--show-current') == created.branch
     assert 'Worktree kept at' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('moved', [False, True])
+def test_clean_pushed_checkout_is_removed_without_asking(
+    launched: Worktree,
+    repo: Path,
+    origin: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    removal_command: RemovalCommand,
+    moved: bool,
+) -> None:
+    """Pushed commits are safe on the remote, whether or not `HEAD` moved since launch."""
+    git(launched.path, 'push', 'origin', 'feature')
+    worktree = launched if moved else current_worktree()
+    assert worktree is not None
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
+    offer_worktree_cleanup(worktree=worktree, read_remove_commands=lambda: {str(repo / '.git'): ['custom']})
+    assert not launched.path.exists()
+    assert Path.cwd() == repo
+    assert git(repo, 'rev-parse', 'feature') == git(origin, 'rev-parse', 'feature')
+    assert not removal_command.calls
+    assert capsys.readouterr() == (f'Removed worktree {launched.path}. Branch kept.\n', '')
+
+
+@pytest.mark.parametrize('change', ['untracked', 'modified', 'commit'])
+def test_pushed_checkout_with_later_work_still_asks(
+    launched: Worktree, origin: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    """Uncommitted files and unpushed commits are work only this checkout or its branch holds."""
+    git(launched.path, 'push', 'origin', 'feature')
+    if change == 'untracked':
+        (launched.path / 'new.txt').write_text('draft')
+    elif change == 'modified':
+        (launched.path / 'tracked.txt').write_text('edited')
+    else:
+        git(launched.path, 'commit', '--allow-empty', '-m', 'Unpushed')
+    picker = AsyncMock(return_value='keep')
+    monkeypatch.setattr(worktrees, 'ask_removal', picker)
+    offer_worktree_cleanup(worktree=launched)
+    picker.assert_awaited_once()
+    assert launched.path.exists()
+
+
+def test_saved_keep_choice_outlives_a_push(
+    launched: Worktree, repo: Path, origin: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    store = SettingsStore(repo.parent / 'config.db')
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(return_value='never'))
+    offer_worktree_cleanup(worktree=launched, store=store)
+    git(launched.path, 'push', 'origin', 'feature')
+    capsys.readouterr()
+    monkeypatch.setattr(worktrees, 'ask_removal', AsyncMock(side_effect=no_prompt))
+    offer_worktree_cleanup(worktree=launched, store=store)
+    assert launched.path.exists()
+    assert capsys.readouterr() == (f'Worktree kept at {launched.path}.\n', '')
 
 
 def run_cli(

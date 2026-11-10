@@ -135,13 +135,15 @@ created, without forcing deletion. If cleanup or the ignore edit fails, the erro
 names the retained branch or checkout for recovery.
 
 On interactive exit, CLAI removes an unchanged worktree this launch created and
-tries to delete its newly created branch with `git branch -d`. Other unchanged
-worktrees are kept. If the checkout changed, CLAI asks whether to remove it.
+tries to delete its newly created branch with `git branch -d`. It also removes
+any worktree with no uncommitted or untracked files and no unpushed commits,
+keeping the branch. Other unchanged worktrees are kept. If the checkout changed,
+CLAI asks whether to remove it.
 Default Git removal keeps the branch and refuses dirty or locked checkouts.
 
 You can register a user-only `worktrees.remove_commands` entry for a repository.
 After confirmation, that command runs instead of Git and may delete the branch
-and uncommitted files. Automatic removal of unchanged worktrees and
+and uncommitted files. Automatic removal and
 `/workspaces destroy` continue to use Git. See
 [the removal-command reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
 for configuration and shell-function examples.

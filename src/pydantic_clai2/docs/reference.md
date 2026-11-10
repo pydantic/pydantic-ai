@@ -2619,17 +2619,23 @@ uncommitted or untracked files, or a different commit checked out than at launch
 Ignored files do not count. If nothing changed in a worktree this launch created,
 CLAI removes it without asking, and deletes its `clai-NAME` branch too when this
 launch created that branch and Git agrees it is merged (`git branch -d`). This
-still applies after `/update now` restarts CLAI in the worktree. An
-unchanged worktree that CLAI reopened, or one you launched inside, is kept without
-asking.
+still applies after `/update now` restarts CLAI in the worktree.
 
-If the worktree changed, CLAI asks **Remove this worktree?** with an inline picker:
+CLAI also removes, without asking, any linked worktree that has no uncommitted or
+untracked files and whose commits are all on a remote-tracking branch, even if a
+different commit is checked out than at launch. It keeps the branch and prints the
+removed path. Pushed commits are judged from the local remote-tracking branches;
+CLAI does not fetch. An unchanged worktree with unpushed commits that CLAI
+reopened, or that you launched inside, is kept without asking.
+
+Otherwise, if the worktree changed, CLAI asks **Remove this worktree?** with an inline picker:
 **Yes**, **No** (selected by default), or **No, don't ask again for this worktree**.
 The path and removal details appear dimmed below the question. The complete
 details are also available in the transcript before you choose; use PageUp and
 PageDown to inspect long commands. Enter on **No**,
 Esc, Ctrl-C, or EOF keeps it; select **Yes** to confirm removal. The third choice
-keeps it and saves the preference in your settings database for this checkout.
+keeps it and saves the preference in your settings database for this checkout,
+which also keeps it once its commits are pushed.
 There is no command to undo this choice for the same checkout.
 A new checkout at the same path is asked again. By default, removal keeps
 the branch and uses Git without `--force`, so dirty or locked worktrees are kept
@@ -2684,7 +2690,7 @@ does not fall back to Git. If the saved configuration cannot be read or validate
 on exit, CLAI warns and offers the existing Git cleanup prompt instead. If Git
 metadata cannot be read to prepare a registered command, CLAI keeps the checkout
 and reports the error. `.clai/settings.json` cannot set `worktree_remove_commands`;
-CLAI refuses to start if it does. Automatic removal of unchanged worktrees and
+CLAI refuses to start if it does. Automatic removal and
 `/workspaces destroy` continue to use Git.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
