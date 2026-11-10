@@ -131,7 +131,7 @@ __all__ = [
     'serialize_message',
 ]
 
-_RENAMED: dict[str, type] = {
+_RENAMED: dict[str, type[SubAgentMessageEvent]] = {
     'SubAgentMessage': SubAgentMessageEvent,
     'ParentMessage': ParentMessageEvent,
     'ChildMessage': ChildMessageEvent,
