@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import infer_model
+from pydantic_ai.models._tool_call_ids import hashed_tool_call_id
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import NativeOutput
 
@@ -81,7 +82,12 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
     ]
     assert [call.tool_name for _, call in tool_calls] == ['first_tool', 'second_tool']
     assert len({call.tool_call_id for _, call in tool_calls}) == len(tool_calls)
-    assert all(re.fullmatch(r'call_\d+_[0-9A-Za-z]{8}', call.tool_call_id) for _, call in tool_calls)
+    # Each ID is qualified with a hash of its own response's ID.
+    assert all(
+        re.fullmatch(r'call_\d+_[0-9A-Za-z]{8}', call.tool_call_id)
+        and call.tool_call_id.endswith(f'_{hashed_tool_call_id(str(response_id), 8)}')
+        for response_id, call in tool_calls
+    )
 
     if not stream:
         # Pin the full non-streaming message shape (reasoning parts, part ids, response-qualified
@@ -313,7 +319,12 @@ async def test_reused_tool_call_ids_gpt_5_5(allow_model_requests: None) -> None:
     ]
     assert [call.tool_name for _, call in tool_calls] == ['first_tool', 'second_tool']
     assert len({call.tool_call_id for _, call in tool_calls}) == len(tool_calls)
-    assert all(re.fullmatch(r'call_\d+_[0-9A-Za-z]{8}', call.tool_call_id) for _, call in tool_calls)
+    # Each ID is qualified with a hash of its own response's ID.
+    assert all(
+        re.fullmatch(r'call_\d+_[0-9A-Za-z]{8}', call.tool_call_id)
+        and call.tool_call_id.endswith(f'_{hashed_tool_call_id(str(response_id), 8)}')
+        for response_id, call in tool_calls
+    )
     # gpt-5.5 reuses the raw `call_0` id across separate responses (like gpt-5.6); the qualified ids
     # stay unique, and replaying the full (normalized) history back to Mantle succeeds.
     assert all(call.tool_call_id.startswith('call_0_') for _, call in tool_calls)
