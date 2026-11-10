@@ -21,7 +21,7 @@ from pydantic_ai_harness import MountError
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend
 
 from ..mounts._scenarios_live import SCENARIOS, LiveSandbox, in_run, s3, start_store
-from .conftest import LIVE_IDLE_TIMEOUT, LIVE_SANDBOX_TIMEOUT
+from .conftest import LIVE_IDLE_TIMEOUT, LIVE_SANDBOX_TIMEOUT, skip_or_fail_live_tier
 
 pytestmark = pytest.mark.modal_live
 
@@ -61,6 +61,8 @@ def _live(backend: ModalSandboxBackend, sandbox: modal.Sandbox, working_dir: str
 
 @pytest.fixture(scope='module')
 async def live() -> AsyncIterator[LiveSandbox]:
+    # Module-scoped, so it is set up before the autouse fixture that skips the live tier.
+    skip_or_fail_live_tier()
     async with owned_backend(runtime='vm') as backend:
         live = _live(backend, await backend.get_sandbox(), await backend.working_dir())
         await start_store(live)
