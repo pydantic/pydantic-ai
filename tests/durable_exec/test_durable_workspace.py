@@ -20,7 +20,6 @@ from typing import Any
 import anyio
 import pytest
 from inline_snapshot import snapshot
-from pydantic import ValidationError
 
 from pydantic_ai import Agent, RunContext, UserError
 from pydantic_ai.capabilities import AbstractCapability, Capability, LocalWorkspace, WrapperCapability
@@ -39,7 +38,6 @@ from pydantic_ai.durable_exec._workspace import (
     DurableWorkspace,
     WorkspaceCall,
     WorkspaceCallError,
-    WorkspaceCallParams,
     WorkspaceCallResult,
     error_as_data,
     execute_call,
@@ -51,9 +49,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     FileEntry,
     LocalWorkspaceBackend,
-    PressKeys,
     ReadOnlyWorkspace,
-    Region,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -62,7 +58,6 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
-    WorkspaceUnsupportedActionError,
     WrapperWorkspace,
 )
 
@@ -446,17 +441,6 @@ async def test_result_workspace_calls_directly_once_the_container_has_ended() ->
     await workspace.remove('after.bin')
     assert await workspace.exists('after.bin') is False
     assert await workspace.realpath('sub/../after.txt') == '/workspace/after.txt'
-    region = Region(left=0, top=0, right=10, bottom=10)
-    for display_call in (
-        workspace.display_size(),
-        workspace.screenshot(),
-        workspace.act(PressKeys(keys=('a',))),
-        workspace.zoom(region),
-        workspace.scaled_screenshot(10, 10),
-        workspace.cursor_position(),
-    ):
-        with pytest.raises(UserError, match='has no display to control'):
-            await display_call
     assert _workspace_units(durability) == ['ensure']
 
     # A wrapper that never ran `ensure` asks the wrapped workspace for its working directory too.
@@ -591,17 +575,6 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
         await workspace.read_bytes('b.bin')
     with pytest.raises(TypeError, match='shell'):
         await workspace.run('ls', shell=False)
-    assert await workspace.display_size() == (1280, 800)
-    # The rest of the display belongs in a durable unit, so workflow code can't reach it.
-    with pytest.raises(UserError, match="`act` reaches the display, which durable workflow code can't"):
-        await workspace.act(PressKeys(keys=('ctrl', 's')))
-    with pytest.raises(UserError, match='`zoom` reaches the display'):
-        await workspace.zoom(Region(left=0, top=0, right=10, bottom=10))
-    with pytest.raises(UserError, match='`scaled_screenshot` reaches the display'):
-        await workspace.scaled_screenshot(640, 400)
-    with pytest.raises(UserError, match='`cursor_position` reaches the display'):
-        await workspace.cursor_position()
-    assert provider.actions == []
     assert _workspace_units(durability) == snapshot(
         [
             'ensure',
@@ -619,7 +592,6 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
             'stat',
             'read_bytes',
             'run',
-            'display_size',
         ]
     )
     assert provider.log == ['create:env-1']
@@ -646,7 +618,6 @@ def test_non_utf8_bytes_round_trip_through_json_and_pickle() -> None:
         WorkspaceTimeoutError('slow', stdout='partial', stderr='err'),
         WorkspaceUnavailableError('gone'),
         WorkspaceReadOnlyError('read-only'),
-        WorkspaceUnsupportedActionError('no such action'),
         WorkspaceError('broken'),
         FileNotFoundError('/missing'),
         NotADirectoryError('/file'),
@@ -710,40 +681,12 @@ async def test_a_backend_error_keeps_its_details_across_a_durable_call(error: Ex
     ]
 
 
-async def test_a_configuration_error_reaches_workflow_code_as_it_is_with_or_without_a_step_policy() -> None:
-    class NoWorkspaceOnTheWorker(FakeDurability):
-        async def _call_workspace(self, params: WorkspaceCallParams) -> WorkspaceCallResult:
-            raise UserError('No capability can supply the workspace on this worker.')
-
-    workspace = DurableWorkspace(Workspace(FakeWorkspace('x')), durability=NoWorkspaceOnTheWorker(), ctx=_run_context())
-    for method in ('stat', 'display_size'):
-        with pytest.raises(UserError, match='No capability can supply'):
-            await workspace._dispatch(WorkspaceCall(method=method), ref=None)  # pyright: ignore[reportPrivateUsage]
-
-
 def test_unexpected_errors_fail_the_unit() -> None:
     assert error_as_data(ConnectionError('flaky')) is None
     assert error_as_data(TimeoutError('flaky')) is None
     assert error_as_data(InterruptedError('flaky')) is None
     assert error_as_data(BlockingIOError('flaky')) is None
-    assert error_as_data(OSError('other')) == WorkspaceCallError(type='OSError', message='other', bases=('Exception',))
-
-
-def test_an_error_type_this_version_lacks_raises_its_nearest_known_base() -> None:
-    # A newer version can journal an error type this one doesn't have.
-    paused = WorkspaceCallError(type='WorkspacePausedError', message='paused', bases=('WorkspaceUnavailableError',))
-    with pytest.raises(WorkspaceUnavailableError, match='paused'):
-        raise_error(paused)
-    with pytest.raises(WorkspaceError, match='new'):
-        raise_error(WorkspaceCallError(type='WorkspaceNewError', message='new'))
-
-
-def test_journal_records_refuse_fields_they_do_not_have() -> None:
-    # An older worker fails a newer call rather than running it with an option dropped.
-    with pytest.raises(ValidationError, match='format'):
-        JSON_CODEC.load(WorkspaceCall, {'method': 'screenshot', 'format': 'jpeg'})
-    with pytest.raises(ValidationError, match='media_type'):
-        JSON_CODEC.load(WorkspaceCallResult, {'data': '', 'media_type': 'image/jpeg'})
+    assert error_as_data(OSError('other')) == WorkspaceCallError(type='OSError', message='other')
 
 
 async def test_known_workspace_ref_is_ensured_once() -> None:

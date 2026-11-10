@@ -102,7 +102,7 @@ from ..append_only import (
     run_conversation,
     skip_unless_installed,
 )
-from ..workspace_fakes import InMemoryProvider
+from .display_fakes import ScreenProvider
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
 pytestmark = pytest.mark.filterwarnings(
@@ -263,7 +263,7 @@ FIXTURES: dict[str, Fixture] = {
     'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
     'Coder': _workspace(Coder),
     'CompactOnRequest': lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
-    'ComputerUse': lambda _: [InMemoryProvider().capability(), ComputerUse()],
+    'ComputerUse': lambda _: [ScreenProvider().capability(), ComputerUse()],
     'ConversationSearch': lambda _: ConversationSearch(
         SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
     ),
