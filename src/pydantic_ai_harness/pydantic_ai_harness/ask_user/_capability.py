@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from functools import partial
 from typing import TYPE_CHECKING, overload
@@ -15,6 +15,7 @@ from typing_extensions import TypeIs
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.external_events import ExternalEventError, wait_for_external_event
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.toolsets import AgentToolset
@@ -181,7 +182,7 @@ class AskUser(AbstractCapability[AgentDepsT]):
         if not questions:
             return None
         return requests.build_results(
-            calls={call.tool_call_id: await self._answer(answerer, ctx, rebuild_request(call)) for call in questions}
+            calls={call.tool_call_id: await self._answer(answerer, ctx, call) for call in questions}
         )
 
     def _owns(self, requests: DeferredToolRequests, tool_call_id: str) -> bool:
@@ -194,8 +195,11 @@ class AskUser(AbstractCapability[AgentDepsT]):
         )
 
     async def _answer(
-        self, answerer: AnyAnswerer[AgentDepsT], ctx: RunContext[AgentDepsT], request: AskUserRequest
+        self, answerer: AnyAnswerer[AgentDepsT], run_ctx: RunContext[AgentDepsT], call: ToolCallPart
     ) -> AskUserResult:
+        request = rebuild_request(call)
+        # The context the tool call had, so the answerer and the events see which call asked.
+        ctx = replace(run_ctx, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
         try:
             # Current, so the wait can tell a durable run whose engine can't wait from a plain run.
             with set_current_run_context(ctx):

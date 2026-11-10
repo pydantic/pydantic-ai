@@ -1,4 +1,4 @@
-"""Tests for waiting on an external event, and for `RequestInput`, which waits for a decision.
+"""Tests for waiting on an external event, and for `RequestInput`, which asks for a decision and waits for it.
 
 Most tests install a recording `ExternalEventWaiter` with `external_event_scope`, the way a durable
 engine does for each durable agent run, and drive `RequestInput` through `Agent.run`. `TestInProcess`
@@ -50,7 +50,7 @@ from .test_agent import READINESS_WAIT_TIMEOUT
 
 
 class RecordingWaiter(ExternalEventWaiter):
-    """Announces a fixed token, then returns `outcome` as the payload, or raises it."""
+    """Passes a fixed token to `ask`, then returns its answer, or else `outcome` as the payload, or raises it."""
 
     def __init__(self, outcome: JsonValue | ExternalEventError) -> None:
         self.outcome = outcome
@@ -60,7 +60,8 @@ class RecordingWaiter(ExternalEventWaiter):
         self, name: str, *, ask: Callable[[str], Awaitable[JsonValue]], timeout: timedelta | None
     ) -> JsonValue:
         self.waits.append((name, timeout))
-        await ask('token-1')
+        if (answer := await ask('token-1')) is not None:
+            return answer
         if isinstance(self.outcome, ExternalEventError):
             raise self.outcome
         return self.outcome
@@ -81,10 +82,10 @@ def delete_and_look_up(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
 def build_agent(
     capabilities: list[Any], deleted: list[str], *, output_type: Any = str
 ) -> tuple[Agent[None, Any], list[tuple[str, list[str], list[str]]]]:
-    announced: list[tuple[str, list[str], list[str]]] = []
+    asked: list[tuple[str, list[str], list[str]]] = []
 
-    async def announce(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
-        announced.append(
+    async def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+        asked.append(
             (token, [call.tool_call_id for call in requests.approvals], [call.tool_call_id for call in requests.calls])
         )
 
@@ -92,7 +93,7 @@ def build_agent(
         FunctionModel(delete_and_look_up),
         deps_type=type(None),
         output_type=output_type,
-        capabilities=[RequestInput[None](announce, timeout=timedelta(hours=1)), *capabilities],
+        capabilities=[RequestInput[None](ask, timeout=timedelta(hours=1)), *capabilities],
     )
 
     @agent.tool_plain(requires_approval=True)
@@ -104,7 +105,7 @@ def build_agent(
     def look_up() -> str:
         raise CallDeferred
 
-    return agent, announced
+    return agent, asked
 
 
 def tool_returns(messages: list[ModelMessage]) -> list[tuple[str, object, str]]:
@@ -119,7 +120,7 @@ def tool_returns(messages: list[ModelMessage]) -> list[tuple[str, object, str]]:
 
 async def test_decision_approves_with_override_args_and_supplies_external_result() -> None:
     deleted: list[str] = []
-    agent, announced = build_agent([], deleted)
+    agent, asked = build_agent([], deleted)
     waiter = RecordingWaiter(
         {
             'approvals': {'call-1': {'kind': 'tool-approved', 'override_args': {'path': 'b.txt'}}},
@@ -132,7 +133,7 @@ async def test_decision_approves_with_override_args_and_supplies_external_result
 
     assert result.output == 'done'
     assert waiter.waits == [('deferred_tool_calls', timedelta(hours=1))]
-    assert announced == [('token-1', ['call-1'], ['call-2'])]
+    assert asked == [('token-1', ['call-1'], ['call-2'])]
     assert deleted == ['b.txt']
     assert tool_returns(result.all_messages()) == snapshot(
         [('call-1', 'deleted b.txt', 'success'), ('call-2', {'answer': 42}, 'success')]
@@ -234,6 +235,11 @@ async def test_partial_decision_leaves_the_rest_pending() -> None:
             r"not valid: `metadata` contains tool call IDs that are not pending: \['call-0'\]",
             id='metadata-for-a-call-that-is-not-pending',
         ),
+        pytest.param(
+            {'approvals': {'call-1': True}, 'answered_by': {'call-0': 'alice'}},
+            r"not valid: `answered_by` contains tool call IDs that are not pending: \['call-0'\]",
+            id='answerer-for-a-call-that-is-not-pending',
+        ),
     ],
 )
 async def test_invalid_decision_fails_the_run(payload: JsonValue, error: str) -> None:
@@ -253,29 +259,29 @@ async def test_other_handlers_resolve_calls_before_the_wait() -> None:
     def resolve_external(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
         return requests.build_results(calls={call.tool_call_id: 'from handler' for call in requests.calls})
 
-    agent, announced = build_agent([HandleDeferredToolCalls(resolve_external)], deleted)
+    agent, asked = build_agent([HandleDeferredToolCalls(resolve_external)], deleted)
 
     with external_event_scope(RecordingWaiter({'approvals': {'call-1': True}})):
         result = await agent.run('clean up')
 
-    assert announced == [('token-1', ['call-1'], [])]
+    assert asked == [('token-1', ['call-1'], [])]
     assert tool_returns(result.all_messages()) == snapshot(
         [('call-1', 'deleted a.txt', 'success'), ('call-2', 'from handler', 'success')]
     )
 
 
-async def test_a_sync_announce_runs_in_a_worker_thread() -> None:
-    """Announcing is typically blocking I/O (Slack, email, a database row), so a sync `announce` runs off the event loop."""
-    announced: list[tuple[str, int]] = []
+async def test_a_sync_ask_runs_in_a_worker_thread() -> None:
+    """Asking is often blocking I/O (Slack, email, a database row), so a sync `ask` runs off the event loop."""
+    asked: list[tuple[str, int]] = []
     waiter = RecordingWaiter({'answer': 'yes'})
 
     with external_event_scope(waiter):
         payload = await wait_for_external_event(
-            'review', ask=lambda token: announced.append((token, threading.get_ident()))
+            'review', ask=lambda token: asked.append((token, threading.get_ident()))
         )
 
     assert payload == {'answer': 'yes'}
-    [(token, thread_id)] = announced
+    [(token, thread_id)] = asked
     assert token == 'token-1'
     assert thread_id != threading.get_ident()
     assert waiter.waits == [('review', None)]
@@ -308,14 +314,14 @@ class TestInProcess:
 
     async def test_an_approval_endpoint_resolves_the_token_and_the_run_continues(self) -> None:
         deleted: list[str] = []
-        announced = anyio.Event()
+        asked = anyio.Event()
         tokens: list[str] = []
 
-        def announce(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
             tokens.append(token)
-            announced.set()
+            asked.set()
 
-        agent = approval_agent(RequestInput[None](announce, timeout=timedelta(hours=1)), deleted)
+        agent = approval_agent(RequestInput[None](ask, timeout=timedelta(hours=1)), deleted)
         results: list[str] = []
 
         async def run() -> None:
@@ -324,7 +330,7 @@ class TestInProcess:
         async with anyio.create_task_group() as tg:
             tg.start_soon(run)
             with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                await announced.wait()
+                await asked.wait()
             # From another thread, as a sync web endpoint would.
             await anyio.to_thread.run_sync(resolve_external_event, tokens[0], {'approvals': {'call-1': True}})
 
@@ -335,10 +341,10 @@ class TestInProcess:
     async def test_a_failure_denies_the_call_with_the_reason(self) -> None:
         deleted: list[str] = []
 
-        def announce(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
             fail_external_event(token, 'The approver rejected the whole batch.')
 
-        result = await approval_agent(RequestInput[None](announce), deleted).run('clean up')
+        result = await approval_agent(RequestInput[None](ask), deleted).run('clean up')
 
         assert deleted == []
         assert tool_returns(result.all_messages()) == snapshot(
@@ -367,22 +373,22 @@ class TestInProcess:
             resolve_external_event(tokens[0], {'approvals': {'call-1': True}})
 
     async def test_a_token_resolves_once(self) -> None:
-        def announce(token: str) -> None:
+        def ask(token: str) -> None:
             resolve_external_event(token, 'first')
             with pytest.raises(UserError, match='No wait in this process has this token'):
                 fail_external_event(token, 'second')
 
-        assert await wait_for_external_event('review', ask=announce) == 'first'
+        assert await wait_for_external_event('review', ask=ask) == 'first'
 
     async def test_the_payload_arrives_in_its_json_form(self) -> None:
         """As on its way through a durable engine, so the wait sees the same value in process."""
 
-        def announce(token: str) -> None:
+        def ask(token: str) -> None:
             with pytest.raises(UserError, match='The payload for an external event must be JSON-serializable'):
                 resolve_external_event(token, object())
             resolve_external_event(token, {'ids': ('call-1', 'call-2')})
 
-        assert await wait_for_external_event('review', ask=announce) == {'ids': ['call-1', 'call-2']}
+        assert await wait_for_external_event('review', ask=ask) == {'ids': ['call-1', 'call-2']}
 
     async def test_a_resolution_that_lands_as_the_timeout_fires_still_counts(self) -> None:
         """The resolver was told it succeeded, so the wait returns its payload rather than timing out.
@@ -394,13 +400,13 @@ class TestInProcess:
         def closed_loop() -> None:
             raise RuntimeError('Event loop is closed')
 
-        def announce(token: str) -> None:
+        def ask(token: str) -> None:
             _pending_events[token].wake = closed_loop
             resolve_external_event(token, 'late')
             with pytest.raises(UserError, match='No wait in this process has this token'):
                 resolve_external_event(token, 'again')
 
-        assert await wait_for_external_event('review', ask=announce, timeout=timedelta(milliseconds=1)) == 'late'
+        assert await wait_for_external_event('review', ask=ask, timeout=timedelta(milliseconds=1)) == 'late'
 
     def test_an_unknown_token_is_rejected(self) -> None:
         with pytest.raises(
@@ -410,16 +416,16 @@ class TestInProcess:
 
     async def test_a_cancelled_wait_forgets_its_token(self) -> None:
         tokens: list[str] = []
-        announced = anyio.Event()
+        asked = anyio.Event()
 
-        def announce(token: str) -> None:
+        def ask(token: str) -> None:
             tokens.append(token)
-            announced.set()
+            asked.set()
 
         async with anyio.create_task_group() as tg:
-            tg.start_soon(partial(wait_for_external_event, 'review', ask=announce))
+            tg.start_soon(partial(wait_for_external_event, 'review', ask=ask))
             with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                await announced.wait()
+                await asked.wait()
             tg.cancel_scope.cancel()
 
         with pytest.raises(UserError, match='No wait in this process has this token'):
@@ -427,22 +433,22 @@ class TestInProcess:
 
     async def test_two_waits_resolve_independently(self) -> None:
         tokens: dict[str, str] = {}
-        both_announced = anyio.Event()
+        both_asked = anyio.Event()
         payloads: dict[str, JsonValue] = {}
 
         async def wait(name: str) -> None:
-            def announce(token: str) -> None:
+            def ask(token: str) -> None:
                 tokens[name] = token
                 if len(tokens) == 2:
-                    both_announced.set()
+                    both_asked.set()
 
-            payloads[name] = await wait_for_external_event(name, ask=announce)
+            payloads[name] = await wait_for_external_event(name, ask=ask)
 
         async with anyio.create_task_group() as tg:
             tg.start_soon(wait, 'first')
             tg.start_soon(wait, 'second')
             with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                await both_announced.wait()
+                await both_asked.wait()
             assert tokens['first'] != tokens['second']
             resolve_external_event(tokens['second'], 2)
             resolve_external_event(tokens['first'], 1)
@@ -452,24 +458,71 @@ class TestInProcess:
     @pytest.mark.parametrize('anyio_backend', ['trio'])
     async def test_on_trio(self) -> None:
         tokens: list[str] = []
-        announced = anyio.Event()
+        asked = anyio.Event()
 
-        async def announce(token: str) -> None:
+        async def ask(token: str) -> None:
             tokens.append(token)
-            announced.set()
+            asked.set()
 
         payloads: list[JsonValue] = []
 
         async def wait() -> None:
-            payloads.append(await wait_for_external_event('review', ask=announce))
+            payloads.append(await wait_for_external_event('review', ask=ask))
 
         async with anyio.create_task_group() as tg:
             tg.start_soon(wait)
             with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-                await announced.wait()
+                await asked.wait()
             await anyio.to_thread.run_sync(resolve_external_event, tokens[0], 'yes')
 
         assert payloads == ['yes']
+
+    async def test_an_answer_from_ask_continues_the_run_without_a_wait(self) -> None:
+        """`ask` answers in place, as a terminal prompt or a policy does: the answer goes through its JSON form, and no token stays pending."""
+        deleted: list[str] = []
+        tokens: list[str] = []
+
+        async def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+            tokens.append(token)
+            return requests.build_results(approvals={'call-1': True}, answered_by={'call-1': 'terminal'})
+
+        result = await approval_agent(RequestInput[None](ask), deleted).run('clean up')
+
+        assert result.output == 'done'
+        assert deleted == ['a.txt']
+        assert tokens[0] not in _pending_events
+
+    async def test_the_timeout_also_bounds_ask(self) -> None:
+        """An `ask` that puts the question to a person directly is cancelled when the timeout elapses."""
+        cancelled = anyio.Event()
+
+        async def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults | None:
+            try:
+                await anyio.sleep_forever()
+            finally:
+                cancelled.set()
+
+        agent = approval_agent(RequestInput[None](ask, timeout=timedelta(milliseconds=1)), [])
+        result = await agent.run('clean up')
+
+        assert cancelled.is_set()
+        assert tool_returns(result.all_messages())[0][2] == 'denied'
+
+    async def test_an_answer_that_is_not_json_is_rejected(self) -> None:
+        with pytest.raises(UserError, match='The payload for an external event must be JSON-serializable'):
+            await wait_for_external_event('review', ask=lambda token: object())
+
+    async def test_a_durable_engine_that_cannot_wait_can_opt_in_to_waiting_in_process(self) -> None:
+        """With `allow_non_durable_wait`, the wait happens in process, unrecorded, instead of raising."""
+        deleted: list[str] = []
+
+        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+            resolve_external_event(token, {'approvals': {'call-1': True}})
+
+        agent = approval_agent(RequestInput[None](ask, allow_non_durable_wait=True), deleted, durable=True)
+
+        assert (await agent.run('clean up')).output == 'done'
+        assert deleted == ['a.txt']
 
     async def test_a_durable_engine_that_cannot_wait_is_rejected(self) -> None:
         """Waiting in process inside a durable run would not be recorded, so it is refused rather than done unsafely."""

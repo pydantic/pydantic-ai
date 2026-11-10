@@ -502,7 +502,7 @@ class TestToolSelection:
 
 
 class _DecidingWaiter(ExternalEventWaiter):
-    """Stands in for a durable engine: announces a token and returns a fixed decision."""
+    """Stands in for a durable engine: passes a token to `ask` and returns a fixed decision."""
 
     def __init__(self, decision: JsonValue) -> None:
         self.decision = decision
@@ -536,16 +536,16 @@ class TestComposition:
         assert sorted(ran) == ['danger:1', 'danger:2']
 
     async def test_a_durable_approval_waits_only_for_what_the_reviewer_did_not_approve(self) -> None:
-        announced: list[str] = []
+        asked: list[str] = []
 
-        def announce(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
-            announced.extend(call.tool_call_id for call in requests.approvals)
+        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+            asked.extend(call.tool_call_id for call in requests.approvals)
 
         waiter = _DecidingWaiter({'approvals': {'call-2': True}})
         ran: list[str] = []
         model = _reviewer_model(lambda prompt: 'no' if '"x": 1' in prompt else 'yes')
         agent = _agent(
-            RequestInput[None](announce),
+            RequestInput[None](ask),
             _reviewer(model),
             outer=_outer_model(_danger(1, 'call-1'), _danger(2, 'call-2')),
             ran=ran,
@@ -553,7 +553,7 @@ class TestComposition:
         with external_event_scope(waiter):
             result = await agent.run('go')
         assert result.output == 'done'
-        assert announced == ['call-2'], 'the person is only asked about what the reviewer did not approve'
+        assert asked == ['call-2'], 'the person is only asked about what the reviewer did not approve'
         assert sorted(ran) == ['danger:1', 'danger:2']
 
     async def test_a_tool_call_judge_still_blocks_a_call_the_reviewer_approved(self) -> None:

@@ -78,7 +78,8 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
     """Registers `ask_user_question`, which defers every call as a question for `AskUser` or the host to answer."""
 
     def __init__(self, *, capability_id: str | None = None) -> None:
-        super().__init__()
+        # The capability's ID names the toolset's durable units, so `AskUser` works under a durable engine.
+        super().__init__(id=capability_id)
         self._capability_id = capability_id
         self.add_function(self.ask_user_question, name=TOOL_NAME)
 

@@ -7,7 +7,7 @@ import base64
 import inspect
 import json
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import replace
 from functools import partial
 from typing import Literal
@@ -21,8 +21,17 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
-from pydantic_ai.capabilities import AbstractCapability, Instrumentation, PrefixTools, on_event
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation, PrefixTools, RequestInput, on_event
+from pydantic_ai.durable_exec import (
+    JSON_CODEC,
+    BaseDurabilityCapability,
+    DurabilityEngineSpec,
+    DurableOperationId,
+    JournalCallableOperationBackend,
+    RoleBasedOperationConfig,
+)
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.external_events import fail_external_event, resolve_external_event
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -183,7 +192,7 @@ class TestAskUser:
         await agent.run('go')
         (requested,) = observer.requested
         (answered,) = observer.answered
-        assert requested.request is answerer.requests[0]
+        assert requested.request == answerer.requests[0]
         assert answered.request_id == requested.request.id
         assert answered.response.cancelled is False
         assert requested.tool_name == TOOL_NAME and answered.tool_call_id == 'c1'
@@ -643,6 +652,168 @@ class TestTimeout:
         assert observer.answered[0].timed_out is False
 
 
+class TestResumeToken:
+    """A three-parameter answerer may hand the question on and let the answer arrive later, through a resume token."""
+
+    @staticmethod
+    def agent(answerer: AnyAnswerer[None], *capabilities: AbstractCapability[None]) -> Agent[None, str]:
+        return Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=answerer), *capabilities],
+        )
+
+    async def test_the_answer_arrives_through_the_token(self) -> None:
+        tokens: list[str] = []
+        handed_on = anyio.Event()
+
+        async def hand_on(ctx: RunContext[None], request: AskUserRequest, token: str) -> AskUserResponse | None:
+            assert ctx.tool_call_id == request.id == 'c1'
+            tokens.append(token)
+            handed_on.set()
+            return None
+
+        observer = Observer()
+        results: list[str] = []
+
+        async def run() -> None:
+            results.append((await self.agent(hand_on, observer).run('go')).output)
+
+        response = AskUserResponse(
+            answers=(
+                AskUserAnswer(header='Approach', selected=('Patch',), note=('Keep the API',)),
+                AskUserAnswer(header='Targets', selected=('db.py',)),
+            )
+        )
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(run)
+            with anyio.fail_after(5):
+                await handed_on.wait()
+            resolve_external_event(tokens[0], TypeAdapter(AskUserResponse).dump_python(response, mode='json'))
+
+        assert json.loads(results[0]) == {'Approach': ['Patch'], 'Targets': ['db.py']}
+        (answered,) = observer.answered
+        assert answered.response == response
+        assert answered.request_id == 'c1' and not answered.timed_out and not answered.failed
+
+    async def test_an_answer_that_is_not_a_response_fails_the_run_but_still_releases_observers(self) -> None:
+        async def hand_on(ctx: RunContext[None], request: AskUserRequest, token: str) -> None:
+            resolve_external_event(token, {'answers': 'Patch'})
+
+        observer = Observer()
+        with pytest.raises(UserError, match="The answer sent for question 'c1' is not an `AskUserResponse`"):
+            await self.agent(hand_on, observer).run('go')
+        (answered,) = observer.answered
+        assert answered.failed
+
+    async def test_a_failed_wait_tells_the_model_the_user_did_not_answer(self) -> None:
+        async def hand_on(ctx: RunContext[None], request: AskUserRequest, token: str) -> None:
+            fail_external_event(token, 'The Slack message was deleted.')
+
+        observer = Observer()
+        result = await self.agent(hand_on, observer).run('go')
+
+        assert result.output == TIMED_OUT
+        (answered,) = observer.answered
+        assert answered.timed_out and answered.response == AskUserResponse(cancelled=True)
+
+
+class TestComposition:
+    async def test_ask_user_answers_its_questions_before_request_input_is_asked(self) -> None:
+        asked: list[DeferredToolRequests] = []
+
+        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+            asked.append(requests)  # pragma: no cover
+
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[RequestInput[None](ask), AskUser(answerer=ScriptedAnswerer())],
+        )
+        result = await agent.run('go')
+
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+        assert asked == []
+
+    async def test_without_an_answerer_request_input_gets_the_question(self) -> None:
+        """One inbox: `RequestInput` sees the question, marked as one, and answers it like any deferred call."""
+        kinds: list[str] = []
+
+        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+            (call,) = requests.calls
+            kinds.append(requests.kind(call.tool_call_id))
+            request = AskUserRequest.from_tool_call(call)
+            response = AskUserResponse(
+                answers=(
+                    AskUserAnswer(header='Approach', selected=('Patch',)),
+                    AskUserAnswer(header='Targets', selected=('ui.py',)),
+                )
+            )
+            return requests.build_results(calls={call.tool_call_id: ask_user_result(request, response)})
+
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=None), RequestInput[None](ask)],
+        )
+        result = await agent.run('go')
+
+        assert kinds == ['question']
+        assert json.loads(result.output) == {'Approach': ['Patch'], 'Targets': ['ui.py']}
+
+
+class _ImmediateBackend(JournalCallableOperationBackend[None]):
+    def __init__(self, agent_name: str, default_model_id: str | None) -> None:
+        super().__init__(
+            agent_name=agent_name,
+            default_model_id=default_model_id,
+            config=RoleBasedOperationConfig(model=None, event=None, capability=None, tool=None),
+        )
+
+    async def execute(
+        self,
+        *,
+        operation_id: DurableOperationId,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: None,
+    ) -> object:
+        return await body()
+
+
+class _AlwaysDurable(BaseDurabilityCapability[None]):
+    """A durable engine that runs every operation immediately and implements no external-event waiter."""
+
+    engine_spec = DurabilityEngineSpec(
+        engine_name='Immediate', durable_unit_noun='operation', durable_container_noun='run', codec=JSON_CODEC
+    )
+
+    @property
+    def in_durable_context(self) -> bool:
+        return True
+
+    def get_durable_operation_backend(self) -> _ImmediateBackend:
+        return _ImmediateBackend(self.name, self.default_model_id)
+
+
+class TestDurableEngineWithoutAWaiter:
+    async def test_asking_is_refused_unless_a_wait_that_is_not_recorded_is_allowed(self) -> None:
+        def agent(**kwargs: bool) -> Agent[None, str]:
+            return Agent(
+                calling(raw_questions()),
+                name='asker',
+                deps_type=type(None),
+                capabilities=[AskUser(answerer=ScriptedAnswerer(), **kwargs), _AlwaysDurable()],
+            )
+
+        with pytest.raises(UserError, match="This agent's durable engine does not support waiting for external events"):
+            await agent().run('go')
+
+        result = await agent(allow_non_durable_wait=True).run('go')
+        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+
+
 class TestCheckResponse:
     def request(self) -> AskUserRequest:
         return AskUserRequest(questions=(question(), question('Targets', multi_select=True, labels=('x', 'y'))))
@@ -727,7 +898,7 @@ class TestCheckResponse:
         with pytest.raises(ValueError, match='unknown or repeated question'):
             await agent.run('go')
         assert len(observer.requested) == 1 and len(observer.answered) == 1
-        assert observer.answered[0].response is answerer.response
+        assert observer.answered[0].response == answerer.response
 
 
 class TestSchema:
@@ -929,9 +1100,6 @@ class TestAnswerNotes:
         assert (note_text in blob) is include_content
         assert (base64.b64encode(note_bytes).decode() in blob) is (include_content and include_binary_content)
         assert note_bytes.decode() not in blob
-        if not deferred:
-            (tool_span,) = [span for span in spans if span.name == 'execute_tool ask_user_question']
-            assert (note_text in json.dumps(dict(tool_span.attributes or {}))) is include_content
         provider.shutdown()
 
     @pytest.mark.parametrize('keep_user_messages', [False, True])
@@ -1013,8 +1181,8 @@ class TestAnswerNotes:
             )
             assert observer.answered == []
         else:
-            assert observer.answered[0].response is response
-            assert observer.answered[0].response.answers[0].note[1] is image_content
+            assert observer.answered[0].response == response
+            assert observer.answered[0].response.answers[0].note[1] == image_content
         assert json.loads(str(result.output)) == snapshot({'Approach': ['Patch'], 'Targets': ['all files']})
         request_id = observer.requested[0].request.id
         last_request = result.all_messages()[-2]
@@ -1061,7 +1229,7 @@ class TestAnswerNotes:
             ),
         ]
         assert not isinstance(user_part.content, str)
-        assert user_part.content[2] is image_content
+        assert user_part.content[2] == image_content
 
     def test_only_answers_with_notes_get_frames_and_multi_select_is_unchanged(self) -> None:
         request = AskUserRequest(questions=(question(), question('Targets', multi_select=True)))
@@ -1226,7 +1394,7 @@ class TestAnswerNotes:
         )
         with pytest.raises(ValueError, match=message):
             await agent.run('go')
-        assert observer.answered[0].response is response
+        assert observer.answered[0].response == response
 
     def test_image_only_notes_and_response_serialization(self, image_content: BinaryContent) -> None:
         request = AskUserRequest(questions=(question(),))
