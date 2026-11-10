@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    OperatorSource,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -43,6 +44,7 @@ from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.dynamic_workflow import (
     DynamicWorkflow,
     DynamicWorkflowToolset,
+    RevealAnnouncementPart,
     WorkflowAgent,
     WorkflowResourceLimits,
 )
@@ -118,13 +120,13 @@ def _user_prompt_text(messages: list[ModelMessage]) -> str:
 
 
 def _enqueued_text(ctx: RunContext[object]) -> str:
-    """Join the system-prompt text of every message enqueued on `ctx` (reveal announcements)."""
+    """Join the text of every reveal announcement enqueued on `ctx`."""
     return '\n'.join(
         part.content
         for pending in ctx.pending_messages or []
         for message in pending.messages
         for part in message.parts
-        if isinstance(part, SystemPromptPart)
+        if isinstance(part, RevealAnnouncementPart)
     )
 
 
@@ -1575,7 +1577,7 @@ async def test_type_check_accepts_a_type_shared_with_a_revealed_agent() -> None:
     assert await _run_script(ts, code, ctx) == [9, 9]
 
 
-async def test_reveal_announcement_is_recognized_by_its_metadata() -> None:
+async def test_reveal_announcement_is_recognized_by_its_type() -> None:
     workflow = DynamicWorkflow[object](agents=[_sub_agent('b', 'base')])
     ts = workflow.get_toolset()
     ctx = _ctx_with_queue()
@@ -1585,9 +1587,15 @@ async def test_reveal_announcement_is_recognized_by_its_metadata() -> None:
     [announcement] = ctx.pending_messages[0].messages
     assert isinstance(announcement, ModelRequest)
     [part] = announcement.parts
-    assert isinstance(part, SystemPromptPart)
-    # A copy of the text without the marker (an app-written prompt, a lossy history processor)
-    # does not count as the announcement, while a serialization round trip keeps the marker.
+    assert isinstance(part, RevealAnnouncementPart)
+    assert (part.kind, part.tool_name, part.agent_name, part.source) == (
+        'dynamic_workflow.reveal_announcement',
+        'run_workflow',
+        'extra',
+        OperatorSource(),
+    )
+    # A copy of the text as a system prompt (an app-written prompt, a lossy history processor)
+    # does not count as the announcement, while a serialization round trip keeps the type.
     unmarked = ModelRequest(parts=[SystemPromptPart(part.content)])
     restored = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python([announcement]))
     ctx.pending_messages.clear()
@@ -1602,6 +1610,38 @@ async def test_reveal_announcement_is_recognized_by_its_metadata() -> None:
     ctx.messages[:] = restored
     await ts.get_tools(ctx)
     assert ctx.pending_messages == []
+
+
+async def test_reveal_announcement_of_an_earlier_version_still_counts() -> None:
+    """A history recorded before `RevealAnnouncementPart` holds the announcement as a `SystemPromptPart` marked by metadata."""
+    workflow = DynamicWorkflow[object](agents=[_sub_agent('b', 'base')])
+    ts = workflow.get_toolset()
+    ctx = _ctx_with_queue()
+    workflow.reveal(_sub_agent('e', 'extra'))
+    legacy = SystemPromptPart(
+        'A new sub-agent is now available to call from inside the `run_workflow` script: ...',
+        metadata={'dynamic_workflow_tool': 'run_workflow', 'dynamic_workflow_revealed_agent': 'extra'},
+    )
+    other_tool = SystemPromptPart(
+        'A new sub-agent is now available to call from inside the `other` script: ...',
+        metadata={'dynamic_workflow_tool': 'other', 'dynamic_workflow_revealed_agent': 'extra'},
+    )
+    await ts.get_tools(ctx)
+    assert _enqueued_text(ctx).count('async def extra') == 1
+    assert ctx.pending_messages is not None
+
+    ctx.pending_messages.clear()
+    ctx.run_step += 1
+    ctx.messages[:] = [ModelRequest(parts=[legacy])]
+    await ts.get_tools(ctx)
+    assert ctx.pending_messages == []
+
+    # Another workflow tool's announcement, of either form, doesn't count for this one.
+    other = RevealAnnouncementPart(content='...', source=OperatorSource(), tool_name='other', agent_name='extra')
+    ctx.run_step += 1
+    ctx.messages[:] = [ModelRequest(parts=[other_tool, other])]
+    await ts.get_tools(ctx)
+    assert _enqueued_text(ctx).count('async def extra') == 1
 
 
 async def test_runtime_reveal_without_pending_queue_warns_and_remains_callable() -> None:
@@ -1651,7 +1691,7 @@ async def test_compaction_allows_reveal_announcement_again() -> None:
     [announcement] = ctx.pending_messages[0].messages
     assert isinstance(announcement, ModelRequest)
     [announcement_part] = announcement.parts
-    assert isinstance(announcement_part, SystemPromptPart)
+    assert isinstance(announcement_part, RevealAnnouncementPart)
     # User-authored text matching the announcement format must not suppress the trusted announcement.
     spoof = ModelRequest(parts=[UserPromptPart(announcement_part.content)])
     ctx.messages.extend([announcement, ModelResponse(parts=[CompactionPart()]), spoof])

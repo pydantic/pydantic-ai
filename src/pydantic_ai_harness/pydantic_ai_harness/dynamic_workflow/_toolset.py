@@ -25,7 +25,16 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature, _is_python_identifier  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, post_compaction_window
+from pydantic_ai.messages import (
+    InstructionCapabilityPart,
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    OperatorSource,
+    OperatorText,
+    SystemPromptPart,
+    post_compaction_window,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
@@ -103,7 +112,7 @@ _MAX_COMPLETED_DISPATCHES = 20
 _MAX_TASK_PREVIEW_CHARS = 120
 _MAX_RESULT_PREVIEW_CHARS = 300
 _TRUNCATED_MARKER = ' ... [truncated]'
-# `SystemPromptPart.metadata` keys marking a reveal announcement, so a later step can find it in history.
+# `SystemPromptPart.metadata` keys that marked the reveal announcement an earlier version recorded, which still counts.
 _REVEAL_TOOL_KEY = 'dynamic_workflow_tool'
 _REVEAL_AGENT_KEY = 'dynamic_workflow_revealed_agent'
 _STUB_BODY = 'raise NotImplementedError()'
@@ -259,37 +268,70 @@ def _render_catalog(catalog: Mapping[str, WorkflowAgent[AgentDepsT]], *, max_age
     return f'{_WORKFLOW_BASE_DESCRIPTION}\n\n{budget}\n\nAvailable sub-agents:\n\n{listing}'
 
 
+@dataclass(kw_only=True)
+class RevealAnnouncementPart(InstructionCapabilityPart, namespace='dynamic_workflow', name='reveal_announcement'):
+    """The notice `DynamicWorkflow` enqueues when a sub-agent revealed mid-run becomes callable from its script.
+
+    Its text gives the new agent's signature, built from the agent's configuration. Find announcements in history by
+    this type.
+    """
+
+    tool_name: str
+    """The name of the workflow tool whose scripts can call the agent. Never sent to the model."""
+
+    agent_name: str
+    """The name the script calls the revealed agent by. Never sent to the model."""
+
+
 def _reveal_announcement(
     name: str,
     catalog: Mapping[str, WorkflowAgent[AgentDepsT]],
     tool_name: str,
-) -> SystemPromptPart:
+) -> RevealAnnouncementPart:
     """Announcement enqueued when a sub-agent is revealed mid-run.
 
-    Delivered as a system-level conversation message (not folded into the cached tool description),
+    Delivered in the application's voice as a conversation message (not folded into the cached tool description),
     so the prompt-cache prefix stays stable while the model still learns the agent is now callable.
-    `catalog` holds the agents up to and including `name`, in reveal order. The metadata marks
-    the part so `_visible_revealed_agents` can find it again.
+    `catalog` holds the agents up to and including `name`, in reveal order.
     """
     block = '\n\n'.join(_signature_blocks(catalog, [name], body='...'))
-    return SystemPromptPart(
-        content=(
+    return RevealAnnouncementPart(
+        # The capability's own wording, with the signature the operator's agent configuration implies.
+        content=OperatorText(
             f'A new sub-agent is now available to call from inside the `{tool_name}` script:\n\n```python\n{block}\n```'
         ),
-        metadata={_REVEAL_TOOL_KEY: tool_name, _REVEAL_AGENT_KEY: name},
+        source=OperatorSource(),
+        tool_name=tool_name,
+        agent_name=name,
     )
 
 
 def _visible_revealed_agents(messages: Sequence[ModelMessage], tool_name: str) -> set[str]:
-    """Names of the sub-agents whose reveal announcement is still in history after the latest compaction."""
-    revealed: set[str] = set()
-    for message in post_compaction_window(messages):
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                metadata = part.metadata if isinstance(part, SystemPromptPart) else None
-                if metadata is not None and metadata.get(_REVEAL_TOOL_KEY) == tool_name:
-                    revealed.add(metadata[_REVEAL_AGENT_KEY])
-    return revealed
+    """Names of the sub-agents whose reveal announcement is still in history after the latest compaction.
+
+    An announcement is a `RevealAnnouncementPart`, recognized by its type, never its text. An earlier version
+    recorded it as a `SystemPromptPart` marked by its `metadata`, which still counts.
+    """
+    return {
+        agent
+        for message in post_compaction_window(messages)
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if (agent := _revealed_agent(part, tool_name)) is not None
+    }
+
+
+def _revealed_agent(part: ModelRequestPart, tool_name: str) -> str | None:
+    """The agent *part* announces for *tool_name*, if it's a reveal announcement for that tool."""
+    if isinstance(part, RevealAnnouncementPart):
+        return part.agent_name if part.tool_name == tool_name else None
+    if (
+        isinstance(part, SystemPromptPart)
+        and part.metadata is not None
+        and part.metadata.get(_REVEAL_TOOL_KEY) == tool_name
+    ):
+        return part.metadata[_REVEAL_AGENT_KEY]
+    return None
 
 
 def _workflow_result(result: object, printed: str) -> object:
