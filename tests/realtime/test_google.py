@@ -4951,6 +4951,52 @@ async def test_parallel_tool_calls_are_one_response_answered_once() -> None:
     assert session.usage.requests == 2
 
 
+@pytest.mark.parametrize('separate_boundary', [False, True], ids=['one-boundary', 'separate-boundary'])
+async def test_a_turn_that_ends_silently_after_a_tool_result_completes(separate_boundary: bool) -> None:
+    """A model with nothing to say about a tool result ends its turn silently, which answers the result (#12765).
+
+    As reported live from `gemini-3.8-live` on Vertex AI: the result goes out, then `generation_complete`, then a
+    `turn_complete` with usage only. The session took that boundary for the tool-call response's own, which Gemini
+    never sends, so `wait_for_reply()` hung. Vertex's `gemini-live-2.5-flash` does send one, which, with the result
+    already out, the connection reports as usage only: the empty answer's boundary that follows is the same.
+    """
+    result_sent = asyncio.Event()
+
+    class _EndsTheTurnSilently(_RecordingSession):
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            await super().send_tool_response(function_responses=function_responses)
+            result_sent.set()
+
+        async def receive(self) -> AsyncIterator[Any]:
+            if result_sent.is_set():
+                # `receive()` serves one turn at a time; the next one never comes.
+                await asyncio.Event().wait()
+            yield _tool_call_message()
+            await result_sent.wait()
+            if separate_boundary:
+                yield _turn_complete_message()
+            yield genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(generation_complete=True))
+            yield _turn_complete_message()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'saved'
+
+    connection = GoogleRealtimeConnection(
+        cast('AsyncSession', _EndsTheTurnSilently()),
+        profile=GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=separate_boundary),
+    )
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, model_name='gemini-live', system='google'),
+        tool_manager=make_tool_manager(runner),
+    )
+    async with session:
+        await session.send('Save it.')
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+        assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
+
+
 def _tool_call_message() -> genai_types.LiveServerMessage:
     return genai_types.LiveServerMessage(
         tool_call=genai_types.LiveServerToolCall(
