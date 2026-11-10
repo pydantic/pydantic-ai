@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Literal
 from opentelemetry.trace import Span, Status, StatusCode, Tracer, set_span_in_context
 from opentelemetry.util.types import AttributeValue
 
+from ._durable_replay import ReplaySnapshot, snapshot as replay_snapshot
 from ._genai_prices import fill_response_cost
 from ._instrumentation import (
     model_attributes,
@@ -43,6 +44,11 @@ class AttemptStart:
 
     timestamp: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     _monotonic_ns: int = field(default_factory=perf_counter_ns)
+    _replay: ReplaySnapshot | None = field(default_factory=replay_snapshot)
+
+    def replayed(self) -> bool:
+        """Whether the attempt was replayed by a durable engine, so its telemetry was recorded when it ran."""
+        return self._replay is not None and self._replay.replayed()
 
     def elapsed(self) -> timedelta:
         """How long it has been since the attempt started, unaffected by changes to the system clock."""

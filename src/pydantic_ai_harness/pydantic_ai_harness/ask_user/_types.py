@@ -217,16 +217,7 @@ def _check_note(note: tuple[UserContent, ...]) -> None:
         raise ValueError('must contain only `UserContent` items') from exc
     has_content = False
     for item in note:
-        if isinstance(item, FileUrl):
-            if urlparse(item.url).scheme not in {'http', 'https'}:
-                raise ValueError('file URLs must use http or https')
-            if item.force_download is not False:
-                raise ValueError('file URLs must use `force_download=False`')
-            # Google treats these URLs as authenticated Files API references, not public downloads.
-            if is_google_files_api_url(item.url):
-                raise ValueError('must not contain provider-uploaded file references')
-        elif isinstance(item, UploadedFile):
-            raise ValueError('must not contain provider-uploaded file references')
+        _check_note_file(item)
         if isinstance(item, str | TextContent):
             text = item if isinstance(item, str) else item.content
             _printable(text, newlines=True)
@@ -235,6 +226,19 @@ def _check_note(note: tuple[UserContent, ...]) -> None:
             has_content = True
     if not has_content:
         raise ValueError('must not be blank')
+
+
+def _check_note_file(item: UserContent) -> None:
+    if isinstance(item, FileUrl):
+        if urlparse(item.url).scheme not in {'http', 'https'}:
+            raise ValueError('file URLs must use http or https')
+        if item.force_download is not False:
+            raise ValueError('file URLs must use `force_download=False`')
+        # Google treats these URLs as authenticated Files API references, not public downloads.
+        if is_google_files_api_url(item.url):
+            raise ValueError('must not contain provider-uploaded file references')
+    elif isinstance(item, UploadedFile):
+        raise ValueError('must not contain provider-uploaded file references')
 
 
 class ContextAnswerer(Protocol[AgentDepsT]):
@@ -277,25 +281,29 @@ def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
         question = questions.pop(answer.header, None)
         if question is None:
             raise ValueError(f'answer for unknown or repeated question {answer.header!r}')
-        try:
-            _check_note(answer.note)
-        except ValueError as exc:
-            raise ValueError(f'answer note for {answer.header!r} {exc}') from exc
-        if answer.custom_answer is not None:
-            if answer.selected:
-                raise ValueError('a custom answer cannot also select options')
-            if not answer.custom_answer.strip():
-                raise ValueError('a custom answer must not be blank')
-            _printable(answer.custom_answer, newlines=True)
-            continue
-        labels = {option.label for option in question.options}
-        if unknown := [label for label in answer.selected if label not in labels]:
-            raise ValueError(f'answer for {answer.header!r} picked options it does not offer: {unknown}')
-        if not answer.selected:
-            raise ValueError(f'answer for {answer.header!r} picked nothing')
-        if len(set(answer.selected)) != len(answer.selected):
-            raise ValueError(f'answer for {answer.header!r} picked the same option twice')
-        if len(answer.selected) > 1 and not question.multi_select:
-            raise ValueError(f'answer for {answer.header!r} picked several options but it is single-select')
+        _check_answer(question, answer)
     if questions:
         raise ValueError(f'unanswered questions: {sorted(questions)}')
+
+
+def _check_answer(question: Question, answer: AskUserAnswer) -> None:
+    try:
+        _check_note(answer.note)
+    except ValueError as exc:
+        raise ValueError(f'answer note for {answer.header!r} {exc}') from exc
+    if answer.custom_answer is not None:
+        if answer.selected:
+            raise ValueError('a custom answer cannot also select options')
+        if not answer.custom_answer.strip():
+            raise ValueError('a custom answer must not be blank')
+        _printable(answer.custom_answer, newlines=True)
+        return
+    labels = {option.label for option in question.options}
+    if unknown := [label for label in answer.selected if label not in labels]:
+        raise ValueError(f'answer for {answer.header!r} picked options it does not offer: {unknown}')
+    if not answer.selected:
+        raise ValueError(f'answer for {answer.header!r} picked nothing')
+    if len(set(answer.selected)) != len(answer.selected):
+        raise ValueError(f'answer for {answer.header!r} picked the same option twice')
+    if len(answer.selected) > 1 and not question.multi_select:
+        raise ValueError(f'answer for {answer.header!r} picked several options but it is single-select')

@@ -320,7 +320,7 @@ class AttemptLog:
             self.attempts.extend(failure.attempts)
         attempt = failed_attempt(model, failure, start=start, duration=start.elapsed(), kind=kind)
         self.attempts.append(attempt)
-        if parent is not None and tracer is not None:
+        if parent is not None and tracer is not None and not start.replayed():
             record_attempt_span(
                 attempt,
                 failure,

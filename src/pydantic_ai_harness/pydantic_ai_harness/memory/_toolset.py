@@ -6,7 +6,7 @@ import hashlib
 import json
 import posixpath
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, Literal, NoReturn, TypeVar
@@ -405,6 +405,11 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                 )
         if self._operations is not None and not _IN_OPERATION.get():
             return raise_retry(await self._operations.write_memory(ctx, content, file, old_text))
+        return await self._write_memory(ctx, content, file, old_text)
+
+    async def _write_memory(
+        self, ctx: RunContext[AgentDepsT], content: str, file: str, old_text: str | None
+    ) -> MemoryWriteResult:
         capability = self._capability
         name = normalize_filename(file)
         if old_text is None and not content.strip():
@@ -428,34 +433,19 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                 write_metadata = capability.write_metadata
                 metadata = write_metadata(ctx) if callable(write_metadata) else write_metadata
                 for attempt in range(_MAX_CAS_ATTEMPTS):
-                    current = await store.read(path, max_chars=capability.max_memory_size)
-                    if current is not None and current.truncated:
-                        raise ModelRetry(
-                            f'{name!r} exceeds max_memory_size and cannot be changed from partial content; '
-                            'edit or replace it through the backing store first.'
-                        )
-                    updated, status = _apply_write(
-                        None if current is None else current.content,
-                        content,
-                        old_text,
-                        name,
-                        read_call(file_reader(ctx, store, scope), name),
+                    updated, status, expected_version = await self._apply_to_current(
+                        ctx, store, scope, path, name, content, old_text
                     )
-                    if len(updated) > capability.max_memory_size:
-                        raise ModelRetry(
-                            f'{name!r} would grow to {len(updated)} characters; the limit is '
-                            f'{capability.max_memory_size}. Split the content into separate memory files.'
-                        )
-                    expected_version = None if current is None else current.version
                     try:
-                        if metadata_store is None:
-                            mutation = await store.write(
-                                path, updated, expected_version=expected_version, operation=operation
-                            )
-                        else:
-                            mutation = await metadata_store.write_with_metadata(
-                                path, updated, expected_version=expected_version, operation=operation, metadata=metadata
-                            )
+                        mutation = await _write_mutation(
+                            store,
+                            metadata_store,
+                            path,
+                            updated,
+                            expected_version=expected_version,
+                            operation=operation,
+                            metadata=metadata,
+                        )
                     except MemoryConflictError:
                         if attempt + 1 == _MAX_CAS_ATTEMPTS:
                             raise ModelRetry('Memory changed repeatedly while writing; retry the operation.')
@@ -473,6 +463,38 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
+
+    async def _apply_to_current(
+        self,
+        ctx: RunContext[AgentDepsT],
+        store: MemoryStore,
+        scope: str,
+        path: str,
+        name: str,
+        content: str,
+        old_text: str | None,
+    ) -> tuple[str, _WriteStatus, str | None]:
+        """The file's content with the write applied, the write's status, and the version the write replaces."""
+        capability = self._capability
+        current = await store.read(path, max_chars=capability.max_memory_size)
+        if current is not None and current.truncated:
+            raise ModelRetry(
+                f'{name!r} exceeds max_memory_size and cannot be changed from partial content; '
+                'edit or replace it through the backing store first.'
+            )
+        updated, status = _apply_write(
+            None if current is None else current.content,
+            content,
+            old_text,
+            name,
+            read_call(file_reader(ctx, store, scope), name),
+        )
+        if len(updated) > capability.max_memory_size:
+            raise ModelRetry(
+                f'{name!r} would grow to {len(updated)} characters; the limit is '
+                f'{capability.max_memory_size}. Split the content into separate memory files.'
+            )
+        return updated, status, None if current is None else current.version
 
     async def read_memory(self, ctx: RunContext[AgentDepsT], file: str) -> str:
         """Read a bounded prefix of one memory file.
@@ -689,6 +711,23 @@ def _write_result(
     if status is None:
         status = 'updated' if old_text is not None else ('appended' if mutation.existed else 'created')
     return {'file': name, 'version': mutation.version, 'replayed': mutation.replayed, 'status': status}
+
+
+async def _write_mutation(
+    store: MemoryStore,
+    metadata_store: MetadataMemoryStore | None,
+    path: str,
+    content: str,
+    *,
+    expected_version: str | None,
+    operation: MemoryOperation,
+    metadata: Mapping[str, str] | None,
+) -> MemoryMutation:
+    if metadata_store is None:
+        return await store.write(path, content, expected_version=expected_version, operation=operation)
+    return await metadata_store.write_with_metadata(
+        path, content, expected_version=expected_version, operation=operation, metadata=metadata
+    )
 
 
 def _delete_result(name: str, mutation: MemoryMutation) -> MemoryDeleteResult:
