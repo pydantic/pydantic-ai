@@ -19,7 +19,7 @@ A snapshot holds the run's message history, not everything around it: capability
 
 1. **Append-only step events.** Every interesting boundary (run start/end, model request, tool call, failure) appends a `StepEvent`. A run killed mid-tool-call still leaves a usable event trail.
 2. **Continuable snapshots.** A `ContinuableSnapshot` is saved at settled node boundaries, and a failing run saves its live at-failure history. Each snapshot carries a `state`: `complete` when every `ToolCallPart` has a matching result, `interrupted` when the capture holds unsettled tool work (e.g. a crash mid-tool-cycle). `latest_snapshot` and `continue_run` return only `complete` snapshots unless the caller passes `include_interrupted=True`. Pass the snapshot's `messages` back to `Agent.run(message_history=...)` to continue or fork.
-3. **Tool-effect ledger.** Every tool call's lifecycle (`started`, `completed`, `failed`) is recorded against `(run_id, tool_call_id)`. After a crash, a tool with a `started` record and no terminal update should be treated as `unknown_after_crash`: the side effect may or may not have happened.
+3. **Tool-effect ledger.** Every tool call's lifecycle (`started`, `completed`, `failed`) is recorded against `(run_id, tool_call_id)`. A tool that fails, including with `ModelRetry` or `ToolFailed`, is recorded `failed`. After a crash, a tool with a `started` record and no terminal update should be treated as `unknown_after_crash`: the side effect may or may not have happened.
 4. **Lineage metadata.** `conversation_id` (sequence) and `parent_run_id` (hierarchy) are independent axes. See [Three-level identity](#three-level-identity).
 
 ## Quick start
@@ -69,6 +69,9 @@ Use `StepPersistence` alone when a run can be resumed or forked from its last se
 Six store boundaries are durable operations: registration identity, run registration, event append, snapshot save, tool-effect start, and tool-effect completion or failure. Every persisted timestamp is read inside one of those operations, so replay uses the journaled value instead of reading the workflow wall clock again. The journaled registration identity makes a retried registration idempotent while a distinct reuse of the same run id still fails.
 
 Events and snapshots written by the capability carry deterministic per-run idempotency keys. Every built-in store suppresses a key it already applied, while records created directly with `idempotency_key=None` retain append behavior. Snapshot keys use a per-run save sequence together with `step_index` and `state`. Replay produces the same sequence, while distinct snapshots at the same step and state retain their write order and newer history.
+
+!!! warning "Compatibility impact: recorded tool-failure operations"
+    Recording a tool call that raises `ModelRetry` or `ToolFailed` as `failed` adds a tool-effect failure and an event append to the recorded operation sequence. Before upgrading, let in-flight DBOS or Temporal runs that already made such a call finish, or deploy the upgrade as a new DBOS application version or with [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning). Set the DBOS `application_version` explicitly: the computed one does not change with a library upgrade. Replaying an older run with the new code raises `DBOSUnexpectedStepError` on DBOS and a nondeterminism error on Temporal.
 
 The orchestrator pattern -- one logical agent serving many turns -- uses `conversation_id`, not a shared `run_id`:
 
@@ -305,7 +308,7 @@ async def set_label(ctx: RunContext[Deps], issue: int, label: str) -> str:
     return 'ok'
 ```
 
-The helper reads the active `run_id` from the `StepPersistence` `ContextVar` and `tool_call_id` / `tool_name` from `ctx`, then merges the metadata into the prior record. It is a no-op when called outside a step-persistence-wrapped tool call. `after_tool_execute` preserves both fields when it writes the terminal `completed` / `failed` entry.
+The helper reads the active `run_id` from the `StepPersistence` `ContextVar` and `tool_call_id` / `tool_name` from `ctx`, then merges the metadata into the prior record. It is a no-op when called outside a step-persistence-wrapped tool call. The terminal `completed` / `failed` entry preserves both fields.
 
 ## Compaction receipt handles
 

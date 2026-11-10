@@ -156,6 +156,7 @@ def build_agent() -> Agent[None, str]:
             cli.MarkTimedOutSpans(),
             cli.RecordRunTotals(),
             cli.CIReviewToolPolicy(),
+            cli.EndRunAfterReserveNoop(),
             cli.RecoverMCPToolErrors(),
             PrepareTools(cli.hold_time_reserve_for_safe_output),
             *(
