@@ -6585,7 +6585,7 @@ name = "pydantic-ai-harness"
 source = { editable = "src/pydantic_ai_harness" }
 dependencies = [
     { name = "genai-prices" },
-    { name = "httpx" },
+    { name = "httpx2" },
     { name = "json-repair" },
     { name = "pydantic-ai-slim" },
 ]
@@ -6733,7 +6733,7 @@ requires-dist = [
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.16.0" },
     { name = "fastmcp", marker = "extra == 'stackone'", specifier = ">=3.4.5,<4" },
     { name = "genai-prices", specifier = ">=0.0.71" },
-    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "httpx2", specifier = ">=2.7" },
     { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
     { name = "json-repair", specifier = ">=0.58.0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },

@@ -14,7 +14,7 @@ from typing import IO, Annotated, Any, Self
 
 import anyio
 import anyio.to_thread
-import httpx
+import httpx2
 from pydantic import Field
 
 from pydantic_ai import RunContext
@@ -481,9 +481,9 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             return await self._operations.localstack_health(self._endpoint_url)
         url = self._endpoint_url.rstrip('/') + _HEALTH_PATH
         try:
-            async with httpx.AsyncClient(timeout=self._default_timeout) as client:
+            async with httpx2.AsyncClient(timeout=self._default_timeout) as client:
                 response = await client.get(url)
-        except httpx.HTTPError as e:
+        except httpx2.HTTPError as e:
             return truncate_tail(f'[error: could not reach LocalStack at {url}: {e}]', self._max_output_chars)
         if response.status_code != 200:
             return f'[error: LocalStack health check returned HTTP {response.status_code}]'

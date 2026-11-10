@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 import anyio
 import anyio.to_thread
-import httpx
+import httpx2
 
 _EDGE_PORT = 4566
 _HEALTH_PATH = '/_localstack/health'
@@ -240,17 +240,17 @@ class LocalStackContainer:
         url = self._readiness_url
         try:
             with anyio.fail_after(self._startup_timeout):
-                async with httpx.AsyncClient() as client:
+                async with httpx2.AsyncClient() as client:
                     while not await self._is_ready(client, url):
                         await anyio.sleep(self._poll_interval)
         except TimeoutError as e:
             raise LocalStackError(f'LocalStack did not become ready within {self._startup_timeout}s.') from e
 
-    async def _is_ready(self, client: httpx.AsyncClient, url: str) -> bool:
+    async def _is_ready(self, client: httpx2.AsyncClient, url: str) -> bool:
         """Return True once the health endpoint answers with HTTP 200."""
         try:
             response = await client.get(url)
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             return False
         return response.status_code == 200
 
