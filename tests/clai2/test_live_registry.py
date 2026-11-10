@@ -450,6 +450,19 @@ async def test_failed_record_write_cleans_up_listener(private_runtime: Path, mon
     assert list(private_runtime.iterdir()) == []
 
 
+async def test_failed_server_start_removes_socket(private_runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fail(*args: object, **kwargs: object) -> None:
+        raise OSError('no server')
+
+    registry = LiveRegistry(lambda: [], directory=private_runtime)
+    monkeypatch.setattr(asyncio, 'start_unix_server', fail)
+    with pytest.raises(OSError, match='no server'):
+        async with registry.serving(subscribe):
+            pass
+    assert registry.socket_path is not None and not registry.socket_path.exists()
+    assert list(private_runtime.iterdir()) == []
+
+
 def test_sessions_command_rejects_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, 'platform', 'win32')
     monkeypatch.setattr(sys, 'argv', ['clai2', 'sessions'])

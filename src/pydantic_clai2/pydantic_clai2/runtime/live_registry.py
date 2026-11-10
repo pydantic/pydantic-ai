@@ -13,7 +13,7 @@ import stat
 import struct
 import sys
 from collections.abc import AsyncGenerator, Callable
-from contextlib import ExitStack, asynccontextmanager, suppress
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -294,25 +294,6 @@ def _unlink_abandoned(path: Path, inode: int) -> None:
         raise OSError(f'CLAI socket changed during cleanup at {path}')
 
 
-def _bind(path: Path) -> tuple[socket.socket, int]:
-    """A private listening socket at `path`, with its inode."""
-    listener = socket.socket(socket.AF_UNIX)
-    with ExitStack() as on_failure:
-        on_failure.callback(listener.close)
-        previous_umask = os.umask(0o077)
-        try:
-            listener.bind(str(path))
-            inode = path.lstat().st_ino
-        finally:
-            os.umask(previous_umask)
-        on_failure.callback(_unlink_if_unchanged, path, inode)
-        path.chmod(0o600)
-        listener.listen()
-        listener.setblocking(False)
-        on_failure.pop_all()
-    return listener, inode
-
-
 def _unlink_published(path: Path, socket_inode: int, record_path: Path, instance: str) -> None:
     _unlink_if_unchanged(path, socket_inode)
     try:
@@ -426,13 +407,25 @@ class LiveRegistry:
             else:
                 raise OSError(f'CLAI socket already active at {path}')
         self.socket_path = path
-        listener, socket_inode = await to_thread.run_sync(_bind, path)
+        listener = socket.socket(socket.AF_UNIX)
+        socket_inode: int | None = None
         try:
+            # The umask is process-wide, so it only changes while no other task can run.
+            previous_umask = os.umask(0o077)
+            try:
+                listener.bind(str(path))
+            finally:
+                os.umask(previous_umask)
+            socket_inode = (await to_thread.run_sync(path.lstat)).st_ino
+            await to_thread.run_sync(path.chmod, 0o600)
+            listener.listen()
+            listener.setblocking(False)
             self._server = await asyncio.start_unix_server(self._serve, sock=listener, limit=_MAX_REQUEST + 1)
         except BaseException:
             listener.close()
-            with CancelScope(shield=True):
-                await to_thread.run_sync(_unlink_if_unchanged, path, socket_inode)
+            if socket_inode is not None:
+                with CancelScope(shield=True):
+                    await to_thread.run_sync(_unlink_if_unchanged, path, socket_inode)
             raise
         record_path = self.directory / f'{self.pid}.json'
         try:
