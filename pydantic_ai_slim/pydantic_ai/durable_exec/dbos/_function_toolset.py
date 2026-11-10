@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Self
 from weakref import WeakKeyDictionary
 
 from dbos import DBOS
 from dbos._error import DBOSPatchNondeterminismError
 
-from pydantic_ai.durable_exec._toolset import tools_before_tool_instance_defaults
+from pydantic_ai.durable_exec._toolset import holds_tool_instance_defaults, listing_tools_before_tool_instance_defaults
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 
@@ -22,14 +22,6 @@ TOOL_INSTANCE_DEFAULTS_PATCH = 'pydantic_ai:function_toolset_defaults_on_tool_in
 
 _tool_instance_defaults_patched: WeakKeyDictionary[DBOSContext, asyncio.Task[bool] | bool] = WeakKeyDictionary()
 """Each workflow execution's `DBOS.patch_async()` result, shared by the agent runs in it like `workflow.patched()`'s."""
-
-
-def holds_tool_instance_defaults(toolset: FunctionToolset[Any]) -> bool:
-    """Whether `toolset` holds a `Tool` that a `FunctionToolset` made sequential or deferred."""
-    return any(
-        tool._sequential_from_toolset or tool._defer_loading_from_toolset  # pyright: ignore[reportPrivateUsage]
-        for tool in toolset.tools.values()
-    )
 
 
 @dataclass
@@ -57,11 +49,11 @@ class ToolInstanceDefaultsGateToolset(WrapperToolset[AgentDepsT]):
         return await super().__aenter__()
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        tools = await super().get_tools(ctx)
         patched = _tool_instance_defaults_patched.get(workflow_context()) if in_workflow_code() else None
         if patched is None or patched is True:
-            return tools
-        return {**tools, **tools_before_tool_instance_defaults(self.function_toolset, tools)}
+            return await super().get_tools(ctx)
+        with listing_tools_before_tool_instance_defaults():
+            return await super().get_tools(ctx)
 
 
 def gate_tool_instance_defaults(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:

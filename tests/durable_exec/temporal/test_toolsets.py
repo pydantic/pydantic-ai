@@ -2320,6 +2320,10 @@ def _tool_instances_agent(name: str, toolset: FunctionToolset[None]) -> Agent[No
     )
 
 
+async def _force_sequential(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+    return replace(tool_def, sequential=True)
+
+
 _shared_first = Tool(first)
 # Turns on `sequential` for `_shared_first`, which the `shared_sequential` agent holds through a toolset without it.
 _sequential_toolset = FunctionToolset([_shared_first], sequential=True)
@@ -2333,6 +2337,14 @@ _tool_instances_agents = {
     ),
     'shared_sequential': _tool_instances_agent(
         'shared_sequential_tool_instance', FunctionToolset([_shared_first, Tool(second)], id='tools')
+    ),
+    'prepare_sequential': _tool_instances_agent(
+        'prepare_sequential_tool_instances',
+        FunctionToolset(
+            [Tool(first, prepare=_force_sequential), Tool(second, prepare=_force_sequential)],
+            id='tools',
+            sequential=True,
+        ),
     ),
 }
 
@@ -2359,22 +2371,28 @@ def _tool_activity_events(history: WorkflowHistory) -> list[str]:
     return events
 
 
+_at_once = ['scheduled', 'scheduled', 'completed', 'completed']
+_one_at_a_time = ['scheduled', 'completed', 'scheduled', 'completed']
+
+
 @pytest.mark.parametrize(
-    ('flag', 'patched_events'),
+    ('flag', 'unpatched_events', 'patched_events'),
     [
-        ('sequential', ['scheduled', 'completed', 'scheduled', 'completed']),
-        ('defer_loading', []),
-        ('shared_sequential', ['scheduled', 'completed', 'scheduled', 'completed']),
+        ('sequential', _at_once, _one_at_a_time),
+        ('defer_loading', _at_once, []),
+        ('shared_sequential', _at_once, _one_at_a_time),
+        ('prepare_sequential', _one_at_a_time, _one_at_a_time),
     ],
 )
 async def test_function_toolset_defaults_on_tool_instances_replay(
-    client: Client, monkeypatch: pytest.MonkeyPatch, flag: str, patched_events: list[str]
+    client: Client, monkeypatch: pytest.MonkeyPatch, flag: str, unpatched_events: list[str], patched_events: list[str]
 ):
     """A history recorded before `FunctionToolset` applied `sequential` or `defer_loading` to `Tool` instances replays.
 
     Without the patch marker, the workflow lists the tools the way it did before: both calls are dispatched at once
-    and neither tool is deferred, including a `Tool` that another toolset made sequential. A new run gets the
-    toolset's value. Unsandboxed, so `workflow.patched` can be faked for the original run.
+    and neither tool is deferred, including a `Tool` that another toolset made sequential, while a tool whose own
+    `prepare` makes it sequential stays sequential. A new run gets the toolset's value. Unsandboxed, so
+    `workflow.patched` can be faked for the original run.
     """
     agent = _tool_instances_agents[flag]
 
@@ -2403,7 +2421,7 @@ async def test_function_toolset_defaults_on_tool_instances_replay(
     monkeypatch.undo()
     patched_history = await run_workflow()
 
-    assert _tool_activity_events(unpatched_history) == ['scheduled', 'scheduled', 'completed', 'completed']
+    assert _tool_activity_events(unpatched_history) == unpatched_events
     assert _tool_activity_events(patched_history) == patched_events
 
     replayer = Replayer(

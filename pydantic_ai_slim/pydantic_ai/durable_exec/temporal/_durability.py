@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal, TypeAlias, cast
@@ -441,10 +441,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))
         return config
 
-    def _function_tools_in_durable_context(
-        self, toolset: FunctionToolset[AgentDepsT], tools: dict[str, ToolsetTool[AgentDepsT]]
-    ) -> dict[str, ToolsetTool[AgentDepsT]]:
-        return gate_tool_instance_defaults(toolset, tools)
+    def _function_tools_listing_in_durable_context(
+        self, toolset: FunctionToolset[AgentDepsT]
+    ) -> AbstractContextManager[None]:
+        return gate_tool_instance_defaults(toolset)
 
     @contextmanager
     def _tool_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT], None, None]:

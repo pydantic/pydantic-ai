@@ -3,8 +3,8 @@ from __future__ import annotations
 import copy
 import functools
 import inspect
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
+from contextlib import AbstractContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import (
     TYPE_CHECKING,
@@ -40,7 +40,12 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent, _RecordsContentFiles  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai.tools import (
+    AgentDepsT,
+    RunContext,
+    ToolDefinition,
+    _without_toolset_sequential_defer_loading,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.toolsets.function import FunctionToolsetTool
@@ -765,27 +770,28 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
                 await held.aclose(*args)
 
 
-def tools_before_tool_instance_defaults(
-    toolset: FunctionToolset[AgentDepsT], tools: dict[str, ToolsetTool[AgentDepsT]]
-) -> dict[str, ToolsetTool[AgentDepsT]]:
-    """The `Tool` instances `toolset` lists as sequential or deferred because a `FunctionToolset` made them so, without that.
+def holds_tool_instance_defaults(toolset: FunctionToolset[AgentDepsT]) -> bool:
+    """Whether `toolset` holds a `Tool` that a `FunctionToolset` made sequential or deferred."""
+    return any(
+        tool._sequential_from_toolset or tool._defer_loading_from_toolset  # pyright: ignore[reportPrivateUsage]
+        for tool in toolset.tools.values()
+    )
+
+
+@contextmanager
+def listing_tools_before_tool_instance_defaults() -> Generator[None]:
+    """List `Tool` instances without the `sequential` and `defer_loading` a `FunctionToolset` set on them.
 
     That's how they were listed before `FunctionToolset` applied its `sequential` and `defer_loading` to
-    `Tool` instances. A sequential or deferred tool changes which durable operations a workflow runs, so
-    workflows started before then can only continue with these.
+    `Tool` instances, and each tool's `prepare` sees the definition it saw then. A sequential or deferred
+    tool changes which durable operations a workflow runs, so workflows started before then can only
+    continue with these.
     """
-    before: dict[str, ToolsetTool[AgentDepsT]] = {}
-    for name, tool in tools.items():
-        assert isinstance(tool, FunctionToolsetTool) and tool.original_name is not None
-        held = toolset.tools[tool.original_name]
-        tool_def = replace(
-            tool.tool_def,
-            sequential=tool.tool_def.sequential and not held._sequential_from_toolset,  # pyright: ignore[reportPrivateUsage]
-            defer_loading=tool.tool_def.defer_loading and not held._defer_loading_from_toolset,  # pyright: ignore[reportPrivateUsage]
-        )
-        if tool_def != tool.tool_def:
-            before[name] = replace(tool, tool_def=tool_def)
-    return before
+    token = _without_toolset_sequential_defer_loading.set(True)
+    try:
+        yield
+    finally:
+        _without_toolset_sequential_defer_loading.reset(token)
 
 
 class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
@@ -801,8 +807,7 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
         resolve_validation_config: ResolveToolConfig | None = None,
         durable_registrations: list[Any] | None = None,
         durable_config: Mapping[str, Any] | None = None,
-        tools_in_durable_context: Callable[[dict[str, ToolsetTool[AgentDepsT]]], dict[str, ToolsetTool[AgentDepsT]]]
-        | None = None,
+        listing_in_durable_context: Callable[[], AbstractContextManager[None]] = nullcontext,
     ):
         super().__init__(
             wrapped,
@@ -815,14 +820,13 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
         self._resolve_tool_config = resolve_tool_config
         self._validate_args_operation = validate_args_operation
         self._resolve_validation_config = resolve_validation_config or resolve_tool_config
-        self._tools_in_durable_context = tools_in_durable_context
+        self._listing_in_durable_context = listing_in_durable_context
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        tools = await super().get_tools(ctx)
         if not self._in_durable_context():
-            return tools
-        if self._tools_in_durable_context is not None:
-            tools = self._tools_in_durable_context(tools)
+            return await super().get_tools(ctx)
+        with self._listing_in_durable_context():
+            tools = await super().get_tools(ctx)
         return {name: self._tool_with_durable_validation(name, tool) for name, tool in tools.items()}
 
     def _tool_with_durable_validation(self, name: str, tool: ToolsetTool[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
