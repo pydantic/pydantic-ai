@@ -6,6 +6,7 @@ import os
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from functools import cache
 from typing import IO, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -62,7 +63,41 @@ def color(role: str) -> str:
     shade = role.removeprefix('bold ')
     if palette is None or shade not in _SLOTS:
         return role
-    return ('bold ' if role.startswith('bold ') else '') + palette.ansi[_SLOTS[shade]]
+    return ('bold ' if role.startswith('bold ') else '') + _readable(
+        palette.ansi[_SLOTS[shade]], palette.bg, palette.fg
+    )
+
+
+_MIN_CONTRAST = 4.5
+"""WCAG AA's contrast for text, which palette colours are raised to, short of the palette's own text."""
+
+
+@cache
+def _readable(colour: str, bg: str, fg: str) -> str:
+    """`colour` moved towards black or white, keeping its hue, until it reads on `bg` as well as `fg` does."""
+    from termflow.themes.palette import blend_hex
+
+    floor = min(_MIN_CONTRAST, _contrast(fg, bg))
+    end = max('#000000', '#FFFFFF', key=lambda extreme: _contrast(extreme, bg))
+    return next(blended for step in range(21) if _contrast(blended := blend_hex(colour, end, step / 20), bg) >= floor)
+
+
+def _luminance(colour: str) -> float:
+    """WCAG relative luminance."""
+    channels = (int(colour[index : index + 2], 16) / 255 for index in (1, 3, 5))
+    red, green, blue = (c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels)
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def _contrast(a: str, b: str) -> float:
+    darker, lighter = sorted((_luminance(a), _luminance(b)))
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _lightness(colour: str) -> float:
+    """CIELAB L*, which red-green and blue-yellow colour blindness leave nearly unchanged."""
+    luminance = _luminance(colour)
+    return 116 * luminance ** (1 / 3) - 16 if luminance > 216 / 24389 else luminance * 24389 / 27
 
 
 def syntax_theme() -> SyntaxTheme:
@@ -77,12 +112,16 @@ def syntax_theme() -> SyntaxTheme:
             color = style.color
             if color is not None:
                 assert color.number is not None
-                styles[token] = style + Style(color=palette.ansi[color.number])
+                styles[token] = style + Style(color=_readable(palette.ansi[color.number], palette.bg, palette.fg))
     return ANSISyntaxTheme(styles)
 
 
 _DIFF_TINT = 0.28
-"""How far a palette's diff backgrounds move from its background towards its green and red."""
+"""How far a palette's diff backgrounds move from its background towards its green and red, on average."""
+_DIFF_SPLITS = (0.08, -0.08, 0.16, -0.16)
+"""How much more the addition is tinted than the deletion is, tried in order until their lightness differs."""
+_DIFF_LIGHTNESS = 12
+"""The L* by which addition and deletion lines differ, so they stay apart without telling red from green."""
 
 
 def diff_theme() -> DiffTheme:
@@ -93,9 +132,19 @@ def diff_theme() -> DiffTheme:
     palette = current()
     if palette is None:
         return DiffTheme(addition=DIFF_ADDITION, deletion=DIFF_DELETION, marker_brighten=2.0)
+    pairs = [
+        (
+            blend_hex(palette.bg, palette.ansi[2], _DIFF_TINT + split),
+            blend_hex(palette.bg, palette.ansi[1], _DIFF_TINT - split),
+        )
+        for split in _DIFF_SPLITS
+    ]
+    addition, deletion = next(
+        (pair for pair in pairs if abs(_lightness(pair[0]) - _lightness(pair[1])) >= _DIFF_LIGHTNESS), pairs[-1]
+    )
     return DiffTheme(
-        addition=blend_hex(palette.bg, palette.ansi[2], _DIFF_TINT),
-        deletion=blend_hex(palette.bg, palette.ansi[1], _DIFF_TINT),
+        addition=addition,
+        deletion=deletion,
         # Markers stand out from their line: brighter on a dark background, darker on a light one.
         marker_brighten=-0.5 if _is_light(palette) else 2.0,
     )
@@ -192,8 +241,8 @@ THINKING = PURPLE
 # The logo keeps Pydantic's brand colours under every palette; do not pass these through `color()`.
 LOGO = f'bold {LITHIUM}'
 BANNER = (LITHIUM, PURPLE, AI_CYAN)
-# Claude Code's dark-theme diff backgrounds: a green and a red at the same depth, so additions read as additions.
-DIFF_ADDITION = '#225C2B'
+# A green and a red that differ in lightness too, so colour-blind readers can tell additions from deletions.
+DIFF_ADDITION = '#2B7536'
 DIFF_DELETION = '#7A2936'
 
 # `roles` gives a shared slot to the first brand here: muted grey text is commoner than element purple.
@@ -238,9 +287,8 @@ def sgr(role: str, *, bold: bool = False) -> str:
     if truecolor():
         red, green, blue = (int(resolved[index : index + 2], 16) for index in (1, 3, 5))
         return f'\x1b[{prefix}38;2;{red};{green};{blue}m'
-    palette = current()
-    if palette is not None and resolved in palette.ansi:
-        slot = palette.ansi.index(resolved)
+    if current() is not None and (shade := role.removeprefix('bold ')) in _SLOTS:
+        slot = _SLOTS[shade]
         code = 30 + slot if slot < 8 else 90 + slot - 8
     else:
         code = _BASIC[resolved]

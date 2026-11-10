@@ -441,7 +441,9 @@ def test_a_theme_change_repaints_earlier_tool_output_in_the_new_palette() -> Non
         painted = len(screen.terminal.getvalue())
         selected[0] = 'tokyo_night'
         screen.surface.paint(ROWS)
-    assert truecolor(PALETTES['tokyo_night'].ansi[8]) in screen.terminal.getvalue()[painted:]
+        muted = theme.color(theme.MUTED)
+    assert muted != PALETTES['tokyo_night'].ansi[8], 'tokyo_night raises its grey to readable contrast'
+    assert truecolor(muted) in screen.terminal.getvalue()[painted:]
     assert screen.lines()[0] == 'earlier tool output'
 
 
