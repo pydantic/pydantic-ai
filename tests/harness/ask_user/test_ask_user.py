@@ -739,21 +739,15 @@ class TestModelRetry:
 
 
 class TestRunStream:
-    async def test_run_stream_ends_the_run_with_the_question(self) -> None:
-        """`run_stream()` runs no deferred tool call handlers yet (#12686), so the answerer is not called."""
+    async def test_run_stream_answers_the_question(self) -> None:
+        """The question is deferred by the tool body, not declared deferred, so `run_stream()` runs `AskUser`'s handler."""
         answerer = ScriptedAnswerer()
-        agent = Agent(
-            calling(raw_questions()),
-            deps_type=type(None),
-            output_type=[str, DeferredToolRequests],
-            capabilities=[AskUser(answerer=answerer)],
-        )
+        agent = Agent(calling(raw_questions()), deps_type=type(None), capabilities=[AskUser(answerer=answerer)])
         async with agent.run_stream('go') as result:
             output = await result.get_output()
 
-        assert isinstance(output, DeferredToolRequests)
-        assert [call.tool_call_id for call in output.calls] == ['c1']
-        assert answerer.requests == []
+        assert json.loads(output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+        assert [request.id for request in answerer.requests] == ['c1']
 
 
 class TestComposition:

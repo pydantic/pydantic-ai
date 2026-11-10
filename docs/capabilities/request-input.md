@@ -255,7 +255,7 @@ Calls the answer leaves out stay pending, and the run ends with them as its `Def
 
 `RequestInput` emits no telemetry of its own: the run's [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] and [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] mark the wait in the event stream, and a durable engine's execution history shows it.
 
-[`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] does not run deferred tool call handlers yet ([#12686](https://github.com/pydantic/pydantic-ai/issues/12686)): use [`run()`][pydantic_ai.agent.AbstractAgent.run], [`iter()`][pydantic_ai.agent.AbstractAgent.iter] or [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
+[`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] ends the run on a call to a tool declared with `requires_approval=True` or as external without running deferred tool call handlers ([#12686](https://github.com/pydantic/pydantic-ai/issues/12686)): for those, use [`run()`][pydantic_ai.agent.AbstractAgent.run], [`iter()`][pydantic_ai.agent.AbstractAgent.iter] or [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events].
 
 ## Waiting for other external events
 

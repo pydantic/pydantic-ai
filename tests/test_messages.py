@@ -1354,6 +1354,7 @@ def test_deferred_tool_events_serialization_roundtrip():
                     }
                 ],
                 'metadata': {'call_1': {'foo': 'bar'}},
+                'kinds': {},
             },
             'event_kind': 'deferred_tool_requests',
         }
@@ -1395,6 +1396,7 @@ def test_deferred_tool_events_serialization_roundtrip():
                     'approval_2': {'message': 'Not allowed', 'kind': 'tool-denied'},
                 },
                 'metadata': {'call_1': {'foo': 'bar'}},
+                'answered_by': {},
             },
             'event_kind': 'deferred_tool_results',
         }

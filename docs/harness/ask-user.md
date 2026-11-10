@@ -223,9 +223,7 @@ agent = Agent('{{ anthropic:xlarge }}', capabilities=[AskUser(answerer=hand_on)]
 ```
 
 Because the question is a deferred call, it waits until the other tool calls from the same model
-response have finished, and [`run_stream()`](../agent.md#streaming-events-and-final-output), which doesn't run deferred tool call handlers
-yet ([#12686](https://github.com/pydantic/pydantic-ai/issues/12686)), ends the run with it as
-`DeferredToolRequests`. Use `run()`, `iter()` or `run_stream_events()`.
+response have finished.
 
 `AskUser` answers its questions before `RequestInput` is asked about what's left, wherever you list them.
 To handle every pending call in one place instead, pass `answerer=None` and answer the question in

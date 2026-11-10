@@ -583,8 +583,8 @@ print(agent.run_sync('Set up storage').output)
   answers its own in `handle_deferred_tool_calls`, after the step's other tool calls finish, one question
   at a time, through core `wait_for_external_event` like `RequestInput`: in process by default, journaled
   and suspended on AWS Lambda durable functions; on Temporal/DBOS/Prefect it raises `UserError` unless
-  `allow_non_durable_wait=True` (unrecorded; not on Temporal). `run_stream()` runs no deferred handlers
-  (#12686), so it ends the run with the question; use `run`, `iter` or `run_stream_events`.
+  `allow_non_durable_wait=True` (unrecorded; not on Temporal). Works under `run_stream()` too: the
+  tool body defers, so streaming doesn't stop on the call.
 - Three required positional parameters receive `(ctx, request, token)` (`TokenAnswerer[DepsT]`): return the
   response, or hand `token` on and return `None`; the answer then arrives when the token is resolved
   with the JSON of an `AskUserResponse` (`resolve_external_event` in process, the engine's API durably).
