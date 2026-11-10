@@ -7,20 +7,20 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai import Agent, RunContext, UserError
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.computer_use import Click, Point, Region
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import (
-    Click,
-    Point,
-    Region,
-    Workspace,
-    WorkspaceError,
-    WorkspaceRef,
-    WorkspaceUnavailableError,
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceError, WorkspaceRef, WorkspaceUnavailableError
+from pydantic_ai_harness.computer_use import (
+    Display,
+    SupportsCursorPosition,
+    SupportsDisplay,
+    SupportsScaledScreenshot,
+    SupportsZoom,
 )
 from pydantic_ai_harness.docker_sandbox import DESKTOP_DOCKERFILE, DockerSandbox, DockerSandboxBackend
 
-from ...workspace_fakes import FAKE_SCREENSHOT
+from ..display_fakes import FAKE_SCREENSHOT
 from ._fake_docker import FakeDocker, install_fake_docker
 
 
@@ -43,6 +43,13 @@ def _run_image(docker: FakeDocker) -> str:
 
 def _desktop(container_dir: Path, image: str | None = None) -> DockerSandboxBackend:
     return DockerSandboxBackend(image=image, working_dir=str(container_dir), desktop=True)
+
+
+def _screen(backend: WorkspaceBackend) -> Display:
+    assert isinstance(backend, SupportsDisplay)
+    display = backend.display
+    assert display is not None
+    return display
 
 
 async def test_the_desktop_image_is_built_once_and_runs_the_container(docker: FakeDocker, container_dir: Path) -> None:
@@ -77,7 +84,7 @@ async def test_a_failed_build_says_why(docker: FakeDocker, container_dir: Path) 
 
 async def test_the_display_starts_on_first_use_and_actions_go_to_it(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display()
-    workspace = Workspace(_desktop(container_dir, image='my-desktop'))
+    workspace = _screen(_desktop(container_dir, image='my-desktop'))
 
     assert await workspace.display_size() == (1280, 800)
     await workspace.act(Click(x=3, y=4))
@@ -101,14 +108,17 @@ async def test_the_display_waits_for_the_window_manager(docker: FakeDocker, cont
     for name in ('fluxbox', 'xprop'):
         (bin_dir / name).chmod(0o755)
 
-    await Workspace(_desktop(container_dir, image='my-desktop')).display_size()
+    await _screen(_desktop(container_dir, image='my-desktop')).display_size()
     assert (bin_dir / 'wm-up').exists()
 
 
 async def test_screenshots_zoom_scaling_and_the_pointer_come_from_the_display(
     docker: FakeDocker, container_dir: Path
 ) -> None:
-    workspace = Workspace(_desktop(container_dir, image='my-desktop'))
+    workspace = _screen(_desktop(container_dir, image='my-desktop'))
+    assert isinstance(workspace, SupportsZoom)
+    assert isinstance(workspace, SupportsCursorPosition)
+    assert isinstance(workspace, SupportsScaledScreenshot)
 
     assert await workspace.screenshot() == FAKE_SCREENSHOT
     assert await workspace.zoom(Region(left=0, top=0, right=10, bottom=10)) == FAKE_SCREENSHOT
@@ -125,7 +135,7 @@ async def test_a_display_in_env_does_not_move_the_desktop(docker: FakeDocker, co
     backend = DockerSandboxBackend(
         image='my-desktop', working_dir=str(container_dir), desktop=True, env={'DISPLAY': ':0'}
     )
-    await Workspace(backend).act(Click(x=3, y=4))
+    await _screen(backend).act(Click(x=3, y=4))
 
     # Starting the display checks the same X server the actions go to.
     assert {call.split(' ')[0] for call in docker.xdotool_calls} == {':1'}
@@ -134,7 +144,7 @@ async def test_a_display_in_env_does_not_move_the_desktop(docker: FakeDocker, co
 async def test_a_desktop_size_sets_the_display_it_starts(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display()
     backend = DockerSandboxBackend(image='my-desktop', working_dir=str(container_dir), desktop=(1440, 900))
-    await Workspace(backend).display_size()
+    await _screen(backend).display_size()
 
     (start,) = (docker.bin_dir / 'xvfb-starts').read_text().splitlines()
     assert '-screen 0 1440x900x24' in start
@@ -142,7 +152,7 @@ async def test_a_desktop_size_sets_the_display_it_starts(docker: FakeDocker, con
 
 async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, container_dir: Path) -> None:
     backend = _desktop(container_dir, image='my-desktop')
-    workspace = Workspace(backend)
+    workspace = _screen(backend)
     await workspace.display_size()
     assert docker.xvfb_starts == 0  # the display was already up
 
@@ -158,7 +168,7 @@ async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, con
 
 
 async def test_an_action_that_fails_on_a_running_display_says_why(docker: FakeDocker, container_dir: Path) -> None:
-    workspace = Workspace(_desktop(container_dir, image='my-desktop'))
+    workspace = _screen(_desktop(container_dir, image='my-desktop'))
     await workspace.display_size()
     (docker.bin_dir / 'xdotool').write_text(
         '#!/bin/sh\ncase " $* " in *" mousemove "*) echo BadWindow >&2; exit 1 ;; esac\n'
@@ -167,16 +177,6 @@ async def test_an_action_that_fails_on_a_running_display_says_why(docker: FakeDo
     with pytest.raises(WorkspaceError, match='BadWindow'):
         await workspace.act(Click(x=1, y=1))
     assert docker.xvfb_starts == 0
-
-
-async def test_backends_on_one_container_name_one_screen(docker: FakeDocker, container_dir: Path) -> None:
-    first, other = _desktop(container_dir, image='my-desktop'), _desktop(container_dir, image='my-desktop')
-    await first.working_dir()
-    await other.working_dir()
-    assert first.ref is not None and first.display is not None and other.display is not None
-    again = DockerSandbox(desktop=True).backend(first.ref).display
-    assert again is not None
-    assert first.display.screen_key == again.screen_key != other.display.screen_key
 
 
 async def test_a_lock_left_by_a_stopped_container_does_not_stop_the_display(
@@ -188,7 +188,7 @@ async def test_a_lock_left_by_a_stopped_container_does_not_stop_the_display(
     docker.remove_display()
     docker.leave_x_lock(backend.ref.id)
 
-    assert await Workspace(backend).display_size() == (1280, 800)
+    assert await _screen(backend).display_size() == (1280, 800)
     assert not docker.x_lock_exists(backend.ref.id)
 
 
@@ -201,13 +201,13 @@ async def test_a_running_x_server_keeps_its_lock(docker: FakeDocker, container_d
     docker.leave_x_lock(backend.ref.id, owner='Xvnc')
 
     with pytest.raises(WorkspaceUnavailableError, match='Server is already active'):
-        await Workspace(backend).display_size()
+        await _screen(backend).display_size()
     assert docker.x_lock_exists(backend.ref.id)
 
 
 async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, container_dir: Path) -> None:
     (docker.bin_dir / 'scrot').unlink()
-    workspace = Workspace(_desktop(container_dir, image='my-desktop'))
+    workspace = _screen(_desktop(container_dir, image='my-desktop'))
 
     with pytest.raises(WorkspaceUnavailableError, match='A display command is missing'):
         await workspace.screenshot()
@@ -215,7 +215,7 @@ async def test_a_missing_display_program_ends_the_run(docker: FakeDocker, contai
 
 async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display(can_start=False)
-    workspace = Workspace(_desktop(container_dir, image='my-desktop'))
+    workspace = _screen(_desktop(container_dir, image='my-desktop'))
 
     with pytest.raises(WorkspaceUnavailableError, match='it needs Xvfb, xdotool, scrot and setsid') as error:
         await workspace.screenshot()
@@ -226,9 +226,7 @@ async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDoc
 async def test_a_container_without_a_desktop_has_no_display(docker: FakeDocker, container_dir: Path) -> None:
     backend = DockerSandboxBackend(image='python:3.13-slim', working_dir=str(container_dir))
 
-    assert Workspace(backend).has_display is False
-    with pytest.raises(UserError, match='has no display'):
-        await Workspace(backend).screenshot()
+    assert backend.display is None
     assert docker.calls == []
 
 
@@ -244,8 +242,8 @@ def test_a_desktop_needs_no_image_and_still_refuses_both_image_and_ref() -> None
 def test_a_desktop_sandbox_reattaches_with_its_display(docker: FakeDocker) -> None:
     ref = WorkspaceRef(provider='docker', id='pydantic-ai-abc')
 
-    assert Workspace(DockerSandbox(desktop=True).backend(ref)).has_display is True
-    assert Workspace(DockerSandbox(image='python:3.13-slim').backend(ref)).has_display is False
+    assert DockerSandbox(desktop=True).backend(ref).display is not None
+    assert DockerSandbox(image='python:3.13-slim').backend(ref).display is None
 
 
 async def test_a_desktop_capability_gives_a_new_run_a_display(docker: FakeDocker, container_dir: Path) -> None:
@@ -255,7 +253,7 @@ async def test_a_desktop_capability_gives_a_new_run_a_display(docker: FakeDocker
 
     @agent.tool
     async def probe(ctx: RunContext[object]) -> str:
-        return 'x'.join(map(str, await ctx.workspace.display_size()))
+        return 'x'.join(map(str, await _screen(ctx.workspace.backend).display_size()))
 
     result = await agent.run('go')
 

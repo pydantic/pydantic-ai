@@ -5,16 +5,13 @@ from __future__ import annotations
 import pytest
 
 from pydantic_ai import Agent, RunContext, UserError
+from pydantic_ai.computer_use import Click
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import (
-    Click,
-    Workspace,
-    WorkspaceError,
-    WorkspaceRef,
-)
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef
 from pydantic_ai_harness._x11 import STARTED
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
+from ..display_fakes import screen
 from .fake_e2b import FakeE2B
 
 
@@ -67,7 +64,7 @@ async def test_a_desktop_sandbox_runs_the_desktop_template_unless_given_one(
 
 
 async def test_the_display_starts_on_first_use_and_actions_go_to_it(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    workspace = Workspace(E2BSandboxBackend(desktop=True))
+    workspace = screen(E2BSandboxBackend(desktop=True))
 
     assert await workspace.display_size() == (1280, 800)
     await workspace.act(Click(x=3, y=4))
@@ -75,16 +72,6 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(fake_e2b: Fa
     assert len(display.starts) == 1
     assert display.xdotool[-1].endswith('mousemove 3 4 click --repeat 1 1')
     assert fake_e2b.sandboxes[0].commands.calls[-1].envs == {'DISPLAY': ':1'}
-
-
-async def test_backends_on_one_sandbox_name_one_screen(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    first, other = E2BSandboxBackend(desktop=True), E2BSandboxBackend(desktop=True)
-    await Workspace(first).display_size()
-    await Workspace(other).display_size()
-    assert first.ref is not None and first.display is not None and other.display is not None
-    again = E2BSandbox(desktop=True).backend(first.ref).display
-    assert again is not None
-    assert first.display.screen_key == again.screen_key != other.display.screen_key
 
 
 async def test_the_live_view_url_opens_the_viewer_with_its_password(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
@@ -98,7 +85,7 @@ async def test_the_live_view_url_opens_the_viewer_with_its_password(fake_e2b: Fa
 
 async def test_a_viewer_that_does_not_start_is_an_error(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
     backend = E2BSandboxBackend(desktop=True)
-    await Workspace(backend).display_size()
+    await screen(backend).display_size()
     display.up = False  # the start script's own failure, as the fake answers it
 
     with pytest.raises(WorkspaceError, match=r'Could not start the desktop viewer.*the viewer did not start'):
@@ -111,7 +98,7 @@ async def test_commands_see_the_desktop(fake_e2b: FakeE2B, display: FakeDisplay)
 
 
 async def test_a_desktop_size_sets_the_display_it_starts(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
-    await Workspace(E2BSandboxBackend(desktop=(1440, 900))).display_size()
+    await screen(E2BSandboxBackend(desktop=(1440, 900))).display_size()
 
     (start,) = display.starts
     assert start.endswith(' sh 1440x900')
@@ -119,7 +106,7 @@ async def test_a_desktop_size_sets_the_display_it_starts(fake_e2b: FakeE2B, disp
 
 async def test_a_display_that_went_away_is_started_again(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
     backend = E2BSandboxBackend(desktop=True)
-    workspace = Workspace(backend)
+    workspace = screen(backend)
     await workspace.display_size()
 
     display.up = False
@@ -137,9 +124,7 @@ async def test_a_display_that_went_away_is_started_again(fake_e2b: FakeE2B, disp
 async def test_a_sandbox_without_a_desktop_has_no_display(fake_e2b: FakeE2B) -> None:
     backend = E2BSandboxBackend()
 
-    assert Workspace(backend).has_display is False
-    with pytest.raises(UserError, match='has no display'):
-        await Workspace(backend).screenshot()
+    assert backend.display is None
     with pytest.raises(UserError, match='has no display: create it with `desktop=True`'):
         await backend.live_view_url()
     assert fake_e2b.create_calls == []
@@ -148,8 +133,8 @@ async def test_a_sandbox_without_a_desktop_has_no_display(fake_e2b: FakeE2B) -> 
 def test_a_desktop_sandbox_reattaches_with_its_display() -> None:
     ref = WorkspaceRef(provider='e2b', id='sbx-desktop')
 
-    assert Workspace(E2BSandbox(desktop=True).backend(ref)).has_display is True
-    assert Workspace(E2BSandbox().backend(ref)).has_display is False
+    assert E2BSandbox(desktop=True).backend(ref).display is not None
+    assert E2BSandbox().backend(ref).display is None
 
 
 async def test_a_desktop_capability_gives_a_new_run_a_display(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
@@ -157,7 +142,7 @@ async def test_a_desktop_capability_gives_a_new_run_a_display(fake_e2b: FakeE2B,
 
     @agent.tool
     async def probe(ctx: RunContext[object]) -> str:
-        return 'x'.join(map(str, await ctx.workspace.display_size()))
+        return 'x'.join(map(str, await screen(ctx.workspace.backend).display_size()))
 
     result = await agent.run('go')
 
