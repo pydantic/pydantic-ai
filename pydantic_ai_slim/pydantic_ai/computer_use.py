@@ -516,7 +516,9 @@ class ComputerResult(TypedDict):
 class SafetyCheck:
     """A check a provider asks a person to make before a `computer` call runs, such as OpenAI's `pending_safety_checks`.
 
-    A call with safety checks waits for approval; see
+    A call with safety checks waits for approval whichever tool runs it, as a
+    [deferred tool](../deferred-tools.md#human-in-the-loop-tool-approval) does, and the model adapter acknowledges the
+    checks once the approved call has a result; see
     [`ComputerCallPart.safety_checks`][pydantic_ai.computer_use.ComputerCallPart.safety_checks].
     """
 
