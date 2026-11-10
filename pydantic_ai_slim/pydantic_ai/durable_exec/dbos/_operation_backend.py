@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
@@ -45,6 +46,9 @@ if TYPE_CHECKING:
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT')
 ResultT = TypeVar('ResultT')
+
+_live_model_responses: ContextVar[list[object]] = ContextVar('_live_model_responses')
+"""The responses a model-request step's body got from the model, on a live run; empty when DBOS replayed the step."""
 
 
 class SnapshotStepReservation:
@@ -202,10 +206,10 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                         run_context=run_context,
                     )
                     response = await operation.handler(cast(ParamsT, params))
-                    if isinstance(response, ModelResponse) and response.run_id is None:
-                        # The run fills in `run_id` only after the step returns, so DBOS would record none to
-                        # check on recovery. A copy, so a response object a model returns to several runs
-                        # isn't recorded with the first run's `run_id` for the others.
+                    _live_model_responses.get().append(operation.result_codec.dump(response))
+                    if isinstance(response, ModelResponse) and response.run_id != run_context.run_id:
+                        # DBOS records a copy carrying this step's run, which the run checks on recovery, while
+                        # a live run gets the model's own response back.
                         response = replace(response, run_id=run_context.run_id)
                     return operation.result_codec.dump(response)
 
@@ -213,13 +217,20 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
 
                 async def dispatch_model(step: Callable[..., Any], params: ParamsT) -> ResultT:
                     model_params = cast(ModelRequestParams, params)
-                    payload = await step(
-                        model_params.model_id,
-                        model_params.messages,
-                        model_params.model_settings,
-                        model_params.model_request_parameters,
-                        model_params.run_context,
-                    )
+                    live_responses: list[object] = []
+                    token = _live_model_responses.set(live_responses)
+                    try:
+                        payload = await step(
+                            model_params.model_id,
+                            model_params.messages,
+                            model_params.model_settings,
+                            model_params.model_request_parameters,
+                            model_params.run_context,
+                        )
+                    finally:
+                        _live_model_responses.reset(token)
+                    if live_responses:
+                        return operation.result_codec.load(live_responses[-1])
                     reject_other_runs_response(payload, model_params.run_context)
                     return operation.result_codec.load(payload)
 

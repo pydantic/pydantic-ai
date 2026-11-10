@@ -6402,6 +6402,7 @@ async def test_dbos_recovery_rejects_another_concurrent_runs_steps(
 
 
 shared_response = ModelResponse(parts=[TextPart('shared')])
+shared_response_crash = {'armed': False}
 
 
 def _return_shared_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -6417,18 +6418,34 @@ shared_response_agent = Agent(
 async def shared_response_workflow() -> list[str | None]:
     first = await shared_response_agent.run('First.')
     second = await shared_response_agent.run('Second.')
-    return [first.all_messages()[-1].run_id, first.run_id, second.all_messages()[-1].run_id, second.run_id]
+    if shared_response_crash['armed']:
+        raise _ProcessCrash
+    return [first.run_id, second.run_id, first.all_messages()[-1].run_id, second.all_messages()[-1].run_id]
 
 
-async def test_dbos_runs_sharing_a_response_object_keep_their_own_run_ids(dbos: DBOS) -> None:
-    """A response object a model returns to several runs of one workflow is recorded with each run's own `run_id`.
+@pytest.mark.parametrize('recover', [False, True])
+async def test_dbos_response_carrying_an_earlier_runs_run_id(dbos: DBOS, recover: bool) -> None:
+    """A model response that already carries an earlier run's `run_id` is not mistaken for a swapped step.
 
-    The step stamps a copy, so the second run doesn't find the first run's `run_id` on the shared object and
-    fail as if recovery had handed it the first run's step.
+    The model returns one response object to every run, so the run commits its `run_id` to the object, and
+    the second run gets it back carrying the first run's. A live run returns the model's own response, as it
+    would outside DBOS, so the second response keeps the first run's `run_id`. DBOS records a copy carrying
+    each step's own run, which a recovered run gets back instead.
     """
-    first_response_run_id, first_run_id, second_response_run_id, second_run_id = await shared_response_workflow()
-    assert (first_response_run_id, second_response_run_id) == (first_run_id, second_run_id)
-    assert shared_response.run_id is None
+    shared_response.run_id = None
+    workflow_id = f'shared-response-{uuid.uuid4()}'
+    if recover:
+        shared_response_crash['armed'] = True
+        with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+            await shared_response_workflow()
+        shared_response_crash['armed'] = False
+        run_ids = await (await DBOS.resume_workflow_async(workflow_id)).get_result()
+    else:
+        with SetWorkflowID(workflow_id):
+            run_ids = await shared_response_workflow()
+    run_ids = [run_id and run_id.replace(workflow_id, '<workflow>') for run_id in run_ids]
+    second_response_run_id = '<workflow>:2' if recover else '<workflow>:1'
+    assert run_ids == ['<workflow>:1', '<workflow>:2', '<workflow>:1', second_response_run_id]
 
 
 deadline_agent = Agent(TestModel(), name='deadline_agent', capabilities=[DBOSDurability()])
