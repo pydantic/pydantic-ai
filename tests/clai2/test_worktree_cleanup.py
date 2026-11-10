@@ -887,18 +887,20 @@ def test_update_keeps_the_launch_snapshot(repo: Path, monkeypatch: pytest.Monkey
 
 
 @pytest.mark.parametrize('update', [False, True])
-def test_reopened_worktree_is_removed_once_pushed(
-    repo: Path, origin: Path, monkeypatch: pytest.MonkeyPatch, update: bool
+@pytest.mark.parametrize('push', [False, True])
+def test_reopened_worktree_is_removed_only_once_pushed(
+    repo: Path, origin: Path, monkeypatch: pytest.MonkeyPatch, update: bool, push: bool
 ) -> None:
-    """`--worktree` marks a checkout it reopens, and `/update` hands the mark to the relaunched build."""
+    """`--worktree` marks a checkout it reopens, and `/update` hands the mark and launch commit to the relaunched build."""
     monkeypatch.delenv('CLAI_RELAUNCH_WORKTREE', raising=False)
     workspace = repo / '.worktrees/task'
 
     def commit() -> None:
         git(workspace, 'commit', '--allow-empty', '-m', 'Work')
 
-    def push() -> None:
-        git(workspace, 'push', 'origin', 'clai-task')
+    def session() -> None:
+        if push:
+            git(workspace, 'push', 'origin', 'clai-task')
 
     monkeypatch.chdir(repo)
     assert len(run_cli(monkeypatch, '-w', 'task', repo=repo, session=commit)) == 1
@@ -906,10 +908,10 @@ def test_reopened_worktree_is_removed_once_pushed(
     if update:
         assert run_cli(monkeypatch, '-w', 'task', repo=repo, relaunch=True) == []
         assert os.environ['CLAI_RELAUNCH_WORKTREE'] == f'reopened {git(workspace, "rev-parse", "HEAD")}'
-        assert run_cli(monkeypatch, repo=repo, session=push) == []
+        assert run_cli(monkeypatch, repo=repo, session=session) == []
     else:
-        assert run_cli(monkeypatch, '-w', 'task', repo=repo, session=push) == []
-    assert not workspace.exists()
+        assert run_cli(monkeypatch, '-w', 'task', repo=repo, session=session) == []
+    assert workspace.exists() != push
     assert git(repo, 'branch', '--list', 'clai-task')
 
 
