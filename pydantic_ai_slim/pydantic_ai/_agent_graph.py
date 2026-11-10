@@ -1347,13 +1347,16 @@ def _repair_interrupted_tail(
 
 
 def _reject_unanswered_calls_before_tail(messages: list[_messages.ModelMessage]) -> None:
-    """Raise when the history ends on a request that leaves some of the final response's tool calls unanswered.
+    """Raise when the history ends on a request that answers only some of the final response's tool calls.
 
     A run paused for `DeferredToolRequests` leaves this history when the same step also executed other
     calls: the trailing request holds their results, and the deferred calls are still waiting for theirs.
     Sending it would close the deferred calls with synthesized returns in the request only, while the stored
     history keeps them open, so a later run could no longer answer them with `deferred_tool_results`.
     Calls of an interrupted request were already closed out by `_repair_interrupted_tail`.
+
+    A trailing request that answers none of the calls, such as a new user message a UI adapter put in the
+    history, isn't a pause and is still repaired at send time.
     """
     if not (
         len(messages) >= 2
@@ -1363,6 +1366,12 @@ def _reject_unanswered_calls_before_tail(messages: list[_messages.ModelMessage])
         return
     unanswered = _dangling_tool_calls_by_response(messages).get(len(messages) - 2)
     if not unanswered:
+        return
+    call_ids = {call.tool_call_id for call in messages[-2].tool_calls}
+    if not any(
+        isinstance(part, _messages.ToolReturnPart | _messages.RetryPromptPart) and part.tool_call_id in call_ids
+        for part in messages[-1].parts
+    ):
         return
     raise exceptions.UserError(
         'Cannot run the agent on this message history: it contains tool calls without results: '

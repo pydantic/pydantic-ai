@@ -524,6 +524,32 @@ async def test_deferred_run_history_not_silently_repaired():
     )
 
 
+async def test_new_message_after_unanswered_call_in_history_is_repaired():
+    """A trailing request that answers none of the final response's calls isn't a pause, so it's repaired, not rejected.
+
+    UI adapters run the agent this way: the user's new message is the last entry of `message_history`
+    and there's no `user_prompt`, so the call the user moved on from is closed with a synthesized return.
+    """
+    agent, received = capture_agent()
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Create a file.', timestamp=TS)], timestamp=TS),
+        ModelResponse(parts=[ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file')], timestamp=TS),
+        ModelRequest(parts=[UserPromptPart('Never mind.', timestamp=TS)], timestamp=TS),
+    ]
+
+    await agent.run(message_history=message_history)
+
+    synthesized = [
+        part
+        for message in received[0]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.metadata == {SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True}
+    ]
+    assert [part.tool_call_id for part in synthesized] == ['call_file']
+
+
 async def test_result_before_call_dropped_as_orphan_and_call_synthesized():
     """A tool result that precedes its call is orphaned: it's dropped, and the now-unanswered call
     gets a synthesized return.
