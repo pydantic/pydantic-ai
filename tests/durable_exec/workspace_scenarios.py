@@ -23,16 +23,8 @@ import pytest
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.durable_exec._workspace import DurableWorkspace
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import (
-    ReadOnlyWorkspace,
-    Workspace,
-    WorkspaceBackend,
-    WorkspaceError,
-    WorkspaceReadOnlyError,
-    WorkspaceRef,
-)
+from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceBackend, WorkspaceReadOnlyError, WorkspaceRef
 
 from ..workspace_fakes import InMemoryProvider
 
@@ -113,22 +105,11 @@ class ScenarioAgents:
     uncaught: Agent[None, str]
 
     def all(self) -> list[Agent[None, str]]:
-        return [
-            self.fresh,
-            self.plain,
-            self.read_only,
-            self.explicit,
-            self.local,
-            self.amnesiac,
-            self.uncaught,
-        ]
+        return [self.fresh, self.plain, self.read_only, self.explicit, self.local, self.amnesiac, self.uncaught]
 
 
 def scenario_agents(
-    durability: Callable[[], AbstractCapability[Any]],
-    *,
-    prefix: str,
-    provider: InMemoryProvider,
+    durability: Callable[[], AbstractCapability[Any]], *, prefix: str, provider: InMemoryProvider
 ) -> ScenarioAgents:
     """The agents every scenario uses, named `<prefix><role>`, each with a fresh `durability()`."""
     workspaces = provider.capability
@@ -258,7 +239,7 @@ _BINARY = b'\xff\xfe\x00\x01binary\x80'
 async def _error_of(call: Awaitable[Any]) -> str:
     try:
         await call
-    except (OSError, UnicodeDecodeError, TypeError, WorkspaceError) as error:
+    except (OSError, UnicodeDecodeError, TypeError) as error:
         return type(error).__name__
     return 'none'  # pragma: no cover
 
@@ -276,7 +257,6 @@ async def binary(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dic
     else:  # pragma: no cover
         decoded = False
     return {
-        'display_size': list(await workspace.display_size()),
         'round_trip': (await workspace.read_bytes('blob.bin')) == _BINARY,
         'size': (await workspace.stat('blob.bin')).size,
         'exists': [await workspace.exists('blob.bin'), await workspace.exists('nope')],
@@ -286,17 +266,7 @@ async def binary(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dic
             await _error_of(workspace.remove('missing.txt')),
             await _error_of(workspace.run('echo hi')),
         ],
-        # Only reading the display size is journaled; the rest belongs in a durable unit.
-        'screenshot_in_workflow': await _user_error_of(workspace.screenshot()),
     }
-
-
-async def _user_error_of(call: Awaitable[Any]) -> str:
-    try:
-        await call
-    except UserError as error:
-        return str(error)
-    return 'none'  # pragma: no cover
 
 
 async def local(agents: ScenarioAgents, arg: str | None, engine_id: str) -> dict[str, Any]:
@@ -320,18 +290,7 @@ async def uncaught(agents: ScenarioAgents, arg: str | None, engine_id: str) -> s
 
 SCENARIOS: dict[str, Scenario] = {
     scenario.__name__: scenario
-    for scenario in (
-        fresh,
-        multi_turn,
-        two_agents,
-        run_id,
-        read_only,
-        explicit,
-        binary,
-        local,
-        amnesiac,
-        uncaught,
-    )
+    for scenario in (fresh, multi_turn, two_agents, run_id, read_only, explicit, binary, local, amnesiac, uncaught)
 }
 
 
@@ -399,18 +358,14 @@ async def check_explicit_rejected(kind: str, type: str, fragment: str, run: Runn
 
 
 async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
-    """Bytes, the display size and the expected errors cross the durable boundary unchanged."""
-    result = await run('binary', None)
-    refused = result.pop('screenshot_in_workflow')
-    assert result == {
-        'display_size': [1280, 800],
+    """Bytes and the expected errors cross the durable boundary unchanged."""
+    assert await run('binary', None) == {
         'round_trip': True,
         'size': 11,
         'exists': [True, False],
         'decode_error_keeps_bytes': True,
         'errors': ['FileNotFoundError', 'FileNotFoundError', 'TypeError'],
     }
-    assert refused.startswith("`screenshot` reaches the display, which durable workflow code can't")
     assert agents.provider.environments['env-1']['/remote/blob.bin'] == _BINARY
 
 

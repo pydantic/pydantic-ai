@@ -14,6 +14,7 @@ import time
 import uuid
 import warnings
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from copy import copy
@@ -426,11 +427,12 @@ class ModelRequestParameters:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
 
     def tool_name_for_kind(self, kind: ToolKindLike) -> str | None:
-        """The name of the first function tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that isn't deferred, or `None` if there is none.
+        """The name of the function tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that isn't deferred, or `None` if there is none.
 
         A model adapter uses it to find the tool that runs a native tool's calls, through
         [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by], whatever the tool is called. It
-        leaves out deferred tools, as the check that decides whether a native tool is sent does.
+        leaves out deferred tools, as the check that decides whether a native tool is sent does; that check also
+        refuses a request with more than one, so a native tool's calls never depend on the order of the tools.
         [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind] keeps them, because it
         names a tool for instructions and tool results.
 
@@ -3162,7 +3164,7 @@ def _supported_native_tools(
     supported_natives: list[AbstractNativeTool] = []
     unsupported_natives: list[AbstractNativeTool] = []
     unapplied_settings: dict[str, frozenset[str]] = {}
-    executor_kinds = {t.tool_kind for t in params.function_tools if not t.defer_loading}
+    executor_kinds = Counter(t.tool_kind for t in params.function_tools if not t.defer_loading)
     for native_tool in params.native_tools:
         if not isinstance(native_tool, tuple(supported_types)):
             unsupported_natives.append(native_tool)
@@ -3176,6 +3178,12 @@ def _supported_native_tools(
                     f'`{type(native_tool).__name__}` needs a tool of each of the kinds {missing} to run its calls, '
                     'and the request has none that is not deferred.'
                 )
+        elif shared := sorted(kind.id for kind in native_tool.executed_by if executor_kinds[kind.id] > 1):
+            # Which of them ran a call would depend on the order of the tools.
+            raise UserError(
+                f'`{type(native_tool).__name__}` needs one tool of each of the kinds {shared} to run its calls, '
+                'and the request has more than one that is not deferred.'
+            )
         else:
             supported_natives.append(native_tool)
 
