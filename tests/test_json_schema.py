@@ -12,7 +12,12 @@ from pydantic import BaseModel, create_model
 from typing_extensions import TypeAliasType
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, PromptedOutput, TextPart, Tool, UserError
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
+from pydantic_ai._json_schema import (
+    InlineDefsJsonSchemaTransformer,
+    JsonSchema,
+    JsonSchemaTransformer,
+    resolve_json_pointer,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleOpenAPISchemaTransformer
@@ -293,6 +298,34 @@ def test_schema_shape_ignores_keywords_the_transformers_do_not_read():
     }
 
     assert _PassthroughTransformer(deepcopy(schema)).walk() == schema
+
+
+def test_resolve_json_pointer_percent_decodes_tokens_once():
+    schema = {
+        '$defs': {
+            'Address Book': {'type': 'object'},
+            'Percent%Name': {'type': 'string'},
+        },
+        'a/b%20c': {'type': 'integer'},
+        'a/b c': {'type': 'string'},
+    }
+
+    assert resolve_json_pointer(schema, '#/$defs/Address%20Book') == schema['$defs']['Address Book']
+    assert resolve_json_pointer(schema, '#/$defs/Percent%25Name') == schema['$defs']['Percent%Name']
+    assert resolve_json_pointer(schema, '#/a~1b%2520c') is schema['a/b%20c']
+    assert resolve_json_pointer(schema, '#/a~1b%2520c') is not schema['a/b c']
+
+
+def test_inline_defs_resolves_percent_encoded_name():
+    schema = {
+        'type': 'object',
+        'properties': {'address': {'$ref': '#/$defs/Address%20Book'}},
+        '$defs': {'Address Book': {'type': 'object', 'properties': {'street': {'type': 'string'}}}},
+    }
+
+    result = InlineDefsJsonSchemaTransformer(schema).walk()
+
+    assert result['properties']['address'] == {'type': 'object', 'properties': {'street': {'type': 'string'}}}
 
 
 @pytest.mark.skipif(not provider_imports_successful(), reason='provider packages not installed')

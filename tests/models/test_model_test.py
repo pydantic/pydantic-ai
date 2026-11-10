@@ -722,6 +722,34 @@ def test_json_pointer_ref_tool_args() -> None:
     assert calls == snapshot([{'from': {'street': 'a', 'city': 'a'}, 'to': {'street': 'a', 'city': 'a'}}])
 
 
+def test_percent_encoded_json_pointer_ref_tool_args() -> None:
+    address = {
+        'type': 'object',
+        'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+        'required': ['street', 'city'],
+        'additionalProperties': False,
+    }
+    calls: list[dict[str, Any]] = []
+
+    def ship_order(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    tool = Tool.from_schema(
+        ship_order,
+        name='ship_order',
+        description='Ships an order.',
+        json_schema={
+            'type': 'object',
+            'properties': {'from address': address, 'to': {'$ref': '#/properties/from%20address'}},
+            'required': ['from address', 'to'],
+            'additionalProperties': False,
+        },
+    )
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'from address': {'street': 'a', 'city': 'a'}, 'to': {'street': 'a', 'city': 'a'}}])
+
+
 def test_list_form_items_tool_args() -> None:
     """A tool schema spelling a tuple as a draft-7 `items` list gets one generated value per element, up to `maxItems`.
 
