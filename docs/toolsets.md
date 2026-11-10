@@ -569,7 +569,6 @@ DeferredToolRequests(
         ),
     ],
     metadata={},
-    kinds={},
 )
 """
 

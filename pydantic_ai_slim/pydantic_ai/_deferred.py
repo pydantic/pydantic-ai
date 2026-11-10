@@ -54,7 +54,8 @@ class DeferredToolRequests:
     """Tool calls that require human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
-    kinds: dict[str, DeferredToolKind] = field(default_factory=dict[str, DeferredToolKind])
+    # Out of the repr, which existing output and snapshots show unchanged; `kind()` reads it.
+    kinds: dict[str, DeferredToolKind] = field(default_factory=dict[str, DeferredToolKind], repr=False)
     """The kind of each call whose kind its list doesn't already say, keyed by `tool_call_id`: a call in `calls` that is a `'question'`.
 
     Read a call's kind with [`kind()`][pydantic_ai.tools.DeferredToolRequests.kind], which covers

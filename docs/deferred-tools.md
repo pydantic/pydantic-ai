@@ -170,7 +170,6 @@ DeferredToolRequests(
         ),
     ],
     metadata={'update_file_dotenv': {'reason': 'protected'}},
-    kinds={},
 )
 """
 
@@ -407,7 +406,6 @@ async def main():
         ],
         approvals=[],
         metadata={'pyd_ai_tool_call_id': {'task_id': 'task_0'}},
-        kinds={},
     )
     """
 
