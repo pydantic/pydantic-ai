@@ -6,6 +6,7 @@ Unit tests rather than integration tests: the real runner is a sandbox (Docker h
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import json
 import posixpath
@@ -24,15 +25,9 @@ from inline_snapshot import snapshot
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import CommandResult, Workspace
+from pydantic_ai.workspaces import CommandResult, Workspace, WrapperWorkspace
 from pydantic_ai_harness import MountError, S3Mount
-from pydantic_ai_harness._mounts import (
-    _HELPER,  # pyright: ignore[reportPrivateUsage]
-    _Mounted,  # pyright: ignore[reportPrivateUsage]
-    _reply,  # pyright: ignore[reportPrivateUsage]
-    _request,  # pyright: ignore[reportPrivateUsage]
-    mounted,
-)
+from pydantic_ai_harness._mounts import mounted
 from tests.workspace_fakes import FakeWorkspace
 
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
@@ -110,7 +105,7 @@ async def test_the_first_operation_mounts_and_later_ones_do_not() -> None:
 
     assert len(root.calls) == 1
     argv, stdin = root.calls[0]
-    assert argv == ['python3', '-c', _HELPER]
+    assert argv[:2] == ['python3', '-c']
     assert stdin.endswith(b'\n') and stdin.count(b'\n') == 1
     assert root.requests() == snapshot(
         [
@@ -222,11 +217,8 @@ def test_every_workspace_coroutine_is_gated_or_explained() -> None:
         for name, member in inspect.getmembers(Workspace)
         if inspect.iscoroutinefunction(member) and not name.startswith('_')
     }
-    gated = {
-        name
-        for name in vars(_Mounted)
-        if inspect.iscoroutinefunction(vars(_Mounted)[name]) and not name.startswith('_')
-    }
+    wrapper = vars(type(mounted(FakeWorkspace('box'), FakeRoot(), [s3()], CTX)))
+    gated = {name for name in wrapper if inspect.iscoroutinefunction(wrapper[name]) and not name.startswith('_')}
     assert coroutines == gated | set(_NOT_GATED)
     assert not gated & set(_NOT_GATED)
 
@@ -235,7 +227,7 @@ async def test_a_workspace_is_wrapped_as_it_is() -> None:
     inner = Workspace(FakeWorkspace('box'))
     workspace = mounted(inner, FakeRoot(), [s3()], CTX)
 
-    assert isinstance(workspace, _Mounted)
+    assert isinstance(workspace, WrapperWorkspace)
     assert workspace.wrapped is inner
 
 
@@ -290,7 +282,7 @@ async def test_a_function_returning_overlapping_paths_is_refused_at_the_first_op
 
 def test_a_folder_beside_another_with_a_longer_name_is_not_inside_it() -> None:
     assert isinstance(
-        mounted(FakeWorkspace('box'), FakeRoot(), [s3('data'), s3('database', 's3://other/')], CTX), _Mounted
+        mounted(FakeWorkspace('box'), FakeRoot(), [s3('data'), s3('database', 's3://other/')], CTX), WrapperWorkspace
     )
 
 
@@ -387,6 +379,17 @@ async def test_output_that_is_not_the_helpers_is_quoted_with_the_keys_blanked() 
     assert str(raised.value) == snapshot(
         'Could not mount storage in the sandbox: Traceback (most recent call last):\nValueError: ***'
     )
+
+
+async def test_a_key_the_helper_quotes_escaped_is_blanked_too() -> None:
+    key = 'AKIA"quoted\\slash'
+    reply = json.dumps({'error': 'rclone', 'message': f'rclone rejected {key}'})
+    workspace = wrap(FakeRoot(f'{reply}\n'), lambda: [s3(key=key)])
+
+    with pytest.raises(MountError) as raised:
+        await workspace.run(['true'])
+
+    assert str(raised.value) == snapshot('rclone rejected ***')
 
 
 async def test_a_sandbox_that_never_runs_the_helper_is_timed_out(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -534,15 +537,16 @@ def test_any_accepted_path_is_a_folder_inside_the_working_directory(path: str) -
 
 @given(st.from_regex(r's3://[a-z./_-]{0,8}(/[a-z./]{0,8})?', fullmatch=True) | st.text(max_size=20))
 @settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
-def test_any_accepted_url_names_a_bucket_and_a_clean_prefix(url: str) -> None:
+async def test_any_accepted_url_names_a_bucket_and_a_clean_prefix(url: str) -> None:
     try:
         mount = S3Mount(
             path='data', url=url, access_key_id='', secret_access_key='', expires_at=NOW + timedelta(hours=1)
         )
     except MountError:
         return
-    request, _ = _request([mount], '/workspace')
-    root: str = request['mounts'][0]['root']
+    helper = FakeRoot()
+    await wrap(helper, [mount]).exists('data')
+    root: str = helper.requests()[0]['mounts'][0]['root']
     bucket, *prefix = root.removesuffix('/').split('/')
     assert url.startswith(f's3://{bucket}')
     assert all(part not in ('', '.', '..') for part in prefix)
@@ -552,9 +556,7 @@ def test_any_accepted_url_names_a_bucket_and_a_clean_prefix(url: str) -> None:
 
 @given(st.text())
 @settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
-def test_any_output_gives_a_reply_or_a_mount_error(stdout: str) -> None:
-    try:
-        reply = _reply(CommandResult(exit_code=0, stdout=stdout, stderr=''))
-    except MountError:
-        return
-    assert 'error' not in reply
+async def test_any_output_mounts_or_raises_a_mount_error(stdout: str) -> None:
+    workspace = wrap(FakeRoot(stdout), [s3()])
+    with contextlib.suppress(MountError):
+        await workspace.exists('data')

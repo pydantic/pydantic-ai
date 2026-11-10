@@ -438,7 +438,11 @@ def test_a_mount_that_will_not_unmount_is_reported(sandbox: Sandbox, monkeypatch
 
 def test_no_key_reaches_a_command_line(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch) -> None:
     started: list[list[str]] = []
-    monkeypatch.setattr(helper.subprocess, 'Popen', lambda argv, **kwargs: started.append(list(argv)))  # pyright: ignore[reportUnknownLambdaType,reportUnknownArgumentType]
+
+    def popen(argv: Sequence[str], **kwargs: object) -> None:
+        started.append(list(argv))
+
+    monkeypatch.setattr(helper.subprocess, 'Popen', popen)
     monkeypatch.setattr(helper, 'start_daemon', START_DAEMON)
     answers = iter([OSError('no daemon yet')])
 
@@ -814,5 +818,5 @@ def test_the_state_folder_is_made_private(sandbox: Sandbox) -> None:
 
 def test_running_out_of_time_is_a_refusal() -> None:
     with pytest.raises(helper.MountFailed, match='Mounting took longer than 1800 seconds') as raised:
-        helper._out_of_time(14, None)  # pyright: ignore[reportPrivateUsage]
+        helper.out_of_time(14, None)
     assert raised.value.code == 'timeout'

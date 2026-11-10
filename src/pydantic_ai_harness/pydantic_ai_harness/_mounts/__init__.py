@@ -185,14 +185,6 @@ def _reply(result: CommandResult) -> dict[str, Any]:
     return answer
 
 
-def _scrubbed(result: CommandResult, secrets: Sequence[str]) -> CommandResult:
-    """`result` with every key value blanked out, so no error message can quote one."""
-    stdout, stderr = result.stdout, result.stderr
-    for secret in secrets:
-        stdout, stderr = stdout.replace(secret, '***'), stderr.replace(secret, '***')
-    return replace(result, stdout=stdout, stderr=stderr)
-
-
 def _check_paths(mounts: Sequence[S3Mount]) -> None:
     # Every pair, not neighbours: `data-other` sorts between `data` and `data/inner`.
     for path, after in itertools.combinations(sorted(mount.path for mount in mounts), 2):
@@ -303,7 +295,14 @@ class _Mounted(WrapperWorkspace):
             self._remount_at = refresh_at if refresh_at > now else expires_at
 
     async def _call(self, request: Mapping[str, Any]) -> dict[str, Any]:
-        secrets = [value for wanted in request['mounts'] for value in wanted['keys'].values() if value]
+        # Each key as written, and as written inside JSON, where quotes, backslashes and control characters are escaped.
+        secrets = {
+            form
+            for wanted in request['mounts']
+            for value in wanted['keys'].values()
+            if value
+            for form in (value, json.dumps(value)[1:-1])
+        }
         # A cancelled caller waits for the helper, which has a deadline of its own: stopped halfway, it could leave a
         # mount half made, or keep the lock that every later call waits for.
         # The helper's own deadline starts only once it runs, so a sandbox that never starts it is timed out here.
@@ -312,7 +311,11 @@ class _Mounted(WrapperWorkspace):
             result = await self._run_as_root(['python3', '-c', _HELPER], f'{json.dumps(request)}\n'.encode())
         if result is None:
             raise MountError(f'The sandbox did not run the mount helper within {_CALL_SECONDS} seconds. Try again.')
-        return _reply(_scrubbed(result, secrets))
+        # Blanked out, so no error message can quote a key.
+        stdout, stderr = result.stdout, result.stderr
+        for secret in secrets:
+            stdout, stderr = stdout.replace(secret, '***'), stderr.replace(secret, '***')
+        return _reply(replace(result, stdout=stdout, stderr=stderr))
 
     async def run(
         self,
