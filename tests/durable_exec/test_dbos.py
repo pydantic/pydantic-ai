@@ -130,6 +130,7 @@ from pydantic_ai.durable_exec.dbos import (
 )
 from pydantic_ai.durable_exec.dbos._function_toolset import (
     _tool_instance_defaults_patched,  # pyright: ignore[reportPrivateUsage]
+    workflow_context,
 )
 from pydantic_ai.durable_exec.dbos._mcp_toolset import DBOSMCPToolset, dbosify_mcp_toolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
@@ -7031,6 +7032,49 @@ async def test_dbos_tool_instance_defaults_patch_freed_with_workflow(dbos: DBOS)
         assert await sequential_tool_instances_runs_workflow() == ['done', 'done']
     steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(workflow_id)]
     assert steps.count('DBOS.patch-pydantic_ai:function_toolset_defaults_on_tool_instances') == 1
+
+    gc.collect()
+    assert len(_tool_instance_defaults_patched) == cached
+
+
+_cancelled_probe_events: dict[str, asyncio.Event] = {}
+
+
+@DBOS.workflow()
+async def cancelled_tool_instances_run_workflow() -> None:
+    run = asyncio.ensure_future(_tool_instances_agents['sequential'].run('Call both tools.'))
+    await _cancelled_probe_events['probing'].wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    probe = _tool_instance_defaults_patched[workflow_context()]
+    assert isinstance(probe, asyncio.Task)
+    _cancelled_probe_events['release'].set()
+    await probe
+
+
+async def test_dbos_tool_instance_defaults_patch_freed_after_cancelled_run(
+    dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run cancelled while it waits on the patch probe doesn't leave the probe holding the workflow's cache entry.
+
+    Not a VCR test: the run is cancelled before its first model request. It reads the gate's private cache for
+    the reason `test_dbos_tool_instance_defaults_patch_freed_with_workflow` gives.
+    """
+    probing, release = asyncio.Event(), asyncio.Event()
+    real_patch_async = DBOS.patch_async
+
+    async def slow_patch_async(patch_name: str) -> bool:
+        probing.set()
+        await release.wait()
+        return await real_patch_async(patch_name)
+
+    monkeypatch.setattr(DBOS, 'patch_async', slow_patch_async)
+    monkeypatch.setitem(_cancelled_probe_events, 'probing', probing)
+    monkeypatch.setitem(_cancelled_probe_events, 'release', release)
+    cached = len(_tool_instance_defaults_patched)
+    with SetWorkflowID(f'tool-instances-cancelled-run-{uuid.uuid4()}'):
+        await cancelled_tool_instances_run_workflow()
 
     gc.collect()
     assert len(_tool_instance_defaults_patched) == cached

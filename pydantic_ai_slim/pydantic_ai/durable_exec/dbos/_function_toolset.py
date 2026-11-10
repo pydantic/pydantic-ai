@@ -40,12 +40,11 @@ class ToolInstanceDefaultsGateToolset(WrapperToolset[AgentDepsT]):
         if in_workflow_code() and holds_tool_instance_defaults(self.function_toolset):
             context = workflow_context()
             patched = _tool_instance_defaults_patched.get(context)
+            if patched is None:
+                patched = asyncio.ensure_future(_patch_tool_instance_defaults(context))
+                _tool_instance_defaults_patched[context] = patched
             if not isinstance(patched, bool):
-                if patched is None:
-                    patched = asyncio.ensure_future(_patch_tool_instance_defaults())
-                    _tool_instance_defaults_patched[context] = patched
-                # A task keeps the context it ran in, and with it this key, alive; keep only its result.
-                _tool_instance_defaults_patched[context] = await asyncio.shield(patched)
+                await asyncio.shield(patched)
         return await super().__aenter__()
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -63,13 +62,19 @@ def gate_tool_instance_defaults(toolset: AbstractToolset[AgentDepsT]) -> Abstrac
     return toolset
 
 
-async def _patch_tool_instance_defaults() -> bool:
+async def _patch_tool_instance_defaults(context: DBOSContext) -> bool:
     try:
-        return await DBOS.patch_async(TOOL_INSTANCE_DEFAULTS_PATCH)
+        patched = await DBOS.patch_async(TOOL_INSTANCE_DEFAULTS_PATCH)
     except DBOSPatchNondeterminismError:
         # Another run in the workflow started a step during the probe. `patch_async` reserved no
         # position and recorded nothing, so this workflow lists the tools as it did before the patch.
-        return False
+        patched = False
+    finally:
+        # This task keeps the context it runs in, and with it `context`, alive: replace it with its
+        # result here, so that holds even when every run waiting on it was cancelled.
+        del _tool_instance_defaults_patched[context]
+    _tool_instance_defaults_patched[context] = patched
+    return patched
 
 
 def workflow_context() -> DBOSContext:
