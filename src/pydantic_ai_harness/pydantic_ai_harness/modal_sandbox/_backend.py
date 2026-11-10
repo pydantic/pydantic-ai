@@ -8,6 +8,8 @@ SDK assumptions verified 2026-10-20 against Modal Python SDK 1.5.5:
   https://modal.com/docs/guide/sandbox-spawn
 * the native filesystem API supplies the operations used here:
   https://modal.com/docs/sdk/py/latest/Sandbox
+* `Sandbox.create(runtime=...)`, which `runtime=` passes on, needs SDK 1.6.0, the `modal` extra's floor (checked
+  2026-11-10 against 1.6.3): https://modal.com/docs/guide/sandboxes#runtimes
 
 Re-check these SDK methods before changing the protocol integration.
 """

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Never
 
@@ -196,8 +196,12 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     `mounts` needs `'vm'`: gVisor can't mount the FUSE file systems they use.
     """
 
-    mounts: Sequence[S3Mount] | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]] = ()
-    """Buckets to show as folders in the sandbox, or a function of the run returning them with fresh keys."""
+    mounts: (
+        Sequence[S3Mount]
+        | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]]
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Sequence[S3Mount]]]
+    ) = ()
+    """Buckets to show as folders in the sandbox, or a function of the run, sync or async, returning them with fresh keys."""
 
     client: modal.Client | None = None
     """The `modal.Client` to create, attach and destroy with, such as one from `modal.Client.from_credentials`;
@@ -239,7 +243,11 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         workdir: str | None = None,
         client: modal.Client | None = None,
         runtime: Literal['gvisor', 'vm'] | None = None,
-        mounts: Sequence[S3Mount] | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]] = (),
+        mounts: (
+            Sequence[S3Mount]
+            | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]]
+            | Callable[[RunContext[AgentDepsT]], Awaitable[Sequence[S3Mount]]]
+        ) = (),
         **removed_arguments: Never,
     ) -> None:
         # Hand-written, with the same parameters a dataclass would generate, so the previous

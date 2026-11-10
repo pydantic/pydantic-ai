@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -70,8 +70,12 @@ class E2BSandbox(AbstractCapability[AgentDepsT]):
     The agent's commands can read them, and a new sandbox keeps them for every process it runs.
     """
 
-    mounts: Sequence[S3Mount] | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]] = ()
-    """Buckets to show as folders in the sandbox, or a function of the run returning them with fresh keys."""
+    mounts: (
+        Sequence[S3Mount]
+        | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]]
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Sequence[S3Mount]]]
+    ) = ()
+    """Buckets to show as folders in the sandbox, or a function of the run, sync or async, returning them with fresh keys."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('E2BSandbox', self.defer_loading)

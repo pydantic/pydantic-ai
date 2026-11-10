@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Literal
 
 import modal
 import pytest
@@ -27,8 +27,8 @@ pytestmark = pytest.mark.modal_live
 
 
 @asynccontextmanager
-async def owned_backend(**settings: Any) -> AsyncGenerator[ModalSandboxBackend]:
-    backend = ModalSandboxBackend(sandbox_timeout=LIVE_SANDBOX_TIMEOUT, idle_timeout=LIVE_IDLE_TIMEOUT, **settings)
+async def owned_backend(runtime: Literal['gvisor', 'vm']) -> AsyncGenerator[ModalSandboxBackend]:
+    backend = ModalSandboxBackend(sandbox_timeout=LIVE_SANDBOX_TIMEOUT, idle_timeout=LIVE_IDLE_TIMEOUT, runtime=runtime)
     native = await backend.get_sandbox()
     try:
         yield backend

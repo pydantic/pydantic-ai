@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -64,8 +64,12 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, on top of the Sprite's own; a command's `env` is layered on top."""
 
-    mounts: Sequence[S3Mount] | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]] = ()
-    """Buckets to show as folders in the Sprite, or a function of the run returning them with fresh keys."""
+    mounts: (
+        Sequence[S3Mount]
+        | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]]
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Sequence[S3Mount]]]
+    ) = ()
+    """Buckets to show as folders in the Sprite, or a function of the run, sync or async, returning them with fresh keys."""
 
     def __post_init__(self) -> None:
         reject_defer_loading('SpritesSandbox', self.defer_loading)
