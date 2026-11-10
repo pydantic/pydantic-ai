@@ -421,8 +421,9 @@ file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
 `~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
 CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--resume`,
 `--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
-(`SessionStart.conversation_chosen`). A conversation saved in another
-directory, such as after AoE moved a worktree, is not resumed; use `/resume`. AoE's
+(`SessionStart.conversation_chosen`). It is resumed also when it was saved in another
+directory, such as after AoE renamed or moved a worktree, and continues in the pane's
+directory. When it cannot be resumed, CLAI2 says why and starts a new conversation. AoE's
 own resume, `--fork-from`, and smart rename apply to its built-in agents only.
 
 **Title.** Off by default, so the AoE session keeps the title you gave it. To title it after
