@@ -58,7 +58,8 @@ A human approval does not substitute for douwebot.
 `PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
 Size S remains a manual judgment; review enforcement skips merge groups after admission.
 On M, L and XL, the `Gate: clean douwebot approval` status reads `failure` until douwebot approves the head.
-When its description reads `Requires a marked, successful douwebot approval on the current head.`, trigger douwebot as step 3 of the loop says. Do not debug that failure as a CI failure.
+Its description `Requires a marked, successful douwebot approval on the current head.` means douwebot has not approved this head.
+If douwebot already reviewed the head, triage its findings in step 4; otherwise trigger douwebot as step 3 of the loop says. Do not debug that failure as a CI failure.
 
 `PR Review Checks` passed means its commit status reads `success` on the current head.
 [`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
@@ -485,6 +486,7 @@ if the head changes, capture the new SHA and restart the loop.
      When the status reads "Awaiting maintainer", the author lacks write access.
      Ask a maintainer to apply `pr-review-checks:run`; the label also covers later pushes.
      A `failure` leaves the gate unsatisfied until a later head passes or a maintainer applies `pr-review-checks:accepted`.
+     A `failure` whose description names `Incomplete` or `No result`, or asks for a rerun, has no finding to triage. Rerun that `PR Review Checks` run once, then escalate.
      When the run posted findings, its `target_url` links that review. Triage the findings in step 4.
    - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs
      when a user with write access approves the current head, when someone adds the `final-review`
