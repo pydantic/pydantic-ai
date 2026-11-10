@@ -771,20 +771,24 @@ class TestCodeMode:
         printed = await wrapper.call_tool('run_code', {'code': 'print("done")\nNone'}, ctx, tools['run_code'])
         assert printed.return_value == {'output': 'done\n'}
 
-    async def test_run_code_caps_printed_output(self) -> None:
+    async def test_run_code_caps_printed_output_and_resets(self) -> None:
+        """An output collector's memory-limit diagnostic is indistinguishable from an unsafe heap limit."""
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
 
-        with pytest.raises(ModelRetry, match='memory limit exceeded'):
+        with pytest.raises(ModelRetry, match='memory limit exceeded') as exc_info:
             await wrapper.call_tool(
                 'run_code',
                 {'code': "x = 7\nprint('x' * (10 * 1024 * 1024))"},
                 ctx,
                 tools['run_code'],
             )
-        result = await wrapper.call_tool('run_code', {'code': 'x + 1'}, ctx, tools['run_code'])
+        assert 'print less output' in exc_info.value.message
+        with pytest.raises(ModelRetry, match='Name `x` used when not defined'):
+            await wrapper.call_tool('run_code', {'code': 'x + 1'}, ctx, tools['run_code'])
+        result = await wrapper.call_tool('run_code', {'code': 'x = 7\nx + 1'}, ctx, tools['run_code'])
         assert result.return_value == 8
 
     async def test_run_code_caps_nested_tool_calls(self) -> None:
@@ -1067,12 +1071,8 @@ class TestCodeMode:
         assert '1 nested tool calls started' in message
         assert "add({'a': 1, 'b': 2}) returned 3" in message
 
-    async def test_memory_exhaustion_reports_calls_without_resetting(self) -> None:
-        """Exceeding `max_memory` reports what already ran, but keeps the session.
-
-        The allocation failed at a known point and later calls work, so a reset would discard
-        usable state even though the summary is just as necessary.
-        """
+    async def test_memory_exhaustion_reports_calls_and_resets(self) -> None:
+        """A live worker's heap is not safe after `max_memory`; reset state but retain completed calls."""
         wrapper = CodeMode[object](resource_limits={'max_memory': 8 * 1024 * 1024}).get_wrapper_toolset(
             _build_function_toolset(add)
         )
@@ -1091,7 +1091,9 @@ class TestCodeMode:
         message = exc_info.value.message
         assert 'memory limit exceeded' in message
         assert "add({'a': 1, 'b': 2}) returned 3" in message
-        assert 'session was reset' not in message
+        assert 'The sandbox ran out of memory and the session was reset.' in message
+        with pytest.raises(ModelRetry, match='Name `r` used when not defined'):
+            await wrapper.call_tool('run_code', {'code': 'r'}, ctx, tools['run_code'])
 
     async def test_every_resource_limit_reports_started_calls_when_exhausted(self) -> None:
         """Exhausting any option a caller can set still reports the calls that already ran.
@@ -1614,27 +1616,15 @@ class TestCodeMode:
         monkeypatch.setattr('pydantic_ai_harness._monty_exec.AsyncMonty', failing_monty)
 
         threads_before = set(threading.enumerate())
-        threads_after_retry: list[str] = []
+        wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper)
+        tools = await wrapper.get_tools(ctx)
+        with pytest.raises(RuntimeError, match='spawn failed'):
+            await wrapper.call_tool('run_code', {'code': '1'}, ctx, tools['run_code'])
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if len(messages) == 1:
-                return ModelResponse(parts=[ToolCallPart('run_code', {'code': '1'})])
-            # Checked while the run is still live: the run's own teardown would hide a leak.
-            # anyio's `to_thread` pool, which runs this sync function, is not the portal.
-            new_threads = set(threading.enumerate()) - threads_before
-            threads_after_retry.extend(t.name for t in new_threads if t.name != 'AnyIO worker thread')
-            return ModelResponse(parts=[TextPart('done')])
-
-        result = await Agent(FunctionModel(model_fn), capabilities=[CodeMode[object]()]).run('fail to spawn')
-
-        retry = next(
-            p
-            for m in result.all_messages()
-            for p in m.parts
-            if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
-        )
-        assert 'spawn failed' in str(retry.content)
-        assert threads_after_retry == []
+        new_threads = set(threading.enumerate()) - threads_before
+        assert [thread.name for thread in new_threads if thread.name != 'AnyIO worker thread'] == []
 
     async def test_agent_run_preserves_repl_between_code_calls(self) -> None:
         """Code Mode keeps one REPL across model steps in an agent run."""
@@ -3522,7 +3512,7 @@ class TestCodeMode:
         run_code = tools['run_code']
 
         await wrapper.call_tool('run_code', {'code': 'x = 1'}, ctx, run_code)
-        with pytest.raises(ModelRetry, match='crashed the sandbox worker') as exc_info:
+        with pytest.raises(ModelRetry, match='ran longer than its time limit') as exc_info:
             await wrapper.call_tool(
                 'run_code', {'code': 'r = await add(a=1, b=2)\nwhile True:\n    pass'}, ctx, run_code
             )

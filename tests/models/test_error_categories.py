@@ -317,6 +317,60 @@ _ANTHROPIC_MESSAGE_START: tuple[str, dict[str, Any]] = (
     },
 )
 
+_GEMINI_FREE_TIER_RATE_LIMIT: dict[str, Any] = {
+    'error': {
+        'code': 429,
+        'message': 'You exceeded your current quota, please check your plan and billing details. For more information '
+        'on this error, head to: https://aistudio.google.com/docs/rate-limits. To monitor your current usage, head to: '
+        'https://ai.dev/rate-limit. \n* Quota exceeded for metric: '
+        'generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 5, model: gemini-3.8-flash, '
+        'description: Generate content requests per minute limit exceeded on Free Tier. See '
+        'https://aistudio.google.com/docs/rate-limits.\nPlease retry in 14.306944957s.',
+        'status': 'RESOURCE_EXHAUSTED',
+        'details': [
+            {
+                '@type': 'type.googleapis.com/google.rpc.Help',
+                'links': [
+                    {
+                        'description': 'Learn more about Gemini API quotas',
+                        'url': 'https://aistudio.google.com/docs/rate-limits',
+                    }
+                ],
+            },
+            {
+                '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+                'violations': [
+                    {
+                        'description': 'Generate content requests per minute limit exceeded on Free Tier. See '
+                        'https://aistudio.google.com/docs/rate-limits.',
+                        'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests',
+                        'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier',
+                        'quotaDimensions': {'model': 'gemini-3.8-flash', 'location': 'global'},
+                        'quotaValue': '5',
+                    }
+                ],
+            },
+            {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'},
+        ],
+    }
+}
+"""Gemini's 429 for the free tier's per-minute request quota, as a real response reported it in
+https://github.com/pydantic/pydantic-ai/issues/12063#issuecomment-6769986854: no `Retry-After` header, and the wait
+only in the body's `google.rpc.RetryInfo`."""
+
+
+def _google_retry_info_body(retry_delay: object) -> dict[str, Any]:
+    """A Gemini 429 whose only wait is the `RetryInfo` detail's `retryDelay`, which a protobuf `Duration` spells."""
+    return {
+        'error': {
+            'code': 429,
+            'message': 'Resource has been exhausted',
+            'status': 'RESOURCE_EXHAUSTED',
+            'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': retry_delay}],
+        }
+    }
+
+
 CASES = [
     Case(
         id='openai-rate-limit',
@@ -786,7 +840,7 @@ CASES = [
             },
         ),
         categories={ModelHTTPError, ModelQuotaExceededError},
-        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED'},
+        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED', 'retry_after': 55.0},
     ),
     Case(
         # Only per-minute quotas exceeded: a rate limit, which waiting fixes.
@@ -818,7 +872,102 @@ CASES = [
             },
         ),
         categories={ModelHTTPError, ModelRateLimitError},
-        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED'},
+        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED', 'retry_after': 12.0},
+    ),
+    Case(
+        # A real free-tier 429: no `Retry-After` header, the wait only in the body's `google.rpc.RetryInfo`.
+        id='google-retry-info',
+        model=_google,
+        handler=_json(429, _GEMINI_FREE_TIER_RATE_LIMIT),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED', 'retry_after': 14.0},
+    ),
+    Case(
+        # A response that carries `Retry-After` keeps it, and the body's `RetryInfo` is only the fallback.
+        id='google-retry-info-after-header',
+        model=_google,
+        handler=_json(429, _GEMINI_FREE_TIER_RATE_LIMIT, headers={'retry-after': '7'}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'retry_after': 7.0},
+    ),
+    Case(
+        # An error chunk in a stream arrives with the open 200 stream's own headers, so only the body has the wait.
+        id='google-stream-retry-info',
+        model=_google,
+        handler=_sse_data(_GEMINI_FREE_TIER_RATE_LIMIT),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'in_stream': True, 'retry_after': 14.0},
+        stream=True,
+    ),
+    Case(
+        # A `RetryInfo` that names no parsable protobuf `Duration` says nothing, and must not fail the mapping.
+        id='google-retry-info-unparsable',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('soon')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        # A `Duration` that ends in `s` but holds no number before it is unparsable too.
+        id='google-retry-info-non-numeric',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('invalids')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        # A protobuf `Duration` may carry a fraction of a second.
+        id='google-retry-info-fractional-seconds',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('0.5s')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': 0.5},
+    ),
+    Case(
+        # Up to nine fractional digits, as a protobuf `Duration` allows.
+        id='google-retry-info-nanoseconds',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('1.000340012s')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': 1.000340012},
+    ),
+    Case(
+        # A negative wait is meaningless, so it's dropped rather than reported.
+        id='google-retry-info-negative',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('-3s')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        id='google-retry-info-infinite',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('infs')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        # A `Duration` always ends in `s`; a bare number is not one.
+        id='google-retry-info-no-second-suffix',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('14')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        id='google-retry-info-not-a-string',
+        model=_google,
+        handler=_json(429, _google_retry_info_body(14)),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        # `retry-after-ms` and `Retry-After` outrank the body: only the fallback reads `RetryInfo`.
+        id='google-retry-info-after-ms-header',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('14s'), headers={'retry-after-ms': '7000'}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': 7.0},
     ),
     Case(
         # From https://github.com/ChatGPTNextWeb/NextChat/issues/5255.
@@ -1319,7 +1468,7 @@ CASES = [
         attrs={'status_code': 404, 'provider_error_code': 'model_not_found'},
     ),
     Case(
-        # The Responses API sends an unknown model as a 400; its code says what it is.
+        # Its code says what it is, whatever status it comes with.
         id='openai-model-not-found-400',
         model=_openai,
         handler=_json(
@@ -1368,7 +1517,7 @@ CASES = [
         attrs={'status_code': 409},
     ),
     Case(
-        # Its status before a stream opens depends on the API, so an in-stream one gets none, only the category.
+        # An in-stream one gets no status, only the category.
         id='openai-stream-model-not-found',
         model=_openai,
         handler=_sse_data({'error': {'message': 'The model does not exist.', 'code': 'model_not_found'}}),
@@ -1747,6 +1896,14 @@ CASES = [
         categories={ModelHTTPError, ModelUnavailableError},
         attrs={'status_code': 503},
         stream=True,
+    ),
+    Case(
+        # The status a retrying transport gave up on still carries Gemini's body, and so its `RetryInfo` wait.
+        id='google-transport-gave-up-retry-info',
+        model=_google,
+        handler=_gave_up(429, content=json.dumps(_GEMINI_FREE_TIER_RATE_LIMIT).encode()),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'retry_after': 14.0},
     ),
     Case(
         id='mistral-transport-gave-up',

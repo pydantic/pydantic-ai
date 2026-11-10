@@ -918,7 +918,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         """Report that a failing settings-built capability is left out of later turns."""
         self.console.print(self.loader.suspend(error), style=theme.color(theme.WARNING), markup=False)
 
-    def fork_session(self, model: str | None, history: Sequence[ModelMessage]) -> Session[DepsT, OutputT]:
+    async def fork_session(self, model: str | None, history: Sequence[ModelMessage]) -> Session[DepsT, OutputT]:
         """A separately saved session configured like the foreground one, seeded with `history`."""
         child = Session(
             self.agent,
@@ -938,7 +938,9 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         child.model_defaults = self.context.model_defaults(child.model or _model_label(self.agent))
         child.on_setup_error = self.capability_failed
         if child.repl_states is not None:
-            child.repl_states.copy(source=self.session.summary.id, target=child.summary.id)
+            await to_thread.run_sync(
+                partial(child.repl_states.copy, source=self.session.summary.id, target=child.summary.id)
+            )
         return child
 
     async def tasks_command(self, args: list[str]) -> str:

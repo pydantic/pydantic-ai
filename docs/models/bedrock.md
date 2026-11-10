@@ -40,11 +40,11 @@ pip/uv-add "pydantic-ai-slim[bedrock]"
 
 To use [AWS Bedrock](https://aws.amazon.com/bedrock/), you'll need an AWS account with Bedrock enabled and appropriate credentials. You can use either AWS credentials directly or a pre-configured boto3 client.
 
-[`BedrockModelName`][pydantic_ai.models.bedrock.BedrockModelName] contains a list of available Bedrock models, including models from Anthropic, Amazon, Cohere, Meta, and Mistral.
+[`BedrockModelName`][pydantic_ai.models.bedrock.BedrockModelName] lists the latest Bedrock models for autocomplete, one id per model, including models from Anthropic, Amazon, Meta, Mistral and OpenAI. Any other model id Bedrock accepts works too.
 
 ### Data retention
 
-Claude Fable 5 and 5.1 require the account's data retention mode in the selected Region to be `aws_review` (or the legacy `provider_data_share`). Otherwise, every request fails with a 400 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] saying that the data retention mode is not available for the model. This is an account setting, not a request setting; configure it through the Bedrock control plane as described in the [AWS data retention documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html).
+Claude Fable 5, 5.1 and 5.2 require the account's data retention mode in the selected Region to be `aws_review` (or the legacy `provider_data_share`). Otherwise, every request fails with a 400 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] saying that the data retention mode is not available for the model. This is an account setting, not a request setting; configure it through the Bedrock control plane as described in the [AWS data retention documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html).
 
 ### Environment variables
 

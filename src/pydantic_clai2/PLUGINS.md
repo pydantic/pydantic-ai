@@ -1350,7 +1350,7 @@ workspace and its default filenames: one instruction file per directory,
 |---|---|---|
 | `walk_up` | `true` | also load instruction files from the directories above the workspace: up to the nearest `repo_context.walk_up_roots` entry containing it, inclusive (home by default), or up to the repository root (the nearest `.git`) when no entry contains it |
 | `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
-| `nested_traversal` | `true` | when the agent reads a file in, or lists, a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
+| `nested_traversal` | `true` | when the agent reads, lists, writes or edits in a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
 | `nested_inject` | `"contents"` | what nested traversal adds: `"contents"` (the file itself) or `"pointer"` (one line naming the file) |
 
 Under home, the walk-up reads every directory up to and including `~`, not just

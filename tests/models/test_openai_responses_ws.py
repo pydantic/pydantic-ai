@@ -2312,8 +2312,8 @@ ERROR_FRAME_CASES = [
         'model_not_found',
         status=400,
         code='model_not_found',
-        model_name='gpt-5.2-proo',
-        suggested_model_id='openai:gpt-5.2-pro',
+        model_name='gpt-5.6-sool',
+        suggested_model_id='openai:gpt-5.6-sol',
     ),
     ErrorFrameCase(
         'rate_limit', status=429, code='rate_limit_exceeded', error_type='requests', expected=ModelRateLimitError
