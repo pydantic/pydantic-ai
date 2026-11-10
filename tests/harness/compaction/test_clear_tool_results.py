@@ -116,6 +116,12 @@ class TestClearToolResultsTargeting:
         cleared = await ClearToolResults[None](max_tokens=1, keep_pairs=0, tools=['search']).compact(messages, _ctx())
         assert _contents(cleared) == {'a': CLEARED, 'b': 'b result'}
 
+    async def test_keep_pairs_window_counts_every_tool_before_tools_filters(self):
+        """The newest pair kept is another tool's, so the older listed result falls out of the window and is cleared."""
+        messages = [*_turn('go', 'a'), *_turn('more', 'b', tool_name='fetch')]
+        cleared = await ClearToolResults[None](max_tokens=1, keep_pairs=1, tools=['search']).compact(messages, _ctx())
+        assert _contents(cleared) == {'a': CLEARED, 'b': 'b result'}
+
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_first_line_placeholder_on_earlier_turns(self):
         """The issue's case: earlier turns' search results shrink to their first line, so their ids survive."""
@@ -324,7 +330,15 @@ class TestClearToolResultsTargeting:
         assert _contents(cleared) == {'a': CLEARED, 'b': 'b result'}
 
     async def test_keep_turns_does_not_reach_a_reused_tool_call_id_in_a_kept_turn(self):
-        messages = [*_turn('one', 'same'), _user('two'), _call('search', 'same'), _return('search', 'same', 'new')]
+        messages = [
+            _user('one'),
+            _call('search', 'same', '{"query": "old"}'),
+            _return('search', 'same', 'old'),
+            ModelResponse(parts=[TextPart('answer')]),
+            _user('two'),
+            _call('search', 'same', '{"query": "new"}'),
+            _return('search', 'same', 'new'),
+        ]
         cleared = await ClearToolResults[None](max_tokens=1, keep_turns=0, clear_tool_inputs=True).compact(
             messages, _ctx()
         )
@@ -336,6 +350,15 @@ class TestClearToolResultsTargeting:
             if isinstance(part, ToolReturnPart)
         ]
         assert returns == [CLEARED, 'new']
+        # Only the older call's arguments are blanked; the kept call keeps its own.
+        args = [
+            part.args
+            for message in cleared
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+            if isinstance(part, ToolCallPart)
+        ]
+        assert args == ['{}', '{"query": "new"}']
 
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_keep_turns_ignores_user_content_a_tool_returns(self):
