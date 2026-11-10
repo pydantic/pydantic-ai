@@ -297,6 +297,7 @@ these categories, whichever provider it came from:
 | [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] | The input exceeds the model's context window. A subclass of `ModelRequestRejectedError`. |
 | [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] | The provider rejected the credentials, or doesn't allow them to make the request, e.g. an HTTP 401 or 403. A subclass of `ModelRequestRejectedError`. |
 | [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] | The provider couldn't find the model, deployment or other resource the request names, e.g. an HTTP 404. A subclass of `ModelRequestRejectedError`. |
+| [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError] | The provider couldn't compile the request's strict schemas, like Anthropic's 400 for a [schema that's too complex](anthropic.md#schema-complexity-limits). A subclass of `ModelRequestRejectedError`. |
 
 A provider's own signal decides between categories that share a status code: a 429 is a rate limit unless the
 provider says the quota is exhausted (the Gemini API names the exceeded quotas in its `RESOURCE_EXHAUSTED` error, so
@@ -367,8 +368,9 @@ print(should_retry(ModelHTTPError.for_category(ModelRateLimitError, status_code=
 ```
 
 [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
-[`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and
-[`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] are all a
+[`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError],
+[`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] and
+[`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError] are all a
 `ModelRequestRejectedError`, so `should_retry` skips them too. Under [Temporal](../durable_execution/temporal.md#activity-retries), the activity
 doesn't retry them either, as they're in `non_retryable_model_errors` by default.
 

@@ -35,6 +35,7 @@ _SpecFallbackError = Literal[
     'ModelContextWindowExceededError',
     'ModelAuthenticationError',
     'ModelNotFoundError',
+    'ModelSchemaTooComplexError',
     'ModelRequestTimeout',
     'ContentFilterError',
 ]

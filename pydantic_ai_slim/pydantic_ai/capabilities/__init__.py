@@ -53,7 +53,6 @@ from .mcp import MCP, MCPAuthorizationTokenFunc
 from .model_fallback import ModelFallback
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
-from .output_mode_fallback import OutputModeFallback
 from .prefix_tools import PrefixTools
 from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
@@ -93,7 +92,6 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         LocalWorkspace,
         MCP,
         ModelFallback,
-        OutputModeFallback,
         PrefixTools,
         PrepareTools,
         ProcessHistory,
@@ -161,7 +159,6 @@ __all__ = [
     'ReinjectSystemPrompt',
     'ResolveModelId',
     'ModelFallback',
-    'OutputModeFallback',
     'SelectModel',
     'SetToolMetadata',
     'Thinking',

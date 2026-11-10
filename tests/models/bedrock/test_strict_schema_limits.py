@@ -6,7 +6,6 @@ https://platform.claude.com/docs/en/build-with-claude/structured-outputs#schema-
 
 from __future__ import annotations as _annotations
 
-from collections import OrderedDict
 from typing import Any
 
 import pytest
@@ -15,8 +14,7 @@ from pydantic import BaseModel, create_model
 
 from pydantic_ai import Tool
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import OutputModeFallback
-from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError
+from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError, ModelSchemaTooComplexError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, OutputObjectDefinition
@@ -131,7 +129,7 @@ async def test_bedrock_schema_too_complex_error_has_hint(allow_model_requests: N
         await agent.run('Fill in the form.')
 
     error = exc_info.value
-    assert isinstance(error, ModelRequestRejectedError)
+    assert isinstance(error, ModelSchemaTooComplexError)
     assert error.status_code == 400
     assert error.hint is not None
     assert error.hint.endswith('See https://pydantic.dev/docs/ai/models/anthropic/#schema-complexity-limits')
@@ -140,19 +138,12 @@ async def test_bedrock_schema_too_complex_error_has_hint(allow_model_requests: N
 @pytest.mark.moves_cache_prefix(
     reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
 )
-async def test_bedrock_output_mode_fallback_attempts_a_too_complex_schema_in_tool_output(
-    allow_model_requests: None,
-    bedrock_provider: BedrockProvider,
-    vcr: Cassette,
-    remembered_output_schemas: OrderedDict[str, None],
+async def test_bedrock_too_complex_inferred_native_output_is_attempted_in_tool_output(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ):
-    """Converse reports the too-complex 400 in its own error shape, which `OutputModeFallback` recognizes too."""
+    """Converse reports the too-complex 400 in its own error shape, which the run attempts again in Tool Output too."""
     form = _model('Form', {f'field_{i}': (str, '') for i in range(13)})
-    agent = Agent(
-        BedrockConverseModel(_MODEL_NAME, provider=bedrock_provider),
-        output_type=form,
-        capabilities=[OutputModeFallback()],
-    )
+    agent = Agent(BedrockConverseModel(_MODEL_NAME, provider=bedrock_provider), output_type=form)
 
     result = await agent.run(
         'Fill in the form with `field_0` set to "a" and every other field left empty.',
@@ -172,7 +163,8 @@ async def test_bedrock_output_mode_fallback_attempts_a_too_complex_schema_in_too
         for body in map(request_json, vcr.requests)
     ] == snapshot([{'outputConfig': True, 'tools': []}, {'outputConfig': False, 'tools': [('final_result', None)]}])
     assert result.usage.requests == 1
-    assert len(remembered_output_schemas) == 1
+    [failed] = result.response.failed_attempts or []
+    assert failed.error is not None and failed.error.startswith('ModelSchemaTooComplexError: ')
 
 
 def test_bedrock_strict_tools_under_tool_choice_none_arent_counted(bedrock_provider: BedrockProvider):

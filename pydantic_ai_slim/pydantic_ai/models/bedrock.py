@@ -84,6 +84,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
     ModelNotFoundError,
+    ModelSchemaTooComplexError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -257,7 +258,7 @@ def _map_client_error(
             suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
         hint = _DATA_RETENTION_HINT if isinstance(message, str) and 'data retention mode' in message.lower() else None
         if strict_schema_limits and status_code == 400 and is_schema_too_complex_error(message):
-            hint = SCHEMA_TOO_COMPLEX_HINT
+            category, hint = ModelSchemaTooComplexError, SCHEMA_TOO_COMPLEX_HINT
         return ModelHTTPError.for_category(
             category or _model_errors.http_status_category(status_code, message),
             status_code=status_code,

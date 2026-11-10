@@ -61,6 +61,7 @@ __all__ = (
     'ModelRequestRejectedError',
     'ModelAuthenticationError',
     'ModelNotFoundError',
+    'ModelSchemaTooComplexError',
     'ModelRequestTimeout',
     'ContentFilterError',
     'IncompleteToolCall',
@@ -612,8 +613,9 @@ class ModelAPIError(AgentRunError):
     [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]), or
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] (and its
     [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
-    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and
-    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError]). When the error
+    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError],
+    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] and
+    [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError]). When the error
     came with an HTTP status code, the raised exception is also a
     [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]; see
     [`ModelHTTPError.for_category`][pydantic_ai.exceptions.ModelHTTPError.for_category].
@@ -817,8 +819,9 @@ class ModelRequestRejectedError(ModelAPIError):
     For example an HTTP 400 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies. Its
     subclasses say why, where the provider does:
     [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
-    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], and
-    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError].
+    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError],
+    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], and
+    [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError].
 
     Exhausted credits are a [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] instead, even
     when the provider sends them as a 400 like Anthropic does, since topping up the account fixes them.
@@ -866,6 +869,22 @@ class ModelNotFoundError(ModelRequestRejectedError):
     [`suggested_model_id`][pydantic_ai.exceptions.ModelHTTPError.suggested_model_id] may suggest a close known one.
     A 404 can also mean that the provider's base URL is wrong. A subclass of
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
+    """
+
+
+class ModelSchemaTooComplexError(ModelRequestRejectedError):
+    """Raised when the provider rejected the request because it couldn't compile its strict schemas.
+
+    For example Anthropic's 400 saying that the schema is too complex or that the compiled grammar is too large,
+    which can arrive only after minutes of compiling, for strict tool schemas and a Native Output schema that are
+    within the documented limits. Its [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint] says how to simplify
+    them. When the agent chose Native Output for the request itself, because the output type didn't pick a mode, the
+    run sends the request again in Tool Output instead of raising this; see
+    [Schema complexity limits](../models/anthropic.md#schema-complexity-limits). A subclass of
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
+
+    It's not the [`UserError`][pydantic_ai.exceptions.UserError] Pydantic AI raises before sending a schema whose
+    `$ref`s expand too far when inlined: this is the provider rejecting a request that was sent.
     """
 
 
@@ -1052,8 +1071,9 @@ class ModelHTTPError(ModelAPIError):
                 [`ModelServerError`][pydantic_ai.exceptions.ModelServerError],
                 [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError],
                 [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError],
-                [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], or
-                [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError].
+                [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
+                [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], or
+                [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError].
             status_code: The HTTP status code.
             model_name: The name of the model.
             body: The body of the error response.
@@ -1161,6 +1181,10 @@ class _HTTPModelNotFoundError(_CategorizedHTTPError, ModelNotFoundError):
     pass
 
 
+class _HTTPModelSchemaTooComplexError(_CategorizedHTTPError, ModelSchemaTooComplexError):
+    pass
+
+
 _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] = {
     ModelRateLimitError: _HTTPModelRateLimitError,
     ModelQuotaExceededError: _HTTPModelQuotaExceededError,
@@ -1171,6 +1195,7 @@ _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] =
     ModelRequestRejectedError: _HTTPModelRequestRejectedError,
     ModelAuthenticationError: _HTTPModelAuthenticationError,
     ModelNotFoundError: _HTTPModelNotFoundError,
+    ModelSchemaTooComplexError: _HTTPModelSchemaTooComplexError,
 }
 
 

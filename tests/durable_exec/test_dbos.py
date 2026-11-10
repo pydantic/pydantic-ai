@@ -8,7 +8,7 @@ import sys
 import time
 import uuid
 import warnings
-from collections import Counter, OrderedDict, deque
+from collections import Counter, deque
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
@@ -66,7 +66,6 @@ from pydantic_ai.capabilities import (
     DynamicCapability,
     Hooks,
     ModelFallback,
-    OutputModeFallback,
     SetToolMetadata,
     WrapperCapability,
 )
@@ -81,6 +80,7 @@ from pydantic_ai.exceptions import (
     ModelHTTPError,
     ModelRequestTimeout,
     ModelRetry,
+    ModelSchemaTooComplexError,
     RunCancelled,
     RunTimedOut,
     ToolFailed,
@@ -6817,12 +6817,10 @@ class _Survey(BaseModel):
 @pytest.mark.moves_cache_prefix(
     reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
 )
-async def test_dbos_output_mode_fallback_remembers_rejected_schemas_only_within_the_run(
-    dbos: DBOS, remembered_output_schemas: OrderedDict[str, None]
-) -> None:
-    """Workflow code has to make the same choices when it's replayed, by a process that may not remember them.
+async def test_dbos_too_complex_inferred_native_output_is_attempted_in_tool_output(dbos: DBOS) -> None:
+    """The rejected attempt fails its step, and workflow code attempts the request again in Tool Output in another.
 
-    So each workflow's first request still infers Native Output, and its later requests use Tool Output.
+    Each workflow's first request infers Native Output again, as the run, not the process, keeps the switch.
     """
     modes: list[str] = []
 
@@ -6830,8 +6828,7 @@ async def test_dbos_output_mode_fallback_remembers_rejected_schemas_only_within_
         mode = info.model_request_parameters.output_mode
         modes.append(mode)
         if mode == 'native':
-            body = {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Schema is too complex.'}}
-            raise ModelHTTPError(400, 'compiler', body=body)
+            raise ModelHTTPError.for_category(ModelSchemaTooComplexError, status_code=400, model_name='compiler')
         if not any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
             return ModelResponse(parts=[ToolCallPart('look_up', {})])
         return ModelResponse(parts=[ToolCallPart('final_result', {'answer': 1})])
@@ -6846,10 +6843,10 @@ async def test_dbos_output_mode_fallback_remembers_rejected_schemas_only_within_
     )
     agent = Agent(
         model,
-        name='dbos_output_mode_fallback',
+        name='dbos_schema_too_complex',
         output_type=_Survey,
         tools=[look_up],
-        capabilities=[OutputModeFallback(), DBOSDurability()],
+        capabilities=[DBOSDurability()],
     )
 
     @DBOS.workflow()
@@ -6859,4 +6856,3 @@ async def test_dbos_output_mode_fallback_remembers_rejected_schemas_only_within_
     assert await run_workflow() == _Survey(answer=1)
     assert await run_workflow() == _Survey(answer=1)
     assert modes == ['native', 'tool', 'tool'] * 2
-    assert not remembered_output_schemas

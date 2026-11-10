@@ -106,6 +106,7 @@ from pydantic_ai.exceptions import (
     ModelQuotaExceededError,
     ModelRateLimitError,
     ModelRetry,
+    ModelSchemaTooComplexError,
     ModelTimeoutError,
     ModelUnavailableError,
     SkipModelRequest,
@@ -453,6 +454,73 @@ async def test_durability_fallback_attempts_run_as_activities(client: Client):
     # The response records the candidate that answered, which is what the workflow resumes a continuation on.
     assert output == ('from fallback', 'fallback_target')
     # The failed attempt on the agent's model and the one on the fallback model.
+    assert _scheduled_activity_count(history) == 2
+
+
+# --- Durability when the provider can't compile an inferred Native Output schema ---
+
+
+_schema_too_complex_modes: list[str] = []
+
+
+def _schema_too_complex_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    mode = info.model_request_parameters.output_mode
+    _schema_too_complex_modes.append(mode)
+    if mode == 'native':
+        raise ModelHTTPError.for_category(ModelSchemaTooComplexError, status_code=400, model_name='compiler')
+    return ModelResponse(parts=[ToolCallPart('final_result', {'label': 'survey', 'answer': 'answered'})])
+
+
+schema_too_complex_durable_agent = Agent(
+    FunctionModel(
+        _schema_too_complex_fn,
+        model_name='compiler',
+        profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),
+    ),
+    name='durability_schema_too_complex_agent',
+    output_type=Answer,
+    capabilities=[
+        TemporalDurability(
+            # The rejection isn't retried in its activity, by default, even when the retry policy would.
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        ),
+    ],
+)
+
+
+@workflow.defn
+class SchemaTooComplexDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await schema_too_complex_durable_agent.run(prompt)).output.answer
+
+
+@pytest.mark.moves_cache_prefix(
+    reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
+)
+async def test_durability_too_complex_inferred_native_output_is_attempted_in_tool_output(client: Client):
+    """The rejected Native Output attempt fails its activity once, and workflow code attempts the request in Tool
+    Output in another activity."""
+    _schema_too_complex_modes.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SchemaTooComplexDurableAgentWorkflow],
+        plugins=[AgentPlugin(schema_too_complex_durable_agent)],
+    ):
+        wf = await client.start_workflow(
+            SchemaTooComplexDurableAgentWorkflow.run,
+            args=['hello'],
+            id=SchemaTooComplexDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        output = await wf.result()
+        history = await wf.fetch_history()
+    assert output == 'answered'
+    assert _schema_too_complex_modes == ['native', 'tool']
     assert _scheduled_activity_count(history) == 2
 
 
