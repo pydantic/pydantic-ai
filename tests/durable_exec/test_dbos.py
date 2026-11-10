@@ -14,7 +14,6 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
@@ -22,7 +21,6 @@ from unittest.mock import AsyncMock, patch
 import httpx2
 import pytest
 from httpx import AsyncClient
-from packaging.version import Version
 from pydantic import BaseModel
 
 from pydantic_ai import (
@@ -112,7 +110,7 @@ from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
-from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging, without_admin_server
+from ..conftest import IsDatetime, IsNow, IsStr, detach_dbos_logging
 from ..realtime_connections import InferredConnection
 
 # Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
@@ -216,7 +214,7 @@ def dbos(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, Any, None]
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
         'enable_otlp': True,
     }
-    dbos = DBOS(config=without_admin_server(dbos_config))
+    dbos = DBOS(config=dbos_config)
     DBOS.launch()
     try:
         yield dbos
@@ -6377,10 +6375,6 @@ async def child_workflow_lead_workflow() -> str:
     return (await child_workflow_lead.run('Explain tides.', timeout=3600)).output
 
 
-@pytest.mark.skipif(
-    Version(version('dbos')) < Version('2.27'),
-    reason="`dbos` 2.27 stopped re-running a completed async workflow's body when it is invoked again (dbos-inc/dbos-transact-py#762)",
-)
 async def test_dbos_child_workflow_tool_survives_recovery(dbos: DBOS) -> None:
     """A tool with `child_workflow` metadata runs in its own child workflow, which recovery resumes from its steps."""
     child_workflow_calls.clear()
@@ -6787,10 +6781,6 @@ async def test_dbos_stream_failing_before_output_falls_back(dbos: DBOS) -> None:
         ModelRequestTimeout('primary', 5),
     ],
     ids=lambda error: type(error).__name__,
-)
-@pytest.mark.skipif(
-    Version(version('dbos')) < Version('2.14'),
-    reason='`dbos` 2.14 added `serialize_exception` and `DBOSDefaultSerializer`',
 )
 def test_dbos_records_what_a_stream_produced_before_failing(error: ModelAPIError) -> None:
     """A step that failed after its stream produced output is raised on replay with what the stream produced.

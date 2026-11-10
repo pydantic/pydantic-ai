@@ -167,7 +167,8 @@ retries = ["tenacity>=8.2.3", "httpx>=0.27"]
 # Temporal
 temporal = ["temporalio>=1.27.0"]
 # DBOS
-dbos = ["dbos>=2.10.0"]
+# 3.4.0 is the first DBOS with `DBOS.reserve_step`, and its `DBOS.patch_async` no longer requires `enable_patching`.
+dbos = ["dbos>=3.4.0"]
 # Prefect
 # 3.9.0 is the first Prefect to cap `fastapi<0.151` (PrefectHQ/prefect#23478) and drop the `min_items`
 # keyword FastAPI 0.155 rejects (PrefectHQ/prefect#23476); earlier ones fail to import their server on

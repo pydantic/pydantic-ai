@@ -41,7 +41,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._agent import DBOSParallelExecutionMode
-from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig, SnapshotStepReservation
+from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig
 from ._operation_names import DBOSOperationNamer
 from ._utils import ChildWorkflowConfig, StepConfig, guard_enqueue_in_workflow, in_workflow_code, using_durable_sleep
 
@@ -164,7 +164,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._legacy_run_sync_workflow: Any = None
         self._operation_backend: DBOSOperationBackend | None = None
         self._event_step_reservations: dict[
-            tuple[str | None, str | None], dict[int, deque[StepReservation | SnapshotStepReservation | None]]
+            tuple[str | None, str | None], dict[int, deque[StepReservation | None]]
         ] = {}
         self._child_workflow_toolsets: dict[str, DurableFunctionToolset[AgentDepsT]] = {}
         self._child_workflow_metadata_capability = False
@@ -413,7 +413,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             # Reserve in buffer order, before immediate listeners can yield or emit another event.
             reservation = None
             if ctx.tool_call_id is not None and self.in_durable_context:
-                reservation = DBOS.reserve_step() if hasattr(DBOS, 'reserve_step') else SnapshotStepReservation()
+                reservation = DBOS.reserve_step()
             reservations.setdefault(id(event), deque()).append(reservation)
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:

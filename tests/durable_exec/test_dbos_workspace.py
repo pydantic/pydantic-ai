@@ -21,7 +21,6 @@ from pydantic_ai import Agent, RunContext, Tool, ToolOutput
 from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.models.test import TestModel
 
-from ..conftest import without_admin_server
 from ..workspace_fakes import InMemoryProvider
 from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents
 
@@ -46,7 +45,7 @@ async def dbos(tmp_path_factory: pytest.TempPathFactory) -> AsyncGenerator[DBOS]
         'system_database_url': f'sqlite:///{dbos_sqlite_file}',
         'enable_otlp': False,
     }
-    dbos = DBOS(config=without_admin_server(dbos_config))
+    dbos = DBOS(config=dbos_config)
     DBOS.launch()
     try:
         yield dbos

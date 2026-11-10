@@ -74,7 +74,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..batch_utils import FAST_BATCH_SETTINGS
-from ..conftest import try_import, without_admin_server
+from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
 
 with try_import() as logfire_installed:
@@ -2441,7 +2441,7 @@ def dbos(tmp_path: Any) -> Generator[DBOS, None, None]:
         'name': 'capability_durable_operations',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
     }
-    instance = DBOS(config=without_admin_server(config))
+    instance = DBOS(config=config)
     DBOS.launch()
     try:
         yield instance
