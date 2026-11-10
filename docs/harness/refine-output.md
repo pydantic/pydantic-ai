@@ -37,18 +37,20 @@ RefineOutput(rounds=2, instructions='Check every figure against the source docum
 
 ## Review rounds
 
-- A round costs at least one more model request, more when the model calls tools during it, and counts toward [`UsageLimits`](../agent.md#usage-limits) like any other request.
+- A round costs at least one more model request, more when the model calls tools during it, and counts toward [`UsageLimits`][pydantic_ai.usage.UsageLimits] like any other request.
 - With structured output the model produces the output again. [Output validators and output functions](../output.md) run on every answer, not only the last, so keep them free of side effects.
-- The instruction is a `SystemPromptPart` whose `metadata` holds `'origin': 'pydantic-ai-harness.refine_output.v1'` and the `round` number. It stays in the message history. Rounds are counted from the current run's messages, so a run that continues an earlier conversation starts with none used.
+- The instruction is a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] whose `metadata` holds `'origin': 'pydantic-ai-harness.refine_output.v1'` and the `round` number. It keeps the default conversation scope, so it stays in the message history. Each run starts with no rounds used.
+- Code that streams the run sees every answer as the model writes it: the first one, then each revised one. Only the last is the run's output.
 
-Two kinds of run end without a review:
+Three kinds of run end without a review:
 
-- A run that pauses for [deferred tools](../deferred-tools.md) and returns `DeferredToolRequests`.
-- `Agent.run_stream()`, which ends at the first output it streams. To stream a run that is reviewed, use `Agent.run()` with an `event_stream_handler`, or `Agent.iter()`.
+- A run that pauses for [deferred tools](../deferred-tools.md) and returns [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests].
+- A run that ends while a background response is still in progress and returns [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits).
+- [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], which ends at the first output it streams. To stream a run that is reviewed, use [`Agent.run()`][pydantic_ai.agent.Agent.run] with an `event_stream_handler`, or [`Agent.iter()`][pydantic_ai.agent.Agent.iter].
 
 ## Durable execution
 
-`RefineOutput` keeps no state of its own. It counts rounds from the run's messages, so there is nothing to set up for a durable run.
+The rounds a run has used live in memory, in the instance `for_run` creates for that run. Under [durable execution](../durable_execution/overview.md) the hook that counts them (`after_node_run`) runs in workflow code, so when Temporal, DBOS, or Prefect replays a run, it runs again in the same order over the journaled responses and counts the same rounds.
 
 ## Telemetry
 
@@ -56,7 +58,8 @@ Two kinds of run end without a review:
 
 ## Composition
 
-- Several `RefineOutput` on one agent share the round count. Each adds its instructions to every round up to its own `rounds`, so two with different instructions have the model review for both in the same round.
+- Several `RefineOutput` on one agent each count their own rounds, and each adds its instructions to every round up to its own `rounds`. Two with different instructions have the model review for both in the same round.
+- The count does not depend on the message history, so [compaction](compaction.md) that summarizes a review instruction away does not start the rounds again.
 - [Trajectory Judge](trajectory-judge.md) has a second model review the run while it is in progress. `RefineOutput` needs no second model and acts only on the output.
 - An [output guardrail](guardrails.md) rejects an output that breaks a rule. `RefineOutput` asks for a second look at an output that was accepted.
 

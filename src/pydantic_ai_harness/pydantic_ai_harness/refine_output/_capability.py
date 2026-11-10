@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
-from pydantic_ai import RunContext
+from pydantic_ai import CallToolsNode, DeferredToolRequests, PendingModelResponse, RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult
-from pydantic_ai.messages import ModelRequest, SystemPromptPart
-from pydantic_ai.tools import AgentDepsT, DeferredToolRequests
+from pydantic_ai.messages import SystemPromptPart
+from pydantic_ai.tools import AgentDepsT
 from pydantic_graph import End
 
 DEFAULT_REFINE_OUTPUT_INSTRUCTIONS = (
@@ -36,8 +36,7 @@ class RefineOutput(AbstractCapability[AgentDepsT]):
     agent = Agent('anthropic:claude-opus-5-5', capabilities=[RefineOutput()])
     ```
 
-    Rounds are counted from the run's own messages, so a run that continues an earlier conversation
-    starts with none used. A run that pauses for deferred tools is not reviewed.
+    A run that ends for its caller to resume, and `Agent.run_stream()`, are not reviewed.
     """
 
     rounds: int = 1
@@ -46,9 +45,15 @@ class RefineOutput(AbstractCapability[AgentDepsT]):
     instructions: str = DEFAULT_REFINE_OUTPUT_INSTRUCTIONS
     """What the agent is told at the start of each review round."""
 
+    _rounds_started: int = field(default=0, init=False, repr=False, compare=False)
+
     def __post_init__(self) -> None:
         if self.rounds < 1:
             raise ValueError(f'`rounds` must be at least 1, got {self.rounds}.')
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> RefineOutput[AgentDepsT]:
+        """Return a fresh instance, so runs don't share the rounds they used."""
+        return replace(self)
 
     async def after_node_run(
         self,
@@ -57,24 +62,14 @@ class RefineOutput(AbstractCapability[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         result: NodeResult[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
-        if not isinstance(result, End) or isinstance(result.data.output, DeferredToolRequests):
-            return result
-        round_number = _rounds_started(ctx) + 1
-        if round_number <= self.rounds:
-            part = SystemPromptPart(self.instructions, metadata={'origin': _ORIGIN, 'round': round_number})
-            ctx.enqueue(part, priority='when_idle')
+        # `Agent.run_stream()` ends through a node of its own, after which the run cannot continue.
+        if (
+            self._rounds_started < self.rounds
+            and isinstance(node, CallToolsNode)
+            and isinstance(result, End)
+            and not isinstance(result.data.output, DeferredToolRequests | PendingModelResponse)
+        ):
+            self._rounds_started += 1
+            metadata = {'origin': _ORIGIN, 'round': self._rounds_started}
+            ctx.enqueue(SystemPromptPart(self.instructions, metadata=metadata), priority='when_idle')
         return result
-
-
-def _rounds_started(ctx: RunContext[AgentDepsT]) -> int:
-    """How many review rounds this run's messages already hold."""
-    return max(
-        (
-            part.metadata['round']
-            for message in ctx.messages
-            if isinstance(message, ModelRequest) and message.run_id == ctx.run_id
-            for part in message.parts
-            if isinstance(part, SystemPromptPart) and part.metadata and part.metadata.get('origin') == _ORIGIN
-        ),
-        default=0,
-    )
