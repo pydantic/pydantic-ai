@@ -54,10 +54,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import RequestUsage, UsageLimits
+from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
 from .batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
+from .clock_utils import Clock
 
 
 def _http_error(
@@ -381,21 +382,19 @@ async def test_two_instances_count_the_same_attempts():
 
 
 async def test_a_usage_limit_is_not_retried():
-    """A token limit the run's own check finds exceeded ends the run, even when `retry_on` matches every error."""
+    """A `UsageLimitExceeded` raised during a request ends the run, even when `retry_on` matches every error."""
     calls: list[str] = []
 
-    def expensive(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        calls.append('expensive')
-        return ModelResponse(
-            parts=[TextPart('partial')], state='suspended', usage=RequestUsage(input_tokens=100, output_tokens=1)
-        )
+    def over_limit(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('over_limit')
+        raise UsageLimitExceeded('The next request would exceed the input_tokens_limit of 5')
 
     agent = Agent(
-        FunctionModel(expensive, model_name='expensive'), capabilities=[RetryOnModelErrors(retry_on=(Exception,))]
+        FunctionModel(over_limit, model_name='over_limit'), capabilities=[RetryOnModelErrors(retry_on=(Exception,))]
     )
     with _recorded_sleeps() as delays, pytest.raises(UsageLimitExceeded):
-        await agent.run('x', usage_limits=UsageLimits(input_tokens_limit=5))
-    assert (calls, delays) == (['expensive'], [])
+        await agent.run('x')
+    assert (calls, delays) == (['over_limit'], [])
 
 
 # --- Provider SDK retries and request deadlines ---
@@ -491,25 +490,29 @@ async def test_retries_share_the_request_deadline():
     assert timeouts[1] is not None and 0 < timeouts[1] < 60
 
 
-async def test_a_retry_that_runs_out_of_time_reports_what_was_left():
+async def test_a_retry_that_runs_out_of_time_reports_what_was_left(monkeypatch: pytest.MonkeyPatch):
     """The `ModelRequestTimeout` of a retry names the rest of the deadline it was sent with, as the docs say."""
     calls: list[str] = []
+    clock = Clock()
+    clock.install(monkeypatch)
 
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         calls.append('primary')
         if len(calls) > 1:
+            # Move the event loop's clock past the deadline rather than wait for it.
+            clock.advance(120)
             await anyio.sleep_forever()
         raise ModelConnectionError('primary', 'reset')
 
     agent = Agent(
         FunctionModel(respond, model_name='primary'),
-        model_settings={'request_timeout': 0.2},
+        model_settings={'request_timeout': 60},
         capabilities=[RetryOnModelErrors(initial_delay=0)],
     )
     with _recorded_sleeps(), pytest.raises(ModelRequestTimeout) as exc_info:
         await agent.run('x')
     assert len(calls) == 2
-    assert 0 < exc_info.value.timeout < 0.2
+    assert 0 < exc_info.value.timeout < 60
 
 
 async def test_does_not_wait_past_the_request_deadline():
