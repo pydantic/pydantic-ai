@@ -54,6 +54,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
 from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
+from pydantic_clai2.runtime.imported_history import ImportedSummaryWindow
 from pydantic_clai2.runtime.monty_cells import MONTY_CELL, MontyCell
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkout, project_identity
 from pydantic_clai2.runtime.project_instructions import ProjectInstructions
@@ -828,7 +829,8 @@ class Session(Generic[DepsT, OutputT]):
     def _bind(self) -> tuple[str | None, list[AgentCapability[DepsT]]]:
         """The model to pass to the next run and its run-level capabilities, rebinding a stock agent first."""
         run_model = self.model
-        capabilities = list(self.plugins)
+        # Bound to a stock agent, so the conversations it delegates to get it too.
+        capabilities: list[AgentCapability[DepsT]] = [*self.plugins, ImportedSummaryWindow[DepsT]()]
         if isinstance(self._base_agent, StockAgent):
             # CLAI's default is the agent's own model, so a capability that selects one wins.
             agent_model = None if self.model_chosen else self.model
@@ -840,7 +842,7 @@ class Session(Generic[DepsT, OutputT]):
                 or any(new is not old for new, old in zip(self.plugins, self._bound_plugins))
             ):
                 instructions = Capability[DepsT](instructions=self._user_instructions)
-                self.agent = self._base_agent.with_plugins([*self.plugins, instructions], model=agent_model)
+                self.agent = self._base_agent.with_plugins([*capabilities, instructions], model=agent_model)
                 self._bound_plugins = tuple(self.plugins)
                 self._bound_model = agent_model
             # Already bound to the stock agent, including delegation and guardrails.

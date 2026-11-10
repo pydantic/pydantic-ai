@@ -1,9 +1,11 @@
 """Claude Code sessions: `projects/<project>/<session-id>.jsonl` under `CLAUDE_CONFIG_DIR` or `~/.claude`.
 
 Each line is an entry linked to its parent by `parentUuid`. Rewinding starts a new branch from an
-earlier entry, and compaction starts a new chain at its summary, so the conversation to continue is
-the chain behind the last message, not every line in the file. Parallel tool calls fork that chain:
-each result hangs off its own call, and only the last result continues it.
+earlier entry, so the conversation to continue is the chain behind the last message, not every line in
+the file. Parallel tool calls fork that chain: each result hangs off its own call, and only the last
+result continues it. Compaction starts a new chain at a boundary that names the entry before it as its
+`logicalParentUuid`, followed by the summary and the latest messages before the boundary, which Claude
+Code sent after the summary.
 
 Besides the user's and the model's messages, the chain holds what Claude Code's harness added to the
 conversation: `attachment` entries with the text it `rendered` for the model (files, reminders, and
@@ -46,6 +48,7 @@ from pydantic_clai2.runtime.imported_history import (
     final_answer,
     framed,
     imported_context,
+    imported_summary,
     number,
     obj,
     objects,
@@ -261,7 +264,10 @@ def _history(entries: list[JsonObject], agents: dict[str, DelegationTask], *, ma
         message = obj(entry.get('message'))
         at = timestamp(entry.get('timestamp'))
         kind = entry.get('type')
-        if kind == 'user' and (entry.get('isMeta') or entry.get('isCompactSummary')):
+        if kind == 'user' and entry.get('isCompactSummary'):
+            if summary := _prompt_text(message.get('content')):
+                history.request(imported_summary(summary, source=SOURCE, at=at), at=at)
+        elif kind == 'user' and entry.get('isMeta'):
             _meta(history, entry, agents, reports, at=at)
         elif kind == 'user':
             _user(history, message.get('content'), at=at)
@@ -280,7 +286,37 @@ def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:
     """
     chain = _chain(entries, main=main)
     kept = chain | _parallel_results(entries, chain)
-    return [entry for entry in entries if text(entry.get('uuid')) in kept]
+    return _as_sent([entry for entry in entries if text(entry.get('uuid')) in kept])
+
+
+def _as_sent(entries: list[JsonObject]) -> list[JsonObject]:
+    """`entries` with each compaction's summary, then the messages it preserved, right after its boundary.
+
+    Claude Code keeps the latest messages before the boundary, and sends them after the summary, ahead of
+    what it attached after compacting.
+    """
+    position = {text(entry.get('uuid')): index for index, entry in enumerate(entries)}
+    follows: dict[int, list[int]] = {}
+    moved: set[int] = set()
+    for index, entry in enumerate(entries):
+        segment = obj(obj(entry.get('compactMetadata')).get('preservedSegment'))
+        summary = position.get(text(segment.get('anchorUuid')))
+        head = position.get(text(segment.get('headUuid')), index)
+        tail = position.get(text(segment.get('tailUuid')), -1)
+        after = [*([summary] if summary is not None else []), *range(head, min(tail, index - 1) + 1)]
+        follows[index] = [moving for moving in after if moving not in moved]
+        moved.update(follows[index])
+    ordered: list[JsonObject] = []
+
+    def place(index: int) -> None:
+        ordered.append(entries[index])
+        for moving in follows[index]:
+            place(moving)
+
+    for index in range(len(entries)):
+        if index not in moved:
+            place(index)
+    return ordered
 
 
 def _chain(entries: list[JsonObject], *, main: bool) -> set[str]:
@@ -300,7 +336,11 @@ def _chain(entries: list[JsonObject], *, main: bool) -> set[str]:
         chain.add(text(node.get('uuid')))
         # Popping each entry as it is visited also ends a malformed, cyclic chain.
         by_id.pop(text(node.get('uuid')), None)
-        node = by_id.pop(text(node.get('parentUuid')), None)
+        # A compaction's boundary starts a chain, and names the entry it continues as its logical parent; where
+        # that is missing, the last message it preserved continues it.
+        segment = obj(obj(node.get('compactMetadata')).get('preservedSegment'))
+        links = (node.get('parentUuid'), node.get('logicalParentUuid'), segment.get('tailUuid'))
+        node = next((by_id.pop(link) for link in map(text, links) if link and link in by_id), None)
     return chain
 
 
@@ -407,8 +447,7 @@ def _meta(
             replace(task, output=report.strip(), generation=generation).report(), timestamp=at
         )
     elif body or files:
-        kind = 'compact_summary' if entry.get('isCompactSummary') else 'meta'
-        part = imported_context(body, source=SOURCE, kind=kind, files=files, at=at)
+        part = imported_context(body, source=SOURCE, kind='meta', files=files, at=at)
     else:
         return
     history.request(part, at=at)

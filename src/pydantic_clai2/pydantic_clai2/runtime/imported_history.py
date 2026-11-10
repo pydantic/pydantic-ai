@@ -6,6 +6,9 @@ alternating requests and responses; core's `repair_messages` then pairs every to
 Content the other agent's harness added on the user's channel, rather than its user, is imported as
 `imported_context`: tagged with an `origin` under the harness prefix, so compaction and the transcript
 tell it apart from what the user typed, as they do a harness capability's content.
+
+A summary the other agent wrote when it compacted its conversation is imported as `imported_summary`,
+after the history it stands in for, which `ImportedSummaryWindow` then keeps from the model.
 """
 
 from __future__ import annotations
@@ -15,16 +18,19 @@ import os
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from itertools import islice
+from itertools import islice, takewhile
 from pathlib import Path
 from typing import Literal, TypeGuard, cast
 
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    SystemPromptPart,
     TextContent,
     TextPart,
     ToolCallPart,
@@ -34,7 +40,10 @@ from pydantic_ai.messages import (
     UserPromptPart,
     repair_messages,
 )
+from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RequestUsage
+from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY, SUMMARY_TIME_METADATA_KEY, is_summary_part
 from pydantic_ai_harness.subagents import is_task_report
 
 JsonObject = dict[str, object]
@@ -144,6 +153,75 @@ def imported_context(
     """
     metadata = {'origin': IMPORTED_CONTEXT_ORIGIN, 'source': source, 'kind': kind}
     return UserPromptPart([TextContent(content, metadata=metadata), *files], timestamp=at)
+
+
+def imported_summary(content: str, *, source: str, at: datetime) -> CompactionPart:
+    """The summary `source` wrote when it compacted its conversation, stored as `SummarizingCompaction` stores its own.
+
+    Marked as a summary, so CLAI's compaction builds on it rather than summarizing it again, and with its
+    `origin` and `source` as `imported_context` has them, so `ImportedSummaryWindow` knows the history
+    ahead of it is the other agent's, kept to show and rewind through rather than to send.
+    """
+    metadata = {
+        SUMMARY_METADATA_KEY: True,
+        SUMMARY_TIME_METADATA_KEY: at.isoformat(),
+        'origin': IMPORTED_CONTEXT_ORIGIN,
+        'source': source,
+    }
+    return CompactionPart(content, metadata=metadata)
+
+
+def summary_window(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """What a model is sent of `messages`: from the latest summary on, when it is an `imported_summary`.
+
+    The system prompts and the import's opening note that start the history stay ahead of it, and a
+    tool result whose call was left behind goes. `messages` itself when its latest summary, if any, is CLAI's.
+    """
+    found = _latest_summary(messages)
+    if found is None:
+        return messages
+    index, position = found
+    message = messages[index]
+    summary = message.parts[position]
+    if not (is_summary_part(summary) and (summary.metadata or {}).get('origin') == IMPORTED_CONTEXT_ORIGIN):
+        return messages
+    first = messages[0]
+    opening: Sequence[ModelRequestPart] = []
+    if isinstance(first, ModelRequest):
+        opening = first.parts if index else first.parts[:position]
+    standing = list(takewhile(lambda p: isinstance(p, SystemPromptPart) or imported_kind(p) == 'import_start', opening))
+    window = [replace(message, parts=[*standing, *message.parts[position:]]), *messages[index + 1 :]]
+    return repair_messages(window, repair_last_response=False)
+
+
+def _latest_summary(messages: Sequence[ModelMessage]) -> tuple[int, int] | None:
+    """Where the latest summary in a request is, as a message index and a part index."""
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if isinstance(message, ModelRequest):
+            for position in range(len(message.parts) - 1, -1, -1):
+                if is_summary_part(message.parts[position]):
+                    return index, position
+    return None
+
+
+@dataclass
+class ImportedSummaryWindow(AbstractCapability[AgentDepsT]):
+    """Sends a model only the `summary_window` of an imported conversation, as the other agent's model saw it.
+
+    CLAI's stand-in for a summary in a request being a compaction boundary on the wire, which belongs in
+    core (#11395), with compaction starting from it in the harness; then this goes.
+
+    Only the request is trimmed, so the conversation keeps the history ahead of the summary, to show and
+    rewind through. Harness compaction works from that whole conversation, so the first compaction of an
+    imported session reads that history once more, then replaces it, as it does any history it compacts.
+    """
+
+    async def before_model_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        window = summary_window(request_context.messages)
+        return request_context if window is request_context.messages else replace(request_context, messages=window)
 
 
 def framed(history: Sequence[ModelMessage], *, source: str, opening: str, closing: str) -> list[ModelMessage]:

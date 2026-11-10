@@ -2433,15 +2433,15 @@ imports one.
 Importing copies the conversation into CLAI's saved sessions. The originals are
 only read, never changed. CLAI keeps what the model saw: prompts, answers,
 reasoning summaries, tool calls, and their results, failed ones and images
-included. After a Claude Code compaction, it keeps the compacted history, and
-after a Claude Code rewind or Codex rollback, it keeps where you ended up. A
+included. After a Claude Code rewind or Codex rollback, it keeps where you ended
+up. A
 tool call with no recorded result gets one saying it was interrupted. The tools
 in the old calls belong to the other agent; the model sees them as history, and
 CLAI's own tools handle what comes next.
 
 CLAI also keeps what the other agent's harness added to the conversation. From
 Claude Code: messages you typed while the model worked, attached files,
-reminders, skill bodies, task notifications, and its compaction summary. From
+reminders, skill bodies, and task notifications. From
 Codex: its developer instructions, environment, `AGENTS.md` and other context,
 and messages between its agents. They are marked as the harness's, so the
 transcript doesn't show them as your prompts and compaction doesn't treat them
@@ -2449,6 +2449,14 @@ as your requests. A note opens the history saying it ran in the other agent, and
 another closes it saying it continues in CLAI, whose tools and instructions now
 apply. A Claude Code session keeps the name you or Claude Code gave it, and a
 Codex session the name in Codex's index.
+
+A compaction summary Claude Code or Codex wrote is imported as a summary like
+the ones CLAI's own compaction writes, after the history it replaced, which
+CLAI keeps too: you can scroll back through it, but only prompts after the
+summary can be rewound to, and the model is sent the summary and what follows
+it, as the other agent's model was. CLAI's compaction later builds on that
+summary rather than summarizing it again, though its first compaction of an
+imported session still reads the history from before the summary once.
 
 Codex encrypts some of what its models see so that only OpenAI's models can
 read it: reasoning, its compaction summaries, and messages between its agents.
