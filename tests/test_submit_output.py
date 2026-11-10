@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import gc
 from collections.abc import AsyncIterable, AsyncIterator
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -18,7 +19,9 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentRunResult,
+    BinaryImage,
     CallToolsNode,
+    DeferredToolRequests,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -278,7 +281,7 @@ async def test_earlier_output_tool_call_wins_over_a_later_submission():
 
 
 @pytest.mark.parametrize('end_strategy', ['graceful', 'exhaustive'])
-async def test_submission_wins_over_a_later_output_tool_call(end_strategy: Any):
+async def test_submission_wins_over_a_later_output_tool_call(end_strategy: EndStrategy):
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
             parts=[
@@ -522,7 +525,7 @@ def two_tools_in_one_response(messages: list[ModelMessage], info: AgentInfo) -> 
 @pytest.mark.parametrize('end_strategy', ['graceful', 'exhaustive'])
 @pytest.mark.parametrize('output_retries', [0, 1])
 async def test_failed_submission_does_not_keep_a_sibling_submission_from_winning(
-    end_strategy: Any, output_retries: int
+    end_strategy: EndStrategy, output_retries: int
 ):
     """A rejected submission, even one out of retries, is a failed output, like a failed output tool call."""
     agent = Agent(
@@ -1129,3 +1132,65 @@ async def test_tool_output_submission_before_the_first_step(hook: str):
     assert result.output == Invoice(order_id=hook, total=1)
     assert result.usage.requests == 0
     assert submitter.output_tool_names == ['submit_invoice']
+
+
+async def test_output_tool_defs_carry_what_prepare_output_tools_changed():
+    seen: list[str | None] = []
+
+    async def describe(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [replace(d, description='Submit the invoice once it adds up.') for d in tool_defs]
+
+    agent = Agent(
+        call_tool_then_reply('assemble'),
+        output_type=ToolOutput(Invoice, name='submit_invoice'),
+        capabilities=[PrepareOutputTools(describe)],
+    )
+
+    @agent.tool
+    async def assemble(ctx: RunContext) -> str:
+        [tool_def] = ctx.output_tool_defs
+        seen.append(tool_def.description)
+        await ctx.submit_output(tool_def.name, {'order_id': 'ord_1', 'total': 1})
+        return 'assembled'
+
+    result = await agent.run('go')
+
+    assert seen == ['Submit the invoice once it adds up.']
+    assert result.output == Invoice(order_id='ord_1', total=1)
+
+
+class _StopRun(Exception):
+    pass
+
+
+@pytest.mark.parametrize(
+    ('output_type', 'submittable'),
+    [(BinaryImage, []), ([Invoice, DeferredToolRequests], ['final_result'])],
+    ids=['image', 'deferred_tool_requests'],
+)
+async def test_image_output_and_deferred_tool_requests_cannot_be_submitted(output_type: Any, submittable: list[str]):
+    seen: list[list[str]] = []
+    raised: list[str] = []
+
+    class SubmitDeferredToolRequests(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            seen.append([d.name for d in ctx.output_tool_defs])
+            try:
+                await ctx.submit_output('DeferredToolRequests', {'calls': []})
+            except ModelRetry as e:
+                raised.append(e.message)
+            raise _StopRun
+
+    agent = Agent(
+        FunctionModel(lambda m, i: ModelResponse(parts=[])),  # pragma: no cover
+        output_type=output_type,
+        capabilities=[SubmitDeferredToolRequests()],
+    )
+
+    with pytest.raises(_StopRun):
+        await agent.run('go')
+
+    assert seen == [submittable]
+    assert raised == ["Unknown output tool 'DeferredToolRequests'."]
