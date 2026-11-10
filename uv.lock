@@ -7440,7 +7440,7 @@ name = "pydantic-ai-harness"
 source = { editable = "src/pydantic_ai_harness" }
 dependencies = [
     { name = "genai-prices" },
-    { name = "httpx" },
+    { name = "httpx2" },
     { name = "pydantic-ai-slim" },
 ]
 
@@ -7611,7 +7611,7 @@ requires-dist = [
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.16.0" },
     { name = "fastmcp", marker = "extra == 'stackone'", specifier = ">=3.4.5,<4" },
     { name = "genai-prices", specifier = ">=0.0.71" },
-    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "httpx2", specifier = ">=2.7" },
     { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
     { name = "ipykernel", marker = "extra == 'ipython'", specifier = ">=6.29.0" },
     { name = "json-repair", marker = "extra == 'coder'", specifier = ">=0.58.0" },
@@ -7906,6 +7906,7 @@ dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "genai-prices" },
+    { name = "httpx" },
     { name = "keyring" },
     { name = "logfire", extra = ["httpx"] },
     { name = "opentelemetry-instrumentation-httpx" },
@@ -7933,6 +7934,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=42" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "genai-prices", specifier = ">=0.1.7" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "keyring", specifier = ">=25.6" },
     { name = "logfire", extras = ["httpx"], specifier = ">=4.31.0" },
     { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.65b0" },
