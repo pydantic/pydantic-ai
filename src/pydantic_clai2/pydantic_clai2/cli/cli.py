@@ -16,7 +16,7 @@ from pydantic_clai2.ui.stderr_relay import relay_stderr
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from pydantic_clai2.cli.self_update import WebHandoff
+    from pydantic_clai2.cli.self_update import Relaunch, WebHandoff
     from pydantic_clai2.config import Settings, UpdateChannel
     from pydantic_clai2.config.project_settings import ProjectSettings
     from pydantic_clai2.config.settings_store import SettingsStore
@@ -100,17 +100,12 @@ def run(*, splash: Splash | None = None) -> None:
     args = _parse_args(parser)
     _resume_source(args)
     _validate_args(args, parser)
-    if args.database is not None:
-        # Before `--worktree` changes directory, so a restart after `/update` reopens the same database.
-        args.database = args.database.resolve()
-    if args.token_file is not None:
-        args.token_file = args.token_file.resolve()  # Also before `--worktree` changes directory.
+    _resolve_paths(args)
     try:
         from pydantic_ai.usage import UsageLimits
         from pydantic_clai2.app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
         from pydantic_clai2.cli.agent_import import import_agent
         from pydantic_clai2.cli.self_update import Relaunch
-        from pydantic_clai2.commands import config_command, plugins_command
         from pydantic_clai2.config.project_settings import load_project_settings
         from pydantic_clai2.config.settings_store import SettingsStore
         from pydantic_clai2.runtime.worktrees import offer_worktree_cleanup
@@ -124,8 +119,7 @@ def run(*, splash: Splash | None = None) -> None:
         store = SettingsStore(args.database)
         store.path = store.path.resolve()
         if args.command:
-            handler = config_command if args.command == 'config' else plugins_command
-            print(handler(store, args.arguments))
+            print(_run_command(args, store))
             return
         if args.update:
             settings = _settings_for(store, model=None, request_limit=None)(
@@ -211,26 +205,56 @@ def run(*, splash: Splash | None = None) -> None:
             )
             offer_worktree_cleanup(worktree=launched, read_remove_commands=store.worktree_remove_commands, store=store)
     except Relaunch as relaunch:
-        # Replace this process with the new build; the working directory, a worktree included, carries over.
-        argv = relaunch_argv(
-            args,
-            executable=relaunch.executable,
-            session_id=relaunch.session_id,
-            new_session_id=relaunch.new_session_id,
-        )
-        _remember_worktree(launched)
-        if relaunch.web is not None:
-            os.environ[_RELAUNCH_WEB] = f'{relaunch.web.port} {relaunch.web.token}'
-        sys.stdout.flush()
-        os.execv(relaunch.executable, argv)
+        _relaunch(args, relaunch, launched=launched)
     except (ValueError, TypeError, ImportError, AttributeError, LookupError, OSError) as exc:
-        if worktree is not None:
-            # A startup error can come before the banner, so name the checkout this launch leaves behind.
-            print(f'Worktree kept at {worktree.path} (branch: {worktree.branch}).', file=sys.stderr)
+        _report_kept_worktree(worktree)
         parser.error(str(exc))
     except KeyboardInterrupt:
-        if args.prompt is not None or args.web or args.update:
+        if _interrupt_fails(args):
             raise SystemExit(130) from None
+
+
+def _resolve_paths(args: argparse.Namespace) -> None:
+    """Resolve `--database` and `--token-file` against the directory CLAI was launched in."""
+    if args.database is not None:
+        # Before `--worktree` changes directory, so a restart after `/update` reopens the same database.
+        args.database = args.database.resolve()
+    if args.token_file is not None:
+        args.token_file = args.token_file.resolve()  # Also before `--worktree` changes directory.
+
+
+def _run_command(args: argparse.Namespace, store: 'SettingsStore') -> str:
+    """Run `clai2 config` or `clai2 plugins` with its arguments, returning what to print."""
+    from pydantic_clai2.commands import config_command, plugins_command
+
+    handler = config_command if args.command == 'config' else plugins_command
+    return handler(store, args.arguments)
+
+
+def _relaunch(args: argparse.Namespace, relaunch: 'Relaunch', *, launched: 'Worktree | None') -> None:
+    """Replace this process with the new build; the working directory, a worktree included, carries over."""
+    argv = relaunch_argv(
+        args,
+        executable=relaunch.executable,
+        session_id=relaunch.session_id,
+        new_session_id=relaunch.new_session_id,
+    )
+    _remember_worktree(launched)
+    if relaunch.web is not None:
+        os.environ[_RELAUNCH_WEB] = f'{relaunch.web.port} {relaunch.web.token}'
+    sys.stdout.flush()
+    os.execv(relaunch.executable, argv)
+
+
+def _report_kept_worktree(worktree: 'Worktree | None') -> None:
+    """Name the `--worktree` checkout a failed launch leaves behind: a startup error can come before the banner."""
+    if worktree is not None:
+        print(f'Worktree kept at {worktree.path} (branch: {worktree.branch}).', file=sys.stderr)
+
+
+def _interrupt_fails(args: argparse.Namespace) -> bool:
+    """Whether Ctrl-C ends this launch with status 130: with `--prompt`, `--web`, or `--update`, not in the shell."""
+    return args.prompt is not None or args.web or args.update
 
 
 def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
@@ -399,10 +423,12 @@ def _continue_session(args: argparse.Namespace, store: 'SettingsStore') -> None:
 
 async def _latest_session(store: 'SettingsStore') -> str | None:
     """The ID of the newest unarchived conversation saved in this directory, for `--continue`; `None` when there is none."""
+    from anyio import to_thread
+
     from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 
     conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
-    workspace = str(Path.cwd().resolve())  # As `Session.workspace` saves it.
+    workspace = str(await to_thread.run_sync(lambda: Path.cwd().resolve()))  # As `Session.workspace` saves it.
     offset = 0
     # The listing spans every directory, newest first, so page through it until one was saved here.
     while page := await conversations.listing(limit=200, offset=offset, archived=False):
@@ -484,6 +510,11 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error(
             '--worktree cannot be combined with --resume or --continue; resume from an existing worktree directory'
         )
+    _validate_web_args(args, parser)
+    _validate_prompt_args(args, parser)
+
+
+def _validate_web_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     if args.web:
         if args.command or args.prompt is not None or args.agent is not None:
             parser.error('--web cannot be combined with config, plugins, --prompt, or --agent')
@@ -493,10 +524,14 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error('--port and --token-file need --web')
     if args.port is not None and not 0 <= args.port < 65536:
         parser.error('--port must be between 0 and 65535')
-    if args.prompt is not None:
-        if args.command:
-            parser.error('--prompt cannot be combined with config or plugins')
-        if not args.prompt.strip():
-            parser.error('--prompt requires non-empty text')
-        if args.resume == '':
-            parser.error('--prompt requires an explicit --resume SESSION-ID')
+
+
+def _validate_prompt_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    if args.prompt is None:
+        return
+    if args.command:
+        parser.error('--prompt cannot be combined with config or plugins')
+    if not args.prompt.strip():
+        parser.error('--prompt requires non-empty text')
+    if args.resume == '':
+        parser.error('--prompt requires an explicit --resume SESSION-ID')

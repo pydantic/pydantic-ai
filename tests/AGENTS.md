@@ -145,6 +145,8 @@ Each case carries its own snapshot (not the central test body), so a reviewer ca
 Record cassettes with `--record-mode=rewrite`, verify playback without the flag, and review diffs.
 For detailed workflows see `.claude/skills/testing-skill/SKILL.md`.
 
+Every cassette must be recorded by its own test. A cassette at `tests/<dir>/cassettes/<file_stem>/<test>.yaml` comes from a `--record-mode=rewrite` run of `<test>` in `tests/<dir>/<file_stem>.py`. Never copy a cassette from another test, and never edit its requests or responses by hand: replay would then test the code against an exchange no provider produced. To replay one recording in several tests, name it with `@pytest.mark.vcr('<name>.yaml')` and say why in the docstring.
+
 ### Realtime WebSocket cassettes
 
 Realtime cassettes live in `tests/realtime/cassettes/<module>/<test>.yaml`. Record them with
@@ -175,11 +177,13 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 
 #### Blocking-call detection
 - `blockbuster` (autouse) raises `BlockingError` when a scanned library frame blocks inside the event loop.
-- Scanned packages are `pydantic_ai`, `pydantic_ai_harness`, `pydantic_graph`, `pydantic_evals`, and `clai`.
+- Scanned packages are `pydantic_ai`, `pydantic_ai_harness`, `pydantic_clai2`, `pydantic_graph`, `pydantic_evals`, and `clai`.
 - Test-only and third-party stacks are ignored. User callbacks remain covered while a scanned library frame is below them.
 - Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
 - Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.
 - List a test double that serves a remote service from local files, processes, or SQLite in `BLOCKBUSTER_TEST_DOUBLES`. That exempts every frame in the file, and the code calling it stays checked.
+- `pydantic_clai2` keeps its own state in small local files and SQLite databases through synchronous functions. List a module that is only such a store in `BLOCKBUSTER_LOCAL_STORES`, and other such synchronous functions in `BLOCKBUSTER_LOCAL_FILES`, with a reason. Every file and database call beneath a listed function is exempt, including in code it calls, so never list an async function. In `BLOCKBUSTER_LOCAL_FILES`, also never list a function an async function calls on the event loop: offload that call instead. The deliberate exceptions, which async code still calls on the loop, are the store modules, `pydantic_clai2`'s shell construction and plugin loading, since making them async is a separate redesign, and the status row's read of `spinners.json` on each repaint.
+- A test that calls a synchronous API production code runs in a thread should do the same, with `anyio.to_thread.run_sync`, rather than add an exemption.
 - Override `blockbuster_excluded_modules` when one integration module intentionally provides synchronous APIs.
 - Override `blockbuster_enabled` at the narrowest test or integration-module boundary that intentionally performs blocking work.
 - Use the narrowest module or test boundary. Do not replace the autouse `blockbuster` fixture.
@@ -298,7 +302,7 @@ The suite runs on every push across a matrix of Python versions and install shap
 - A test that launches a Python interpreter (`sys.executable`, `python*`, a console script, `uv run python`, `multiprocessing` with `spawn`/`forkserver`) fails unless it is marked `@pytest.mark.subprocess(reason='...')`. The marker is right only when the claim depends on the process boundary: what a fresh interpreter imports, behavior without an installed dependency, signals and process trees, a real stdio peer. Launching one while setting up a fixture shared beyond one test needs no marker, and other programs are not guarded. A marker on a module, class or function that no longer covers any launch fails the session with "remove the stale marker"; it is only judged on runs that select every test it covers, and `conditional=True` opts out a test that launches Python only on some platforms or installs
 - When `PYTEST_TEST_BUDGET_SECONDS` is set (one CI leg sets it; it is off locally), a test whose setup and call together take longer fails unless it is marked `@pytest.mark.slow(reason='...')`. Setup of `module`, `class`, `package` and `session`-scoped fixtures is not counted, so sharing an expensive fixture is never penalized. Reach for the marker only when the duration is inherent to what the test proves; otherwise make the test cheaper with the patterns above
 
-When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module that takes longer to collect fails the session, with no escape hatch: check whether a heavy dependency is installed with `importlib.util.find_spec` for the skip condition, and import it in the tests that use it, after a `module`-scoped fixture has imported it once outside the per-test budget.
+When `PYTEST_COLLECT_BUDGET_SECONDS` is set (on the same CI leg), a test module that takes longer to collect fails the session, with no escape hatch: check whether a heavy dependency is installed with `importlib.util.find_spec` for the skip condition, and import it in the tests that use it, after a `module`-scoped fixture has imported it once outside the per-test budget. `tests/cost_guards.py` imports the dependencies in its `SHARED_DEPENDENCIES` before collection, so no module is charged for being the first to import one. When a module is over the budget only because it is the first to import a dependency that other test modules also import at module level, add that dependency there rather than moving the import, which only moves the charge to the next module.
 
 ## Garbage from earlier tests
 
@@ -333,6 +337,10 @@ uv run python -m tests.refactor_capture "$(git merge-base HEAD upstream/main)" <
 ```
 
 Select one or two test nodes that reach each changed line, not whole files. The command exits non-zero when a test's records differ or only one side has them; put its summary in the PR. Check that the summary's per-target counts include the requests your change builds: a request sent through a mocked SDK client is recorded only when `SDK_MOCKS` in `tests/refactor_capture.py` lists the mock's method; a call on `FunctionModel` or `TestModel` counts as a request, recorded with the messages, model settings and model request parameters the model is handed. The module docstring says what it records and normalizes.
+
+## Dependency floors
+
+Never raise a dependency's minimum version in a `pyproject.toml` without a reason. Give the reason in a comment next to the requirement: what the code now needs from that version. The `test-lowest-versions` CI job installs the declared minimums, so each one is the oldest version the suite tests. A raised minimum moves every user onto the newer version, and without a recorded reason no later change can tell whether it can come down again.
 
 ## Directory Structure
 

@@ -2,20 +2,31 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import re
 import sys
 import time
 import uuid
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import NoneType, SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
+import anyio
 import pytest
 from pydantic import TypeAdapter
 
@@ -121,7 +132,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.batch import Batch, EncodedBatchRequest
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel, StreamFunctionDef
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel, StreamFunctionDef
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -147,11 +158,21 @@ from ...realtime_connections import InferredConnection
 try:
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
+    from temporalio.api.enums.v1 import EventType
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.exceptions import ActivityError, ApplicationError
-    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
-    from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
+    from temporalio.worker import (
+        Interceptor,
+        Replayer,
+        StartActivityInput,
+        UnsandboxedWorkflowRunner,
+        Worker,
+        WorkflowInboundInterceptor,
+        WorkflowInterceptorClassInput,
+        WorkflowOutboundInterceptor,
+    )
+    from temporalio.workflow import ActivityConfig, ActivityHandle, ChildWorkflowConfig
 
     import pydantic_ai.durable_exec.temporal._toolset as temporal_toolset
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
@@ -2879,10 +2900,14 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
         capabilities=[base_factory, WrapperCapability(wrapped=TemporalDurability())],
     )
 
-    # Only `in_workflow` is faked, so keep the default-ID hook off the real workflow APIs.
+    # Only `in_workflow` is faked, so keep the default-ID hook and replay telemetry off the real workflow APIs.
     with (
         patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
         patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
+        patch(
+            'pydantic_ai.durable_exec.temporal._durability.workflow.unsafe.is_replaying_history_events',
+            return_value=False,
+        ),
     ):
         result = await agent.run('hello', capabilities=[Instrumentation(InstrumentationSettings())])
         assert result.output == 'skipped'
@@ -3801,6 +3826,224 @@ async def test_durability_unserializable_event_payload_names_events(client: Clie
                 id=UnserializableEventWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+# --- Tool results completed in one workflow task replay in recorded order ---
+#
+# Both tool tasks come back from one `asyncio.wait` call, whose `done` set iterates in an order that
+# follows task identity, so a worker replaying the history can iterate it differently than the
+# worker that recorded it. Each `FunctionToolResultEvent` is one event-handler activity, and Temporal
+# matches activities on replay by type and sequence, not by input: a replay that reorders the result
+# events hands each handler activity the other tool's result without a nondeterminism error.
+# https://github.com/pydantic/pydantic-ai/issues/11182
+
+_COMPLETION_ORDER_TOOLS = ('completion_order_tool_a', 'completion_order_tool_b')
+
+
+@dataclass
+class _CompletionOrderGate:
+    """Holds both tool activities until the test releases them, so they complete together."""
+
+    arrived: set[str] = field(default_factory=set[str])
+    both_arrived: asyncio.Event = field(default_factory=asyncio.Event)
+    release: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+_completion_order_gate = _CompletionOrderGate()
+
+
+async def _completion_order_gated(name: str) -> str:
+    _completion_order_gate.arrived.add(name)
+    if _completion_order_gate.arrived == set(_COMPLETION_ORDER_TOOLS):
+        _completion_order_gate.both_arrived.set()
+    await _completion_order_gate.release.wait()
+    return f'{name} done'
+
+
+async def completion_order_tool_a() -> str:
+    return await _completion_order_gated('completion_order_tool_a')
+
+
+async def completion_order_tool_b() -> str:
+    return await _completion_order_gated('completion_order_tool_b')
+
+
+async def _completion_order_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    if len(messages) == 1:
+        yield {
+            0: DeltaToolCall(name='completion_order_tool_a', json_args='{}', tool_call_id='call_a'),
+            1: DeltaToolCall(name='completion_order_tool_b', json_args='{}', tool_call_id='call_b'),
+        }
+    else:
+        yield 'done'
+
+
+async def _completion_order_event_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+_completion_order_agent = Agent(
+    FunctionModel(stream_function=_completion_order_model),
+    name='durability_completion_order',
+    tools=[completion_order_tool_a, completion_order_tool_b],
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_completion_order_event_handler)
+    ],
+)
+
+
+@workflow.defn
+class CompletionOrderWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _completion_order_agent.run(prompt)).output
+
+
+def _completion_order_event_key(data: bytes) -> tuple[str, str]:
+    event = json.loads(data)['event']
+    return event['event_kind'], event['part']['tool_call_id']
+
+
+_completion_order_replayed_inputs: list[tuple[str, str]] = []
+
+
+class _CompletionOrderInterceptor(Interceptor):
+    """Records the input of each event-handler activity the replayed workflow schedules."""
+
+    def workflow_interceptor_class(self, input: WorkflowInterceptorClassInput) -> type[WorkflowInboundInterceptor]:
+        return _CompletionOrderInboundInterceptor
+
+
+class _CompletionOrderInboundInterceptor(WorkflowInboundInterceptor):
+    def init(self, outbound: WorkflowOutboundInterceptor) -> None:
+        super().init(_CompletionOrderOutboundInterceptor(outbound))
+
+
+class _CompletionOrderOutboundInterceptor(WorkflowOutboundInterceptor):
+    def start_activity(self, input: StartActivityInput) -> ActivityHandle[object]:
+        if input.activity.endswith('__event_stream_handler'):
+            payload = workflow.payload_converter().to_payloads([input.args[0]])[0]
+            _completion_order_replayed_inputs.append(_completion_order_event_key(payload.data))
+        return super().start_activity(input)
+
+
+def _completion_order_workflow_worker(client: Client, task_queue: str, *, max_cached_workflows: int) -> Worker:
+    return Worker(
+        client,
+        task_queue=task_queue,
+        workflows=[CompletionOrderWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        max_cached_workflows=max_cached_workflows,
+    )
+
+
+@dataclass
+class _CompletionOrderWait:
+    """How an `asyncio.wait` that returns both tool tasks iterates its `done` set: by task name, either way round."""
+
+    reverse: bool = False
+    tools_done_together: bool = False
+
+
+def _completion_order_task_name(future: asyncio.Future[object]) -> str:
+    # Temporal's workflow loop appends ` (workflow: ..., id: ..., run: ...)` to every task name.
+    return future.get_name().partition(' (')[0] if isinstance(future, asyncio.Task) else ''
+
+
+class _CompletionOrderDoneSet(set[asyncio.Future[object]]):
+    """A `done` set that iterates by task name, one of the orders a plain set can produce."""
+
+    def __init__(self, done: Iterable[asyncio.Future[object]], *, reverse: bool):
+        super().__init__(done)
+        self.reverse = reverse
+
+    def __iter__(self) -> Iterator[asyncio.Future[object]]:
+        return iter(sorted(super().__iter__(), key=_completion_order_task_name, reverse=self.reverse))
+
+
+@pytest.fixture
+def completion_order_wait(monkeypatch: pytest.MonkeyPatch) -> _CompletionOrderWait:
+    order = _CompletionOrderWait()
+    real_wait = asyncio.wait
+
+    async def wait(
+        fs: Iterable[asyncio.Future[object]], *, timeout: float | None = None, return_when: str = asyncio.ALL_COMPLETED
+    ) -> tuple[set[asyncio.Future[object]], set[asyncio.Future[object]]]:
+        done, pending = await real_wait(fs, timeout=timeout, return_when=return_when)
+        if not set(_COMPLETION_ORDER_TOOLS) <= {_completion_order_task_name(future) for future in done}:
+            return done, pending
+        order.tools_done_together = True
+        return _CompletionOrderDoneSet(done, reverse=order.reverse), pending
+
+    monkeypatch.setattr(asyncio, 'wait', wait)
+    return order
+
+
+async def test_tool_results_completed_together_replay_in_recorded_order(
+    client: Client, completion_order_wait: _CompletionOrderWait
+):
+    """A replay that iterates the `done` set the other way round schedules the event-handler inputs it recorded.
+
+    Both tool completions land in one workflow task by construction: the workflow worker stops while the tools are
+    held, the tools are released, and a fresh workflow worker starts once history holds both completions. The
+    recording iterates `done` in call order and the replay in reverse; the replay must still send each handler
+    activity the result the history holds for it. The workers and the replayer run unsandboxed so the patched
+    `asyncio.wait` and the gate are the module state the workflow and the tools see.
+    """
+    global _completion_order_gate
+    _completion_order_gate = _CompletionOrderGate()
+    task_queue = f'completion-order-{uuid.uuid4()}'
+    with anyio.fail_after(30):
+        # Activities only: this worker has no workflows, so it never polls workflow tasks.
+        async with Worker(client, task_queue=task_queue, plugins=[AgentPlugin(_completion_order_agent)]):
+            # No cache, so no sticky queue holds the next workflow task for the stopped worker.
+            async with _completion_order_workflow_worker(client, task_queue, max_cached_workflows=0):
+                handle = await client.start_workflow(
+                    CompletionOrderWorkflow.run, args=['go'], id=task_queue, task_queue=task_queue
+                )
+                await _completion_order_gate.both_arrived.wait()
+            _completion_order_gate.release.set()
+            # The next workflow task only starts once history holds both tool completions.
+            events = handle.fetch_history_events(wait_new_event=True)
+            tool_activities: set[int] = set()
+            completed = 0
+            while completed < len(_COMPLETION_ORDER_TOOLS):
+                event = await anext(events)
+                if event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED:
+                    if event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__call_tool'):
+                        tool_activities.add(event.event_id)
+                elif event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_COMPLETED:
+                    completed += event.activity_task_completed_event_attributes.scheduled_event_id in tool_activities
+            async with _completion_order_workflow_worker(client, task_queue, max_cached_workflows=100):
+                assert await handle.result() == 'done'
+        history = await handle.fetch_history()
+
+    recorded = [
+        _completion_order_event_key(event.activity_task_scheduled_event_attributes.input.payloads[0].data)
+        for event in history.events
+        if event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+        and event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__event_stream_handler')
+    ]
+    assert recorded == [
+        ('function_tool_call', 'call_a'),
+        ('function_tool_call', 'call_b'),
+        ('function_tool_result', 'call_a'),
+        ('function_tool_result', 'call_b'),
+    ]
+
+    completion_order_wait.reverse = True
+    completion_order_wait.tools_done_together = False
+    _completion_order_replayed_inputs.clear()
+    await Replayer(
+        workflows=[CompletionOrderWorkflow],
+        plugins=[AgentPlugin(_completion_order_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=client.data_converter,
+        interceptors=[_CompletionOrderInterceptor()],
+    ).replay_workflow(history)
+    assert completion_order_wait.tools_done_together
+    assert _completion_order_replayed_inputs == recorded
 
 
 # ==========================================

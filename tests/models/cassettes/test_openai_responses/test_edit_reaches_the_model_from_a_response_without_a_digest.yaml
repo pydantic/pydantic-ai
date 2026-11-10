@@ -1,0 +1,381 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "253"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Write exactly 80 lines of the form `LINE <n>: <eight random lowercase English words>`. No preamble."
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "14449"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_02ba21a7dde90050006aebcf39f1f087d1b8cf129baebdfb9e
+        object: response
+        created_at: 1793838905
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793838920
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6-luna
+        moderation: null
+        output:
+        - id: rs_02ba21a7dde90050006aebcf3a8b0887d1a3edacecb78cdefc
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq689IFmwGj9z4P9JkgdIUhB3uTeqrI-9aeSs2F81BuVLh_ube1pePyV_ZbF-YvcdohaMEyd_eFIJDWhnNooZqvO7Meo3JuULVyAhbkkgOxkgR2wa2UQR6UJaf-wd46fe2u9CO4eBuHxq9VuEvbuFLxyHPsdCQ2Uy-31gUZi5rkcg7aPFOx398L9aGVezbdZCJxH0xt1BUgp1uepoMUGEVvppaENwTmj5nMUXKEa3f5B_7X8hWO1VNg5mpURrjiVU5PNizKfNbvfIsCsiaPhn4HZhEwk-BhsguGORxmbShwDNfWg79dVrNBEYLPHe4u7zudNA_5l7dRWTaqCHPFcGTpWHaq9YQNTKYeFddK8Tro-HjB3H8Yoq5-QnfRiD11QRDigb3PpL7H-ck9wS0J513BpTQttP3qQJn3YEdp0LyGFYVE5kRRT0Yl-wuzC-HPSszbfaiAq7XztFGJElmPNPAoeKomZpMFfoew3cEjgTwbEv28Uv7QLRZGn3A5Hotymu5zDLoD7mLj0lJCXYTV5CYsM3R1fkxeZBe_b3JoGtXfcsV2sLaLFuIHCroQXJYIFEN6263lM8WwmXB8nDmpdYQPK8rwGM9awoh8HwuxnnMoFVjHvCaykX8ffbTCHvoC4oePCQAIlgj7FACuLbzEK-EvYtGoC1ixs_zEGQEsRHxjPRpscjZbrAZlDDAbeEMnUGxP8e5lHbYSwVt-lu6eT4WxtnjghgYaHJBwF2mgWFHH7y45Ni2yoU_PWDw-ghiMGsofZ1TTbDLMTwJ4fmSzQbfDgvBSEzhabtJzRpYR4qFdE3Xasy1WVb7uf7Ix3kVwnDt9LxTeGYFyJs7JYdYobRdqbrBuL5BlFnVuS0l9mVHi1Uj5c9z1erP3uxfxwhH7arUB4yyMaIToJPx3zLncPAimFlJ1301xUR8YFlr4NrIdlZsC9zPSOtCammoYDGlOnxX3PQEig1ZrQKU_IYFb8awCmBI4lgydqecW28RTGI0WFfb-oYxdwwdLOWZTWJFEeYWuSFm6suRnZT5zcQkrizxIxtnKH8jqq0NR9uVcsoHC5gzHMaZpt9_1vE-bYnd12vVVi_12_TiyJrkWxDyfu6-7t80NxWIzxsfLaYtivKMaybh4m2nkFcCrbOYibM0UHKzqc9enEGiZq6VNHvbRLQvpi_Mq21XBUtvHutJ2YErRTHqpI4rWFAu2RWcygkdANdausIWavcLnqTIXDCxdpK1jnA7L8p1L209d0CeE9_fPwKIbV0EXkAR-3e16dA5WVV07XlodkOMC2loh1rxUoN2C5m4JnH43-tCIgesXhs6pu-33KIww87ZgByXKGC2lNjIaj_li8gH0Qv-xqzejhxvtuMQuVQkp-ZRxEmG8wgSIQiAAV0aEzSSGxyrhKigEJR2_DOOHkfA27up-gvuq_PoVCiF8n4-KEpNRt0y5AQUmgN1e9kOB3u-PsVwwb-0JSBXJWkaI1g9t1KIBHQ5f3XjIJ8LvxysUl8VfAjreQc7zYE-QMeW7HAc3hevziwN9cAgIC7OX2q1EYzNu5cbHaVLBsNtaFCP-3OfWEW9lqNL2zFOef-7psXCmNczbfBcv9HD0W6ZJPVWrEJfR35gvcFFKtq6z7eY-uxyMEYt7W1DbcGj10MQlcK9rO4u1OkK-j-sWg9SLRqru968uEjgstgz82q_U3IjCvedZGB3oZrYehn_vZbQL9M9S1qg_kUnGXRLmXJf2Vj5oRDaTFVjZcFJgaTH_fTLiudx8x_FlFqBvk4tjNwCKSXgvtz4SeoSGqLJSkVRtIQ1iDlgjdGpd-jSE8Hds2kS5viOyE2Y9odckveBSPsgnQYiu472NLNZ5AGD76JfFb2TJK010Y65w061SLQqLQxtZJAzlKmAQ-ksik7K_suIY-nNN7AFjRhFfmT_AGGML5CHP0GRNJdThjUSiwl_Kr4pUuLYx8gEXMcLZWlW2lAWMIrgr0ejsUe_hj3-4IgbOjJR6UgbQUFB4lXXfGfKSA_a3ztmAx8tHuaD0Z6Y6na5ONOk7sgvP_fZ8AAnn4MEMCcbazw0gtukpJJIMsvBXqaJhxmOIEVc6dU7PVtSjGvYxPnK02fYvlQIJTh0MxG5BsMiQaWdH0gTQ3IIWZoryOZ5UspCHTSX_uC8PSlDcrP7PqO2x6giDeiq7_pERhkv5wtu5cdhzfBLtA8RIWIaY0Ag3YxoXJ3B4LS1zjS7sSKQW0hiOvvfyk17JAqK3_GYX04pkd0cqD_MWZHt3w0pHrtfK-cIAX8cPZfzJgEg8xALx3wnhfbUvTjc4v8AKxoZcuNbyX6W-D0oCYqThB9jz6nflFHB1pMqNXX8hNu5tnUQbtKg0G2Ive1Bhhkwrg-YMYHWKUINOeN1QIfcOjyaZhzeLd9JwxsaoYnJ09M-GtpKrRcHjmSykKEQRaOvcnYYR_S1O1BWGNUeHMFBHQOoLBNq0BkfKrVngRd8RpstmGXAzd3Q18CRov0g7_Peb1nmqVG93_K44-SBXwsUPYUgXy3RYoyyThpIrK2-jW66e5FNiy_S0vYRTbzFRtKnTP58CR88bjV7wpJaDM-L1ZqKtXhABcGTIz_cNDaF-ZWY1bUap_S5MVCoOl9KR1nfiZuQ7A-cXhZDFMDU0RhDoZCYDQismgZlSyejwdhJfWNhE42rgJfw88OXeLlQJvsKC0JBYGvyOfzpH7yWl-fncC6UHYKdvrzmV-a_ygFcapNRcR75MhmDN9wRGJCH_z3cRcaMcVJwjLZ7ikVtqjWLY4LD4oicn6Km5L8dvE0CwD_eDVXhHTmslqhBQoGhHkqdKOM1kIvdFzPTKYHTp-WJYqfgdioA1MEg5NXOWg6tBwvVTzEVDEu42lGsAZ07deIaQXlU3zsr7KyzRj7wIHVFjG_0Nxr9G5uhtfISrVa0GMDp4sgjkTwcKjji4LGZZnIIMgsswq34EYr3ujLVWXuMfbuageRUDGpszO2e8G1FrzbI9nsRhy4LC8U_3nOp8AaK96pl36UDhGqd4slH1Zk-8kGjpXAxojC5Ne42tV3TdouPW6P7LBb85uvbf9Ff8L4YGIzs
+          summary: []
+        - id: msg_02ba21a7dde90050006aebcf3bc6e887d198ba5721af41c661
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: |-
+              LINE 1: amber river gentle clouds wander beneath silver lanterns
+              LINE 2: quiet meadow drifting petals circle ancient willow branches
+              LINE 3: velvet morning sunlight spills across distant mountain valleys
+              LINE 4: curious sparrows gather beside windows filled with golden reflections
+              LINE 5: copper teacups rest peacefully near blooming jasmine flowers
+              LINE 6: soft thunder rolls above forests fragrant with rain
+              LINE 7: moonlit harbors shelter small boats beneath pale stars
+              LINE 8: sleepy foxes follow narrow paths through autumn leaves
+              LINE 9: bright marbles tumble down the wooden staircase slowly
+              LINE 10: distant bells announce another peaceful village evening
+              LINE 11: blue feathers glide across still water at sunrise
+              LINE 12: wild roses flourish along the crumbling garden wall
+              LINE 13: patient gardeners plant sweet onions beside green beans
+              LINE 14: silver raindrops shimmer upon the rooftops after midnight
+              LINE 15: playful kittens explore baskets filled with colorful yarn
+              LINE 16: gentle breezes carry fragrant blossoms across empty fields
+              LINE 17: old maps reveal hidden islands beyond familiar coastlines
+              LINE 18: warm lanterns illuminate paths beneath towering cedar trees
+              LINE 19: sleepy sailors dream beside quietly rocking wooden vessels
+              LINE 20: fresh peaches ripen slowly under the summer sunshine
+              LINE 21: tiny mushrooms appear beneath mossy logs after storms
+              LINE 22: cheerful children build castles beside the sandy shoreline
+              LINE 23: rusty bicycles lean against painted brick garden walls
+              LINE 24: velvet curtains frame windows overlooking busy city streets
+              LINE 25: green apples roll through tall grass beside fences
+              LINE 26: friendly badgers wander home beneath the twilight sky
+              LINE 27: warm cinnamon scents drift through the bustling market
+              LINE 28: paper kites dance above rooftops during spring afternoons
+              LINE 29: ancient stones remember countless footsteps through forgotten courtyards
+              LINE 30: bright candles flicker beside bowls of ripe plums
+              LINE 31: timid rabbits nibble clover near the orchard gate
+              LINE 32: misty hills conceal winding roads and quiet cottages
+              LINE 33: clever magpies collect shiny treasures beside the fountain
+              LINE 34: soft blankets cover travelers resting beneath broad trees
+              LINE 35: little boats sail across lakes reflecting snowy peaks
+              LINE 36: fragrant coffee fills the bakery before dawn arrives
+              LINE 37: golden wheat sways beneath passing clouds on hillsides
+              LINE 38: painted shutters brighten narrow alleys after gentle rain
+              LINE 39: graceful swans drift past reeds along the riverbank
+              LINE 40: distant trains cross open plains under starry skies
+              LINE 41: sleepy hedgehogs curl beneath leaves beside garden stones
+              LINE 42: white daisies bloom around the old stone well
+              LINE 43: cool breezes rustle through fields of purple lavender
+              LINE 44: bright oranges fill woven baskets beside the doorway
+              LINE 45: shy deer cross the meadow at early sunrise
+              LINE 46: quiet music drifts through open windows at dusk
+              LINE 47: small candles glow beside books on wooden shelves
+              LINE 48: clever squirrels bury acorns beneath the sprawling oak
+              LINE 49: silver fish sparkle beneath ripples in the pond
+              LINE 50: gentle waves carry seashells toward the sandy beach
+              LINE 51: red balloons float above crowds gathered in the square
+              LINE 52: wild horses wander across broad valleys beneath clouds
+              LINE 53: fresh bread cools beside jars of apricot preserves
+              LINE 54: soft snow blankets rooftops throughout the sleeping village
+              LINE 55: bright ribbons flutter from branches beside the playground
+              LINE 56: clever artists sketch old bridges beside the canal
+              LINE 57: ripe cherries hang above paths in the orchard
+              LINE 58: quiet owls watch the forest beneath silver moonlight
+              LINE 59: smooth pebbles line the shore beside driftwood logs
+              LINE 60: fragrant mint grows beside thyme in clay pots
+              LINE 61: pale clouds gather above the far western hills
+              LINE 62: cheerful robins search for worms beneath the hedge
+              LINE 63: yellow tulips brighten the courtyard beside blue doors
+              LINE 64: warm sunlight paints long shadows across the pavement
+              LINE 65: sleepy lambs wander near barns after the rain
+              LINE 66: delicate snowflakes settle softly on evergreen branches
+              LINE 67: open books invite curious minds into distant worlds
+              LINE 68: bright windows glow above the quiet harbor tonight
+              LINE 69: tiny candles illuminate a path through the garden
+              LINE 70: golden leaves tumble across the empty country lane
+              LINE 71: gentle dolphins leap beyond the waves near shore
+              LINE 72: bluebells carpet the forest floor beneath ancient birches
+              LINE 73: fresh lemons brighten shelves beside jars of honey
+              LINE 74: small lanterns guide travelers through the misty valley
+              LINE 75: warm rain taps softly against the glass roof
+              LINE 76: sleepy puppies curl together beneath a woven blanket
+              LINE 77: bright stars scatter across the dark evening sky
+              LINE 78: curious children discover shells beside the quiet tidepools
+              LINE 79: red poppies sway gently along the winding footpath
+              LINE 80: calm rivers carry fallen leaves toward the sea
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 31
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 1240
+          output_tokens_details:
+            reasoning_tokens: 131
+          total_tokens: 1271
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-05T00:35:20.407768+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "3955"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: "Write exactly 80 lines of the form `LINE <n>: <eight random lowercase English words>`. No preamble."
+        - id: rs_02ba21a7dde90050006aebcf3a8b0887d1a3edacecb78cdefc
+          summary: []
+          encrypted_content: >-
+            gAAAAABq689IFmwGj9z4P9JkgdIUhB3uTeqrI-9aeSs2F81BuVLh_ube1pePyV_ZbF-YvcdohaMEyd_eFIJDWhnNooZqvO7Meo3JuULVyAhbkkgOxkgR2wa2UQR6UJaf-wd46fe2u9CO4eBuHxq9VuEvbuFLxyHPsdCQ2Uy-31gUZi5rkcg7aPFOx398L9aGVezbdZCJxH0xt1BUgp1uepoMUGEVvppaENwTmj5nMUXKEa3f5B_7X8hWO1VNg5mpURrjiVU5PNizKfNbvfIsCsiaPhn4HZhEwk-BhsguGORxmbShwDNfWg79dVrNBEYLPHe4u7zudNA_5l7dRWTaqCHPFcGTpWHaq9YQNTKYeFddK8Tro-HjB3H8Yoq5-QnfRiD11QRDigb3PpL7H-ck9wS0J513BpTQttP3qQJn3YEdp0LyGFYVE5kRRT0Yl-wuzC-HPSszbfaiAq7XztFGJElmPNPAoeKomZpMFfoew3cEjgTwbEv28Uv7QLRZGn3A5Hotymu5zDLoD7mLj0lJCXYTV5CYsM3R1fkxeZBe_b3JoGtXfcsV2sLaLFuIHCroQXJYIFEN6263lM8WwmXB8nDmpdYQPK8rwGM9awoh8HwuxnnMoFVjHvCaykX8ffbTCHvoC4oePCQAIlgj7FACuLbzEK-EvYtGoC1ixs_zEGQEsRHxjPRpscjZbrAZlDDAbeEMnUGxP8e5lHbYSwVt-lu6eT4WxtnjghgYaHJBwF2mgWFHH7y45Ni2yoU_PWDw-ghiMGsofZ1TTbDLMTwJ4fmSzQbfDgvBSEzhabtJzRpYR4qFdE3Xasy1WVb7uf7Ix3kVwnDt9LxTeGYFyJs7JYdYobRdqbrBuL5BlFnVuS0l9mVHi1Uj5c9z1erP3uxfxwhH7arUB4yyMaIToJPx3zLncPAimFlJ1301xUR8YFlr4NrIdlZsC9zPSOtCammoYDGlOnxX3PQEig1ZrQKU_IYFb8awCmBI4lgydqecW28RTGI0WFfb-oYxdwwdLOWZTWJFEeYWuSFm6suRnZT5zcQkrizxIxtnKH8jqq0NR9uVcsoHC5gzHMaZpt9_1vE-bYnd12vVVi_12_TiyJrkWxDyfu6-7t80NxWIzxsfLaYtivKMaybh4m2nkFcCrbOYibM0UHKzqc9enEGiZq6VNHvbRLQvpi_Mq21XBUtvHutJ2YErRTHqpI4rWFAu2RWcygkdANdausIWavcLnqTIXDCxdpK1jnA7L8p1L209d0CeE9_fPwKIbV0EXkAR-3e16dA5WVV07XlodkOMC2loh1rxUoN2C5m4JnH43-tCIgesXhs6pu-33KIww87ZgByXKGC2lNjIaj_li8gH0Qv-xqzejhxvtuMQuVQkp-ZRxEmG8wgSIQiAAV0aEzSSGxyrhKigEJR2_DOOHkfA27up-gvuq_PoVCiF8n4-KEpNRt0y5AQUmgN1e9kOB3u-PsVwwb-0JSBXJWkaI1g9t1KIBHQ5f3XjIJ8LvxysUl8VfAjreQc7zYE-QMeW7HAc3hevziwN9cAgIC7OX2q1EYzNu5cbHaVLBsNtaFCP-3OfWEW9lqNL2zFOef-7psXCmNczbfBcv9HD0W6ZJPVWrEJfR35gvcFFKtq6z7eY-uxyMEYt7W1DbcGj10MQlcK9rO4u1OkK-j-sWg9SLRqru968uEjgstgz82q_U3IjCvedZGB3oZrYehn_vZbQL9M9S1qg_kUnGXRLmXJf2Vj5oRDaTFVjZcFJgaTH_fTLiudx8x_FlFqBvk4tjNwCKSXgvtz4SeoSGqLJSkVRtIQ1iDlgjdGpd-jSE8Hds2kS5viOyE2Y9odckveBSPsgnQYiu472NLNZ5AGD76JfFb2TJK010Y65w061SLQqLQxtZJAzlKmAQ-ksik7K_suIY-nNN7AFjRhFfmT_AGGML5CHP0GRNJdThjUSiwl_Kr4pUuLYx8gEXMcLZWlW2lAWMIrgr0ejsUe_hj3-4IgbOjJR6UgbQUFB4lXXfGfKSA_a3ztmAx8tHuaD0Z6Y6na5ONOk7sgvP_fZ8AAnn4MEMCcbazw0gtukpJJIMsvBXqaJhxmOIEVc6dU7PVtSjGvYxPnK02fYvlQIJTh0MxG5BsMiQaWdH0gTQ3IIWZoryOZ5UspCHTSX_uC8PSlDcrP7PqO2x6giDeiq7_pERhkv5wtu5cdhzfBLtA8RIWIaY0Ag3YxoXJ3B4LS1zjS7sSKQW0hiOvvfyk17JAqK3_GYX04pkd0cqD_MWZHt3w0pHrtfK-cIAX8cPZfzJgEg8xALx3wnhfbUvTjc4v8AKxoZcuNbyX6W-D0oCYqThB9jz6nflFHB1pMqNXX8hNu5tnUQbtKg0G2Ive1Bhhkwrg-YMYHWKUINOeN1QIfcOjyaZhzeLd9JwxsaoYnJ09M-GtpKrRcHjmSykKEQRaOvcnYYR_S1O1BWGNUeHMFBHQOoLBNq0BkfKrVngRd8RpstmGXAzd3Q18CRov0g7_Peb1nmqVG93_K44-SBXwsUPYUgXy3RYoyyThpIrK2-jW66e5FNiy_S0vYRTbzFRtKnTP58CR88bjV7wpJaDM-L1ZqKtXhABcGTIz_cNDaF-ZWY1bUap_S5MVCoOl9KR1nfiZuQ7A-cXhZDFMDU0RhDoZCYDQismgZlSyejwdhJfWNhE42rgJfw88OXeLlQJvsKC0JBYGvyOfzpH7yWl-fncC6UHYKdvrzmV-a_ygFcapNRcR75MhmDN9wRGJCH_z3cRcaMcVJwjLZ7ikVtqjWLY4LD4oicn6Km5L8dvE0CwD_eDVXhHTmslqhBQoGhHkqdKOM1kIvdFzPTKYHTp-WJYqfgdioA1MEg5NXOWg6tBwvVTzEVDEu42lGsAZ07deIaQXlU3zsr7KyzRj7wIHVFjG_0Nxr9G5uhtfISrVa0GMDp4sgjkTwcKjji4LGZZnIIMgsswq34EYr3ujLVWXuMfbuageRUDGpszO2e8G1FrzbI9nsRhy4LC8U_3nOp8AaK96pl36UDhGqd4slH1Zk-8kGjpXAxojC5Ne42tV3TdouPW6P7LBb85uvbf9Ff8L4YGIzs
+          type: reasoning
+        - role: assistant
+          content: |-
+            LINE 1: amber river gentle clouds wander beneath silver lanterns
+            LINE 2: quiet meadow drifting petal
+            [edited]
+            ppies sway gently along the winding footpath
+            LINE 80: calm rivers carry fallen leaves toward the sea
+          phase: final_answer
+        - role: user
+          content: >-
+            Does your previous message contain the literal string `[edited]`? Reply with
+            only yes or no.
+        prompt_cache_options:
+          comparison_response_id: resp_02ba21a7dde90050006aebcf39f1f087d1b8cf129baebdfb9e
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1024"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_02ba21a7dde90050006aebcf48851887d1bc75a7b67b0f7a4b
+        object: response
+        created_at: 1793838920
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1793838921
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6-luna
+        moderation: null
+        output:
+        - id: rs_02ba21a7dde90050006aebcf491c4887d1a285d0b55986d8eb
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq689JqdOX8FtfuG-Vt1Djo4cTmkCGjCADTl9Ok5WAdVrWn3JcE8V46BpQP9irLoU_MYY4cLnZiYtsJIDRrI780JkDpSStZU7fKhPyNRs1MEEhSVBlsYw96dCdQfJO3fed5iUpIcl7g1QSXKzPKGdmyIasN83ZTV3o7AiCPP_iuao1OTndpa5tFxL47Jbn86bqLpkxsrdJvcN28OLqidnrd3bbpgV7a5ResR0Rzv5gfWW4xgXNG3vXeshpab_q-2vcJu-U73iE8sf2D2OGQZfYZ8vQTm0qzDSOGm_fAh-5v64C0SfEanbGzdNil0P2ZFz_UAA-NybH5W-P0vOUMHcs_BfAUE4zuPZiGkK1wpBXUGuDHC7ht0zzVNq6-UDCXg1W7Xoeia5N95rnTMzKb_rv1rYgicFVQ0t96HhySvLAXkxQ-ou-8BmaHE7LNfkL7T8r9kMSEK_6o-knoD7M6McNkmYW8wIybc1fpaWz9VRCj9fo_bPS60hYYLg3RJs8ssO1j3aIpr0WXml9rCJ4V2GBfSM6_XNvV7U2AWoa2Ed7KCfsngluPON2wcAIv4srZBeeeZptQl9gRdnQYszzlJ6ZnI96jmhmue6MDIccWZhiaCS7XfugUu-qwutbRuPjFJ_UAbHt-OC5MAk5uFDZOwf7x3NKpRUPX3c36LbtG3Vg12sk1VI0qav9UqCTxQaGSleAJga6ky9XVUvDFGmDky81r_Yw1cfXNHGIS8EHpGKaIIlbnv9DRZfO5bx6Ow-cRhxobnA4w0JSMvLeH1YbLA_RH6ddp61Zlunr1YfBWx6ir8Uwfz_I48-QrvfbtummgXEzOTeY5e27hCFAxJDy00diAUqL-HRIaomNlSvSq7h_pPvk6KSBKzuNvb8lYsRajV7c1E-EY_bCWRiNWCjuKb_UjhCwjZvCCfYMLieYrrH8BqWxbkockSfijA2lJ1pnYr7qIHNqAlyLtXVsQFucJMlAuZBJJS3BIWhXMGNna867hO4CR2BmBFkwfGekokZORKbAsoVeGpVWBAlNXs-18aKQg1kXdBfpYEcuM8Uvy9RnhsTledPfcXwsXLcMpfBlf6p-IP3mgeZavSK9akI0xwgzBYjPpLn6GO_09NTFPyahSmGoCrnCwpdARMOxAJz7nL3qbc-4CAS-NvuzZq_0SQL3mGbOqckDX0vNX6cTNlXHjVslXsE-HndcaRhSeJSOyqfYS0_Nz_iN7viI6IKw7oBnVKU-Hr39KHpOVeSben7tOeZYOXVGdUVggjHkoblH0w6Huml1CLLM8JBOYp3rnh5hmnkjxGEZkmkAy-bzGEG7BbDIiWOcTc3MsZ0VaDds1U7zxevDR5Wwyu0DJiOVS7h_lkzz4xBA9a_icX_uvdpps6Cs1ZCVCBTpIHUUw5yg6uAydamdwLznW1qUppYcpBUS-LZL6F6igvbHi3Hho9TxJ1LxmnyGOggqZrqvpyMek_ofLEu_AWHF9wT7PRGqSILABPKPWCeagi9qUd63-9wo5_fdQFFl6BsySXS8u-7vtaHo32oLB1lC_lZyvM15L6SOZivO0XNRyTd0SfpSBIQuFnYjwVwXLs7wn1XucKwWMCC_W6dV
+          summary: []
+        - id: msg_02ba21a7dde90050006aebcf493d2487d1a8d0b8637e3742dc
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: "yes"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_diagnostics:
+          type: cache_hit
+        prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_02ba21a7dde90050006aebcf39f1f087d1b8cf129baebdfb9e
+          mode: implicit
+          ttl: 30m
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 243
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 22
+          output_tokens_details:
+            reasoning_tokens: 15
+          total_tokens: 265
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-05T00:35:21.545170+00:00

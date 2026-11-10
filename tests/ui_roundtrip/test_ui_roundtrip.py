@@ -650,7 +650,9 @@ def _image_tools(agent: Agent[None, str]) -> None:
 
 _AGUI_ACTIVITY = (
     '`@ag-ui/client` leaves `activity` messages out of every request it sends (`prepareRunAgentInput`), '
-    'so records the adapter carries as activities never come back; documented in #10569, carrier design pending'
+    'so records the adapter carries as activities never come back; documented in #10569, carrier design pending. '
+    "With `framing_announcement='when_needed'`, a dropped mid-conversation system prompt also takes the framing "
+    "announcement out of the standing prompt on the next turn; accepted, and documented: UI apps set `'always'`"
 )
 _RETRY = (
     "the AI SDK stream has no carrier for a tool's outcome, so a streamed retry reloads as "
@@ -659,7 +661,9 @@ _RETRY = (
 _APPEND_INSTRUCTIONS = (
     'append-mode instruction records (`InstructionBaselinePart`, `InstructionDeltaPart`) are system voice, '
     "which the adapter strips from client history in `manage_system_prompt='server'`, so every turn re-renders "
-    'the baseline from current state and rewrites the prefix; no issue yet'
+    'the baseline from current state and rewrites the prefix; no issue yet. '
+    "With `framing_announcement='when_needed'`, the dropped delta also takes the framing announcement out of the "
+    "standing prompt on the next turn; accepted, and documented: UI apps set `'always'`"
 )
 _FEEDBACK_NOT_STREAMED = (
     "retry feedback (`RetryFeedbackPart`) isn't streamed, so the client keeps the rejected and the accepted "

@@ -50,7 +50,8 @@ agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.'), cr
 ```
 
 `directory` is a path on the machine running the agent, relative to the process's current
-directory, not a workspace path.
+directory, not a workspace path, and it must have `'operator'` authority in the run's workspace
+(see [Trust boundary](#trust-boundary)).
 
 `CapabilityCreation` also contributes static, cache-stable system-prompt guidance
 explaining these tools. Leave `guidance=None` for the default text, or pass your own
@@ -147,6 +148,26 @@ machine. A run therefore refuses to start unless its
 [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is a writable `LocalWorkspace`: next to a
 sandbox the model's code would run outside the sandbox, and a read-only workspace promises the
 model that it changes nothing.
+
+`directory` must hold only code the operator wrote or this capability authored, not a cloned
+repository or a user's upload. A run therefore also refuses to start unless
+[`authority_of`](https://pydantic.dev/docs/ai/core-concepts/workspace/) gives `directory`
+`'operator'` authority:
+
+- A workspace with `authority='user'` or `authority='none'` is refused, unless `path_authority`
+  gives `directory` `'operator'`.
+- A lower directory inside an operator workspace, such as one under
+  `path_authority={'vendor': 'none'}`, is refused, including through a symlink.
+- A directory outside the workspace's working directory has `'none'` authority, so name it:
+  `LocalWorkspace('./project', path_authority={'/var/lib/my-app/authored': 'operator'})`.
+
+With `defer_loading=True`, a run starts before the capability loads, so these checks, and the
+writable `LocalWorkspace` one above, refuse each authoring tool call instead, failing the run.
+
+These checks can't cover a `store.load_active()` you call before the
+run, as in the example above: that call has no workspace to ask, and runs the code it finds. It also
+only looks at who controls the directory, not what the model has read: to keep text in a lower
+workspace from steering what gets authored, require approval as shown below.
 
 Authoring executes arbitrary Python in-process at import, construction, and run time. That
 is the same trust boundary an agent that already runs shell commands and edits files

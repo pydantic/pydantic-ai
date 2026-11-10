@@ -348,7 +348,7 @@ def test_activity_toolset_scope_closes_after_failure_or_cancellation(
     assert 'enter' in lifetimes
 
 
-@pytest.mark.parametrize('kind', ['collision', 'missing-format', 'codec-failure'])
+@pytest.mark.parametrize('kind', ['collision', 'missing-format', 'codec-failure', 'non-utf8'])
 def test_activity_result_wire_contract(durable_worker: 'InMemoryWorker', kind: str) -> None:
     lookalike: JsonValue = {
         'format': 'pydantic-ai-durabletask-result-v1',
@@ -365,7 +365,11 @@ def test_activity_result_wire_contract(durable_worker: 'InMemoryWorker', kind: s
 
         @durable_operation('produce')
         async def produce(self, ctx: RunContext[object]) -> object:
-            return object() if kind == 'codec-failure' else lookalike
+            if kind == 'codec-failure':
+                return object()
+            if kind == 'non-utf8':
+                return b'\xff'
+            return lookalike
 
     agent = Agent(TestModel(), name='wire', capabilities=[Producer(), AzureDurableTaskDurability()])
     with registered_agent(durable_worker, agent):

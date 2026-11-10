@@ -139,9 +139,15 @@ class TestIsPrivateIp:
             '2002:0a00:0001::1',  # Embeds 10.0.0.1
             # IPv6 IANA-reserved / special-purpose ranges
             '::',  # Unspecified
+            '::ffff:0:10.0.0.1',  # IPv4-translated (RFC 2765)
+            '::ffff:0:127.0.0.1',
             '100::1',  # Discard prefix (RFC 6666)
+            '100:0:0:1::1',  # Dummy prefix (RFC 9780)
             '2001::1',  # Teredo tunneling (RFC 4380)
+            '2001:2::1',  # Benchmarking (RFC 5180)
             '2001:db8::1',  # Documentation (RFC 3849)
+            '3fff::1',  # Documentation (RFC 9637)
+            '5f00::1',  # Segment Routing (SRv6) SIDs (RFC 9602)
             'ff02::1',  # Multicast (RFC 4291)
             # NAT64 well-known prefix (RFC 6052) wrapping a private IPv4
             '64:ff9b::192.168.1.1',
