@@ -55,6 +55,7 @@ from pydantic_ai.messages import (
     ToolRetryCause,
     ToolReturnPart,
     UserPromptPart,
+    is_retry,
 )
 from pydantic_ai.models import Model, ModelProfile, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -2136,3 +2137,66 @@ async def test_a_retried_tool_returns_cause_never_reaches_the_model(allow_model_
         bodies.append(get_mock_chat_completion_kwargs(mock_client)[0]['messages'])
 
     assert bodies[0] == bodies[1]
+
+
+def test_is_retry_finds_the_retries_a_run_records_and_a_stored_history_loads_as():
+    """`is_retry` matches what `isinstance(part, RetryPromptPart)` used to: a retried tool return and tool-less
+    feedback, from a run or loaded from a history stored before the split.
+    """
+    rejected_output = False
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('lookup', {'invoice_id': 'INV-1'}, tool_call_id='call_1')])
+        return ModelResponse(parts=[TextPart('There is no such invoice.')])
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def lookup(invoice_id: str) -> str:
+        raise ModelRetry('no such invoice')
+
+    @agent.output_validator
+    def reject_once(output: str) -> str:
+        nonlocal rejected_output
+        if not rejected_output:
+            rejected_output = True
+            raise ModelRetry('cite the invoice id')
+        return output
+
+    messages = agent.run_sync('Find invoice INV-1').all_messages()
+    assert [part for m in messages for part in m.parts if is_retry(part)] == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='lookup',
+                content='no such invoice',
+                tool_call_id='call_1',
+                timestamp=IsDatetime(),
+                outcome='retried',
+                retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
+            ),
+            RetryFeedbackPart(
+                content='cite the invoice id',
+                retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+    stored = ModelMessagesTypeAdapter.dump_json(
+        [
+            ModelRequest(
+                parts=[
+                    legacy_retry_prompt_part(content='no such invoice', tool_name='lookup', tool_call_id='call_1'),
+                    legacy_retry_prompt_part(content='cite the invoice id'),
+                ]
+            )
+        ]
+    )
+    [loaded] = ModelMessagesTypeAdapter.validate_json(stored)
+    assert [is_retry(part) for part in loaded.parts] == [True, True]
+
+    assert not is_retry(ToolReturnPart('lookup', 'INV-1 is paid', tool_call_id='call_1'))
+    assert not is_retry(ToolReturnPart('lookup', 'database is down', tool_call_id='call_1', outcome='failed'))
+    assert not is_retry(UserPromptPart('Find invoice INV-1'))
+    assert not is_retry(legacy_retry_prompt_part(content='cite the invoice id'))

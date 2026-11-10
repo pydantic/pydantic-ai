@@ -4229,6 +4229,23 @@ ModelResponsePart = Annotated[
 """A message part returned by a model."""
 
 
+def is_retry(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[ToolReturnPart | RetryFeedbackPart]:
+    """Check whether a message part is a retry Pydantic AI sent the model.
+
+    A retry that answers a tool call is that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]
+    with `outcome='retried'`, and one that answers no tool call is a
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]. Together they are what the deprecated
+    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] used to record, and a stored history loads in this
+    shape too, so use `is_retry(part)` where code used to check `isinstance(part, RetryPromptPart)`. A
+    `RetryPromptPart` your own code still constructs isn't matched.
+
+    A tool call that failed (`outcome='failed'`) isn't a retry. To find every tool call that reached the model
+    as an error, check a [`BaseToolReturnPart`][pydantic_ai.messages.BaseToolReturnPart]'s `outcome` against
+    [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES] instead.
+    """
+    return isinstance(part, RetryFeedbackPart) or (isinstance(part, ToolReturnPart) and part.outcome == 'retried')
+
+
 @dataclass(frozen=True, kw_only=True)
 class WorkspaceRef:
     """Serializable identity of a [workspace](../workspace.md) environment, without credentials.
