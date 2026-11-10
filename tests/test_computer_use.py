@@ -15,14 +15,16 @@ from pydantic_ai.computer_use import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryImage,
+    ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.tools import ToolDefinition
 
@@ -102,7 +104,16 @@ def test_computer_tool_is_sent_with_a_computer_tool_to_run_its_calls() -> None:
     assert params.tool_name_for_kind('computer_use.other') is None
 
 
-@pytest.mark.parametrize('function_tools', [[], [_computer_tool_def(defer_loading=True)]], ids=['none', 'deferred'])
+@pytest.mark.parametrize(
+    'function_tools',
+    [
+        [],
+        [_computer_tool_def(defer_loading=True)],
+        # A fallback for the native tool itself is dropped once the native tool is sent.
+        [ToolDefinition(name='my_computer', tool_kind=COMPUTER_KIND, unless_native='computer')],
+    ],
+    ids=['none', 'deferred', 'fallback'],
+)
 def test_computer_tool_needs_a_computer_tool_that_is_not_deferred(function_tools: list[ToolDefinition]) -> None:
     optional = ComputerTool(display_size=(1280, 800), optional=True)
     assert _prepare(ModelRequestParameters(function_tools=function_tools, native_tools=[optional])).native_tools == []
@@ -129,3 +140,46 @@ def test_computer_tool_refuses_two_computer_tools_that_could_run_its_calls() -> 
 def test_computer_tool_refuses_a_display_size_that_is_not_positive(size: tuple[int, int]) -> None:
     with pytest.raises(ValueError, match='must be two positive numbers'):
         ComputerTool(display_size=size)
+
+
+async def test_a_computer_call_with_safety_checks_waits_for_approval_whichever_tool_runs_it() -> None:
+    from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, Tool
+
+    ran: list[object] = []
+
+    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
+        ran.append(actions)
+        return ['Done.', SCREEN]
+
+    checks = [{'id': 'sc_1', 'code': 'malicious_instructions', 'message': 'Check it.'}]
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('ok')])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    'computer',
+                    {'actions': [{'type': 'click', 'x': 1, 'y': 2}]},
+                    tool_call_id='call_1',
+                    provider_details={'safety_checks': checks},
+                )
+            ]
+        )
+
+    # A plain computer-kind tool with no approval configured: the provider's checks still gate it.
+    agent = Agent(
+        FunctionModel(respond),
+        tools=[Tool(computer, tool_kind=COMPUTER_KIND)],
+        output_type=[str, DeferredToolRequests],
+    )
+    paused = await agent.run('Click.')
+    assert isinstance(paused.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in paused.output.approvals] == ['call_1']
+    assert ran == []
+
+    resumed = await agent.run(
+        message_history=paused.all_messages(), deferred_tool_results=DeferredToolResults(approvals={'call_1': True})
+    )
+    assert resumed.output == 'ok'
+    assert ran == [[{'type': 'click', 'x': 1, 'y': 2}]]

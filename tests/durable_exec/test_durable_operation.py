@@ -28,6 +28,7 @@ from pydantic_ai.durable_exec import (
     DurabilityEngineSpec,
     JournalCallableOperationBackend,
     RoleBasedOperationConfig,
+    StepPolicy,
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._codec import JSON_CODEC
@@ -1170,6 +1171,34 @@ class _RegisteredDurability(JournalDurability):
 class _DispatchParams:
     inputs: tuple[object, ...]
     name: str = ''
+
+
+class _PolicyBackend(_RecordingBackend):
+    def apply_policy(self, config: dict[str, str], policy: StepPolicy) -> dict[str, str]:
+        return {**config, 'repeatable': str(policy.repeatable)}
+
+
+async def test_a_config_passed_for_one_invocation_still_runs_under_the_step_policy() -> None:
+    async def handler(params: int) -> int:
+        return params
+
+    backend = _PolicyBackend(_Config())
+    operation = DurableOperation(
+        operation_id=ModelRequestId('registered', streaming=False, model_name='model'),
+        handler=handler,
+        parameter_transport=IdentityParameterTransport[int](),
+        cache_identity=_CacheIdentity(),
+        result_codec=TypedResultCodec[int](int),
+        config_role='model',
+        policy=StepPolicy(repeatable=False),
+    )
+    bound = backend.bind(operation)
+    await bound(1)
+    await bound(2, config={'source': 'explicit'})
+    assert [config for _, _, config in backend.calls] == [
+        {'source': 'role-default', 'repeatable': 'False'},
+        {'source': 'explicit', 'repeatable': 'False'},
+    ]
 
 
 async def test_callable_operation_backend_resolves_and_round_trips() -> None:
