@@ -5331,6 +5331,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.request_stream"
       ]
     },
+    "_with_framing_announcement": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>"
+      ]
+    },
     "infer_model": {
       "engines": [
         "durable_exec",
