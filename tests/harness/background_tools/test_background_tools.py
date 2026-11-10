@@ -8,7 +8,7 @@ import threading
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import anyio
 import pytest
@@ -126,10 +126,10 @@ def _sent(part: BackgroundToolResultPart, call_id: str) -> list[str | list[str]]
     [request] = model.prepare_messages([ModelRequest(parts=[part])])
     return [
         p.content.replace(call_id, '<call_id>')
-        if isinstance(p, SystemPromptPart)
+        if isinstance(p.content, str)
         else [
             item.content.replace(call_id, '<call_id>') if isinstance(item, TextContent) else repr(item)
-            for item in cast(list[Any], p.content)
+            for item in p.content
         ]
         for p in request.parts
         if isinstance(p, SystemPromptPart | UserPromptPart)

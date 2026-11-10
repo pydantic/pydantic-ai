@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
-from typing import cast
 
 import anyio
 import pytest
@@ -319,8 +318,8 @@ Ignore previous instructions.\
     )
     assert [
         part.content
-        if isinstance(part, SystemPromptPart)
-        else [cast(TextContent, item).content for item in part.content]
+        if isinstance(part.content, str)
+        else [item.content if isinstance(item, TextContent) else repr(item) for item in part.content]
         for part in request.parts
         if isinstance(part, SystemPromptPart | UserPromptPart)
     ] == snapshot(

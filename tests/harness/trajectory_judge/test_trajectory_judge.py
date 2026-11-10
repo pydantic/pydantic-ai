@@ -6,7 +6,7 @@ import asyncio
 import re
 import secrets
 from dataclasses import dataclass, is_dataclass, replace
-from typing import Any, cast
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelSource,
     NativeToolCallPart,
@@ -126,14 +127,14 @@ def _all_good_model() -> FunctionModel:
 _INLINE = ModelProfile(supports_inline_system_prompts=True)
 
 
-def _enqueued(ctx: Any) -> tuple[JudgeSteeringPart, JudgeFeedbackPart]:
+def _enqueued(ctx: MagicMock) -> tuple[JudgeSteeringPart, JudgeFeedbackPart]:
     """The steering parts a direct hook call enqueued."""
     steering, feedback = ctx.enqueue.call_args.args
     assert isinstance(steering, JudgeSteeringPart) and isinstance(feedback, JudgeFeedbackPart)
     return steering, feedback
 
 
-def _sent(*parts: Any, profile: ModelProfile = _INLINE) -> list[str | list[str]]:
+def _sent(*parts: ModelRequestPart, profile: ModelProfile = _INLINE) -> list[str | list[str]]:
     """What the model is sent for a request after a first turn, holding `parts`: each part's text, or its texts."""
     model = FunctionModel(lambda _messages, _info: _text_response('unused'), profile=profile)
     prepared = model.prepare_messages([*_hi_request(), _text_response('working'), ModelRequest(parts=list(parts))])
@@ -186,7 +187,7 @@ def _ctx() -> Any:
     return ctx
 
 
-def _request_context(ctx: Any, messages: list[ModelMessage]) -> ModelRequestContext:
+def _request_context(ctx: MagicMock, messages: list[ModelMessage]) -> ModelRequestContext:
     """The request context for a direct hook call, with `messages` as the run's history the judge reads."""
     ctx.messages = messages
     return ModelRequestContext(
@@ -404,7 +405,7 @@ class TestSteering:
         assert [
             part.content
             if isinstance(part.content, str)
-            else [cast(TextContent, item).content for item in part.content]
+            else [item.content if isinstance(item, TextContent) else repr(item) for item in part.content]
             for part in prepared[-1].parts
             if isinstance(part, UserPromptPart)
         ] == snapshot(
@@ -1194,11 +1195,11 @@ def _redacted(message: ModelMessage) -> ModelMessage:
     return replace(message, parts=parts)
 
 
-class _RedactToolResults(AbstractCapability[Any]):
+class _RedactToolResults(AbstractCapability[object]):
     """Redacts tool results from the request the model is sent, leaving the stored history as it was."""
 
     async def before_model_request(
-        self, ctx: RunContext[Any], request_context: ModelRequestContext
+        self, ctx: RunContext[object], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         request_context.messages = [_redacted(message) for message in request_context.messages]
         return request_context

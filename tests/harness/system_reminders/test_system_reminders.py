@@ -1622,8 +1622,8 @@ class TestEndToEnd:
             for part in message.parts
             if isinstance(part, GeneratedReminderPart)
         ]
-        assert len(records) == len(firings)
-        assert all(part.scope == 'conversation' for part in records if isinstance(part, SystemPromptPart))
+        # One record per firing, each stored with what that firing generated.
+        assert [part.content for part in records] == [f'refocus {step}' for step in firings]
 
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_reminder_survives_compaction_listed_after_it(self) -> None:
