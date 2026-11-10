@@ -3,7 +3,7 @@
 import io
 import json
 from collections.abc import AsyncIterator, Callable, Iterator
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,14 +26,17 @@ from pydantic_clai2.builtin_plugins.web.app import HEADER, create_app
 from pydantic_clai2.builtin_plugins.web.host_session import HostSessions
 from pydantic_clai2.builtin_plugins.web.protocol import PROTOCOL
 from pydantic_clai2.builtin_plugins.web.service import Observer, WebService
+from pydantic_clai2.cli.self_update import Updates
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, Transcript
+from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 
 from .test_live_runtimes import until
+from .test_self_update import _updates  # pyright: ignore[reportPrivateUsage]
 from .test_web import HOSTS, TOKEN, QuestionModel, static_dir
 from .test_web_parts import REQUEST
 
@@ -594,8 +597,10 @@ def test_command_menus_act_on_the_session_they_name(make_fleet: MakeFleet) -> No
     assert (session_a.model, session_b.model) == (None, 'test')
 
 
-def test_a_session_the_browser_opened_keeps_update_menu_and_refuses_its_install(make_fleet: MakeFleet) -> None:
-    """Settings > About in a session the browser opened: `/update`'s menu, its own description, and its refusal."""
+def test_about_in_a_session_the_browser_opened_installs_in_the_launch_session(
+    make_fleet: MakeFleet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settings > About's Update, in a session the browser opened, asks in its page and installs where CLAI restarts."""
     fleet = make_fleet()
     b = fleet.new('b')
     assert set(menu_rows(fleet, f'/api/sessions/{b}/commands/update/fields')) == {'version', 'updates.channel'}
@@ -604,7 +609,102 @@ def test_a_session_the_browser_opened_keeps_update_menu_and_refuses_its_install(
         'Show whether a newer CLAI is out on updates.channel (stable or main); /update now installs it',
         'Reload CLAI2 code without restarting',
     )
-    # No terminal shows it, so Update says why, as `/update now` typed there would, instead of asking first.
+    installed: list[list[str]] = []
+    done = fleet.portal.call(anyio.Event)
+
+    async def update(args: list[str]) -> str:
+        installed.append(args)
+        done.set()
+        return 'Updated.'
+
+    monkeypatch.setattr(fleet.launch.updates, 'command', update)
+    with fleet.socket() as socket, ThreadPoolExecutor(1) as pool:
+        connected(socket)
+        watch(socket, b)
+        action = pool.submit(fleet.post, f'/api/sessions/{b}/commands/update/fields/version/action')
+        [*_, opened] = messages(socket, until=kind('dialog'))
+        dialog = at(opened, 'dialog')
+        assert at(dialog, 'title') == 'Update CLAI?'
+        assert fleet.post(f'/api/sessions/{b}/dialogs/{at(dialog, "id")}', {'value': 'yes'}).status_code == 204
+        response = action.result(timeout=10)
+    assert response.status_code == 200, response.text
+    assert response.json()['messages'] == ['Running /update now on the stable channel.']
+    fleet.portal.call(done.wait)
+    assert installed == [['now']]
+    assert fleet.runtimes['b'].restarter() is fleet.launch
+
+
+def test_about_shows_how_an_install_in_the_launch_session_ended(
+    make_fleet: MakeFleet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The page whose About asked hears uv's output and the result of the `/update now` it entered, and only that.
+
+    C's Update waits behind the launch session's turn. B's cancelled Update, and the `/update now` B types
+    meanwhile, which B refuses itself, leave C the page that hears; the launch session's own later
+    `/update now` tells C nothing.
+    """
+    gates: dict[str, Gate] = {}
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gates['home'] = Gate(portal, 'home')
+        return {'home': gates['home'].agent()}
+
+    def failing(*, channel: object) -> Updates:
+        return _updates(['stable'], codes=[1, 1], lines=['Resolving'])[0]
+
+    monkeypatch.setattr(session_runtime, 'Updates', failing)
+    fleet = make_fleet(agents)
+    fleet.launch.updates.capture = lambda: True
+    a, b, c = fleet.launch.session.conversation_id, fleet.new('b'), fleet.new('c')
+    assert fleet.post(f'/api/sessions/{a}/input', {'text': 'go'}).status_code == 200
+    fleet.portal.call(gates['home'].started.wait)
+    with fleet.socket() as socket, ThreadPoolExecutor(1) as pool:
+        connected(socket)
+        watch(socket, a, b, c)
+        for page, answer in ((c, 'yes'), (b, 'no')):
+            action = pool.submit(fleet.post, f'/api/sessions/{page}/commands/update/fields/version/action')
+            [*_, opened] = messages(socket, until=kind('dialog'))
+            dialog_id = at(opened, 'dialog', 'id')
+            assert fleet.post(f'/api/sessions/{page}/dialogs/{dialog_id}', {'value': answer}).status_code == 204
+            assert action.result(timeout=10).status_code == 200
+        assert fleet.post(f'/api/sessions/{b}/input', {'text': '/update now'}).status_code == 200
+        refused = messages(socket, until=kind('notice', session=b, command='/update now'))
+        assert not [message for message in refused if kind('notice', session=c)(message)]
+        fleet.portal.call(gates['home'].release.set)
+        uv = messages(socket, until=kind('notice', session=c, command='uv'))
+        assert (uv[-1]['text'], uv[-1]['level']) == ('Resolving', 'error')
+        result = messages(socket, until=kind('notice', session=c, command='/update now'))[-1]
+        assert result['text'] == 'uv exited with status 1; see its output above.'
+        assert fleet.post(f'/api/sessions/{a}/input', {'text': '/update now'}).status_code == 200
+        own = messages(socket, until=kind('notice', session=a, command='/update now'))
+        assert [message['session'] for message in own if message['type'] == 'notice'] == [a, a], 'uv, then the result'
+
+
+def test_about_gives_the_launch_sessions_refusal(make_fleet: MakeFleet) -> None:
+    """The launch session refuses while another runs a turn: the asking page's own turn counts, as the restart ends it."""
+    gates: dict[str, Gate] = {}
+
+    def agents(portal: BlockingPortal) -> dict[str, Agent[None, str]]:
+        gates['b'] = Gate(portal, 'b')
+        return {'b': gates['b'].agent()}
+
+    fleet = make_fleet(agents)
+    b = fleet.new('b')
+    assert fleet.post(f'/api/sessions/{b}/input', {'text': 'go'}).status_code == 200
+    fleet.portal.call(gates['b'].started.wait)
+    response = fleet.post(f'/api/sessions/{b}/commands/update/fields/version/action')
+    assert response.status_code == 400, response.text
+    assert response.json()['detail'] == '1 other session is running a turn; try again when it finishes.'
+    fleet.portal.call(gates['b'].release.set)
+    fleet.portal.call(until, fleet.launch.process.live, lambda: fleet.runtimes['b'].idle)
+
+
+def test_about_refuses_an_install_while_no_session_restarts_clai(make_fleet: MakeFleet) -> None:
+    """While the terminal shows a session not live here, no session restarts CLAI, so About's Update says where."""
+    fleet = make_fleet()
+    b = fleet.new('b')
+    fleet.launch.process.live.focused = 'shown-elsewhere'
+    assert fleet.runtimes['b'].restarter() is fleet.runtimes['b']
     response = fleet.post(f'/api/sessions/{b}/commands/update/fields/version/action')
     assert response.status_code == 400, response.text
     assert response.json()['detail'] == (

@@ -12,14 +12,15 @@ from typing import Any, Literal, Self
 from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, ModelSelection, NativeOrLocalTool
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.capabilities import AbstractCapability, ModelSelection, NativeOrLocalTool, durable_operation
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import AbstractModel, KnownModelName, Model, ModelRequestContext, parse_model_id
 from pydantic_ai.native_tools import AdvisorTool
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool
+from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 _LIMIT_REACHED = 'Advisor consultation limit reached for this model request. Continue without further advice.'
@@ -41,6 +42,13 @@ def _caller_stacklevel() -> int:
         frame = frame.f_back
         stacklevel += 1
     return stacklevel
+
+
+@dataclass
+class _Advice:
+    """A consultation's output, wrapped so a journaled output can't be read back as a `RetryRequest`."""
+
+    output: object
 
 
 def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:
@@ -207,8 +215,8 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
 
     def _build_tools(self) -> None:
         """Build the native factory and local tool from the fields, and initialise the base capability."""
-        model, mode, output_type = self.model, self.mode, self.output_type
-        max_uses, max_tokens, forward_history = self.max_uses, self.max_tokens, self.forward_history
+        mode, output_type = self.mode, self.output_type
+        max_uses, forward_history = self.max_uses, self.forward_history
         native: AgentNativeTool[AgentDepsT] | bool
         local: Tool[AgentDepsT] | bool
         if mode == 'native':
@@ -222,33 +230,8 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                         return _LIMIT_REACHED
                     self._local_uses += 1
 
-                settings = ModelSettings(max_tokens=max_tokens) if max_tokens is not None else None
-                advisor_agent = Agent(
-                    model,
-                    name='advisor',
-                    output_type=output_type,
-                    instructions=(
-                        'You are an expert advisor. '
-                        + (
-                            'Give concise, actionable advice to the executor model about the question it sends you. '
-                            if output_type is str
-                            else "Answer the executor model's question using the configured output format. "
-                        )
-                        + 'Do not address the end user.'
-                    ),
-                    model_settings=settings,
-                )
-                try:
-                    result = await advisor_agent.run(
-                        prompt,
-                        message_history=ctx.messages[:-1] if forward_history else None,
-                        conversation_id=ctx.conversation_id,
-                        usage=ctx.usage,
-                        usage_limits=ctx.usage_limits,
-                    )
-                except UnexpectedModelBehavior as e:
-                    raise ModelRetry(str(e)) from e
-                return result.output
+                history = ctx.messages[:-1] if forward_history else None
+                return raise_retry(await self._consult(ctx, prompt, history)).output
 
             local = Tool(
                 advisor,
@@ -265,6 +248,38 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             local=local,
             id=self.id,
         )
+
+    @durable_operation('consult')
+    async def _consult(
+        self, ctx: RunContext[AgentDepsT], prompt: str, message_history: list[ModelMessage] | None
+    ) -> _Advice | RetryRequest:
+        output_type = self.output_type
+        advisor_agent = Agent(
+            self.model,
+            name='advisor',
+            output_type=output_type,
+            instructions=(
+                'You are an expert advisor. '
+                + (
+                    'Give concise, actionable advice to the executor model about the question it sends you. '
+                    if output_type is str
+                    else "Answer the executor model's question using the configured output format. "
+                )
+                + 'Do not address the end user.'
+            ),
+            model_settings=ModelSettings(max_tokens=self.max_tokens) if self.max_tokens is not None else None,
+        )
+        try:
+            result = await advisor_agent.run(
+                prompt,
+                message_history=message_history,
+                conversation_id=ctx.conversation_id,
+                usage=ctx.usage,
+                usage_limits=ctx.usage_limits,
+            )
+        except UnexpectedModelBehavior as e:
+            return RetryRequest(str(e))
+        return _Advice(result.output)
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
@@ -352,7 +367,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             model=model_name,
             max_uses=self.max_uses,
             max_tokens=self.max_tokens,
-            caching=self.caching,
+            provider_settings={'anthropic': {'caching': self.caching}} if self.caching is not None else None,
         )
 
     @staticmethod

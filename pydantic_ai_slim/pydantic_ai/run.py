@@ -25,7 +25,7 @@ from . import (
     usage as _usage,
 )
 from ._conversation_marks import mark_stored
-from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
     CustomEventT,
@@ -758,7 +758,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def pending_messages(self) -> list[PendingMessage]:
         """Internal: live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
 
-        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages.
+        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages,
+        and [`dequeue`][pydantic_ai.run.AgentRun.dequeue] or [`set_enqueue_priority`][pydantic_ai.run.AgentRun.set_enqueue_priority]
+        to change them.
         """
         return self._graph_run.state.pending_messages
 
@@ -837,6 +839,43 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             return None
         self._graph_run.state.pending_messages.append(pending)
         return pending.enqueue_id
+
+    def dequeue(self, enqueue_id: str) -> bool:
+        """Remove a message queued with [`enqueue`][pydantic_ai.run.AgentRun.enqueue] before it's delivered.
+
+        Works like [`RunContext.dequeue`][pydantic_ai.tools.RunContext.dequeue], and is safe to call
+        from the same places as `enqueue`.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+
+        Returns:
+            `True` if the message was still queued and is now removed, or `False` if it was already
+            delivered, dequeued, or never queued in this run, including once the run has ended.
+        """
+        return self._queue.dequeue(enqueue_id)
+
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        """Change when a message queued with [`enqueue`][pydantic_ai.run.AgentRun.enqueue] is delivered.
+
+        Works like [`RunContext.set_enqueue_priority`][pydantic_ai.tools.RunContext.set_enqueue_priority]: the message
+        keeps its place and its `enqueue_id`.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+            priority: The new priority, with the same meaning as in `enqueue`.
+
+        Returns:
+            `True` if the message was still queued, or `False` if it was already delivered, dequeued,
+            or never queued in this run, including once the run has ended.
+        """
+        return self._queue.set_enqueue_priority(enqueue_id, priority)
+
+    @property
+    def _queue(self) -> PendingMessageQueue:
+        queue = self._graph_run.state.pending_messages
+        assert isinstance(queue, PendingMessageQueue)  # `GraphAgentState.__post_init__` guarantees it
+        return queue
 
     def cancel(self) -> None:
         """Cancel the whole agent run.
