@@ -395,6 +395,27 @@ async def test_provider_refuses_stored_credentials_without_plan_usage():
             await client.get('https://api.openai.com/v1/models')
 
 
+async def test_base_url_takes_requests_and_credentials_to_its_host():
+    seen: list[str | None] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request.headers.get('authorization'))
+        return httpx2.Response(200)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        provider = OpenAIChatGPTProvider(
+            credential_source=CredentialSource(make_credentials()),
+            base_url='https://gateway.example/v1',
+            http_client=client,
+        )
+        await client.get('https://gateway.example/v1/models')
+        await client.get('https://api.openai.com/v1/models')
+
+    assert provider.base_url == 'https://gateway.example/v1'
+    assert provider.client.base_url == 'https://gateway.example/v1/'
+    assert seen == ['Bearer access-1', None]
+
+
 @pytest.mark.parametrize(
     'refreshed,expected_id_token,expected_scope',
     [

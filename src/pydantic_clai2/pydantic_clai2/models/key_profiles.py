@@ -9,6 +9,7 @@ their existing setup: `/model add` connections, or core's environment variables.
 import inspect
 import json
 import re
+from collections.abc import Callable
 from functools import partial
 from typing import Annotated, Protocol, TypeGuard
 
@@ -37,20 +38,29 @@ class KeyConnection(BaseModel):
     """Required and never empty: an empty key would let the provider fall back to the environment's key."""
 
 
-class KeyedProvider(Protocol):
-    """A provider class that can be built from an API key alone."""
+URL_ARGUMENTS = {
+    'azure': 'azure_endpoint',
+    'azure-responses': 'azure_endpoint',
+    'xai': 'api_host',
+    'litellm': 'api_base',
+}
+"""Providers whose constructor names its endpoint something other than `base_url`."""
 
-    def __call__(self, *, api_key: str) -> Provider[object]:
+
+class KeyedProvider(Protocol):
+    """A provider class that can be built from string options, such as an API key alone."""
+
+    def __call__(self, **options: str) -> Provider[object]:
         """Build the provider."""
         ...
 
 
-def _accepts_key(provider_class: type[Provider[object]]) -> TypeGuard[KeyedProvider]:
-    return 'api_key' in inspect.signature(provider_class).parameters
+def _accepts(provider_class: Callable[..., Provider[object]], *options: str) -> TypeGuard[KeyedProvider]:
+    return inspect.signature(provider_class).parameters.keys() >= set(options)
 
 
-def keyed_provider(provider: str) -> KeyedProvider | None:
-    """The class Pydantic AI runs `provider:` models with, when it accepts `api_key`.
+def keyed_provider(provider: str, *options: str) -> KeyedProvider | None:
+    """The class Pydantic AI runs `provider:` models with, when it accepts `options`, by default `api_key`.
 
     A known provider whose SDK is missing raises core's `ImportError`, which names the extra to install.
     """
@@ -58,7 +68,7 @@ def keyed_provider(provider: str) -> KeyedProvider | None:
         provider_class = infer_provider_class(provider)
     except ValueError:
         return None
-    return provider_class if _accepts_key(provider_class) else None
+    return provider_class if _accepts(provider_class, *(options or ('api_key',))) else None
 
 
 def supports(provider: str, *, profile: str | None) -> bool:
@@ -139,9 +149,11 @@ async def _save_token(*, provider: str, name: str, token: SecretStr | KeyReferen
     return True
 
 
-def model(name: str) -> Model:
-    """Build a core provider's model with the profile's saved key instead of environment variables."""
+def model(name: str, *, base_url: str | None = None) -> Model:
+    """Build a core provider's model with the profile's saved key, or its `base_url`, instead of the environment's."""
     ref = parse_model(name)
+    if ref.profile is None:
+        return infer_model(name, provider_factory=partial(build_provider, base_url=base_url))
     if keyed_provider(ref.provider) is None:
         raise _no_profiles(ref.provider)
     raw = load_codex_credentials(account=ref.account)
@@ -151,24 +163,31 @@ def model(name: str) -> Model:
         connection = KeyConnection.model_validate_json(raw)
     except ValidationError:
         raise UserError(f'Stored {ref.account} credentials are invalid. Run /login {ref.account}.') from None
-    provider = build_provider(ref.provider, key=resolve_key(token=connection.token))
+    provider = build_provider(ref.provider, key=resolve_key(token=connection.token), base_url=base_url)
     return infer_model(f'{ref.provider}:{ref.name}', provider_factory=lambda _: provider)
 
 
-def build_provider(provider: str, *, key: str) -> Provider[object]:
-    """The provider core would build for `provider:` models, with `key` instead of the environment's key.
+def build_provider(provider: str, *, key: str | None = None, base_url: str | None = None) -> Provider[object]:
+    """The provider core would build for `provider:` models, with `key` and `base_url` instead of the environment's.
 
-    A `gateway/` route goes through core's gateway provider, as `infer_provider` does, so it keeps the
-    Gateway's endpoint. Other settings, such as an Azure endpoint, still come from the environment.
+    A `gateway/` route goes through core's gateway provider, as `infer_provider` does. Other settings,
+    such as an Azure API version, still come from the environment.
     """
     if provider.startswith('gateway/'):
         from pydantic_ai.providers.gateway import gateway_provider
 
-        return gateway_provider(provider.removeprefix('gateway/'), api_key=key)
-    provider_class = keyed_provider(provider)
+        return gateway_provider(provider.removeprefix('gateway/'), api_key=key, base_url=base_url)
+    options = {'api_key': key, URL_ARGUMENTS.get(provider, 'base_url'): base_url}
+    options = {name: value for name, value in options.items() if value is not None}
+    provider_class = keyed_provider(provider, *options)
     if provider_class is None:
-        raise _no_profiles(provider)
-    return provider_class(api_key=key)
+        raise _no_profiles(provider) if base_url is None else no_endpoint(provider)
+    return provider_class(**options)
+
+
+def no_endpoint(provider: str) -> UserError:
+    """The error for a `base_url` saved for a model whose provider cannot take one."""
+    return UserError(f'{provider} has no endpoint to override. Reset base_url in /model settings.')
 
 
 def _no_profiles(provider: str) -> UserError:

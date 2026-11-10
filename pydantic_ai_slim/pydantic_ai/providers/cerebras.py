@@ -37,7 +37,7 @@ class CerebrasProvider(_OpenAISDKProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.cerebras.ai/v1'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -102,16 +102,16 @@ class CerebrasProvider(_OpenAISDKProvider):
         )
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
-    def __init__(self, *, http_client: _OpenAIHTTPClient) -> None: ...
+    def __init__(self, *, base_url: str | None = None, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -120,6 +120,7 @@ class CerebrasProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -128,7 +129,8 @@ class CerebrasProvider(_OpenAISDKProvider):
         Args:
             api_key: The API key to use for authentication, if not provided, the `CEREBRAS_API_KEY` environment variable
                 will be used if available.
-            openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key` and `http_client` must be `None`.
+            base_url: The base URL to use for requests, if not provided, `https://api.cerebras.ai/v1` will be used.
+            openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key`, `base_url` and `http_client` must be `None`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
         api_key = api_key or os.getenv('CEREBRAS_API_KEY')
@@ -140,6 +142,7 @@ class CerebrasProvider(_OpenAISDKProvider):
 
         default_headers = {'X-Cerebras-3rd-Party-Integration': 'pydantic-ai'}
 
+        self._base_url = base_url or 'https://api.cerebras.ai/v1'
         if openai_client is not None:
             self._client = openai_client
         else:

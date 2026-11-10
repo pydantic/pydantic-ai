@@ -89,27 +89,41 @@ class ModelResolver:
         if (chain := chain_name(name)) is not None:
             return await self._chain(chain)
         ref = _parse(name)
+        base_url = self._base_url(name)
         if ref.profile == ALL:
-            return await self._all_accounts(ref.provider, ref.name)
+            return await self._all_accounts(ref.provider, ref.name, base_url=base_url)
         if ref.profile == DEFAULT:
-            return await self._one_account(base_model(name))
+            return await self._one_account(base_model(name), base_url=base_url)
         if ref.profile is None and ref.provider and self.pool_accounts():
             members = await self._pool(ref.provider)
             if len(members) > 1:
-                return await self._fall_back(members, ref.name)
-        return await self._one_account(name)
+                return await self._fall_back(members, ref.name, base_url=base_url)
+        return await self._one_account(name, base_url=base_url)
 
-    async def _one_account(self, name: str) -> Model | str:
+    def _base_url(self, name: str) -> str | None:
+        """The endpoint `/model settings` saved for `name`, which its accounts all use."""
+        from pydantic_clai2.models.model_settings import model_settings_from_json
+
+        if self.store is None:
+            return None
+        return model_settings_from_json(self.store.model_settings(name)).base_url
+
+    async def _one_account(self, name: str, *, base_url: str | None) -> Model | str:
         """Build a model on the one account it names, the default one when it names none."""
         ref = _parse(name)
+        endpoint = {} if base_url is None else {'base_url': base_url}
         if ref.provider in ('openrouter', 'vllm', 'github-copilot'):
             from pydantic_clai2.models import github_copilot, openrouter, vllm
 
             build = {'openrouter': openrouter.model, 'vllm': vllm.model, 'github-copilot': github_copilot.model}
-            return await to_thread.run_sync(build[ref.provider], name, abandon_on_cancel=True)
+            return await to_thread.run_sync(partial(build[ref.provider], name, **endpoint), abandon_on_cancel=True)
         if ref.provider == 'openai-codex':
-            return self.codex_auth().model(name)
+            return self.codex_auth().model(name, **endpoint)
         if (provider := self.plugins().get(ref.provider)) is not None:
+            if endpoint:
+                from pydantic_clai2.models.key_profiles import no_endpoint
+
+                raise no_endpoint(ref.provider)
             if ref.profile is None:
                 resolve = partial(provider.resolve, ref.name)
             elif provider.resolve_profile is not None:
@@ -122,10 +136,10 @@ class ModelResolver:
 
                 limit_retry_after(model=model)
             return model
-        if ref.profile is not None:
+        if ref.profile is not None or endpoint:
             from pydantic_clai2.models import key_profiles
 
-            return await to_thread.run_sync(key_profiles.model, name, abandon_on_cancel=True)
+            return await to_thread.run_sync(partial(key_profiles.model, name, **endpoint), abandon_on_cancel=True)
         return name
 
     async def _chain(self, chain: str) -> Model:
@@ -138,12 +152,12 @@ class ModelResolver:
         first, *rest = [await self.resolve(model) for model in models]
         return FallbackModel(first, *rest)
 
-    async def _all_accounts(self, provider: str, name: str) -> Model | str:
+    async def _all_accounts(self, provider: str, name: str, *, base_url: str | None) -> Model | str:
         """`PROVIDER@*:NAME`: the model on every signed-in account, in `/accounts` order, falling back in turn."""
         members = await self._pool(provider)
         if not members:
             raise UserError(f'No {provider} account is signed in. Add one with /accounts.')
-        return await self._fall_back(members, name)
+        return await self._fall_back(members, name, base_url=base_url)
 
     async def _pool(self, provider: str) -> 'list[Account]':
         """The provider's signed-in accounts, in `/accounts` order; none without a settings store."""
@@ -152,11 +166,11 @@ class ModelResolver:
         store = self.store
         return await to_thread.run_sync(lambda: pool(store, provider), abandon_on_cancel=True) if store else []
 
-    async def _fall_back(self, members: 'list[Account]', name: str) -> Model | str:
+    async def _fall_back(self, members: 'list[Account]', name: str, *, base_url: str | None) -> Model | str:
         """NAME on each account in turn, the next one taking over when a request fails."""
         from pydantic_ai.models.fallback import FallbackModel
 
-        first, *rest = [await self._one_account(member.model(name)) for member in members]
+        first, *rest = [await self._one_account(member.model(name), base_url=base_url) for member in members]
         return FallbackModel(first, *rest) if rest else first
 
     async def accounts(self, args: list[str]) -> str:

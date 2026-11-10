@@ -262,7 +262,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://openrouter.ai/api/v1'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -396,6 +396,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: None = None,
@@ -406,6 +407,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: AsyncOpenAI | None = None,
@@ -416,6 +418,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
         Args:
             api_key: OpenRouter API key. Falls back to `OPENROUTER_API_KEY`
                 when omitted and required unless `openai_client` is provided.
+            base_url: The base URL to use for requests, if not provided, `https://openrouter.ai/api/v1` will be used.
             app_url: Optional url for app attribution. Falls back to
                 `OPENROUTER_APP_URL` when omitted.
             app_title: Optional title for app attribution. Falls back to
@@ -442,6 +445,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
         if x_title := app_title or os.getenv('OPENROUTER_APP_TITLE'):
             attribution_headers['X-Title'] = x_title
 
+        self._base_url = base_url or 'https://openrouter.ai/api/v1'
         if openai_client is not None:
             self._client = openai_client
         else:

@@ -352,15 +352,23 @@ class CodexAuth:
         """Drop an account's cached provider after it signs out, so the next request asks to sign in."""
         self._providers.pop(account, None)
 
-    def model(self, name: str) -> OpenAICodexModel:
-        """Reuse each profile's core provider so it owns refresh and credential persistence."""
+    def model(self, name: str, *, base_url: str | None = None) -> OpenAICodexModel:
+        """Reuse each profile's core provider so it owns refresh and credential persistence.
+
+        A `base_url` gets a provider of its own, built per model so signing out still applies to it.
+        """
         ref = parse_model(name)
-        return OpenAICodexModel(ref.name, provider=self.account_provider(ref.account))
+        if base_url is None:
+            return OpenAICodexModel(ref.name, provider=self.account_provider(ref.account))
+        provider = OpenAICodexProvider(credential_source=self._source(ref.account), base_url=base_url)
+        return OpenAICodexModel(ref.name, provider=provider)
 
     def account_provider(self, account: str) -> OpenAICodexProvider:
         """The core provider for `openai-codex` or `openai-codex@PROFILE`, shared by models and usage checks."""
         provider = self._providers.get(account)
         if provider is None:
-            source = self.source if account == CODEX else CodexCredentials(account=account)
-            provider = self._providers[account] = OpenAICodexProvider(credential_source=source)
+            provider = self._providers[account] = OpenAICodexProvider(credential_source=self._source(account))
         return provider
+
+    def _source(self, account: str) -> CodexCredentials:
+        return self.source if account == CODEX else CodexCredentials(account=account)

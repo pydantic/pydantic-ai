@@ -118,6 +118,11 @@ class ModelSettingsForm(BaseModel):
     custom_params: dict[str, JsonValue] | None = Field(
         default=None, description='Custom request body parameters. Dotted keys nest; custom values win.'
     )
+    base_url: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Endpoint this model's provider is built with, such as a gateway. Wins over its environment variable.",
+    )
 
     @field_validator('custom_params')
     @classmethod

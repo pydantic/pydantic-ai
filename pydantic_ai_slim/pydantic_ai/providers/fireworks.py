@@ -41,7 +41,7 @@ class FireworksProvider(_OpenAISDKProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.fireworks.ai/inference/v1'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -86,13 +86,13 @@ class FireworksProvider(_OpenAISDKProvider):
         )
 
     @overload
-    def __init__(self) -> None: ...
+    def __init__(self, *, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str, base_url: str | None = None, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -101,6 +101,7 @@ class FireworksProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -111,6 +112,7 @@ class FireworksProvider(_OpenAISDKProvider):
                 ' to use the Fireworks AI provider.'
             )
 
+        self._base_url = base_url or 'https://api.fireworks.ai/inference/v1'
         if openai_client is not None:
             self._client = openai_client
         else:

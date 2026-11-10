@@ -30,6 +30,7 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
         if provider in ('openrouter', 'vllm') or (provider == 'azure' and family_defaults):
             options = _openai_options(provider='openai-chat', name=name, family_defaults=family_defaults)
     options['cache'] = ()
+    options['base_url'] = ()
     options.update(_glm_options(name=name))
     return options
 

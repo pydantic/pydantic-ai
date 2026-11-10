@@ -34,12 +34,13 @@ class VoyageAIProvider(Provider[AsyncClient]):
     def __init__(self, *, voyageai_client: AsyncClient) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str | None = None) -> None: ...
+    def __init__(self, *, api_key: str | None = None, base_url: str | None = None) -> None: ...
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         voyageai_client: AsyncClient | None = None,
     ) -> None:
         """Create a new VoyageAI provider.
@@ -47,12 +48,14 @@ class VoyageAIProvider(Provider[AsyncClient]):
         Args:
             api_key: The API key to use for authentication, if not provided, the `VOYAGE_API_KEY` environment variable
                 will be used if available.
+            base_url: The base URL to use for requests, if not provided, `https://api.voyageai.com/v1` will be used.
             voyageai_client: An existing
                 [AsyncClient](https://github.com/voyage-ai/voyageai-python)
-                client to use. If provided, `api_key` must be `None`.
+                client to use. If provided, `api_key` and `base_url` must be `None`.
         """
         if voyageai_client is not None:
             assert api_key is None, 'Cannot provide both `voyageai_client` and `api_key`'
+            assert base_url is None, 'Cannot provide both `voyageai_client` and `base_url`'
             self._client = voyageai_client
         else:
             api_key = api_key or os.getenv('VOYAGE_API_KEY')
@@ -62,4 +65,4 @@ class VoyageAIProvider(Provider[AsyncClient]):
                     'to use the VoyageAI provider.'
                 )
 
-            self._client = AsyncClient(api_key=api_key)
+            self._client = AsyncClient(api_key=api_key, base_url=base_url)

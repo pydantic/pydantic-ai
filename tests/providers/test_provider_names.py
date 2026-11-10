@@ -1,7 +1,8 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import pytest
@@ -126,6 +127,30 @@ def test_infer_provider_class(provider: str, provider_cls: type[Provider[Any]], 
         pytest.skip('Gateway providers are not supported for this test')
 
     assert infer_provider_class(provider) == provider_cls
+
+
+@pytest.mark.filterwarnings('ignore:`GitHubProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning')
+@pytest.mark.parametrize(
+    'provider',
+    [
+        'cerebras',
+        'crusoe',
+        'deepseek',
+        'fireworks',
+        'github',
+        'meta',
+        'nebius',
+        'openrouter',
+        'ovhcloud',
+        'together',
+        'vercel',
+    ],
+)
+def test_provider_base_url_replaces_the_default(provider: str):
+    provider_cls = cast(Callable[..., Provider[Any]], infer_provider_class(provider))
+    custom = provider_cls(api_key='api-key', base_url='https://gateway.example/v1')
+    assert custom.base_url == 'https://gateway.example/v1' != provider_cls(api_key='api-key').base_url
+    assert custom.client.base_url == 'https://gateway.example/v1/'
 
 
 @pytest.mark.parametrize('removed_prefix', ['google-gla', 'google-vertex', 'vertexai'])
