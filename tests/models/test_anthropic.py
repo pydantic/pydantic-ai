@@ -4,7 +4,7 @@ import json
 import os
 import re
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
@@ -69,8 +69,17 @@ from pydantic_ai import (
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._utils import PeekableAsyncStream
-from pydantic_ai.capabilities import AbstractCapability, Capability, Citations, NativeTool, ToolSearch
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    Citations,
+    Hooks,
+    ModelFallback,
+    NativeTool,
+    ToolSearch,
+)
+from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
@@ -80,7 +89,9 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
     UploadedFile,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import (
     SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
@@ -123,6 +134,11 @@ from .conftest import (
     message_shape,
 )
 from .mock_async_stream import MockAsyncStream
+
+with try_import() as otel_sdk_imports_successful:
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 with try_import() as imports_successful:
     from anthropic import (
@@ -777,6 +793,7 @@ class MockAnthropic:
     index = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.anthropic.com'
+    default_headers: dict[str, str] = field(default_factory=dict[str, str])
 
     @property
     def timeout(self) -> Any:
@@ -897,6 +914,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                     cost=Decimal('0.000044'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -921,6 +939,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                     cost=Decimal('0.000044'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -2426,6 +2445,53 @@ async def test_anthropic_betas_merge_with_other_sources(allow_model_requests: No
     assert 'custom-feature-1' in betas
 
 
+@pytest.mark.parametrize(
+    'header',
+    # Ids that differ by more than case, so the cassettes don't collide on a case-insensitive file system.
+    [
+        pytest.param('anthropic-beta', id='lowercase'),
+        pytest.param('Anthropic-Beta', id='titlecase'),
+        pytest.param('ANTHROPIC-BETA', id='uppercase'),
+    ],
+)
+@pytest.mark.parametrize(
+    'value,anthropic_betas,expected',
+    [
+        pytest.param('files-api-2025-04-14', [], ['files-api-2025-04-14'], id='header-only'),
+        pytest.param(
+            'files-api-2025-04-14',
+            ['interleaved-thinking-2025-05-14'],
+            ['files-api-2025-04-14,interleaved-thinking-2025-05-14'],
+            id='with-setting',
+        ),
+        # Outside the declared type, but what an unset environment variable reads as.
+        pytest.param(None, ['interleaved-thinking-2025-05-14'], ['interleaved-thinking-2025-05-14'], id='no-value'),
+    ],
+)
+async def test_anthropic_beta_extra_header_merges_in_any_spelling(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    header: str,
+    value: str | None,
+    anthropic_betas: list[str],
+    expected: list[str],
+):
+    """An `anthropic-beta` in `extra_headers` merges with the other betas whatever the spelling of its name.
+
+    The SDK folds header names case-insensitively, so a per-request `Anthropic-Beta` would replace the header it
+    builds from `betas` and drop every other beta.
+    """
+    settings = AnthropicModelSettings(
+        extra_headers={header: value},  # pyright: ignore[reportArgumentType]
+        anthropic_betas=anthropic_betas,
+    )
+    await Agent(anthropic_model('claude-haiku-4-5', capture=True)).run('Hello', model_settings=settings)
+
+    [request_headers] = request_capture.headers
+    assert request_headers.get_list('anthropic-beta') == expected
+
+
 async def test_anthropic_native_output_decimal_strict(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
 
@@ -2934,6 +3000,188 @@ async def test_unified_cache_trims_oldest_cache_point(allow_model_requests: None
     ]
 
 
+@dataclass
+class CacheBreakpointsCase:
+    id: str
+    prompt: list[UserContent]
+    cache: bool
+    expected: dict[str, dict[str, list[str]]]
+
+
+CACHE_BREAKPOINTS_CASES = [
+    CacheBreakpointsCase(
+        id='dropped',
+        # The instruction, tool definition and automatic breakpoints take 3 of the 4 slots, so only the newest
+        # `CachePoint` is applied, and the span shows which one was dropped.
+        prompt=['Context 1', CachePoint(), 'Context 2', CachePoint(), 'Question'],
+        cache=True,
+        expected=snapshot(
+            {
+                'chat claude-haiku-4-5': {
+                    'pydantic_ai.cache.requested_breakpoints': [
+                        'system[1]',
+                        'tools[0]',
+                        'messages[0].content[0]',
+                        'messages[0].content[1]',
+                        'automatic',
+                    ],
+                    'pydantic_ai.cache.applied_breakpoints': [
+                        'system[1]',
+                        'tools[0]',
+                        'messages[0].content[1]',
+                        'automatic',
+                    ],
+                }
+            }
+        ),
+    ),
+    CacheBreakpointsCase(
+        id='all_fit',
+        prompt=['Context', CachePoint(), 'Question'],
+        cache=True,
+        expected=snapshot(
+            {
+                'chat claude-haiku-4-5': {
+                    'pydantic_ai.cache.requested_breakpoints': [
+                        'system[1]',
+                        'tools[0]',
+                        'messages[0].content[0]',
+                        'automatic',
+                    ],
+                    'pydantic_ai.cache.applied_breakpoints': [
+                        'system[1]',
+                        'tools[0]',
+                        'messages[0].content[0]',
+                        'automatic',
+                    ],
+                }
+            }
+        ),
+    ),
+    CacheBreakpointsCase(id='none', prompt=['Question'], cache=False, expected=snapshot({})),
+]
+
+
+def _cache_breakpoint_attributes(exporter: InMemorySpanExporter) -> dict[str, dict[str, list[str]]]:
+    """The requested and applied cache breakpoints, by the name of every span that records them."""
+    return {
+        span.name: {
+            key: list(cast(Sequence[str], value)) for key, value in attributes.items() if key.endswith('_breakpoints')
+        }
+        for span in exporter.get_finished_spans()
+        if (attributes := span.attributes) and 'pydantic_ai.cache.requested_breakpoints' in attributes
+    }
+
+
+def _cache_breakpoints_agent(
+    client: AsyncAnthropic, exporter: InMemorySpanExporter, *, cache: bool
+) -> Agent[None, str]:
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=client))
+    agent = Agent(
+        model,
+        instructions='System instructions.',
+        model_settings=ModelSettings(cache=cache),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(tracer_provider=tracer_provider))],
+    )
+
+    @agent.tool_plain
+    def my_tool() -> str:  # pragma: no cover
+        return 'result'
+
+    return agent
+
+
+@pytest.mark.skipif(not otel_sdk_imports_successful(), reason='opentelemetry-sdk not installed')
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CACHE_BREAKPOINTS_CASES])
+async def test_cache_breakpoints_recorded_on_request_span(
+    allow_model_requests: None, case: CacheBreakpointsCase, stream: bool
+):
+    """The model-request span lists the cache breakpoints the request asked for and the ones that fit Anthropic's
+    limit of four, so a dropped `CachePoint` shows up in tracing."""
+    client = cast(
+        AsyncAnthropic,
+        MockAnthropic(
+            messages_=completion_message(
+                [BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1)
+            ),
+            stream=[
+                BetaRawMessageStartEvent(
+                    type='message_start',
+                    message=BetaMessage(
+                        id='msg_1',
+                        model='claude-haiku-4-5',
+                        role='assistant',
+                        type='message',
+                        content=[],
+                        stop_reason=None,
+                        usage=BetaUsage(input_tokens=5, output_tokens=0),
+                    ),
+                ),
+                BetaRawContentBlockStartEvent(
+                    type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text='ok')
+                ),
+                BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+                BetaRawMessageDeltaEvent(
+                    type='message_delta',
+                    delta=Delta(stop_reason='end_turn'),
+                    usage=BetaMessageDeltaUsage(output_tokens=1),
+                ),
+                BetaRawMessageStopEvent(type='message_stop'),
+            ],
+        ),
+    )
+    exporter = InMemorySpanExporter()
+    agent = _cache_breakpoints_agent(client, exporter, cache=case.cache)
+
+    if stream:
+        async with agent.run_stream(case.prompt) as result:
+            assert await result.get_output() == 'ok'
+    else:
+        assert (await agent.run(case.prompt)).output == 'ok'
+
+    assert _cache_breakpoint_attributes(exporter) == case.expected
+
+
+@pytest.mark.skipif(not otel_sdk_imports_successful(), reason='opentelemetry-sdk not installed')
+async def test_cache_breakpoints_not_recorded_by_count_tokens(allow_model_requests: None):
+    """`count_tokens` builds and trims the same request before the model-request span opens, but only the request
+    records its breakpoints, on its own span."""
+    client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    exporter = InMemorySpanExporter()
+    agent = _cache_breakpoints_agent(client, exporter, cache=True)
+
+    await agent.run(
+        ['Context 1', CachePoint(), 'Context 2', CachePoint(), 'Question'],
+        usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True),
+    )
+
+    assert len(get_mock_chat_completion_kwargs(client)) == 2  # the token count, then the request
+    assert _cache_breakpoint_attributes(exporter) == snapshot(
+        {
+            'chat claude-haiku-4-5': {
+                'pydantic_ai.cache.requested_breakpoints': [
+                    'system[1]',
+                    'tools[0]',
+                    'messages[0].content[0]',
+                    'messages[0].content[1]',
+                    'automatic',
+                ],
+                'pydantic_ai.cache.applied_breakpoints': [
+                    'system[1]',
+                    'tools[0]',
+                    'messages[0].content[1]',
+                    'automatic',
+                ],
+            }
+        }
+    )
+
+
 async def test_anthropic_cache_with_explicit_breakpoints(allow_model_requests: None):
     """Test combining automatic caching with explicit cache breakpoints."""
     c = completion_message(
@@ -3263,6 +3511,7 @@ async def test_request_stream_fallback_for_high_max_tokens(
                     cost=Decimal('0.000076'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3311,6 +3560,7 @@ async def test_request_structured_response(allow_model_requests: None):
                     cost=Decimal('0.0000224'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3392,6 +3642,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000056'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3432,6 +3683,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000104'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3464,6 +3716,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cost=Decimal('0.0000224'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsNow(tz=UTC),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -3856,6 +4109,7 @@ async def test_stream_structured(allow_model_requests: None):
                     parts=[TextPart(content='FINAL_PAYLOAD')],
                     usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
                     model_name='claude-3-5-haiku-123',
+                    model_id='anthropic:claude-haiku-4-5',
                     timestamp=IsDatetime(),
                     provider_name='anthropic',
                     provider_url='https://api.anthropic.com',
@@ -4322,7 +4576,9 @@ async def test_anthropic_citations_request_setting(
 
     await Agent(
         model,
-        capabilities=[NativeTool(WebFetchTool(enable_citations=enable_citations))],
+        capabilities=[
+            NativeTool(WebFetchTool(provider_settings={'anthropic': {'enable_citations': enable_citations}}))
+        ],
         model_settings=ModelSettings(citations=citations),
     ).run(
         [
@@ -4433,10 +4689,15 @@ async def test_anthropic_citations_with_forced_tool_raises(
     assert get_mock_chat_completion_kwargs(mock_client) == []
 
 
-async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(allow_model_requests: None) -> None:
-    """With no document or Web Fetch tool, the setting doesn't change the request, so a forced tool call is allowed.
+@pytest.mark.parametrize('web_search', [pytest.param(False, id='nothing'), pytest.param(True, id='web-search')])
+async def test_anthropic_citations_with_forced_tool_without_document_or_web_fetch(
+    allow_model_requests: None, web_search: bool
+) -> None:
+    """With no document or Web Fetch tool, a forced tool call is allowed.
 
-    Unit test: it pins that the run goes ahead.
+    That includes web search, which the setting sends with direct calls on models with the `20260209` web tools.
+
+    Unit test: it pins that the run goes ahead, and the callers sent.
     """
     mock_client = MockAnthropic.create_mock(
         [
@@ -4448,8 +4709,12 @@ async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(allow_mo
         ]
     )
     agent = Agent(
-        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
-        capabilities=[Citations(), _ForceToolOnFirstStep('required')],
+        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client)),
+        capabilities=[
+            Citations(),
+            _ForceToolOnFirstStep('required'),
+            *([NativeTool(WebSearchTool())] if web_search else []),
+        ],
     )
 
     @agent.tool_plain
@@ -4459,6 +4724,11 @@ async def test_anthropic_citations_with_forced_tool_and_nothing_to_cite(allow_mo
     result = await agent.run('Save a summary of the returns policy.')
 
     assert result.output == 'Saved.'
+    assert [
+        tool.get('allowed_callers')
+        for tool in get_mock_chat_completion_kwargs(mock_client)[0]['tools']
+        if tool.get('name') == 'web_search'
+    ] == ([['direct']] if web_search else [])
 
 
 @pytest.mark.parametrize('citations', [pytest.param(False, id='off'), pytest.param(True, id='on')])
@@ -4925,6 +5195,7 @@ async def test_anthropic_model_instructions(
                     cost=Decimal('0.000388'),
                 ),
                 model_name='claude-opus-5-5',
+                model_id='anthropic:claude-opus-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -4980,6 +5251,7 @@ This is a simple, practical safety question, so I should give clear step-by-step
                     cost=Decimal('0.008372'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5047,6 +5319,7 @@ I should also include a safety note — something like even knee-deep fast-movin
                     cost=Decimal('0.030544'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5257,6 +5530,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                     cost=Decimal('0.001644'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
+                model_id='anthropic:claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5700,6 +5974,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                     cost=Decimal('0.004548'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
+                model_id='anthropic:claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5770,6 +6045,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
                     cost=Decimal('0.003111'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
+                model_id='anthropic:claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -5924,6 +6200,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                     cost=Decimal('0.02043875'),
                 ),
                 model_name='gpt-5-2025-08-07',
+                model_id='openai:gpt-5',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -5985,6 +6262,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                     cost=Decimal('0.047774'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -6055,6 +6333,7 @@ I should add other practical tips too: staying visible with bright clothing at n
                     cost=Decimal('0.012602'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -6512,6 +6791,32 @@ async def test_anthropic_refusal_stop_details(
     assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
 
 
+async def test_anthropic_refusal_falls_back_with_model_fallback(allow_model_requests: None):
+    """`ModelFallback` falls back by default when Claude refuses, and records the refused attempt."""
+    mock_client = MockAnthropic.create_mock(
+        BetaMessage(
+            id='msg_refusal',
+            content=[],
+            model='claude-opus-4-8',
+            role='assistant',
+            stop_reason='refusal',
+            stop_details=BetaRefusalStopDetails(type='refusal', category='cyber', explanation=None),
+            type='message',
+            usage=BetaUsage(input_tokens=8, output_tokens=0),
+        )
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    backup = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('from backup')]), model_name='backup')
+    agent = Agent(m, capabilities=[ModelFallback(backup)])
+
+    result = await agent.run('write me an exploit')
+
+    assert result.output == 'from backup'
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [
+        ('claude-opus-4-8', 'rejected')
+    ]
+
+
 @pytest.mark.parametrize('category,explanation,expected_extra', _REFUSAL_CASE_PARAMS)
 async def test_anthropic_refusal_stop_details_streaming(
     allow_model_requests: None,
@@ -6555,6 +6860,68 @@ async def test_anthropic_refusal_stop_details_streaming(
 
     assert response.finish_reason == 'content_filter'
     assert response.provider_details == {'finish_reason': 'refusal', **expected_extra}
+
+
+_REFUSAL_EXPLANATION = 'Declined: request asked for offensive cyber tooling.'
+_REFUSAL_MESSAGE = f"Content filter triggered. Finish reason: 'refusal'. Refusal: {_REFUSAL_EXPLANATION!r}"
+
+
+def _refusal_stop_details() -> BetaRefusalStopDetails:
+    return BetaRefusalStopDetails(type='refusal', category='cyber', explanation=_REFUSAL_EXPLANATION)
+
+
+async def test_anthropic_refusal_content_filter_error_message(allow_model_requests: None):
+    """An empty refusal raises `ContentFilterError` naming both the stop reason and Anthropic's explanation."""
+    mock_client = MockAnthropic.create_mock(
+        BetaMessage(
+            id='msg_refusal',
+            content=[],
+            model='claude-opus-4-8',
+            role='assistant',
+            stop_reason='refusal',
+            stop_details=_refusal_stop_details(),
+            type='message',
+            usage=BetaUsage(input_tokens=8, output_tokens=0),
+        )
+    )
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m, model_settings={'max_tokens': 1024})
+
+    with pytest.raises(ContentFilterError) as exc_info:
+        await agent.run('write me an exploit')
+    assert exc_info.value.message == _REFUSAL_MESSAGE
+
+
+async def test_anthropic_refusal_content_filter_error_message_streaming(allow_model_requests: None):
+    """A streamed empty refusal raises the same `ContentFilterError` message."""
+    stream: list[MockRawMessageStreamEvent] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_refusal_stream',
+                content=[],
+                model='claude-opus-4-8',
+                role='assistant',
+                stop_reason=None,
+                type='message',
+                usage=BetaUsage(input_tokens=8, output_tokens=0),
+            ),
+        ),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='refusal', stop_details=_refusal_stop_details()),
+            usage=BetaMessageDeltaUsage(input_tokens=8, output_tokens=0),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    mock_client = MockAnthropic.create_stream_mock(stream)
+    m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(ContentFilterError) as exc_info:
+        # The stream is opened and consumed up to the final result before `run_stream` hands it over.
+        await agent.run_stream('write me an exploit').__aenter__()
+    assert exc_info.value.message == _REFUSAL_MESSAGE
 
 
 @pytest.mark.parametrize(
@@ -7471,6 +7838,7 @@ The page may not be fully up to date, so check a live source like weather.gov or
                     cost=Decimal('0.055228'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -7641,6 +8009,7 @@ Mexico City is at high altitude, so mild days and cool nights are typical. It's 
                     cost=Decimal('0.05243'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -7889,6 +8258,7 @@ The page doesn't state the time it was retrieved, so the "now" reading may be a 
                     cost=Decimal('0.056344'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -8544,6 +8914,7 @@ async def test_anthropic_web_fetch_tool(
                     cost=Decimal('0.084032'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -8658,6 +9029,7 @@ async def test_anthropic_web_fetch_tool(
                     cost=Decimal('0.084032'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -8709,6 +9081,7 @@ The page is about **Pydantic AI**, an agent framework for Python. It mentions se
                     cost=Decimal('0.075198'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -8861,6 +9234,7 @@ async def test_anthropic_web_fetch_tool_stream(
                     cost=Decimal('0.083242'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -9093,8 +9467,7 @@ async def test_anthropic_web_fetch_tool_with_parameters():
     web_fetch_tool = WebFetchTool(
         max_uses=5,
         allowed_domains=['example.com', 'ai.pydantic.dev'],
-        enable_citations=True,
-        max_content_tokens=50000,
+        provider_settings={'anthropic': {'enable_citations': True, 'max_content_tokens': 50000}},
     )
 
     model_request_parameters = ModelRequestParameters(
@@ -9170,7 +9543,14 @@ def test_anthropic_advisor_tool_request_shape():
     m = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='test-key'))
 
     full = ModelRequestParameters(
-        native_tools=[AdvisorTool(model='claude-opus-4-8', max_uses=2, max_tokens=2048, caching='1h')],
+        native_tools=[
+            AdvisorTool(
+                model='claude-opus-4-8',
+                max_uses=2,
+                max_tokens=2048,
+                provider_settings={'anthropic': {'caching': '1h'}},
+            )
+        ],
     )
     tools, _, beta_features = m._add_native_tools([], full, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
     advisor_param = next(t for t in tools if t.get('name') == 'advisor')
@@ -9783,6 +10163,7 @@ async def test_anthropic_mcp_servers(allow_model_requests: None, anthropic_api_k
                     cost=Decimal('0.016258'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -9868,6 +10249,7 @@ Pydantic AI builds on Pydantic. It uses Pydantic for type-safe structured output
                     cost=Decimal('0.025486'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10039,6 +10421,7 @@ The project also uses AI-assisted development. It keeps agent guidelines in file
                     cost=Decimal('0.012884'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10269,6 +10652,7 @@ async def test_anthropic_code_execution_tool(
                     cost=Decimal('0.012474'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10332,6 +10716,7 @@ async def test_anthropic_code_execution_tool(
                     cost=Decimal('0.01247'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10432,6 +10817,7 @@ async def test_anthropic_code_execution_tool_stream(
                     cost=Decimal('0.013602'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10704,6 +11090,7 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
                     cost=Decimal('0.000834'),
                 ),
                 model_name='gpt-4.1-2025-04-14',
+                model_id='openai:gpt-4.1',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
@@ -10848,6 +11235,7 @@ async def test_anthropic_tool_output(
                     cost=Decimal('0.00116'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10890,6 +11278,7 @@ async def test_anthropic_tool_output(
                     cost=Decimal('0.001704'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -10967,6 +11356,7 @@ async def test_anthropic_text_output_function(
                     cost=Decimal('0.001028'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11007,6 +11397,7 @@ async def test_anthropic_text_output_function(
                     cost=Decimal('0.001722'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11085,6 +11476,7 @@ Don't include any text or Markdown fencing before or after.
                     cost=Decimal('0.001228'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11121,6 +11513,7 @@ Don't include any text or Markdown fencing before or after.
                     cost=Decimal('0.001252'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11198,6 +11591,7 @@ Don't include any text or Markdown fencing before or after.
                     cost=Decimal('0.001102'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -11536,6 +11930,7 @@ async def test_anthropic_text_editor_code_execution_tool(
                     cost=Decimal('0.020992'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -14698,6 +15093,99 @@ A later <context> element with the same id replaces the earlier one and stays in
     assert called_revealed_tool
 
 
+def _refunds_loaded_from_code(model: AnthropicModel, *, keep_load_capability_tool: bool) -> Agent[None, str]:
+    """An agent whose `open_ticket` tool loads the deferred `refunds` capability with `ctx.load_capability`."""
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund tools.',
+        instructions='Always give the refund date in the format DD/MM/YYYY.',
+        defer_loading=True,
+    )
+
+    @refunds.tool_plain
+    def refund_status(order_id: str) -> str:
+        """Look up the refund status for an order."""
+        return f'Order {order_id}: refund issued on 2026-05-01.'
+
+    capabilities: list[AbstractCapability[None]] = [refunds]
+    if not keep_load_capability_tool:
+        # Every on-demand capability here is loaded from code, so the model is never offered `load_capability`.
+        hooks = Hooks[None]()
+
+        @hooks.on.before_model_request
+        async def drop_load_capability(
+            ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            params = request_context.model_request_parameters
+            request_context.model_request_parameters = replace(
+                params, function_tools=[tool for tool in params.function_tools if tool.name != 'load_capability']
+            )
+            return request_context
+
+        capabilities.append(hooks)
+    agent = Agent(
+        model,
+        deps_type=type(None),
+        model_settings={'thinking': True},
+        capabilities=capabilities,
+        instructions=(
+            'First call open_ticket on its own. Once it returns, call refund_status for the order. '
+            'Never call load_capability.'
+        ),
+    )
+
+    @agent.tool
+    async def open_ticket(ctx: RunContext[None]) -> str:
+        """Open the customer's support ticket for order ABC-123."""
+        ctx.load_capability('refunds')
+        return 'Ticket for order ABC-123 opened.'
+
+    return agent
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize('keep_load_capability_tool', [True, False], ids=['with-load-tool', 'without-load-tool'])
+async def test_anthropic_load_capability_from_code(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    keep_load_capability_tool: bool,
+):
+    """Anthropic accepts a load from code, which records no `load_capability` call, with thinking enabled.
+
+    It's accepted whether or not the request has a `load_capability` tool: the request after the load carries the
+    capability's instructions as a system message and its tool, and the model calls the tool and follows them.
+    """
+    agent = _refunds_loaded_from_code(
+        anthropic_model('claude-haiku-4-5', capture=True), keep_load_capability_tool=keep_load_capability_tool
+    )
+
+    result = await agent.run('Where is my refund for order ABC-123?')
+
+    body = request_capture.body('/v1/messages', index=1)
+    tools = cast(list[dict[str, Any]], body['tools'])
+    tool_names = [tool['name'] for tool in tools]
+    assert ('load_capability' in tool_names, 'refund_status' in tool_names) == (keep_load_capability_tool, True)
+    # After the model's first turn: the load is the reveal of `refund_status` this adapter renders as a
+    # `search_tools` exchange, and the capability's instructions as system text; no `load_capability` call.
+    assert message_shape(body)[2:] == snapshot(
+        [('user', ['tool_result']), ('assistant', ['tool_use']), ('user', ['tool_result', 'text'])]
+    )
+    messages = cast(list[dict[str, Any]], body['messages'])
+    assert [block['name'] for message in messages for block in message['content'] if block['type'] == 'tool_use'] == [
+        'open_ticket',
+        'search_tools',
+    ]
+    assert [
+        part.tool_name
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ] == ['open_ticket', 'refund_status']
+    assert '01/05/2026' in result.output
+
+
 @pytest.mark.vcr()
 @pytest.mark.parametrize(
     'native_tool,wire_tool,input_tokens',
@@ -15590,11 +16078,11 @@ async def test_anthropic_container_setting_dict_with_skills_passed_through(allow
 
 
 async def test_anthropic_container_from_message_history(allow_model_requests: None):
-    """Test that container_id from message history is passed to subsequent requests."""
+    """Test that container_id from message history is passed to subsequent requests with code execution."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock([c, c])
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Create a message history with a container_id in provider_details
     history: list[ModelMessage] = [
@@ -15613,12 +16101,42 @@ async def test_anthropic_container_from_message_history(allow_model_requests: No
     assert completion_kwargs['container'] == 'container_from_history'
 
 
+@pytest.mark.parametrize(
+    'base_url', ['https://gateway-a.example', 'https://gateway-b.example'], ids=['same-endpoint', 'other-endpoint']
+)
+async def test_anthropic_container_from_history_scoped_by_endpoint(allow_model_requests: None, base_url: str):
+    """A code execution container from another endpoint with the same `provider_name` isn't reused.
+
+    https://github.com/pydantic/pydantic-ai/issues/11508
+    """
+    producer_client = MockAnthropic.create_mock(
+        completion_message(
+            [BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10)
+        ).model_copy(update={'container': BetaContainer(id='container_a', expires_at=datetime(2025, 1, 1))})
+    )
+    cast(MockAnthropic, producer_client).base_url = 'https://gateway-a.example'
+    producer = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=producer_client)))
+    history = (await producer.run('hello')).all_messages()
+
+    c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    cast(MockAnthropic, mock_client).base_url = base_url
+    agent = Agent(
+        AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)),
+        capabilities=[NativeTool(CodeExecutionTool())],
+    )
+    await agent.run('follow up', message_history=history)
+
+    container = get_mock_chat_completion_kwargs(mock_client)[0].get('container')
+    assert container == ('container_a' if base_url == 'https://gateway-a.example' else OMIT)
+
+
 async def test_anthropic_container_setting_false_ignores_history(allow_model_requests: None):
     """Test that anthropic_container=False ignores container_id from history."""
     c = completion_message([BetaTextBlock(text='world', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MockAnthropic.create_mock(c)
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(m)
+    agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())])
 
     # Create a message history with a container_id
     history: list[ModelMessage] = [
@@ -15776,6 +16294,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                     cost=Decimal('0.012474'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -15829,6 +16348,7 @@ async def test_anthropic_code_execution_tool_container_reuse(
                     cost=Decimal('0.01291'),
                 ),
                 model_name='claude-sonnet-5-5',
+                model_id='anthropic:claude-sonnet-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -15972,6 +16492,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                     cost=Decimal('0.000028'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-sonnet-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -16082,6 +16603,7 @@ async def test_stream_cancel(allow_model_requests: None):
                     input_tokens=5, details={'input_tokens': 5, 'output_tokens': 0}, cost=Decimal('0.000005')
                 ),
                 model_name='claude-haiku-4-5-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -16836,6 +17358,7 @@ async def test_pause_turn_continues_run(allow_model_requests: None):
                     cost=Decimal('0.0000456'),
                 ),
                 model_name='claude-3-5-haiku-123',
+                model_id='anthropic:claude-haiku-4-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
@@ -17167,6 +17690,7 @@ async def test_anthropic_model_retrying_after_empty_response(allow_model_request
                     cost=Decimal('0.0000082'),
                 ),
                 model_name='claude-haiku-5-5',
+                model_id='anthropic:claude-haiku-5-5',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',

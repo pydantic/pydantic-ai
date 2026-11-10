@@ -86,12 +86,12 @@ fi
 
 `/bin/sh` is absolute, so the host does not resolve the launcher through `PATH`. The script then
 skips relative entries and anything inside the writable working directory, compared as canonical
-paths: a command can plant
-`bwrap`, `sh` or `base64` there, and the next call would otherwise run that plant on the host,
-before the sandbox exists. It also refuses to start when `/bin/sh` itself is inside that directory,
-because the absolute launcher would then be writable. With the network off, `base64` is chosen the
-same way and decodes the seccomp filter onto descriptor 3. The filter travels on the command line
-because `bwrap` may run on another host, which receives a command, not open files.
+paths: a command can plant `bwrap`, `sh` or `base64` there, and the next call would otherwise run
+that plant on the host, before the sandbox exists. It also refuses to start when `/bin/sh` itself
+is inside that directory, because the absolute launcher would then be writable. With the network
+off, `base64` is chosen the same way and decodes the seccomp filter onto descriptor 3. The filter
+travels on the command line because `bwrap` may run on another host, which receives a command, not
+open files.
 """
 
 _LOGIN_PATHS = ('.ssh/', '.config/fish/', '.bashrc', '.zshenv', '.cshrc', '.tcshrc', '.pam_environment')
@@ -188,6 +188,25 @@ _PROBE_TIMEOUT = 30.0
 def _contains(root: str, path: str) -> bool:
     """Whether the normalized absolute `path` is `root` or inside it."""
     return root == '/' or path == root or path.startswith(root + '/')
+
+
+def _login_path_kinds(root: str, *, home: str, zdotdir: str) -> dict[str, str]:
+    """The protected login paths inside `root`, and the directories between them and `root`, each with its kind."""
+    # Path to kind, as `_ENSURE_LOGIN_PATHS` takes them: `p` for a parent pinned in place by binding it onto
+    # itself, `d` for a protected directory, `f` for a protected file.
+    kinds: dict[str, str] = {}
+    protected = [(posixpath.join(home, name.rstrip('/')), 'd' if name.endswith('/') else 'f') for name in _LOGIN_PATHS]
+    if zdotdir and zdotdir != home:
+        protected.append((posixpath.join(zdotdir, '.zshenv'), 'f'))
+    for path, kind in protected:
+        if not _contains(root, path):
+            continue
+        kinds[path] = kind
+        parent = posixpath.dirname(path)
+        while parent != root and _contains(root, parent):
+            kinds.setdefault(parent, 'p')
+            parent = posixpath.dirname(parent)
+    return kinds
 
 
 class _SandboxedCommands(WorkspaceBackend, SupportsCommands):
@@ -374,8 +393,6 @@ class BubblewrapWorkspace(WrapperWorkspace):
                 "bubblewrap could not read the host account's home directory, so it cannot keep its "
                 'login files out of the writable sandbox'
             )
-        # ZDOTDIR overrides $HOME for zsh startup files. If set via sshd_config SetEnv to a directory inside
-        # the writable working directory, zsh would execute <ZDOTDIR>/.zshenv before bwrap starts.
         zdotdir_reported = await self.wrapped.run(['/bin/sh', '-c', _CANONICAL_ZDOTDIR], timeout=_PROBE_TIMEOUT)
         zdotdir = zdotdir_reported.stdout.removesuffix('\n')
         if zdotdir_reported.exit_code != 0:
@@ -383,23 +400,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
                 'bubblewrap found a relative ZDOTDIR, which zsh would resolve against the working directory; '
                 'this cannot be made safe inside the sandbox'
             )
-        root = posixpath.normpath(working_dir)
-        # Path to kind, as `_ENSURE_LOGIN_PATHS` takes them: `p` for a parent pinned in place by binding it onto
-        # itself, `d` for a protected directory, `f` for a protected file.
-        kinds: dict[str, str] = {}
-        protected = [
-            (posixpath.join(home, name.rstrip('/')), 'd' if name.endswith('/') else 'f') for name in _LOGIN_PATHS
-        ]
-        if zdotdir and zdotdir != home:
-            protected.append((posixpath.join(zdotdir, '.zshenv'), 'f'))
-        for path, kind in protected:
-            if not _contains(root, path):
-                continue
-            kinds[path] = kind
-            parent = posixpath.dirname(path)
-            while parent != root and _contains(root, parent):
-                kinds.setdefault(parent, 'p')
-                parent = posixpath.dirname(parent)
+        kinds = _login_path_kinds(posixpath.normpath(working_dir), home=home, zdotdir=zdotdir)
         # Sorted, a parent comes before what's inside it, both to be created and to be mounted.
         paths = sorted(kinds)
         if paths:

@@ -24,9 +24,8 @@ pip install "pydantic-ai-harness[coder]"
 ```
 
 The extra installs `ripgrep==14.1.0` except on Android, where `rg` must be supplied separately on `PATH`.
-In a workspace without `rg`, such as a sandbox image that lacks it, `list_files` and `grep` use a single POSIX git/grep/find command instead.
 
-For remote workspaces, use the file tools (`grep`, `list_files`, `read_file`) instead of sending whole files through shell `cat`. Install `rg` and `git` in the sandbox image for fast search (the Coder extra installs `rg` on the agent host, not in a remote image). For large or generated trees, run `rg -n 'pattern' path` or `rg --files` through Shell and cap its output. Without `rg`, command-capable POSIX workspaces use one in-sandbox git/grep/find command for `grep` and `list_files` (after an initial `rg` probe). Backends that are filesystem-only use bounded file walks. The POSIX fallback honors nested `.gitignore` in repositories and search-root `.ignore` with git available; nested `.ignore` rules are not applied by the POSIX fallback, and rg-specific regex features require `rg`. Without git, the POSIX fallback cannot apply ignore files. Searches report output and result caps rather than presenting partial results as complete.
+For remote workspaces, use the file tools (`grep`, `list_files`, `read_file`) instead of sending whole files through shell `cat`. The Coder extra installs `rg` on the agent host, not in a remote image, so install `rg` and `git` in the sandbox image for fast search. For large or generated trees, run `rg -n 'pattern' path` or `rg --files` through Shell and cap its output. In a workspace without `rg`, `grep` and `list_files` fall back, after an initial `rg` probe, to one git/grep/find command in command-capable POSIX workspaces and to bounded file walks on filesystem-only backends. With git available, the POSIX fallback honors nested `.gitignore` in repositories and search-root `.ignore`, but not nested `.ignore`; without git, it cannot apply ignore files. rg-specific regex features require `rg`. Searches report output and result caps rather than presenting partial results as complete.
 Add a provider extra such as `[coder,anthropic]` when needed.
 `Coder` works in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/). Here that is the current directory on your machine:
 
@@ -45,7 +44,7 @@ result = agent.run_sync('Find out why tests/test_parser.py fails and fix the bug
 print(result.output)
 ```
 
-File paths resolve from the workspace's working directory, and commands start there. To work in an isolated cloud machine instead, swap `LocalWorkspace` for a sandbox capability (Modal, E2B, Sprites, Daytona, or boxd); the rest of the code stays the same. Commands run without an allowlist, and the file tools' path limits don't apply to them.
+File paths resolve from the workspace's working directory, and commands start there. To work in an isolated cloud machine instead, swap `LocalWorkspace` for a sandbox capability (Modal, E2B, Render, Sprites, Daytona, or boxd); the rest of the code stays the same. Commands run without an allowlist, and the file tools' path limits don't apply to them.
 
 With [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), for example:
 
@@ -126,8 +125,13 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
    Each file tool allows five consecutive retries (for a denied path or a stale edit) rather than the agent's default one,
    so a repeated correctable mistake does not end a long run.
 3. [`Shell`](https://pydantic.dev/docs/ai/harness/shell/)`(denied_commands=[], allow_interactive=True, default_timeout=270, tools=['shell'])`.
-4. [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/)`(expose_inventory_tool=False)` for repository instructions and structure.
-   Pass `repo_context=False` to leave it out when the agent already binds its own `RepoContext`, so the
+4. [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/)`(walk_up='repo_root')`
+   for repository instructions: the instruction file of each directory (`AGENTS.md`, else `CLAUDE.md`) from the repository root down to the working directory
+   at run start, and those in subdirectories when the agent first reads or lists something under them. A
+   subdirectory file that would take the conversation past `RepoContext`'s default budget of 32,000 characters of inlined
+   instructions is surfaced as a pointer instead.
+   Pass your own `RepoContext` as `repo_context=` to use it in this one's place, or `repo_context=False` to leave
+   it out when the agent already binds its own `RepoContext`, so the
    instruction files are not loaded twice.
 5. [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/)`(include_self=True, agent_folders=None)`, so the agent can hand a self-contained
    sub-task to a fresh run of itself (see below). Pass `sub_agents=False` to leave it out.
@@ -140,9 +144,13 @@ Then the plumbing, which the agent never calls directly:
    without adding a spill-retrieval tool. Its stable ID, `coder_tool_output_limits`, lets durability
    capabilities bind its inherited operations without colliding with a separately configured `ToolOutputLimits`.
 8. [`RepairToolArguments`](https://pydantic.dev/docs/ai/harness/repair-tool-arguments/) repairs malformed JSON tool arguments before normal validation (see below).
-9. Prompt caching, the same as [`Caching()`](https://pydantic.dev/docs/ai/capabilities/caching/) unless the model, the agent, or a capability listed before
+9. Once a tool's retries run out while it executes, its last error goes back to the model as a failed tool result
+   with a prompt to try a different approach, rather than ending the run. This covers every tool, `delegate_task`
+   included, so consecutive delegate failures do not abort the parent. Running out on argument validation
+   (see item 8) still ends the run, and usage limits still bound a model that never changes course.
+10. Prompt caching, the same as [`Caching()`](https://pydantic.dev/docs/ai/capabilities/caching/) unless the model, the agent, or a capability listed before
    `Coder` already sets `cache` (see below). Pass `caching=False` to leave it out.
-10. Strict mode off for `Coder`'s own tools (see below). Pass `strict=None` to leave it out.
+11. Strict mode off for `Coder`'s own tools (see below). Pass `strict=None` to leave it out.
 
 Every tool comes from `FileSystem`, `Shell`, or `SubAgents`; those pages document each one in full. Build the same
 agent from the pieces to change any setting, for example to keep content hashes, add `list_directory`,
@@ -218,7 +226,8 @@ accessible to commands in a local workspace.
 ## Instructions
 
 The default instructions keep engineering guidance brief: autonomous investigation and completion,
-focused changes and verification, and pragmatic DRY, YAGNI, SOLID, and the Zen of Python.
+focused changes and verification, pragmatic DRY, YAGNI, and the Zen of Python, and matching the
+surrounding code's style, structure, and imports rather than adding new abstractions.
 They also ask the agent to leave only the requested change in the project: check behavior with inline
 shell scripts rather than new files, add tests only where the project already has them, and delete
 scratch files before finishing.
@@ -287,6 +296,8 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 ## Upgrading
 
 `json-repair` moved from the base install to the `coder` and `repair-tool-arguments` extras. If you install plain `pydantic-ai-harness`, importing `Coder` or `coder_agent` raises an `ImportError`: install `pydantic-ai-harness[coder]`, or add `coder` to the extras you already use. If you use `RepairToolArguments` on its own, install `pydantic-ai-harness[repair-tool-arguments]`.
+
+`Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, one per directory with `AGENTS.md` ahead of `CLAUDE.md`, and inlines a subdirectory's instruction file the first time the agent reads or lists something under it, up to 32,000 characters per conversation. Its bundled `RepoContext` is now `RepoContext(walk_up='repo_root')`. This adds workspace `exists` and `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To get close to the old behavior, pass `Coder(repo_context=RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False))`. It only approximates it: a directory holding both files now loads only `CLAUDE.md`, where it used to load both.
 
 `Coder` now turns on prompt caching; pass `caching=False` or set `cache` yourself to keep the old behavior (see [Prompt caching](#prompt-caching)).
 

@@ -8,6 +8,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import hashlib
+import inspect
 import json
 import reprlib
 import time
@@ -15,12 +16,12 @@ import uuid
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Mapping, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from copy import copy
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
-from functools import cache, cached_property
+from functools import cache, cached_property, wraps
 from types import TracebackType
 from typing import (
     TYPE_CHECKING,
@@ -56,8 +57,11 @@ from .._framing import (
     CONVERSATION_SUMMARY_TAG,
     SYSTEM_TAG,
     SYSTEM_VOICE_ANNOUNCEMENT,
+    LookalikeSource,
+    context_lookalike_note,
     neutralize_tags,
     neutralize_voice_tag,
+    opens_context_element,
     wrap,
 )
 from .._genai_prices import lookup_context_window, preload_pricing_data
@@ -77,12 +81,21 @@ from .._instructions import (
     window_boundary_index,
 )
 from .._json_schema import (
+    InlinedSchemaTooLargeError,
     JsonSchemaTransformer,
     JsonSchemaTransformerWithOutputOverride,
 )
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
+from .._removed_names import removed_names_getattr
 from .._run_context import RunContext
+from .._special_tokens import (
+    StreamRestorer,
+    break_special_tokens,
+    break_special_tokens_in_messages,
+    restore_special_tokens_in_response,
+    restore_special_tokens_in_stream,
+)
 from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, UserError
@@ -91,8 +104,10 @@ from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
     BaseToolReturnPart,
+    BinaryContent,
     BinaryImage,
     CachePoint,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     DocumentMediaType,
     FilePart,
@@ -196,7 +211,11 @@ ModelContextDepsT = TypeVar('ModelContextDepsT')
 
 @cache
 def known_model_names() -> tuple[str, ...]:
-    """Return every model name known to [`KnownModelName`][pydantic_ai.models.KnownModelName].
+    """Return the model names [`KnownModelName`][pydantic_ai.models.KnownModelName] lists.
+
+    The list is curated for autocomplete and error suggestions: per provider and model line, the newest
+    model of the newest generation and of the previous one. It is not exhaustive of the model ids accepted
+    by providers and should not be used to validate user input.
 
     This is the public, stable way to enumerate the known model ids. Prefer it over introspecting
     the `KnownModelName` type alias directly (e.g. `get_args(KnownModelName.__value__)`), which is
@@ -811,9 +830,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the tuning knobs among them,
     like `temperature`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
 
-    This covers the fields a model class sends to its provider. `request_timeout` is enforced by Pydantic AI for
-    every model, and `thinking`, `cache` and `tool_choice` are resolved through the model profile, so they're not
-    listed here.
+    This covers the fields a model class sends to its provider. `request_timeout` and `first_event_timeout` are
+    enforced by Pydantic AI for every model, and `thinking`, `cache` and `tool_choice` are resolved through the model
+    profile, so they're not listed here.
 
     It's declared on the model class because whether a setting reaches the provider is mostly decided by the API and
     SDK the class speaks. The OpenAI model classes add the ignored settings their profile lists in
@@ -975,6 +994,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Get the model settings."""
         return self._settings
 
+    def _run_scope(self) -> AbstractAsyncContextManager[None]:
+        """The context an agent run holds around its requests to this model, unless it runs in a durable workflow.
+
+        Unlike `__aenter__`, it leaves the provider's HTTP client alone. A model can use it to keep a connection it
+        opens on demand open for the run. Wrappers should inherit from `WrapperModel`, or forward this context
+        manager to their wrapped models as `WrapperModel` and `FallbackModel` do. Without forwarding, wrapped
+        models cannot acquire run-scoped resources and may fall back to HTTP.
+        """
+        return nullcontext()
+
     def __eq__(self, other: object) -> bool:
         """Compare `settings`, `profile`, and the subclass's dataclass fields; a subclass that hashes by identity compares by identity."""
         if not isinstance(other, type(self)) or other.__class__ is not self.__class__:
@@ -997,6 +1026,64 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             shown.append(f'profile={self._profile!r}')
         return f'{self.__class__.__qualname__}({", ".join(shown)})'
 
+    _answers_requests_itself: ClassVar[bool] = True
+    """Whether this class's `request` and `request_stream` produce a model's output, as opposed to another `Model`'s."""
+
+    @property
+    def _restores_special_tokens(self) -> bool:
+        """Whether this model's responses lose the joiner that `prepare_messages` put inside each special token."""
+        if not self._answers_requests_itself:
+            return False
+        try:
+            return self.profile.get('may_tokenize_special_tokens_in_content', False)
+        except NotImplementedError:
+            # A third-party router with no profile of its own that doesn't set `_answers_requests_itself`: the models
+            # it answers through restore for themselves.
+            return False
+
+    @classmethod
+    def _restore_special_tokens_at_the_model_boundary(cls) -> None:
+        """Have each method of `cls` that returns a model's output remove the joiner `prepare_messages` put in its tokens.
+
+        Done here, for every model class, because a model copies the joiner into what it writes. A class that left this
+        out would corrupt the files its model edits, and everything after this boundary (tools, output validation,
+        users, stored history) sees the same value whichever way the response was produced.
+        """
+        request = cls.__dict__.get('request')
+        if inspect.iscoroutinefunction(request):
+
+            @wraps(request)
+            async def restoring_request(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
+                response = await request(self, *args, **kwargs)
+                return restore_special_tokens_in_response(response) if self._restores_special_tokens else response
+
+            cls.request = restoring_request
+
+        request_stream = cls.__dict__.get('request_stream')
+        if inspect.isfunction(request_stream):
+
+            @wraps(request_stream)
+            @asynccontextmanager
+            async def restoring_request_stream(
+                self: Model, *args: Any, **kwargs: Any
+            ) -> AsyncGenerator[StreamedResponse, None]:
+                async with request_stream(self, *args, **kwargs) as stream:
+                    if self._restores_special_tokens:
+                        stream._parts_manager.special_token_restorer = StreamRestorer()
+                    yield stream
+
+            cls.request_stream = restoring_request_stream
+
+        batch_decode = cls.__dict__.get('batch_decode')
+        if inspect.isfunction(batch_decode):
+
+            @wraps(batch_decode)
+            def restoring_batch_decode(self: Model, *args: Any, **kwargs: Any) -> ModelResponse:
+                response = batch_decode(self, *args, **kwargs)
+                return restore_special_tokens_in_response(response) if self._restores_special_tokens else response
+
+            cls.batch_decode = restoring_batch_decode
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         # `@dataclass` generates `__eq__` and `__repr__` from the subclass's own fields, which leaves out the
@@ -1018,6 +1105,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
             # Pydantic AI calls `resolve_cache_retention`, so route it to the legacy override.
             cls.resolve_cache_retention = legacy
+        cls._restore_special_tokens_at_the_model_boundary()
 
     def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve prompt cache retention requested by model settings.
@@ -1052,13 +1140,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Whether these (merged) settings include a provider-specific cache setting, which takes precedence."""
         return False
 
-    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
-        """Start the `request_timeout` deadline of a request to this model made now, if it's set here or on the model.
+    def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
+        """Start the deadlines of a request to this model made now, if they're set here or on the model.
 
-        A model that makes its requests through other models, each under a deadline of its own, overrides this to
-        return `None`, as [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
+        That's `request_timeout`'s, and on a streamed request `first_event_timeout`'s. A model that makes its
+        requests through other models, each under deadlines of their own, overrides this to return `None`, as
+        [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does.
         """
-        return RequestDeadline.start(self.model_name, merge_model_settings(self.settings, model_settings))
+        return RequestDeadline.start(
+            self.model_name, merge_model_settings(self.settings, model_settings), stream=stream
+        )
 
     def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
         """Whether a model that needs prompt caching configured on the request got no caching configuration at all.
@@ -1124,6 +1215,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     def _max_cache_retention(
         *cache_settings: CacheSetting | None,
     ) -> timedelta | None:
+        if '12h' in cache_settings:
+            return timedelta(hours=12)
         if '1h' in cache_settings:
             return timedelta(hours=1)
         if '30m' in cache_settings:
@@ -1179,8 +1272,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         Every model that sends such data back decides with this method, as does the trim that drops history
         before a compaction part, so the two always agree. Data that isn't accepted gets the model's fallback
-        for foreign data, such as thinking rendered as text. Stateful data, such as response, file and
-        container IDs, is only sent back to the same `provider_name`.
+        for foreign data, such as thinking rendered as text. Server-side state, such as response and container
+        IDs, is judged by [`accepts_server_state`][pydantic_ai.models.Model.accepts_server_state] instead.
 
         Args:
             response: The response the part is in.
@@ -1195,6 +1288,28 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             canonical_system=self.canonical_system,
             compatible_systems=self.compatible_systems,
         )
+
+    def accepts_server_state(self, response: ModelResponse) -> bool:
+        """Whether this model can send back the IDs of server-side state created by `response`.
+
+        That's state the API stores and looks up by ID, rather than verifying by its own key: stored responses
+        (`previous_response_id`), output item IDs, conversations and code execution containers. It's accepted
+        when the response has this model's `system` as its `provider_name` and was created at an endpoint this
+        model's provider [`shares_server_state_with`][pydantic_ai.providers.Provider.shares_server_state_with].
+        A response without a `provider_url`, such as one recorded by hand, and a model without a provider are
+        judged by `provider_name` alone. Stateless data has its own check,
+        [`accepts_stateless_artifacts`][pydantic_ai.models.Model.accepts_stateless_artifacts], so a response from
+        another endpoint of the same API still has its encrypted reasoning sent back, without the IDs.
+
+        Uploaded files aren't judged here: the endpoint an
+        [`UploadedFile`][pydantic_ai.messages.UploadedFile] is sent to is the one you pass it to.
+        """
+        if response.provider_name != self.system:
+            return False
+        provider = self.provider
+        if provider is None or response.provider_url is None:
+            return True
+        return provider.shares_server_state_with(response.provider_url)
 
     @property
     def _canonical_system_stamp(self) -> str | None:
@@ -1655,6 +1770,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             has_function_tools=bool(model_request_parameters.function_tools),
         )
 
+    def _format_inlined_text_file(self, text: str, *, media_type: str, identifier: str) -> str:
+        """Frame a text file for a message-mapping step that inlines it into a text prompt.
+
+        It's downloaded or decoded in that step, so `prepare_messages` can't have seen its text.
+        """
+        formatted = _utils.format_inlined_text_file(text, media_type=media_type, identifier=identifier)
+        if self.profile.get('may_tokenize_special_tokens_in_content', False):
+            return break_special_tokens(formatted)
+        return formatted
+
     def prepare_messages(
         self,
         messages: list[ModelMessage],
@@ -1682,6 +1807,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         mid-conversation effort change and the profile sets `supports_mid_conversation_effort`; everywhere else it
         drops them, so the current effort goes out as the request-level setting.
 
+        Drops [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart]s: the
+        model sees a capability's load as its instructions and tools, not as the record that loads it.
+
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
         `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
         instruction baseline or compaction. A change to a loaded deferred capability's block is kept
@@ -1690,6 +1818,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Renders each [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] with a `context_id` as the
         `<context>` element that id names, so a later statement of an appending dynamic system prompt replaces
         or withdraws the first.
+
+        Where the profile's `may_tokenize_special_tokens_in_content` is `True`, puts a zero-width joiner inside each
+        chat-template special token in user prompts, tool results and replayed model output, so a host can't encode it
+        as a control token. The same text always comes out the same, and the history itself isn't changed. The
+        joiner is removed again from each response, by `_restore_special_tokens_at_the_model_boundary`.
+
+        When the conversation has `<context>` elements, follows each user prompt, attached text file and tool result
+        whose text opens one with a note saying who wrote it, so the model doesn't take it as a change to its
+        instructions. The item itself is sent as written.
 
         Where the profile's `supports_request_scoped_system_prompts` is `False`, leaves out every
         [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] `SystemPromptPart` whose request has been answered
@@ -1723,14 +1860,21 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         inline_system = self.profile.get('supports_inline_system_prompts', False)
+        prefix = model_request_parameters.instruction_parts if model_request_parameters is not None else None
+        # Asked before the instruction state is projected, which drops the records it's read from.
+        first_context_request = _first_context_request(messages, prefix)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
-            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update.
+            # `_wrap_non_leading_system_prompts` below `<system>`-wraps the update. Projection must run
+            # while the history still carries a code load's `CapabilityLoadDeltaPart`: it's the only
+            # record of that load, and folding it in is what keeps a code-loaded block rendered across
+            # instruction windows. The records go out only after, never in the messages the model sees.
             messages = _project_instruction_state(
                 messages,
                 inline_system=inline_system,
-                prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
+                prefix=prefix,
             )
+        messages = _drop_capability_load_deltas(messages)
 
         messages = _render_system_prompt_contexts(
             messages,
@@ -1752,6 +1896,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
         messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
+        # After retry feedback becomes user text, and before any step below renders the application's own text.
+        messages = break_special_tokens_in_messages(messages, self.profile, self.accepts_stateless_artifacts)
+        if first_context_request is not None:
+            # Before the `<system>` wrap below, which turns each note into `<system>`-tagged user text where needed.
+            messages = _note_context_lookalikes(messages, first_context_request)
         # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
         # history was authored with, and an announcement opening the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
@@ -2131,7 +2280,8 @@ class StreamedResponse(ABC):
     """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
     was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
     _request_deadline: RequestDeadline | None = field(default=None, init=False, repr=False)
-    """The `ModelSettings['request_timeout']` deadline each pull of the next event runs under, if any.
+    """The `ModelSettings['request_timeout']` and `ModelSettings['first_event_timeout']` deadlines each pull of the next
+    event runs under, if any.
 
     Set before iteration starts by whoever opened the stream under that deadline."""
 
@@ -2242,14 +2392,16 @@ class StreamedResponse(ABC):
                     if not self._cancelled:
                         self._finished = True
 
-            events = self._get_event_iterator()
+            events = restore_special_tokens_in_stream(
+                self._get_event_iterator(), self._parts_manager.special_token_restorer
+            )
             if self._request_deadline is not None:
                 events = self._request_deadline.iterate(events)
             self._event_iterator = iterator_with_cancel_guard(iterator_with_part_end(iterator_with_final_event(events)))
         return self._event_iterator
 
     def _enforce_request_deadline(self, deadline: RequestDeadline) -> None:
-        """Pull each event under `deadline`, the `request_timeout` deadline this stream was opened under."""
+        """Pull each event under `deadline`, the deadlines this stream was opened under."""
         assert self._event_iterator is None, 'The request deadline must be set before the stream is iterated'
         self._request_deadline = deadline
 
@@ -2307,7 +2459,9 @@ class StreamedResponse(ABC):
         This method should be implemented by subclasses to translate the vendor-specific stream of events into
         pydantic_ai-format events.
 
-        It should use the `_parts_manager` to handle deltas, and should update the `_usage` attributes as it goes.
+        It should use the `_parts_manager` to handle deltas, forwarding the events that `handle_text_delta`,
+        `handle_thinking_delta` and `handle_tool_call_delta_events` yield, and should update the `_usage` attributes
+        as it goes.
         """
         raise NotImplementedError()
         # noinspection PyUnreachableCode
@@ -3051,13 +3205,34 @@ def get_user_agent() -> str:
     return f'pydantic-ai/{__version__}'
 
 
+def _with_default_user_agent(headers: Mapping[str, str]) -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
+    """A copy of `headers` with our `User-Agent` added, unless they hold a user-agent in any spelling.
+
+    Fits an SDK that merges per-request headers into its own case-insensitively, as OpenAI's and Anthropic's do.
+    """
+    extra_headers = dict(headers)
+    if all(name.lower() != 'user-agent' for name in extra_headers):
+        extra_headers['User-Agent'] = get_user_agent()
+    return extra_headers
+
+
 def _customize_tool_def(transformer: type[JsonSchemaTransformer], tool_def: ToolDefinition) -> ToolDefinition:
     """Customize the tool definition using the given transformer.
 
     If the tool definition has `strict` set to None, the strictness will be inferred from the transformer.
     """
-    schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
-    parameters_json_schema = schema_transformer.walk()
+    try:
+        schema_transformer = transformer(tool_def.parameters_json_schema, strict=tool_def.strict)
+        # Walking can also raise, e.g. for a malformed node only reachable through a `$ref`.
+        parameters_json_schema = schema_transformer.walk()
+    except InlinedSchemaTooLargeError:
+        raise InlinedSchemaTooLargeError(
+            f'The JSON schema of tool {tool_def.name!r}',
+            'Refer to large definitions from fewer places, or leave the tool out of the request with `prepare_tools` '
+            'or a `FilteredToolset`.',
+        ) from None
+    except UserError as e:
+        raise UserError(f'Tool {tool_def.name!r}: {e}') from None
     return replace(
         tool_def,
         parameters_json_schema=parameters_json_schema,
@@ -3069,7 +3244,10 @@ def _customize_output_object(
     transformer: type[JsonSchemaTransformer], output_object: OutputObjectDefinition
 ) -> OutputObjectDefinition:
     schema_transformer = transformer(output_object.json_schema, strict=output_object.strict)
-    json_schema = schema_transformer.walk()
+    try:
+        json_schema = schema_transformer.walk()
+    except InlinedSchemaTooLargeError:
+        raise InlinedSchemaTooLargeError('The output JSON schema') from None
     return replace(
         output_object,
         json_schema=json_schema,
@@ -3351,7 +3529,7 @@ def prepare_return_schemas(
 
 
 def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:
-    """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
+    """Return an appropriate FinalResultEvent if `e` corresponds to a part that could produce a final result."""
     if isinstance(e, PartStartEvent):
         new_part = e.part
         if (isinstance(new_part, TextPart) and params.allow_text_output) or (
@@ -3617,6 +3795,7 @@ def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
         | InstructionDeltaPart
         | InstructionBaselinePart
         | ToolAvailabilityDeltaPart
+        | CapabilityLoadDeltaPart
         | ModelSettingsDeltaPart,
     ):
         return False
@@ -3983,6 +4162,26 @@ def _project_instruction_state(
     return projected
 
 
+def _drop_capability_load_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """`messages` without their `CapabilityLoadDeltaPart`s, or `messages` itself when there are none.
+
+    A request left with no parts is kept, as it is when every other part of it is dropped.
+    """
+    if not any(
+        isinstance(part, CapabilityLoadDeltaPart)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    ):
+        return messages
+    return [
+        replace(message, parts=[part for part in message.parts if not isinstance(part, CapabilityLoadDeltaPart)])
+        if isinstance(message, ModelRequest)
+        else message
+        for message in messages
+    ]
+
+
 def _project_model_settings_deltas(messages: list[ModelMessage], *, keep: bool) -> list[ModelMessage]:
     """Leave the `ModelSettingsDeltaPart`s a model with a mid-conversation effort channel renders, or drop them all.
 
@@ -4130,6 +4329,104 @@ def _render_system_prompt_contexts(
     return rendered
 
 
+def _first_context_request(messages: list[ModelMessage], prefix: Sequence[InstructionPart] | None) -> int | None:
+    """The position, among `messages`' requests, of the first one sent with a `<context>` element, or `None` if none is.
+
+    That's the first request that records an append-mode instruction window, an instruction change or an appending
+    system prompt. History is append-only, so once one exists the position never moves, and lookalike notes from it on
+    render the same on every later request, while requests sent before it never gain one. A history without such a
+    record, as a direct caller's, has `<context>` elements throughout when the instruction prefix opens an append-mode
+    block.
+    """
+    requests = (message for message in messages if isinstance(message, ModelRequest))
+    for index, request in enumerate(requests):
+        if any(_records_context_element(part) for part in request.parts):
+            return index
+    return 0 if _tagged_append_parts(prefix or []) else None
+
+
+def _records_context_element(part: ModelRequestPart) -> bool:
+    if isinstance(part, InstructionBaselinePart):
+        return any(isinstance(block, InstructionPart) and block.on_change == 'append' for block in part.instructions)
+    return isinstance(part, InstructionDeltaPart) or (
+        isinstance(part, SystemPromptPart) and part.context_id is not None
+    )
+
+
+def _note_context_lookalikes(messages: list[ModelMessage], first_request: int) -> list[ModelMessage]:
+    """Follow each user prompt, file and tool result whose text opens a `<context>` or `<context_diff>` element with a note.
+
+    Only requests from the `first_request`th on, the first sent with a `<context>` element, are noted. The note is a
+    `SystemPromptPart` saying the text was written by the user, the author of the file or the tool, not by the
+    application (`context_lookalike_note`). It goes right after the user prompt, or after the request's last tool
+    result, so it's never part of the standing system prompt and never comes between tool results, and it's worded
+    "preceding" to match. The item itself is left as written.
+
+    Returns the original list when nothing changed.
+    """
+    new_messages: list[ModelMessage] = []
+    changed = False
+    request_index = -1
+    for message in messages:
+        if isinstance(message, ModelRequest) and (request_index := request_index + 1) >= first_request:
+            timestamp = message.timestamp or _utils.now_utc()
+            parts: list[ModelRequestPart] = []
+            tool_note_at: int | None = None
+            for part in message.parts:
+                parts.append(part)
+                if isinstance(part, ToolReturnPart):
+                    if tool_note_at is not None or _tool_return_opens_context_element(part):
+                        tool_note_at = len(parts)
+                elif isinstance(part, UserPromptPart):
+                    parts.extend(
+                        SystemPromptPart(content=context_lookalike_note(source), timestamp=timestamp)
+                        for source in _user_prompt_context_lookalike_sources(part)
+                    )
+            if tool_note_at is not None:
+                parts.insert(
+                    tool_note_at, SystemPromptPart(content=context_lookalike_note('tool'), timestamp=timestamp)
+                )
+            if len(parts) != len(message.parts):
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+    return new_messages if changed else messages
+
+
+def _user_prompt_context_lookalike_sources(part: UserPromptPart) -> list[LookalikeSource]:
+    """Who wrote a user prompt's text that opens a `<context>` element: the user, the author of an attached text file, or both."""
+    items: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
+    sources: list[LookalikeSource] = []
+    if any(opens_context_element(text) for item in items if (text := _typed_text(item)) is not None):
+        sources.append('user')
+    if any(opens_context_element(text) for item in items if (text := _text_file_text(item)) is not None):
+        sources.append('file')
+    return sources
+
+
+def _tool_return_opens_context_element(part: ToolReturnPart) -> bool:
+    """Whether a tool result's text, its text files included, opens a `<context>` or `<context_diff>` element."""
+    return any(
+        text is not None and opens_context_element(text)
+        for item in part.content_items(mode='str', wrap_if_error=False)
+        for text in (_typed_text(item), _text_file_text(item))
+    )
+
+
+def _typed_text(item: object) -> str | None:
+    if isinstance(item, str):
+        return item
+    if isinstance(item, TextContent):
+        return item.content
+    return None
+
+
+def _text_file_text(item: object) -> str | None:
+    if isinstance(item, BinaryContent) and _utils.is_text_like_media_type(item.media_type):
+        return item.data.decode(errors='replace')
+    return None
+
+
 def _has_instruction_state(messages: Iterable[ModelMessage]) -> bool:
     """Whether any request in `messages` records instruction state that `prepare_messages` projects."""
     return any(
@@ -4272,15 +4569,20 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 
 # TODO(v3): remove `RetryPromptPart`
 _UnpreparedPart: TypeAlias = (
-    ToolAvailabilityDeltaPart | ModelSettingsDeltaPart | RetryFeedbackPart | RetryPromptPart | CompactionPart  # pyright: ignore[reportDeprecated]
+    ToolAvailabilityDeltaPart
+    | CapabilityLoadDeltaPart
+    | ModelSettingsDeltaPart
+    | RetryFeedbackPart
+    | RetryPromptPart  # pyright: ignore[reportDeprecated]
+    | CompactionPart
 )
 """The request parts `prepare_messages` translates away before any adapter sees them.
 
-Each of these carries something no provider API has a field for — a mid-conversation change to the
-tool list or the thinking effort, or a retry that isn't a plain turn — and `prepare_messages` turns it
-into the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that step never
-ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart`
-on a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
+Each of these carries something no provider API has a field for — a mid-conversation change to the tool list or the
+thinking effort, a capability load from code, or a retry that isn't a plain turn — and `prepare_messages` turns it into
+the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that
+step never ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart` on
+a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 A deprecated `RetryPromptPart` or a request-side `CompactionPart` never reaches this branch either:
 adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts.
 """
@@ -4753,3 +5055,12 @@ def _synthesize_tool_availability_delta_messages(
             transformed.append(replace(message, parts=request_parts))
 
     return transformed if changed else messages
+
+
+_REMOVED_IN_V2 = {
+    'cached_async_http_client': 'use `create_async_http_client()`.',
+}
+
+# Kept from type checkers, which would otherwise accept any name on this module.
+if not TYPE_CHECKING:  # pragma: no branch
+    __getattr__ = removed_names_getattr(__name__, _REMOVED_IN_V2)

@@ -68,6 +68,10 @@ class HostSession:
         return False
 
     @property
+    def busy(self) -> bool:
+        return False
+
+    @property
     def waiting_for(self) -> str | None:
         return self._user_waits.current
 

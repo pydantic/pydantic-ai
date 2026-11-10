@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from anyio import CancelScope, Event, create_task_group, sleep
+from anyio import CancelScope, Event, create_task_group, sleep, to_thread
 from anyio.abc import TaskGroup, TaskStatus
 
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
@@ -51,6 +51,18 @@ class Served(Protocol):
 
     async def serve(self, *, resume: str | None, ready: Callable[[], None]) -> SessionEndReason:
         """Restore `resume`, load plugins, call `ready`, and take input until it ends or is cancelled."""
+        ...
+
+    def send_input(self, text: str) -> None:
+        """Enter `text` as Enter at its prompt does."""
+        ...
+
+    def restarts_clai(self) -> bool:
+        """Whether `/reload` and `/update` restart CLAI from it."""
+        ...
+
+    def restart_refusal(self) -> str | None:
+        """Why `/reload` and `/update` cannot restart CLAI from it now; `None` when they can."""
         ...
 
 
@@ -106,6 +118,10 @@ class LiveRuntimes(JoinedSessions):
     def listing(self) -> list[LiveSession]:
         """Every live session, oldest first, leaving out those `open` and `new` are still loading."""
         return [live.runtime.live_session for live in self._live.values() if live.ready]
+
+    def restarter(self) -> Served | None:
+        """The live session CLAI restarts from; `None` while none does, as while the terminal shows one not listed."""
+        return next((live.runtime for live in self._live.values() if live.ready and live.runtime.restarts_clai()), None)
 
     def add(self, runtime: Served) -> None:
         """Count `runtime` among the live sessions, following the settings the others save; once is enough."""
@@ -217,14 +233,16 @@ class LiveRuntimes(JoinedSessions):
             saved = await self._conversations.get(conversation_id=conversation_id)
             continuing = await continuing_fork(self._conversations, saved.summary)
             if continuing is None:
-                return await self._start(workspace_directory(saved.summary.workspace), resume=conversation_id)
+                directory = await to_thread.run_sync(workspace_directory, saved.summary.workspace)
+                return await self._start(directory, resume=conversation_id)
         finally:
             del self._opening[conversation_id]
             opened.set()
         return await self.open(continuing.conversation_id)
 
     async def new(self, *, workspace: Path | None = None) -> LiveSession:
-        return await self._start(None if workspace is None else workspace_directory(str(workspace)), resume=None)
+        directory = None if workspace is None else await to_thread.run_sync(workspace_directory, str(workspace))
+        return await self._start(directory, resume=None)
 
     @contextmanager
     def claim(self, conversation_id: str, *, holder: LiveSession) -> Generator[None]:

@@ -33,6 +33,7 @@ from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, MODES_ON, WHEEL_ROWS
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
+from tests.conftest import no_leaked_tasks
 
 
 @asynccontextmanager
@@ -42,12 +43,21 @@ async def editor(
     toolbar: Callable[[], list[tuple[str, str]]] = lambda: [('', 'ready')],
     clock: Callable[[], float] = lambda: 0,
     panel: Callable[[str], Sequence[str]] = lambda _: (),
+    key_wait_limit: float = 5,
 ) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
+    """An opened editor on a pipe; `key_wait_limit` fails a test left waiting for keys that never come.
+
+    A test that feeds no keys and writes to a real store passes a limit no stall reaches: a slow disk is no hang.
+    """
     output = output if output is not None else io.StringIO()
     console = Console(file=output, force_terminal=True, width=80, height=24)
     commands = Commands()
     commands.register(Command(name='help', description='Help', handler=lambda args: 'help'))
-    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(5):
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+        anyio.fail_after(key_wait_limit),
+    ):
         live = LivePrompt(
             console=console,
             commands=commands,
@@ -174,18 +184,17 @@ async def test_menu_suspension_preserves_draft_and_output() -> None:
 
 @pytest.mark.parametrize('menu', [False, True])
 async def test_outer_cancellation_releases_terminal_and_tasks(menu: bool) -> None:
-    before = asyncio.all_tasks()
-    with anyio.CancelScope() as scope:
-        async with editor() as (live, _, _):
-            if menu:
-                async with live.suspended():
+    with no_leaked_tasks():
+        with anyio.CancelScope() as scope:
+            async with editor() as (live, _, _):
+                if menu:
+                    async with live.suspended():
+                        scope.cancel()
+                        await anyio.sleep_forever()
+                else:
                     scope.cancel()
                     await anyio.sleep_forever()
-            else:
-                scope.cancel()
-                await anyio.sleep_forever()
-    assert scope.cancelled_caught
-    assert asyncio.all_tasks() <= before
+        assert scope.cancelled_caught
 
 
 @pytest.mark.parametrize('key', ['\x03', '\x1b'])

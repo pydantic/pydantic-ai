@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
@@ -21,7 +21,9 @@ from ..messages import (
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -358,50 +360,70 @@ class FunctionStreamedResponse(StreamedResponse):
     def __post_init__(self):
         self._usage += _estimate_usage([])
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for item in self._iter:
-            if isinstance(item, str):
-                response_tokens = _estimate_string_tokens(item)
-                self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                for event in self._parts_manager.handle_text_delta(vendor_part_id='content', content=item):
-                    yield event
-            elif isinstance(item, dict) and item:
-                for dtc_index, delta in item.items():
-                    if isinstance(delta, DeltaThinkingPart):
-                        if delta.content:  # pragma: no branch
-                            response_tokens = _estimate_string_tokens(delta.content)
-                            self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        for event in self._parts_manager.handle_thinking_delta(
-                            vendor_part_id=dtc_index,
-                            content=delta.content,
-                            signature=delta.signature,
-                            provider_name='function' if delta.signature else None,
-                        ):
-                            yield event
-                    elif isinstance(delta, DeltaToolCall):
-                        if delta.json_args:
-                            response_tokens = _estimate_string_tokens(delta.json_args)
-                            self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        maybe_event = self._parts_manager.handle_tool_call_delta(
-                            vendor_part_id=dtc_index,
-                            tool_name=delta.name,
-                            args=delta.json_args,
-                            tool_call_id=delta.tool_call_id,
-                        )
-                        if maybe_event is not None:  # pragma: no branch
-                            yield maybe_event
-                    elif isinstance(delta, NativeToolCallPart):
-                        if content := delta.args_as_json_str():  # pragma: no branch
-                            response_tokens = _estimate_string_tokens(content)
-                            self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        yield self._parts_manager.handle_part(vendor_part_id=dtc_index, part=delta)
-                    elif isinstance(delta, NativeToolReturnPart):
-                        if content := delta.model_response_str():  # pragma: no branch
-                            response_tokens = _estimate_string_tokens(content)
-                            self._usage += usage.RequestUsage(output_tokens=response_tokens)
-                        yield self._parts_manager.handle_part(vendor_part_id=dtc_index, part=delta)
-                    else:
-                        assert_never(delta)
+            for event in self._map_item(item):
+                yield event
+
+    def _map_item(
+        self, item: str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns
+    ) -> Iterator[ModelResponseStreamEvent]:
+        if isinstance(item, str):
+            response_tokens = _estimate_string_tokens(item)
+            self._usage += usage.RequestUsage(output_tokens=response_tokens)
+            yield from self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
+        elif isinstance(item, dict) and item:
+            for dtc_index, delta in item.items():
+                yield from self._map_delta(dtc_index, delta)
+
+    def _map_delta(
+        self, index: int, delta: DeltaThinkingPart | DeltaToolCall | NativeToolCallPart | NativeToolReturnPart
+    ) -> Iterator[ModelResponseStreamEvent]:
+        match delta:
+            case DeltaThinkingPart():
+                yield from self._map_thinking_delta(index, delta)
+            case DeltaToolCall():
+                yield from self._map_tool_call_delta(index, delta)
+            case NativeToolCallPart():
+                yield from self._map_native_tool_call(index, delta)
+            case NativeToolReturnPart():
+                yield from self._map_native_tool_return(index, delta)
+            case _:
+                assert_never(delta)
+
+    def _map_thinking_delta(self, index: int, delta: DeltaThinkingPart) -> Iterator[ModelResponseStreamEvent]:
+        if delta.content:  # pragma: no branch
+            response_tokens = _estimate_string_tokens(delta.content)
+            self._usage += usage.RequestUsage(output_tokens=response_tokens)
+        yield from self._parts_manager.handle_thinking_delta(
+            vendor_part_id=index,
+            content=delta.content,
+            signature=delta.signature,
+            provider_name='function' if delta.signature else None,
+        )
+
+    def _map_tool_call_delta(self, index: int, delta: DeltaToolCall) -> Iterator[ModelResponseStreamEvent]:
+        if delta.json_args:
+            response_tokens = _estimate_string_tokens(delta.json_args)
+            self._usage += usage.RequestUsage(output_tokens=response_tokens)
+        yield from self._parts_manager.handle_tool_call_delta_events(
+            vendor_part_id=index,
+            tool_name=delta.name,
+            args=delta.json_args,
+            tool_call_id=delta.tool_call_id,
+        )
+
+    def _map_native_tool_call(self, index: int, part: NativeToolCallPart) -> Iterator[ModelResponseStreamEvent]:
+        if content := part.args_as_json_str():  # pragma: no branch
+            response_tokens = _estimate_string_tokens(content)
+            self._usage += usage.RequestUsage(output_tokens=response_tokens)
+        yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
+
+    def _map_native_tool_return(self, index: int, part: NativeToolReturnPart) -> Iterator[ModelResponseStreamEvent]:
+        if content := part.model_response_str():  # pragma: no branch
+            response_tokens = _estimate_string_tokens(content)
+            self._usage += usage.RequestUsage(output_tokens=response_tokens)
+        yield self._parts_manager.handle_part(vendor_part_id=index, part=part)
 
     async def close_stream(self) -> None:
         # FunctionModel has no underlying connection to close.
@@ -434,7 +456,7 @@ def _check_instruction_deltas_projected(messages: Iterable[ModelMessage]) -> Non
         raise _unprojected_instruction_delta_error()
 
 
-def _estimate_usage(  # noqa: C901
+def _estimate_usage(
     messages: Iterable[ModelMessage], *, allow_tool_availability_deltas: bool = False
 ) -> usage.RequestUsage:
     """Very rough guesstimate of the token usage associated with a series of messages.
@@ -451,48 +473,57 @@ def _estimate_usage(  # noqa: C901
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in _sendable_request_parts(message.parts):
-                if isinstance(part, SystemPromptPart | UserPromptPart):
-                    request_tokens += _estimate_string_tokens(part.content)
-                elif isinstance(part, ToolReturnPart):
-                    request_tokens += _estimate_string_tokens(part.model_response_str())
-                elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
-                    raise _unprojected_instruction_delta_error()
-                elif isinstance(part, ToolAvailabilityDeltaPart) and allow_tool_availability_deltas:
-                    request_tokens += _estimate_string_tokens(' '.join(part.tools_added))
-                elif isinstance(part, _UnpreparedPart):
-                    raise _unprepared_part_error(part)
-                elif isinstance(part, SpeechPart):
-                    # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
-                    # user speech can arrive unconverted; estimate from the transcript like the
-                    # response side below rather than undercounting the turn to zero.
-                    request_tokens += _estimate_string_tokens(part.content)
-                else:
-                    assert_never(part)
+                request_tokens += _estimate_request_part_tokens(part, allow_tool_availability_deltas)
         elif isinstance(message, ModelResponse):
             for part in message.parts:
-                if isinstance(part, TextPart):
-                    response_tokens += _estimate_string_tokens(part.content)
-                elif isinstance(part, ThinkingPart):
-                    response_tokens += _estimate_string_tokens(part.content)
-                elif isinstance(part, ToolCallPart | NativeToolCallPart):
-                    response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, NativeToolReturnPart):
-                    response_tokens += _estimate_string_tokens(part.model_response_str())
-                elif isinstance(part, FilePart):
-                    response_tokens += _estimate_string_tokens([part.content])
-                elif isinstance(part, CompactionPart):
-                    # A provider's own compaction item is opaque state, not text the model reads.
-                    pass
-                elif isinstance(part, SpeechPart):
-                    response_tokens += _estimate_string_tokens(part.content)
-                else:
-                    assert_never(part)
+                response_tokens += _estimate_response_part_tokens(part)
         else:
             assert_never(message)
     return usage.RequestUsage(
         input_tokens=request_tokens,
         output_tokens=response_tokens,
     )
+
+
+def _estimate_request_part_tokens(part: ModelRequestPart, allow_tool_availability_deltas: bool) -> int:
+    if isinstance(part, SystemPromptPart | UserPromptPart):
+        return _estimate_string_tokens(part.content)
+    elif isinstance(part, ToolReturnPart):
+        return _estimate_string_tokens(part.model_response_str())
+    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+        raise _unprojected_instruction_delta_error()
+    elif isinstance(part, ToolAvailabilityDeltaPart) and allow_tool_availability_deltas:
+        return _estimate_string_tokens(' '.join(part.tools_added))
+    elif isinstance(part, _UnpreparedPart):
+        raise _unprepared_part_error(part)
+    elif isinstance(part, SpeechPart):
+        # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
+        # user speech can arrive unconverted; estimate from the transcript like the
+        # response side below rather than undercounting the turn to zero.
+        return _estimate_string_tokens(part.content)
+    else:
+        assert_never(part)
+
+
+def _estimate_response_part_tokens(part: ModelResponsePart) -> int:
+    match part:
+        case TextPart():
+            return _estimate_string_tokens(part.content)
+        case ThinkingPart():
+            return _estimate_string_tokens(part.content)
+        case ToolCallPart() | NativeToolCallPart():
+            return 1 + _estimate_string_tokens(part.args_as_json_str())
+        case NativeToolReturnPart():
+            return _estimate_string_tokens(part.model_response_str())
+        case FilePart():
+            return _estimate_string_tokens([part.content])
+        case CompactionPart():
+            # A provider's own compaction item is opaque state, not text the model reads.
+            return 0
+        case SpeechPart():
+            return _estimate_string_tokens(part.content)
+        case _:
+            assert_never(part)
 
 
 def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:

@@ -9,9 +9,10 @@ from collections.abc import AsyncGenerator, AsyncIterable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any, Literal
-from unittest.mock import Mock, patch
+from typing import Annotated, Any, Literal, cast
+from unittest.mock import AsyncMock, Mock, patch
 
+import httpx2
 import pytest
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import to_jsonable_python
@@ -25,6 +26,7 @@ from pydantic_ai import (
     DocumentUrl,
     FilePart,
     FunctionToolset,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -119,7 +121,10 @@ try:
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec._toolset import CallToolResult
+    from pydantic_ai.durable_exec._toolset import (
+        CallToolResult,
+        _ToolReturn,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         LogfirePlugin,
@@ -205,9 +210,11 @@ with workflow.unsafe.imports_passed_through():
     # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
 
     from ..._inline_snapshot import snapshot
+    from ...append_only import drain_events
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsStr, try_import
+    from ..responses_websocket import responses_reply, websocket_model
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -918,7 +925,7 @@ async def test_oversized_model_response_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134331)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
+            f"The response from model 'function:oversized-response-model' is too large for Temporal. {payload_limit_detail(2134347)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedModelResponseWorkflow.run,
@@ -1699,6 +1706,7 @@ def test_temporal_model_canonical_system_follows_active_model():
 
     assert (temporal_model.canonical_system, temporal_model.compatible_systems) == ('test', frozenset())
     assert not temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+    assert not temporal_model.accepts_server_state(anthropic_response)
     assert temporal_model._model_for_response(anthropic_response) is default_model  # pyright: ignore[reportPrivateUsage]
 
     with temporal_model.using_model('alt'):
@@ -1712,6 +1720,7 @@ def test_temporal_model_canonical_system_follows_active_model():
     with temporal_model.using_model('anthropic:claude-sonnet-4-5'):
         assert (temporal_model.canonical_system, temporal_model.compatible_systems) == ('anthropic', frozenset())
         assert temporal_model.accepts_stateless_artifacts(anthropic_response, anthropic_response.parts[0])
+        assert temporal_model.accepts_server_state(anthropic_response)
         assert temporal_model._model_for_response(anthropic_response) is temporal_model  # pyright: ignore[reportPrivateUsage]
 
 
@@ -1928,6 +1937,40 @@ async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: 
         'cancel',
         'exit',
     ]
+
+
+async def test_temporal_model_activities_use_http_for_responses_websocket(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An activity without an external model owner uses HTTP instead of opening a socket for one request."""
+    pytest.importorskip('websockets')
+    connect = AsyncMock()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        responses_model = websocket_model(client)
+        temporal_model = TemporalModel(
+            responses_model,
+            activity_name_prefix='test__responses_websocket',
+            activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+            deps_type=type(None),
+            event_stream_handler=drain_events,
+        )
+        ctx = RunContext[None](deps=None, model=responses_model, usage=RunUsage(), run_id='responses-websocket')
+        params = _RequestParams(
+            messages=[ModelRequest.user_text_prompt('hello')],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+            serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+            model_id=None,
+        )
+        response = await ActivityEnvironment().run(temporal_model.request_activity, params, None)
+        stream_response = await ActivityEnvironment().run(
+            temporal_model.request_stream_activity,
+            params,
+            None,  # pyright: ignore[reportArgumentType]
+        )
+    assert response.text == stream_response.text == 'from HTTP'
+    connect.assert_not_called()
 
 
 @pytest.mark.parametrize('legacy_payload', [True, False])
@@ -3313,6 +3356,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     ],
                     usage=RequestUsage(input_tokens=61, output_tokens=2),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
@@ -3347,6 +3391,7 @@ async def test_multimodal_content_serialization_in_workflow(client: Client):
                     ],
                     usage=RequestUsage(input_tokens=62, output_tokens=34),
                     model_name='test',
+                    model_id='test:test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
@@ -3744,6 +3789,9 @@ def test_a_category_subclass_defined_elsewhere_keeps_its_own_type():
 
 
 def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):
+    """An error the workflow can't rebuild, without a `retry_after` or a listing as non-retryable, fails the activity
+    as it always did."""
+
     class ApplicationModelError(ModelAPIError):
         """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
 
@@ -3781,6 +3829,49 @@ def test_a_non_retryable_model_error_that_cannot_be_rebuilt_is_still_marked_non_
     with pytest.raises(ActivityError):
         with rebuilt_model_errors():
             raise _activity_error(raised.value)
+
+
+@pytest.mark.parametrize(
+    ('retry_after', 'next_retry_delay'),
+    [
+        pytest.param(7.0, timedelta(seconds=7), id='retry-after'),
+        # Outside an activity, the default retry policy's `maximum_interval` of 100 seconds caps the delay.
+        pytest.param(3600.0, timedelta(seconds=100), id='capped'),
+    ],
+)
+def test_a_model_error_that_cannot_be_rebuilt_still_carries_its_retry_delay(
+    retry_after: float, next_retry_delay: timedelta
+):
+    """An error the workflow can't rebuild, like one defined outside Pydantic AI, is raised as an `ApplicationError`
+    when it has a `retry_after`, so Temporal still waits that long, under its own class name as Temporal would have
+    reported it."""
+
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom', retry_after=retry_after)
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    assert (raised.value.type, raised.value.non_retryable, raised.value.details, raised.value.next_retry_delay) == (
+        'ApplicationModelError',
+        False,
+        (),
+        next_retry_delay,
+    )
+    assert raised.value.__cause__ is error
+    with pytest.raises(ActivityError):
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+
+
+def test_a_non_retryable_model_error_gets_no_retry_delay():
+    """A model error listed as non-retryable isn't attempted again, so its `retry_after` sets no `next_retry_delay`."""
+    error = ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='gpt-test', retry_after=7.0)
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors((ModelRateLimitError,)):
+            raise error
+    assert (raised.value.non_retryable, raised.value.next_retry_delay) == (True, None)
 
 
 def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(
@@ -3827,3 +3918,24 @@ def test_an_activity_failure_without_an_application_error_is_raised_unchanged():
         with rebuilt_model_errors():
             raise activity_error
     assert raised.value is activity_error
+
+
+def test_payload_converter_decodes_journal_entries_written_before_records():
+    """A tool-call result an earlier worker journaled has no file record, and still decodes with every file.
+
+    The application's own worker wrote it, so a workflow in flight across an upgrade keeps its tool results.
+    """
+    files: list[DocumentUrl | ImageUrl | UploadedFile] = [
+        UploadedFile('file-1', 'openai'),
+        DocumentUrl('s3://bucket/report.pdf'),
+        ImageUrl('https://example.com/chart.png', force_download=True),
+    ]
+    result = _ToolReturn(result=files)
+    journaled = TypeAdapter[Any](CallToolResult).dump_python(result, mode='json')
+    del journaled['content_file_digests']
+    payload = temporalio.api.common.v1.Payload(
+        metadata={'encoding': b'json/plain'}, data=json.dumps(journaled).encode()
+    )
+
+    converter = temporal_payload_converter.PydanticAIJSONPlainPayloadConverter()
+    assert converter.from_payload(payload, cast(type, CallToolResult)) == result
