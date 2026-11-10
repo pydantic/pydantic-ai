@@ -3,15 +3,14 @@ from __future__ import annotations
 import json
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, assert_never
 
 import httpx
 import httpx2
 import pytest
 from inline_snapshot import snapshot
-from typing_extensions import assert_never
 
-from pydantic_ai import Agent, ModelHTTPError
+from pydantic_ai import Agent, ModelHTTPError, ModelNotFoundError
 
 from .conftest import IsStr, TestEnv, try_import
 
@@ -57,66 +56,66 @@ class Case:
 CASES = [
     Case(
         provider='openai-responses',
-        model_name='gpt-5.2-proo',
-        expected_request=('gpt-5.2-proo',),
+        model_name='gpt-5.6-sool',
+        expected_request=('gpt-5.6-sool',),
         expected_body=snapshot(
             {
-                'message': "The requested model 'gpt-5.2-proo' does not exist.",
-                'type': 'invalid_request_error',
-                'param': 'model',
-                'code': 'model_not_found',
-            }
-        ),
-        expected_status_code=400,
-        expected_suggestion='openai:gpt-5.2-pro',
-        marks=(pytest.mark.skipif(not openai_imports(), reason='openai not installed'),),
-    ),
-    Case(
-        provider='openai-chat',
-        model_name='gpt-5.2-proo',
-        expected_request=('gpt-5.2-proo',),
-        expected_body=snapshot(
-            {
-                'message': 'The model `gpt-5.2-proo` does not exist or you do not have access to it.',
+                'message': 'The model `gpt-5.6-sool` does not exist or you do not have access to it.',
                 'type': 'invalid_request_error',
                 'param': None,
                 'code': 'model_not_found',
             }
         ),
         expected_status_code=404,
-        expected_suggestion='openai:gpt-5.2-pro',
+        expected_suggestion='openai:gpt-5.6-sol',
+        marks=(pytest.mark.skipif(not openai_imports(), reason='openai not installed'),),
+    ),
+    Case(
+        provider='openai-chat',
+        model_name='gpt-5.6-sool',
+        expected_request=('gpt-5.6-sool',),
+        expected_body=snapshot(
+            {
+                'message': 'The model `gpt-5.6-sool` does not exist or you do not have access to it.',
+                'type': 'invalid_request_error',
+                'param': None,
+                'code': 'model_not_found',
+            }
+        ),
+        expected_status_code=404,
+        expected_suggestion='openai:gpt-5.6-sol',
         marks=(pytest.mark.skipif(not openai_imports(), reason='openai not installed'),),
     ),
     Case(
         provider='anthropic',
-        model_name='claude-sonet-4-5',
-        expected_request=('claude-sonet-4-5',),
+        model_name='claude-sonet-5-5',
+        expected_request=('claude-sonet-5-5',),
         expected_body=snapshot(
             {
                 'type': 'error',
-                'error': {'type': 'not_found_error', 'message': 'model: claude-sonet-4-5'},
+                'error': {'type': 'not_found_error', 'message': 'model: claude-sonet-5-5'},
                 'request_id': IsStr(),
             }
         ),
         expected_status_code=404,
-        expected_suggestion='anthropic:claude-sonnet-4-5',
+        expected_suggestion='anthropic:claude-sonnet-5-5',
         marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
     ),
     Case(
         provider='google',
-        model_name='gemini-3.6-flahs',
-        expected_request=('/v1beta/models/gemini-3.6-flahs:generateContent',),
+        model_name='gemini-3.8-flahs',
+        expected_request=('/v1beta/models/gemini-3.8-flahs:generateContent',),
         expected_body=snapshot(
             {
                 'error': {
                     'code': 404,
-                    'message': 'models/gemini-3.6-flahs is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.',
+                    'message': 'models/gemini-3.8-flahs is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.',
                     'status': 'NOT_FOUND',
                 }
             }
         ),
         expected_status_code=404,
-        expected_suggestion='google:gemini-3.6-flash',
+        expected_suggestion='google:gemini-3.8-flash',
         marks=(pytest.mark.skipif(not google_imports(), reason='google not installed'),),
     ),
     Case(
@@ -145,19 +144,19 @@ CASES = [
     ),
     Case(
         provider='groq',
-        model_name='llama-3.3-70b-versatlie',
-        expected_request=('llama-3.3-70b-versatlie',),
+        model_name='openai/gpt-oss-120bb',
+        expected_request=('openai/gpt-oss-120bb',),
         expected_body=snapshot(
             {
                 'error': {
-                    'message': 'The model `llama-3.3-70b-versatlie` does not exist or you do not have access to it.',
+                    'message': 'The model `openai/gpt-oss-120bb` does not exist or you do not have access to it.',
                     'type': 'invalid_request_error',
                     'code': 'model_not_found',
                 }
             }
         ),
         expected_status_code=404,
-        expected_suggestion='groq:llama-3.3-70b-versatile',
+        expected_suggestion='groq:openai/gpt-oss-120b',
         marks=(pytest.mark.skipif(not groq_imports(), reason='groq not installed'),),
     ),
 ]
@@ -230,6 +229,8 @@ async def test_model_name_suggestion(case: Case, request: pytest.FixtureRequest,
     assert exc_info.value.status_code == case.expected_status_code
     assert exc_info.value.body == case.expected_body
     assert exc_info.value.suggested_model_id == case.expected_suggestion
+    # Every provider's model-name error is a `ModelNotFoundError`, whatever status it came with.
+    assert isinstance(exc_info.value, ModelNotFoundError)
     assert exc_info.value.__cause__ is not None
     assert str(exc_info.value).endswith(f'. Did you mean {case.expected_suggestion!r}?')
 
@@ -239,7 +240,8 @@ async def test_inferred_model_name_suggestion(allow_model_requests: None, openai
     env.set('OPENAI_API_KEY', openai_api_key)
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        await Agent('openai:gpt-5.2-proo').run('hello')
+        await Agent('openai:gpt-5.6-sool').run('hello')
 
-    assert str(exc_info.value).endswith(". Did you mean 'openai:gpt-5.2-pro'?")
+    assert str(exc_info.value).endswith(". Did you mean 'openai:gpt-5.6-sol'?")
+    assert isinstance(exc_info.value, ModelNotFoundError)
     assert exc_info.value.__cause__ is not None

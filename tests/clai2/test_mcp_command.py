@@ -32,6 +32,8 @@ from pydantic_clai2.mcp import (
     run_form,
 )
 from pydantic_clai2.plugins import PluginHost, collect
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
+from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs, Type
 from tests.clai2.menu_script import Script, pick, typed
 
 ESC = MenuResult(cancelled=True)
@@ -74,7 +76,7 @@ async def test_help_errors_and_usage(tmp_path: Path) -> None:
 
 async def test_install_stdio_through_the_form(tmp_path: Path) -> None:
     config = json.dumps({'command': 'uvx', 'args': ['my-server'], 'env': {'TOKEN': '$MY_TOKEN'}})
-    script = Script(lists=[pick('name'), pick('json'), pick('save')], choices=[], texts=[typed(' files ')])
+    script = Script(lists=[], choices=[pick('name'), pick('json'), pick('save')], texts=[typed(' files ')])
     command, store = make(tmp_path, script, edits=[config])
     message = await command(['install'])
     assert message.startswith('Added files. The agent can use it on your next prompt')
@@ -86,16 +88,26 @@ async def test_install_stdio_through_the_form(tmp_path: Path) -> None:
 
 
 async def test_install_remote_with_type_swap_and_oauth(tmp_path: Path) -> None:
-    script = Script(
-        lists=[pick('type'), pick('target'), pick('target'), pick('oauth'), pick('name'), pick('save')],
-        choices=[pick('http')],
-        texts=[typed('not a url'), typed('https://mcp.example.com/mcp'), typed('docs')],
+    dialogs = ScriptedDialogs(
+        [
+            Pick(value='type'),
+            Pick(value='http'),
+            Pick(value='target'),
+            Type(text='https://mcp.example.com/mcp'),
+            Pick(value='oauth'),
+            Pick(value='name'),
+            Type(text='docs'),
+            Pick(value='save'),
+        ]
     )
-    command, store = make(tmp_path, script)
-    assert (await command(['install'])).startswith('Added docs.')
+    command, store = make(tmp_path)
+    assert (await command.run(['install'], dialogs=dialogs, editor=None)).startswith('Added docs.')
+    form, *_ = dialogs.asked
+    assert form.title == 'Add Custom MCP Server' and form.description.startswith('Name   (not set)')
+    assert dialogs.asked[1].current == 'stdio', 'the type picker marks the current type'
     saved = store.load().servers['docs']
     assert isinstance(saved, HTTPServer)
-    assert str(saved.url) == 'https://mcp.example.com/mcp', 'an invalid URL is ignored, the valid one saved'
+    assert str(saved.url) == 'https://mcp.example.com/mcp'
     assert saved.auth == 'oauth' and saved.timeout == 330, 'OAuth allows time for the browser sign-in'
     assert saved.headers is None, 'switching on OAuth drops the Authorization header'
 
@@ -112,7 +124,7 @@ async def test_form_saves_only_valid_servers(tmp_path: Path) -> None:
     form.name = 'fresh-one'
     form.config = '{not json'
     assert not form.save() and 'Invalid JSON' in (form.status or '')
-    assert 'JSON Configuration (INVALID)' in [item.label for item in form.items()]
+    assert 'JSON Configuration (INVALID)' in [option.label for option in form.options()]
     form.config = '{}'
     assert form.problem() == 'command: Field required'
     form.config = '{"command": "x", "typo": 1}'
@@ -127,27 +139,28 @@ async def test_form_saves_only_valid_servers(tmp_path: Path) -> None:
 
 def test_form_rows_preview_and_examples(tmp_path: Path) -> None:
     form = ServerForm(MCPStore(tmp_path / 'config'))
-    labels = [item.label for item in form.items()]
+    labels = [option.label for option in form.options()]
     assert labels == [
         'Server Name: (not set)',
         'Server Type: stdio',
         'Command: npx -y @modelcontextprotocol/server-filesystem /path/to/dir',
+        'On demand: off',
         'JSON Configuration (valid)',
         'Load example for stdio',
         'Save & Install',
         'Cancel',
     ]
-    assert 'Add Custom MCP Server' in form.preview() and 'Configuration is valid' in form.preview()
+    assert form.title == 'Add Custom MCP Server' and 'Configuration is valid' in form.preview()
     assert 'OAuth' not in form.preview()
     form.select_type('sse')
     assert form.config == EXAMPLES['sse'], 'an untouched example follows the type'
-    assert 'OAuth sign-in: off' in [item.label for item in form.items()]
-    assert 'OAuth signs in' in form.preview()
+    assert 'OAuth sign-in: off' in [option.label for option in form.options()]
+    assert '/mcp auth NAME signs in' in form.preview()
     form.config = '{"url": "https://example.com/sse"}'
     form.select_type('http')
     assert form.config == '{"url": "https://example.com/sse"}', 'edited configuration is kept'
     form.toggle_oauth()
-    assert form.oauth and 'OAuth sign-in: on' in [item.label for item in form.items()]
+    assert form.oauth and 'OAuth sign-in: on' in [option.label for option in form.options()]
     form.toggle_oauth()
     assert not form.oauth and json.loads(form.config) == {'url': 'https://example.com/sse'}
     form.config = '{"url": "https://example.com/sse", "auth": "oauth", "timeout": 60}'
@@ -164,57 +177,78 @@ def test_form_rows_preview_and_examples(tmp_path: Path) -> None:
     assert form.config == EXAMPLES['http'] and form.status is None
 
 
-def test_json_fallback_when_no_editor_runs(tmp_path: Path) -> None:
+async def test_json_fallback_when_no_editor_runs(tmp_path: Path) -> None:
+    """The terminal's one-line input when its editor cannot run; empty text or backing out keeps the JSON."""
     store = MCPStore(tmp_path / 'config')
     script = Script(
-        lists=[pick('json'), pick('json'), pick('json'), pick('cancel')],
-        choices=[],
-        texts=[typed('{"command": "uvx"}'), TextInputResult(cancelled=True), typed('{broken')],
+        lists=[],
+        choices=[pick('json'), pick('json'), pick('json'), pick('cancel')],
+        texts=[typed('{"command": "uvx"}'), TextInputResult(cancelled=True), typed('  ')],
     )
     form = ServerForm(store)
     form.config = 'not json yet'
-    assert not run_form(form, script.runners, editor=lambda _: None)
+    assert not await run_form(form, TerminalDialogs(script.runners), editor=lambda _: None)
     assert json.loads(form.config) == {'command': 'uvx'}
-    assert script.opened == ['list', 'text', 'list', 'text', 'list', 'text', 'list']
+    assert script.opened == ['choice', 'text', 'choice', 'text', 'choice', 'text', 'choice']
 
 
-def test_form_cancel_paths(tmp_path: Path) -> None:
+async def test_without_an_editor_the_dialog_edits_the_indented_json(tmp_path: Path) -> None:
+    """As the web UI asks: the JSON as it is, which its dialog edits over several lines."""
+    form = ServerForm(MCPStore(tmp_path / 'config'))
+    dialogs = ScriptedDialogs([Pick(value='json'), Type(text='{"command": "uvx"}'), Back()])
+    assert not await run_form(form, dialogs)
+    assert dialogs.asked[1].initial == EXAMPLES['stdio'] and '\n' in dialogs.asked[1].initial
+    assert json.loads(form.config) == {'command': 'uvx'}
+
+
+async def test_form_cancel_paths(tmp_path: Path) -> None:
     store = MCPStore(tmp_path / 'config')
     form = ServerForm(store)
-    script = Script(
-        lists=[pick('name'), pick('type'), pick('example'), pick('save'), pick('stray'), ESC],
-        choices=[ESC],
-        texts=[TextInputResult(cancelled=True)],
+    dialogs = ScriptedDialogs(
+        [
+            Pick(value='name'),
+            Back(),
+            Pick(value='type'),
+            Back(),
+            Pick(value='target'),
+            Back(),
+            Pick(value='example'),
+            Pick(value='save'),
+            Back(),
+        ]
     )
-    assert not run_form(form, script.runners, editor=lambda _: None)
+    assert not await run_form(form, dialogs)
     assert form.status == 'Save failed: Server name is required'
     assert form.type == 'stdio' and form.name == ''
 
 
+async def test_an_empty_name_keeps_the_name(tmp_path: Path) -> None:
+    form = ServerForm(MCPStore(tmp_path / 'config'), name='local', server=stdio())
+    assert not await run_form(form, ScriptedDialogs([Pick(value='name'), Type(text=''), Back()]))
+    assert form.name == 'local'
+
+
 async def test_install_cancelled(tmp_path: Path) -> None:
-    command, store = make(tmp_path, Script(lists=[pick('cancel')], choices=[], texts=[]))
+    command, store = make(tmp_path, Script(lists=[], choices=[pick('cancel'), pick('cancel')], texts=[]))
     assert await command(['install']) == 'Exited custom server form.'
+    assert await command(['INSTALL']) == 'Exited custom server form.', 'subcommands ignore case'
     assert store.load().servers == {}
 
 
 async def test_missing_program_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('PATH', str(tmp_path / 'empty'))
-    script = Script(lists=[pick('name'), pick('save')], choices=[], texts=[typed('fs')])
+    script = Script(lists=[], choices=[pick('name'), pick('save')], texts=[typed('fs')])
     command, _ = make(tmp_path, script)
     assert 'npx is not on PATH' in await command(['install'])
 
 
 async def test_edit_prefills_renames_and_cancels(tmp_path: Path) -> None:
-    script = Script(
-        lists=[pick('name'), pick('json'), pick('save'), ESC],
-        choices=[],
-        texts=[typed('renamed')],
-    )
+    script = Script(lists=[], choices=[pick('name'), pick('json'), pick('save'), ESC], texts=[typed('renamed')])
     command, store = make(tmp_path, script, edits=[json.dumps({'command': 'uvx', 'args': ['new'], 'timeout': 5})])
     store.put('local', StdioServer(type='stdio', command='python', env={'A': 'b'}))
     form = ServerForm(store, name='local', server=store.load().servers['local'])
     assert json.loads(form.config) == {'type': 'stdio', 'command': 'python', 'env': {'A': 'b'}}
-    assert 'Edit MCP Server' in form.preview() and 'Save changes' in [item.label for item in form.items()]
+    assert form.title == 'Edit MCP Server' and 'Save changes' in [option.label for option in form.options()]
     assert form.name_problem('local') is None, 'keeping the name is not a clash'
     assert (await command(['edit', 'local'])).startswith('Updated renamed.')
     assert list(store.load().servers) == ['renamed']
@@ -222,6 +256,7 @@ async def test_edit_prefills_renames_and_cancels(tmp_path: Path) -> None:
     assert await command(['edit', 'renamed']) == 'No changes.'
 
 
+@pytest.mark.subprocess(reason='starts a real stdio MCP server written in Python')
 async def test_edit_restarts_a_running_server(tmp_path: Path) -> None:
     server = tmp_path / 'server.py'
     server.write_text(
@@ -229,7 +264,7 @@ async def test_edit_restarts_a_running_server(tmp_path: Path) -> None:
         '@server.tool()\ndef ping() -> str:\n    return "pong"\nserver.run()\n'
     )
     config = json.dumps({'command': sys.executable, 'args': [str(server)], 'cwd': str(tmp_path)})
-    command, store = make(tmp_path, Script(lists=[pick('json'), pick('save')], choices=[], texts=[]), edits=[config])
+    command, store = make(tmp_path, Script(lists=[], choices=[pick('json'), pick('save')], texts=[]), edits=[config])
     store.put('local', stdio(sys.executable, str(server)))
     await command(['start', 'local'])
     lines = (await command(['edit', 'local'])).splitlines()
@@ -245,6 +280,7 @@ async def test_edit_refuses_servers_mcp_does_not_own(tmp_path: Path) -> None:
         await command(['edit', 'legacy'])
 
 
+@pytest.mark.subprocess(reason='runs Python scripts as the `$VISUAL`/`$EDITOR` commands')
 def test_editor_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     edit = tmp_path / 'edit.py'
     edit.write_text('import sys, pathlib\npathlib.Path(sys.argv[1]).write_text("{\\"command\\": \\"edited\\"}")\n')
@@ -479,7 +515,7 @@ def test_url_and_command_rows(tmp_path: Path) -> None:
     assert form.target_problem('ftp://example.com') == 'Enter an http:// or https:// URL'
     form.set_target(' https://example.com/sse ')
     assert form.target() == 'https://example.com/sse'
-    assert 'URL: https://example.com/sse' in [item.label for item in form.items()]
+    assert 'URL: https://example.com/sse' in [option.label for option in form.options()]
     form.config = 'broken'
     assert form.target() == ''
     form.set_target('https://example.com/sse')
@@ -511,6 +547,7 @@ async def test_symlinked_project_file_is_never_trusted(tmp_path: Path) -> None:
     assert store.trust_state(project) == 'untrusted' and store.project_servers() == {}
 
 
+@pytest.mark.subprocess(reason='starts a real stdio MCP server written in Python')
 async def test_revoke_disconnects_project_servers(tmp_path: Path) -> None:
     server = tmp_path / 'server.py'
     server.write_text('from mcp.server.fastmcp import FastMCP\nFastMCP("t").run()\n')

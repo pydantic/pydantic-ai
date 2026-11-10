@@ -20,13 +20,20 @@ from rich.console import Console
 from rich.text import Text
 
 from pydantic_ai import PartStartEvent
-from pydantic_ai.messages import AgentStreamEvent, FunctionToolCallEvent, TextPart, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, FunctionToolCallEvent, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import Settings, resolve_settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.runtime.sandbox_calls import SandboxCallOrder, SandboxCallStartedEvent
+from pydantic_clai2.runtime.eager_timing import EAGER_TIMING_EVENTS, EagerExecutionCompletedEvent
+from pydantic_clai2.runtime.sandbox_calls import (
+    SHOW_SANDBOX_CALLS_EVENTS,
+    DelegationCallStartedEvent,
+    SandboxCallFinishedEvent,
+    SandboxCallOrder,
+    SandboxCallStartedEvent,
+)
 from pydantic_clai2.runtime.speculation import Speculation, SpeculationCounters
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
@@ -43,10 +50,21 @@ def speculation(tmp_path: Path, console: Console | None = None) -> Speculation:
     context = CommandContext(
         settings=store.load(),
         store=store,
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
     )
     return Speculation(context=context, console=console or Console(file=io.StringIO()))
+
+
+class TestDefaults:
+    @pytest.fixture
+    def native_tools(self) -> None:
+        """The shipped defaults, not the suite's code-mode-off stand-in."""
+
+    def test_code_mode_on_and_speculation_off(self) -> None:
+        assert (Settings().code_mode, Settings().speculative_code_mode) == (True, False)
+        # Older settings never saved `run.code_mode`, so they get it; a saved speculation choice stands.
+        assert resolve_settings({'run.speculative_code_mode': True}).code_mode is True
+        assert resolve_settings({'run.code_mode': False}).code_mode is False
 
 
 class TestSwitch:
@@ -60,7 +78,7 @@ class TestSwitch:
         assert switch.row() == ''
         assert switch.capabilities([]) == []
 
-        assert switch.toggle() == 'Speculative execution on from the next turn. Ctrl+X Ctrl+S toggles it.'
+        assert switch.toggle() == 'Speculative execution on. Ctrl+X Ctrl+S toggles it.'
         assert SettingsStore(tmp_path / 'config.db').overrides() == {'run.speculative_code_mode': True}
         assert plain(switch.row()).startswith('Speculative Execution  0 hits')
 
@@ -71,6 +89,22 @@ class TestSwitch:
         switch.toggle()
         assert plain(switch.row()).startswith('Speculative Execution  2 hits')
 
+    @pytest.mark.parametrize('bound', [False, True])
+    def test_toggle_during_a_turn_keeps_its_row_and_marks_the_next_prompt(self, tmp_path: Path, bound: bool) -> None:
+        switch = speculation(tmp_path)
+        if bound:
+            switch.toggle()
+        with switch.turn():
+            assert switch.toggle().endswith('from the next prompt; this turn keeps its tools.')
+            # The row stays while either the running turn or the next prompt speculates.
+            pending = 'off' if bound else 'on'
+            assert plain(switch.row()) == f'{plain(switch.counters.row())}    {pending} from the next prompt'
+            assert switch.toggle() == f'Speculative execution {"on" if bound else "off"}. Ctrl+X Ctrl+S toggles it.'
+            assert (switch.row() != '') is bound
+            switch.toggle()
+        assert (switch.row() == '') is bound
+        assert 'next prompt' not in plain(switch.row())
+
     def test_missing_sandbox_dependency_warns_and_runs_natively(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -79,7 +113,7 @@ class TestSwitch:
         switch.toggle()
         monkeypatch.setitem(sys.modules, 'pydantic_clai2.runtime.speculative_mode', None)
         assert switch.capabilities([]) == []
-        assert 'Speculative execution is unavailable' in output.getvalue()
+        assert 'Code mode is unavailable' in output.getvalue()
 
     def test_sandbox_dependency_ships_with_clai(self) -> None:
         """A plain `pydantic-clai2` install must bring Monty, not leave it behind a harness extra."""
@@ -206,3 +240,20 @@ class TestChord:
         assert len(frame) <= height - 2
         assert frame[0].startswith('\u2500')
         assert ('PINNED ROW' in frame) is shown
+
+
+def test_clai2_capability_events_are_namespaced_by_the_capability_that_emits_them() -> None:
+    call = ToolCallPart('shell', tool_call_id='run__1')
+    result = ToolReturnPart('shell', 'ok', tool_call_id='run__1')
+    assert (SHOW_SANDBOX_CALLS_EVENTS, EAGER_TIMING_EVENTS) == ('show_sandbox_calls', 'eager_timing')
+    assert [
+        SandboxCallStartedEvent(call=call).kind,
+        DelegationCallStartedEvent(call=call).kind,
+        SandboxCallFinishedEvent(result=result).kind,
+        EagerExecutionCompletedEvent(saved_ms=1.0).kind,
+    ] == [
+        'show_sandbox_calls.sandbox_call_started',
+        'show_sandbox_calls.delegation_call_started',
+        'show_sandbox_calls.sandbox_call_finished',
+        'eager_timing.eager_execution_completed',
+    ]

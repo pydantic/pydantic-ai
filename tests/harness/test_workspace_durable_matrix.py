@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import gc
 import json
 import re
-import warnings
-from collections.abc import Generator
 from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -16,7 +13,7 @@ import pytest
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
 pytest.importorskip('dbos')
@@ -34,24 +31,9 @@ from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkfl
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
+from tests.conftest import without_admin_server
 from tests.harness._temporal import skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
-
-
-@pytest.fixture
-def prefect_server() -> Generator[None, None, None]:
-    # Prefect is an optional core extra; its absence must not hide the DBOS cells.
-    pytest.importorskip('prefect')
-    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
-    from prefect.testing.utilities import prefect_test_harness
-
-    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
-        with prefect_test_harness(server_startup_timeout=120):
-            yield
-    # Prefect's test server leaves client sockets for GC on Python 3.14.
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', message='unclosed.*socket', category=ResourceWarning)
-        gc.collect()
 
 
 def _agent(root: Path, engine: str, capability: str, vetoes: list[str]) -> Agent[None, str]:
@@ -76,7 +58,7 @@ def _agent(root: Path, engine: str, capability: str, vetoes: list[str]) -> Agent
     script = scripts[capability]
 
     def model(messages: list[ModelMessage], info: object) -> ModelResponse:
-        returns = [p for m in messages for p in m.parts if isinstance(p, (ToolReturnPart, RetryPromptPart))]
+        returns = [p for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
         # Past the script's end, a shell job still running gets checked again.
         if len(returns) >= len(script) and '[status: running]' not in str(returns[-1].content):
             return ModelResponse(parts=[TextPart('done')])
@@ -118,8 +100,10 @@ def _agent(root: Path, engine: str, capability: str, vetoes: list[str]) -> Agent
     return agent
 
 
+# `prefect_test_server` skips without Prefect, an optional core extra, so the DBOS cells still run.
+@pytest.mark.xdist_group(name='prefect')
 @pytest.mark.parametrize('capability', ['coder', 'shell', 'filesystem'])
-async def test_prefect_workspace_capabilities(tmp_path: Path, prefect_server: None, capability: str) -> None:
+async def test_prefect_workspace_capabilities(tmp_path: Path, prefect_test_server: None, capability: str) -> None:
     from prefect import flow
 
     (tmp_path / 'dir').mkdir()
@@ -149,8 +133,8 @@ async def test_dbos_workspace_capabilities(tmp_path: Path, capability: str) -> N
         return [str(p.content) for m in result.all_messages() for p in m.parts if p.part_kind == 'tool-return']
 
     DBOS(
-        config=DBOSConfig(
-            name='harness_matrix', system_database_url=f'sqlite:///{tmp_path / "db.sqlite"}', run_admin_server=False
+        config=without_admin_server(
+            DBOSConfig(name='harness_matrix', system_database_url=f'sqlite:///{tmp_path / "db.sqlite"}')
         )
     )
     DBOS.launch()

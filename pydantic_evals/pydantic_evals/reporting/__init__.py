@@ -4,14 +4,15 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from io import StringIO
-from typing import Any, Generic, Literal, Protocol
+from typing import Any, Generic, Literal, Protocol, assert_never
 
 from pydantic import BaseModel, TypeAdapter
 from rich.console import Console, Group, RenderableType
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from typing_extensions import TypedDict, TypeVar, assert_never
+from typing_extensions import TypedDict, TypeVar
 
 from pydantic_evals._utils import UNSET, Unset
 
@@ -76,6 +77,22 @@ def _cross_mark(ascii_only: bool) -> str:
 
 def _arrow(ascii_only: bool) -> str:
     return '->' if ascii_only else '→'
+
+
+def _escape_markup(text: str) -> str:
+    """Escape `text` so Rich shows it as written instead of parsing it as markup.
+
+    `rich.markup.escape` also doubles a single trailing backslash so a closing tag right after the text still works,
+    but the extra backslash shows anywhere else, so it's dropped here; `_style_markup` handles those closing tags.
+    """
+    escaped = escape(text)
+    return escaped[:-1] if escaped.endswith('\\\\') and not text.endswith('\\\\') else escaped
+
+
+def _style_markup(markup: str, style: str) -> str:
+    """Wrap `markup` in a `style` tag, doubling any trailing backslashes so they don't escape the closing tag."""
+    markup += '\\' * (len(markup) - len(markup.rstrip('\\')))
+    return f'[{style}]{markup}[/]'
 
 
 InputsT = TypeVar('InputsT', default=Any)
@@ -205,37 +222,12 @@ class ReportCaseAggregate(BaseModel):
                 total_duration=0.0,
             )
 
-        def _scores_averages(scores_by_name: list[dict[str, int | float | bool]]) -> dict[str, float]:
-            counts_by_name: dict[str, int] = defaultdict(int)
-            sums_by_name: dict[str, float] = defaultdict(float)
-            for sbn in scores_by_name:
-                for name, score in sbn.items():
-                    counts_by_name[name] += 1
-                    sums_by_name[name] += score
-            return {name: sums_by_name[name] / counts_by_name[name] for name in sums_by_name}
-
-        def _labels_averages(labels_by_name: list[dict[str, str]]) -> dict[str, dict[str, float]]:
-            counts_by_name: dict[str, int] = defaultdict(int)
-            sums_by_name: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-            for lbn in labels_by_name:
-                for name, label in lbn.items():
-                    counts_by_name[name] += 1
-                    sums_by_name[name][label] += 1
-            return {
-                name: {value: count / counts_by_name[name] for value, count in sums_by_name[name].items()}
-                for name in sums_by_name
-            }
-
         average_task_duration = sum(case.task_duration for case in cases) / num_cases
         average_total_duration = sum(case.total_duration for case in cases) / num_cases
 
         # average_assertions: dict[str, float] = _scores_averages([{k: v.value for k, v in case.scores.items()} for case in cases])
-        average_scores: dict[str, float] = _scores_averages(
-            [{k: v.value for k, v in case.scores.items()} for case in cases]
-        )
-        average_labels: dict[str, dict[str, float]] = _labels_averages(
-            [{k: v.value for k, v in case.labels.items()} for case in cases]
-        )
+        average_scores: dict[str, float] = _scores_averages([_result_values(case.scores) for case in cases])
+        average_labels: dict[str, dict[str, float]] = _labels_averages([_result_values(case.labels) for case in cases])
         average_metrics: dict[str, float] = _scores_averages([case.metrics for case in cases])
 
         average_assertions: float | None = None
@@ -277,20 +269,7 @@ class ReportCaseAggregate(BaseModel):
         avg_scores = _avg_numeric_dicts([a.scores for a in aggregates])
         avg_metrics = _avg_numeric_dicts([a.metrics for a in aggregates])
 
-        # Average labels (average the distribution dicts)
-        all_label_keys: set[str] = set()
-        for a in aggregates:
-            all_label_keys.update(a.labels)
-        avg_labels: dict[str, dict[str, float]] = {}
-        for key in all_label_keys:
-            combined: dict[str, float] = {}
-            count = 0
-            for a in aggregates:
-                if key in a.labels:
-                    count += 1
-                    for label_val, freq in a.labels[key].items():
-                        combined[label_val] = combined.get(label_val, 0.0) + freq
-            avg_labels[key] = {k: v / count for k, v in combined.items()}
+        avg_labels = _avg_label_distributions(aggregates)
 
         # Average assertions
         assertion_values = [a.assertions for a in aggregates if a.assertions is not None]
@@ -311,6 +290,47 @@ class ReportCaseAggregate(BaseModel):
             task_duration=sum(task_durs) / len(task_durs),
             total_duration=sum(total_durs) / len(total_durs),
         )
+
+
+def _scores_averages(scores_by_name: list[dict[str, int | float | bool]]) -> dict[str, float]:
+    counts_by_name: dict[str, int] = defaultdict(int)
+    sums_by_name: dict[str, float] = defaultdict(float)
+    for sbn in scores_by_name:
+        for name, score in sbn.items():
+            counts_by_name[name] += 1
+            sums_by_name[name] += score
+    return {name: sums_by_name[name] / counts_by_name[name] for name in sums_by_name}
+
+
+def _labels_averages(labels_by_name: list[dict[str, str]]) -> dict[str, dict[str, float]]:
+    counts_by_name: dict[str, int] = defaultdict(int)
+    sums_by_name: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for lbn in labels_by_name:
+        for name, label in lbn.items():
+            counts_by_name[name] += 1
+            sums_by_name[name][label] += 1
+    return {
+        name: {value: count / counts_by_name[name] for value, count in sums_by_name[name].items()}
+        for name in sums_by_name
+    }
+
+
+def _avg_label_distributions(aggregates: list[ReportCaseAggregate]) -> dict[str, dict[str, float]]:
+    """Average the label distributions of several aggregates."""
+    all_label_keys: set[str] = set()
+    for a in aggregates:
+        all_label_keys.update(a.labels)
+    avg_labels: dict[str, dict[str, float]] = {}
+    for key in all_label_keys:
+        combined: dict[str, float] = {}
+        count = 0
+        for a in aggregates:
+            if key in a.labels:
+                count += 1
+                for label_val, freq in a.labels[key].items():
+                    combined[label_val] = combined.get(label_val, 0.0) + freq
+        avg_labels[key] = {k: v / count for k, v in combined.items()}
+    return avg_labels
 
 
 @dataclass(kw_only=True)
@@ -339,6 +359,8 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     """The trace ID of the evaluation."""
     span_id: str | None = None
     """The span ID of the evaluation."""
+    dataset_name: str | None = None
+    """The name of the dataset that produced this report, if it has one."""
 
     def case_groups(self) -> list[ReportCaseGroup[InputsT, OutputT, MetadataT]] | None:
         """Group cases by source_case_name and compute per-group aggregates.
@@ -527,7 +549,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             for failure in self.report_evaluator_failures:
                 msg = f'  {failure.name}: {failure.error_message}'
                 console.print(Text(msg, style='red'))
-        if include_errors and self.failures:  # pragma: no cover
+        if include_errors and self.failures:
             failures_table = self.failures_table(
                 include_input=include_input,
                 include_metadata=include_metadata,
@@ -624,64 +646,63 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         """
         if baseline is None:
             # Single report - show metadata if present
-            if self.experiment_metadata:
-                metadata_text = Text()
-                items = list(self.experiment_metadata.items())
-                for i, (key, value) in enumerate(items):
-                    metadata_text.append(f'{key}: {value}', style='dim')
-                    if i < len(items) - 1:
-                        metadata_text.append('\n')
-                return Panel(
-                    metadata_text,
-                    title=f'Evaluation Summary: {self.name}',
-                    title_align='left',
-                    border_style='dim',
-                    padding=(0, 1),
-                    expand=False,
-                )
+            if not self.experiment_metadata:
+                return None
+            title = f'Evaluation Summary: {self.name}'
+            lines_styles = [(f'{key}: {value}', 'dim') for key, value in self.experiment_metadata.items()]
         else:
             # Diff report - show metadata diff if either has metadata
-            if self.experiment_metadata or baseline.experiment_metadata:
-                diff_name = (
-                    baseline.name if baseline.name == self.name else f'{baseline.name} {_arrow(ascii_only)} {self.name}'
-                )
-                metadata_text = Text()
-                lines_styles: list[tuple[str, str]] = []
-                if baseline.experiment_metadata and self.experiment_metadata:
-                    # Collect all keys from both
-                    all_keys = sorted(set(baseline.experiment_metadata.keys()) | set(self.experiment_metadata.keys()))
-                    for key in all_keys:
-                        baseline_val = baseline.experiment_metadata.get(key)
-                        report_val = self.experiment_metadata.get(key)
-                        if baseline_val == report_val:
-                            lines_styles.append((f'{key}: {report_val}', 'dim'))
-                        elif baseline_val is None:
-                            lines_styles.append((f'+ {key}: {report_val}', 'green'))
-                        elif report_val is None:
-                            lines_styles.append((f'- {key}: {baseline_val}', 'red'))
-                        else:
-                            lines_styles.append((f'{key}: {baseline_val} {_arrow(ascii_only)} {report_val}', 'yellow'))
-                elif self.experiment_metadata:
-                    lines_styles = [(f'+ {k}: {v}', 'green') for k, v in self.experiment_metadata.items()]
-                else:  # baseline.experiment_metadata only
-                    assert baseline.experiment_metadata is not None
-                    lines_styles = [(f'- {k}: {v}', 'red') for k, v in baseline.experiment_metadata.items()]
+            if not (self.experiment_metadata or baseline.experiment_metadata):
+                return None
+            diff_name = (
+                baseline.name if baseline.name == self.name else f'{baseline.name} {_arrow(ascii_only)} {self.name}'
+            )
+            title = f'Evaluation Diff: {diff_name}'
+            lines_styles = self._metadata_diff_lines(baseline, ascii_only=ascii_only)
 
-                for i, (line, style) in enumerate(lines_styles):
-                    metadata_text.append(line, style=style)
-                    if i < len(lines_styles) - 1:
-                        metadata_text.append('\n')
+        metadata_text = Text()
+        for i, (line, style) in enumerate(lines_styles):
+            metadata_text.append(line, style=style)
+            if i < len(lines_styles) - 1:
+                metadata_text.append('\n')
 
-                return Panel(
-                    metadata_text,
-                    title=f'Evaluation Diff: {diff_name}',
-                    title_align='left',
-                    border_style='dim',
-                    padding=(0, 1),
-                    expand=False,
-                )
+        return Panel(
+            metadata_text,
+            title=title,
+            title_align='left',
+            border_style='dim',
+            padding=(0, 1),
+            expand=False,
+        )
 
-        return None
+    def _metadata_diff_lines(
+        self, baseline: EvaluationReport[InputsT, OutputT, MetadataT], *, ascii_only: bool
+    ) -> list[tuple[str, str]]:
+        """Diff the experiment metadata against the baseline's, as `(line, style)` pairs.
+
+        At least one of the two reports has metadata.
+        """
+        if not baseline.experiment_metadata:
+            assert self.experiment_metadata is not None
+            return [(f'+ {k}: {v}', 'green') for k, v in self.experiment_metadata.items()]
+        if not self.experiment_metadata:
+            return [(f'- {k}: {v}', 'red') for k, v in baseline.experiment_metadata.items()]
+
+        lines_styles: list[tuple[str, str]] = []
+        # Collect all keys from both
+        all_keys = sorted(set(baseline.experiment_metadata.keys()) | set(self.experiment_metadata.keys()))
+        for key in all_keys:
+            baseline_val = baseline.experiment_metadata.get(key)
+            report_val = self.experiment_metadata.get(key)
+            if baseline_val == report_val:
+                lines_styles.append((f'{key}: {report_val}', 'dim'))
+            elif baseline_val is None:
+                lines_styles.append((f'+ {key}: {report_val}', 'green'))
+            elif report_val is None:
+                lines_styles.append((f'- {key}: {baseline_val}', 'red'))
+            else:
+                lines_styles.append((f'{key}: {baseline_val} {_arrow(ascii_only)} {report_val}', 'yellow'))
+        return lines_styles
 
     def failures_table(
         self,
@@ -770,11 +791,11 @@ class _ValueRenderer:
             has_diff = self.diff_checker and self.diff_checker(old, new)
             if has_diff:  # pragma: no branch
                 # If there is a diff, make the name bold and compute the diff_str
-                name = name and f'[bold]{name}[/]'
+                name = name and _style_markup(name, 'bold')
                 diff_str = self.diff_formatter and self.diff_formatter(old, new)
-                if diff_str:  # pragma: no cover
-                    result += f' ({diff_str})'
-                result = f'[{self.diff_style}]{result}[/]'
+                if diff_str:
+                    result += f' ({_escape_markup(diff_str)})'
+                result = _style_markup(result, self.diff_style)
 
         # Add the name
         if name:
@@ -786,9 +807,9 @@ class _ValueRenderer:
         if value is None:
             return MISSING_VALUE_STR
         if isinstance(self.value_formatter, str):
-            return self.value_formatter.format(value)
+            return _escape_markup(self.value_formatter.format(value))
         else:
-            return self.value_formatter(value)
+            return _escape_markup(self.value_formatter(value))
 
 
 class RenderNumberConfig(TypedDict, total=False):
@@ -881,7 +902,7 @@ class _NumberRenderer:
             diff_style = self._get_diff_style(old, new)
             if diff_style:
                 # If there is a diff, make the name bold and compute the diff_str
-                name = name and f'[bold]{name}[/]'
+                name = name and _style_markup(name, 'bold')
                 diff_str = self._get_diff_str(old, new)
                 if diff_str:
                     result += f' ({diff_str})'
@@ -995,6 +1016,10 @@ T = TypeVar('T')
 ScalarT = TypeVar('ScalarT', bound=EvaluationScalar)
 
 
+def _result_values(results: Mapping[str, EvaluationResult[ScalarT]]) -> dict[str, ScalarT]:
+    return {name: result.value for name, result in results.items()}
+
+
 @dataclass(kw_only=True)
 class ReportCaseRenderer:
     include_input: bool
@@ -1065,7 +1090,7 @@ class ReportCaseRenderer:
 
     def build_row(self, case: ReportCase) -> list[str]:
         """Build a table row for a single case."""
-        row = [case.name]
+        row = [_escape_markup(case.name)]
 
         if self.include_input:
             row.append(self.input_renderer.render_value(None, case.inputs) or EMPTY_CELL_STR)
@@ -1142,7 +1167,7 @@ class ReportCaseRenderer:
     ) -> list[str]:
         """Build a table row for a given case ID."""
         assert baseline.name == new_case.name, 'This should only be called for matching case IDs'
-        row = [baseline.name]
+        row = [_escape_markup(baseline.name)]
 
         if self.include_input:  # pragma: no branch
             input_diff = self.input_renderer.render_diff(None, baseline.inputs, new_case.inputs) or EMPTY_CELL_STR
@@ -1167,17 +1192,13 @@ class ReportCaseRenderer:
 
         if self.include_scores:  # pragma: no branch
             scores_diff = self._render_dicts_diff(
-                {k: v.value for k, v in baseline.scores.items()},
-                {k: v.value for k, v in new_case.scores.items()},
-                self.score_renderers,
+                _result_values(baseline.scores), _result_values(new_case.scores), self.score_renderers
             )
             row.append(scores_diff)
 
         if self.include_labels:  # pragma: no branch
             labels_diff = self._render_dicts_diff(
-                {k: v.value for k, v in baseline.labels.items()},
-                {k: v.value for k, v in new_case.labels.items()},
-                self.label_renderers,
+                _result_values(baseline.labels), _result_values(new_case.labels), self.label_renderers
             )
             row.append(labels_diff)
 
@@ -1251,7 +1272,7 @@ class ReportCaseRenderer:
 
     def build_failure_row(self, case: ReportCaseFailure) -> list[str]:
         """Build a table row for a single case failure."""
-        row = [case.name]
+        row = [_escape_markup(case.name)]
 
         if self.include_input:
             row.append(self.input_renderer.render_value(None, case.inputs) or EMPTY_CELL_STR)
@@ -1263,10 +1284,10 @@ class ReportCaseRenderer:
             row.append(self.output_renderer.render_value(None, case.expected_output) or EMPTY_CELL_STR)
 
         if self.include_error_message:
-            row.append(case.error_message or EMPTY_CELL_STR)
+            row.append(_escape_markup(case.error_message) or EMPTY_CELL_STR)
 
         if self.include_error_stacktrace:
-            row.append(case.error_stacktrace or EMPTY_CELL_STR)
+            row.append(_escape_markup(case.error_stacktrace) or EMPTY_CELL_STR)
 
         return row
 
@@ -1314,7 +1335,7 @@ class ReportCaseRenderer:
         for key in sorted(keys):
             old_val = baseline_dict.get(key)
             new_val = new_dict.get(key)
-            rendered = renderers[key].render_diff(key if include_names else None, old_val, new_val)
+            rendered = renderers[key].render_diff(_escape_markup(key) if include_names else None, old_val, new_val)
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
@@ -1326,7 +1347,8 @@ class ReportCaseRenderer:
         include_names: bool = True,
     ) -> str:
         diff_lines = [
-            renderers[key].render_value(key if include_names else None, val) for key, val in case_dict.items()
+            renderers[key].render_value(_escape_markup(key) if include_names else None, val)
+            for key, val in case_dict.items()
         ]
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
@@ -1339,9 +1361,9 @@ class ReportCaseRenderer:
     ) -> str:
         diff_lines: list[str] = []
         for key, val in case_dict.items():
-            rendered = renderers[key].render_value(key if include_names else None, val.value)
+            rendered = renderers[key].render_value(_escape_markup(key) if include_names else None, val.value)
             if self.include_reasons and (reason := val.reason):
-                rendered += f'\n  Reason: {reason}\n'
+                rendered += f'\n  Reason: {_escape_markup(reason)}\n'
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
@@ -1355,8 +1377,8 @@ class ReportCaseRenderer:
         for a in assertions:
             line = self._render_assertion_mark(a)
             if self.include_reasons:
-                line = f'{a.name}: {line}\n'
-                line = f'{line}  Reason: {a.reason}\n\n' if a.reason else line
+                line = f'{_escape_markup(a.name)}: {line}\n'
+                line = f'{line}  Reason: {_escape_markup(a.reason)}\n\n' if a.reason else line
             lines.append(line)
         return ''.join(lines)
 
@@ -1413,9 +1435,9 @@ class ReportCaseRenderer:
             return EMPTY_CELL_STR  # pragma: no cover
         lines: list[str] = []
         for failure in failures:
-            line = f'[red]{failure.name}[/]'
+            line = _style_markup(_escape_markup(failure.name), 'red')
             if failure.error_message:
-                line += f': {failure.error_message}'
+                line += f': {_escape_markup(failure.error_message)}'
             lines.append(line)
         return '\n'.join(lines)
 
@@ -1575,25 +1597,7 @@ class EvaluationRenderer:
         """
         report_cases = report.cases
         baseline_cases = self._baseline_cases_to_include(report, baseline)
-
-        report_cases_by_id = {case.name: case for case in report_cases}
-        baseline_cases_by_id = {case.name: case for case in baseline_cases}
-
-        diff_cases: list[tuple[ReportCase, ReportCase]] = []
-        removed_cases: list[ReportCase] = []
-        added_cases: list[ReportCase] = []
-
-        for case_id in sorted(set(baseline_cases_by_id.keys()) | set(report_cases_by_id.keys())):
-            maybe_baseline_case = baseline_cases_by_id.get(case_id)
-            maybe_report_case = report_cases_by_id.get(case_id)
-            if maybe_baseline_case and maybe_report_case:
-                diff_cases.append((maybe_baseline_case, maybe_report_case))
-            elif maybe_baseline_case:
-                removed_cases.append(maybe_baseline_case)
-            elif maybe_report_case:
-                added_cases.append(maybe_report_case)
-            else:  # pragma: no cover
-                assert False, 'This should be unreachable'
+        diff_cases, removed_cases, added_cases = self._pair_cases(report_cases, baseline_cases)
 
         case_renderer = self._get_case_renderer(report, baseline)
         diff_name = (
@@ -1629,6 +1633,31 @@ class EvaluationRenderer:
                 table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
 
         return table
+
+    @staticmethod
+    def _pair_cases(
+        report_cases: list[ReportCase], baseline_cases: list[ReportCase]
+    ) -> tuple[list[tuple[ReportCase, ReportCase]], list[ReportCase], list[ReportCase]]:
+        """Pair cases by name: `(baseline, report)` pairs, then baseline-only cases, then report-only cases."""
+        report_cases_by_id = {case.name: case for case in report_cases}
+        baseline_cases_by_id = {case.name: case for case in baseline_cases}
+
+        diff_cases: list[tuple[ReportCase, ReportCase]] = []
+        removed_cases: list[ReportCase] = []
+        added_cases: list[ReportCase] = []
+
+        for case_id in sorted(set(baseline_cases_by_id.keys()) | set(report_cases_by_id.keys())):
+            maybe_baseline_case = baseline_cases_by_id.get(case_id)
+            maybe_report_case = report_cases_by_id.get(case_id)
+            if maybe_baseline_case and maybe_report_case:
+                diff_cases.append((maybe_baseline_case, maybe_report_case))
+            elif maybe_baseline_case:
+                removed_cases.append(maybe_baseline_case)
+            elif maybe_report_case:
+                added_cases.append(maybe_report_case)
+            else:  # pragma: no cover
+                assert False, 'This should be unreachable'
+        return diff_cases, removed_cases, added_cases
 
     def build_failures_table(self, report: EvaluationReport) -> Table:
         case_renderer = self._get_case_renderer(report)
@@ -1697,37 +1726,58 @@ def _render_analysis(
     analysis: ConfusionMatrix | PrecisionRecall | ScalarResult | TableResult | LinePlot,
 ) -> RenderableType:
     """Render a single report analysis as a Rich renderable."""
-    if isinstance(analysis, ConfusionMatrix):
-        table = Table(title=analysis.title, show_lines=True)
-        table.add_column('Expected \\ Predicted', style='bold')
-        for label in analysis.class_labels:
-            table.add_column(label, justify='right')
-        for i, row_label in enumerate(analysis.class_labels):
-            row = [row_label] + [str(v) for v in analysis.matrix[i]]
-            table.add_row(*row)
-        return table
-    elif isinstance(analysis, ScalarResult):
-        value_str = str(analysis.value)
-        if analysis.unit:
-            value_str += f' {analysis.unit}'
-        return Text(f'{analysis.title}: {value_str}')
-    elif isinstance(analysis, PrecisionRecall):
-        lines: list[str] = [analysis.title]
-        for curve in analysis.curves:
-            auc_str = f', AUC={curve.auc:.4f}' if curve.auc is not None else ''
-            lines.append(f'  {curve.name}: {len(curve.points)} points{auc_str}')
-        return Text('\n'.join(lines))
-    elif isinstance(analysis, LinePlot):
-        lines: list[str] = [analysis.title]
-        for curve in analysis.curves:
-            lines.append(f'  {curve.name}: {len(curve.points)} points')
-        return Text('\n'.join(lines))
-    elif isinstance(analysis, TableResult):
-        table = Table(title=analysis.title, show_lines=True)
-        for col in analysis.columns:
-            table.add_column(col)
-        for row in analysis.rows:
-            table.add_row(*[str(v) if v is not None else '' for v in row])
-        return table
-    else:
-        assert_never(analysis)
+    match analysis:
+        case ConfusionMatrix():
+            return _render_confusion_matrix(analysis)
+        case ScalarResult():
+            return _render_scalar_result(analysis)
+        case PrecisionRecall():
+            return _render_precision_recall(analysis)
+        case LinePlot():
+            return _render_line_plot(analysis)
+        case TableResult():
+            return _render_table_result(analysis)
+        case _:
+            assert_never(analysis)
+
+
+def _render_confusion_matrix(analysis: ConfusionMatrix) -> RenderableType:
+    table = Table(title=analysis.title, show_lines=True)
+    table.add_column('Expected \\ Predicted', style='bold')
+    for label in analysis.class_labels:
+        table.add_column(label, justify='right')
+    for i, row_label in enumerate(analysis.class_labels):
+        row = [row_label] + [str(v) for v in analysis.matrix[i]]
+        table.add_row(*row)
+    return table
+
+
+def _render_scalar_result(analysis: ScalarResult) -> RenderableType:
+    value_str = str(analysis.value)
+    if analysis.unit:
+        value_str += f' {analysis.unit}'
+    return Text(f'{analysis.title}: {value_str}')
+
+
+def _render_precision_recall(analysis: PrecisionRecall) -> RenderableType:
+    lines: list[str] = [analysis.title]
+    for curve in analysis.curves:
+        auc_str = f', AUC={curve.auc:.4f}' if curve.auc is not None else ''
+        lines.append(f'  {curve.name}: {len(curve.points)} points{auc_str}')
+    return Text('\n'.join(lines))
+
+
+def _render_line_plot(analysis: LinePlot) -> RenderableType:
+    lines: list[str] = [analysis.title]
+    for curve in analysis.curves:
+        lines.append(f'  {curve.name}: {len(curve.points)} points')
+    return Text('\n'.join(lines))
+
+
+def _render_table_result(analysis: TableResult) -> RenderableType:
+    table = Table(title=analysis.title, show_lines=True)
+    for col in analysis.columns:
+        table.add_column(col)
+    for row in analysis.rows:
+        table.add_row(*[str(v) if v is not None else '' for v in row])
+    return table

@@ -19,7 +19,7 @@ from pathlib import Path
 
 # The workflows install exactly one pinned third-party package for these
 # scripts: pydantic, the typed boundary in `triage_models`. The repo-wide ban
-# on `typing.TypedDict` exists for pydantic validation on Python 3.10/3.11;
+# on `typing.TypedDict` exists for pydantic validation on Python 3.11;
 # these scripts only run on the newer runner Python.
 from typing import Annotated, Any, Literal, TypedDict, cast  # noqa: TID251
 
@@ -75,8 +75,8 @@ _WEEKLY_TEXT_LIMIT = 30_000
 REPOSITORIES = frozenset({'pydantic/pydantic-ai', 'pydantic/pydantic-ai-harness'})
 MAINTAINER_OWNERS = ('adtyavrdhn', 'dsfaccini', 'DouweM', 'mpfaffenberger')
 ROUTING_RECOVERY_EPOCH = '2026-08-18'
-# Triage priority labels: the first two open the assignment gate in
-# `semantic_owner_router`; issues carrying none of the four are still awaiting triage.
+# Triage priority labels: the first two mark issues that need a maintainer owner;
+# issues carrying none of the four are still awaiting triage.
 PRIORITY_GATE_LABELS = ('p:1-highest', 'p:2-high')
 _PRIORITY_LABELS_ALL = (*PRIORITY_GATE_LABELS, 'p:3-mid', 'p:4-low')
 _GATE_BATCH_BREACH = 15
@@ -2170,7 +2170,7 @@ def main() -> int:
         return 1
     client = GitHubClient(token)
     repo = os.environ.get('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     failures: list[str] = []
     if args.mode == 'snapshot':
         lines = write_snapshot(client, repo, args.snapshot_path, now=now)

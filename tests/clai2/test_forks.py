@@ -3,7 +3,9 @@
 import asyncio
 import io
 import signal
+import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import closing
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -21,13 +23,13 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import HostEvent, TurnEnd, TurnStart
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.plugins import ForkEnd, ForkInfo, HostEvent, TurnEnd, TurnStart
 from pydantic_clai2.runtime.forks import USAGE, Forks, parse_fork_args
+from pydantic_clai2.runtime.session import Session
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
@@ -149,13 +151,10 @@ async def test_snapshot_failure_forks_fresh(tmp_path: Path) -> None:
     def broken() -> list[ModelMessage]:
         raise RuntimeError('no history')
 
-    forks = Forks(
-        console=console,
-        history=broken,
-        spawn=lambda _, history: Session(
-            Agent(FunctionModel(stream_function=model.respond)), deps=None, message_history=history
-        ),
-    )
+    async def spawn(_: str | None, history: Sequence[ModelMessage]) -> Session[None, str]:
+        return Session(Agent(FunctionModel(stream_function=model.respond)), deps=None, message_history=history)
+
+    forks = Forks(console=console, history=broken, spawn=spawn)
     await forks.fork_command(['hello'])
     (record,) = forks.records
     await record.task
@@ -238,6 +237,26 @@ async def test_notices_wait_while_busy(tmp_path: Path) -> None:
     assert 'fork #1 cancelled after' in text
 
 
+async def test_quiet_waits_for_every_turn_and_command(tmp_path: Path) -> None:
+    shell = shell_for(tmp_path, Model(), io.StringIO())
+    forks = shell.forks
+    entered: list[str] = []
+
+    async def notice() -> None:
+        async with forks.quiet():
+            entered.append('notice')
+
+    async with anyio.create_task_group() as tasks:
+        async with forks.busy():
+            tasks.start_soon(notice)
+            await anyio.wait_all_tasks_blocked()
+        # The notice wakes as the first command ends, but another has claimed the terminal by then.
+        async with forks.busy():
+            await anyio.wait_all_tasks_blocked()
+            assert entered == []
+    assert entered == ['notice']
+
+
 async def test_announcements_own_the_terminal(tmp_path: Path) -> None:
     model, output = Model(), io.StringIO()
     shell = shell_for(tmp_path, model, output)
@@ -262,11 +281,11 @@ async def test_announcements_own_the_terminal(tmp_path: Path) -> None:
 
 async def test_structured_output_prints_as_is() -> None:
     output = io.StringIO()
-    forks = Forks(
-        console=Console(file=output, width=200),
-        history=lambda: [],
-        spawn=lambda _, history: Session(Agent(TestModel(), output_type=list[int]), deps=None),
-    )
+
+    async def spawn(_: str | None, history: Sequence[ModelMessage]) -> Session[None, list[int]]:
+        return Session(Agent(TestModel(), output_type=list[int]), deps=None)
+
+    forks = Forks(console=Console(file=output, width=200), history=lambda: [], spawn=spawn)
     await forks.fork_command(['numbers'])
     (record,) = forks.records
     await record.task
@@ -276,13 +295,21 @@ async def test_structured_output_prints_as_is() -> None:
 
 
 async def test_first_forks_on_a_new_database_all_run(tmp_path: Path) -> None:
-    for attempt in range(25):
-        model, output = Model(), io.StringIO()
-        shell = shell_for(tmp_path / str(attempt), model, output)
-        for prompt in ('one', 'two', 'three'):
-            await shell.commands.execute_async(f'/fork {prompt}')
-        await asyncio.gather(*(record.task for record in shell.forks.records))
-        assert [record.status for record in shell.forks.records] == ['done', 'done', 'done'], output.getvalue()
+    """Concurrent first connections to a brand-new store can fail on its WAL switch, so `/fork` opens it first."""
+    model, output = Model(), io.StringIO()
+    shell = shell_for(tmp_path, model, output)
+    conversations = shell.session.conversations
+    assert conversations is not None
+    assert not conversations.database.exists()
+    await shell.commands.execute_async('/fork one')
+    # The fork has not run yet, and the command has already switched the new store to WAL.
+    assert model.seen == {}
+    with closing(sqlite3.connect(f'{conversations.database.as_uri()}?mode=ro', uri=True)) as connection:
+        assert connection.execute('PRAGMA journal_mode').fetchone() == ('wal',)
+    for prompt in ('two', 'three'):
+        await shell.commands.execute_async(f'/fork {prompt}')
+    await asyncio.gather(*(record.task for record in shell.forks.records))
+    assert [record.status for record in shell.forks.records] == ['done', 'done', 'done'], output.getvalue()
 
 
 async def test_forks_fire_turn_hooks() -> None:
@@ -298,12 +325,10 @@ async def test_forks_fire_turn_hooks() -> None:
         elif isinstance(event, TurnStart) and event.text == 'broken hook':
             raise RuntimeError('hook broke')
 
-    forks = Forks(
-        console=Console(file=output, width=200),
-        history=lambda: [],
-        spawn=lambda _, history: Session(Agent(FunctionModel(stream_function=model.respond)), deps=None),
-        fire=fire,
-    )
+    async def spawn(_: str | None, history: Sequence[ModelMessage]) -> Session[None, str]:
+        return Session(Agent(FunctionModel(stream_function=model.respond)), deps=None)
+
+    forks = Forks(console=Console(file=output, width=200), history=lambda: [], spawn=spawn, fire=fire)
     with pytest.raises(ValueError, match='Fork cancelled by a plugin: policy says no'):
         await forks.fork_command(['forbidden'])
     with pytest.raises(RuntimeError, match='hook broke'):
@@ -328,6 +353,21 @@ async def test_forks_fire_turn_hooks() -> None:
     # A refused fork still closes its turn, as a refused foreground turn does.
     assert ends['forbidden'].outcome == 'cancelled'
     assert ends['broken hook'].outcome == 'failed'
+    # Each fork that ran ends with `fork_end` too, after its `turn_end`, so a plugin such as `web` can show it.
+    fork_ends = {event.fork.id: event for event in events if isinstance(event, ForkEnd)}
+    assert [(fork_ends[n].fork.prompt, fork_ends[n].fork.status) for n in (1, 2, 3)] == [
+        ('rewritten', 'done'),
+        ('explode', 'failed'),
+        ('block', 'cancelled'),
+    ]
+    assert fork_ends[1].output == '**answer** to rewritten' and fork_ends[1].error is None
+    assert fork_ends[2].output is None and str(fork_ends[2].error) == 'provider down\nsecond line'
+    assert fork_ends[3].output is None and fork_ends[3].error is None
+    assert events.index(fork_ends[1]) == events.index(ends['rewritten']) + 1
+    assert forks.listing() == tuple(fork_ends[n].fork for n in (1, 2, 3))
+    assert forks.listing()[0] == ForkInfo(
+        id=1, model='agent default', prompt='rewritten', status='done', elapsed=done.elapsed or 0, session_id=None
+    )
     assert isinstance(ends['broken hook'].error, RuntimeError)
 
 
@@ -411,7 +451,7 @@ async def test_a_fork_that_cannot_start_closes_its_turn() -> None:
     async def fire(event: HostEvent) -> None:
         events.append(event)
 
-    def spawn(model: str | None, history: Sequence[ModelMessage]) -> Session[None, str]:
+    async def spawn(model: str | None, history: Sequence[ModelMessage]) -> Session[None, str]:
         raise ValueError(f'Unknown model {model}')
 
     forks = Forks(console=Console(file=io.StringIO()), history=lambda: [], spawn=spawn, fire=fire)
@@ -459,7 +499,7 @@ class Script:
                 step = steps.pop(0)
                 return step if isinstance(step, str) else await step()
 
-        monkeypatch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
 
 
 async def test_cancelled_turn_takes_forks_down(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -489,15 +529,16 @@ async def test_shell_passthrough_holds_fork_output(tmp_path: Path, monkeypatch: 
         await model.started.wait()
         return '!make test'
 
-    async def run_shell_command(command: str, *, console: Console, interrupts: object) -> None:
+    async def run_shell_command(command: str, *, console: Console, interrupts: object, cwd: Path) -> str:
         # The fork finishes while the command owns the terminal; its output must wait.
         model.release.set()
         for _ in range(20):
             await asyncio.sleep(0.01)
         assert 'FORK #1' not in output.getvalue()
         console.print(f'ran {command}')
+        return f'ran {command}'
 
-    monkeypatch.setattr('pydantic_clai2._app.run_shell_command', run_shell_command)
+    monkeypatch.setattr('pydantic_clai2.runtime.session_runtime.run_shell_command', run_shell_command)
 
     async def after_command() -> str:
         # Idle again: the held banner prints before the next prompt returns.

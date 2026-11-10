@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import errno
 import pickle
+import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     FileEntry,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
@@ -127,6 +129,13 @@ class FreshWorkspaces(AbstractCapability[Any]):
         backend = FakeWorkspace(ref.id if ref is not None else 'fresh', ref=ref)
         self.backends.append(backend)
         return backend
+
+
+async def test_an_engine_without_default_ids_keeps_fresh_uuid7s() -> None:
+    """An engine built on the public base supplies no replay-stable `run_id`, so the defaults stay UUID7s."""
+    agent = Agent(TestModel(), name='engine_without_default_ids', capabilities=[FakeDurability()])
+    result = await agent.run('Hello.')
+    assert [uuid.UUID(result.run_id).version, uuid.UUID(result.conversation_id).version] == [7, 7]
 
 
 def _run_context() -> RunContext[None]:
@@ -304,6 +313,47 @@ async def test_a_matching_explicit_workspace_policy_is_kept(tmp_path: Path) -> N
     assert isinstance(result.workspace, DurableWorkspace)
     assert isinstance(result.workspace.wrapped, PolicyWorkspace)
     assert result.workspace.wrapped.durable_policy() == ('open',)
+
+
+async def test_an_explicit_workspace_with_another_authority_is_rejected(tmp_path: Path) -> None:
+    agent = Agent(TestModel(), name='ws', capabilities=[LocalWorkspace(tmp_path, authority='user'), FakeDurability()])
+    backend = LocalWorkspaceBackend(tmp_path)
+
+    with pytest.raises(UserError, match=r'a `workspace=` policy would be lost'):
+        await agent.run('go', workspace=AuthorityWorkspace(Workspace(backend), authority='none'))
+
+    result = await agent.run('go', workspace=AuthorityWorkspace(Workspace(backend), authority='user'))
+    assert isinstance(result.workspace, DurableWorkspace)
+    assert result.workspace.authority == 'user'
+
+
+async def test_path_authority_survives_the_durable_layer(tmp_path: Path) -> None:
+    (tmp_path / 'vendor').mkdir()
+    (tmp_path / 'link.md').symlink_to(tmp_path / 'vendor' / 'AGENTS.md')
+    durability = FakeDurability()
+    agent = Agent(
+        TestModel(call_tools=['probe']),
+        name='ws',
+        capabilities=[LocalWorkspace(tmp_path, path_authority={'vendor': 'none'}), durability],
+    )
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> list[str]:
+        return [await ctx.workspace.authority_of(path) for path in ('AGENTS.md', 'vendor/AGENTS.md', 'link.md')]
+
+    result = await agent.run('go')
+    assert result.output == '{"probe":["operator","none","none"]}'
+    # Called outside a unit, the symlink resolution it needs runs in units.
+    durability.units.clear()
+    assert await result.workspace.authority_of('link.md') == 'none'
+    assert durability.units and all(unit.endswith('workspace.call:realpath') for unit in durability.units)
+
+    backend = LocalWorkspaceBackend(tmp_path)
+    with pytest.raises(UserError, match=r'a `workspace=` policy would be lost'):
+        await agent.run(
+            'go',
+            workspace=AuthorityWorkspace(Workspace(backend), authority='operator', path_authority={'vendor': 'user'}),
+        )
 
 
 def test_a_policy_capability_follows_the_wrapped_answer(tmp_path: Path) -> None:

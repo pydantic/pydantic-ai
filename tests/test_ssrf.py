@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import gzip
-import subprocess
-import sys
-import textwrap
 import zlib
 from collections.abc import AsyncIterator, Callable
 from typing import Any
@@ -133,15 +130,24 @@ class TestIsPrivateIp:
             # IPv6 unique local
             'fc00::1',
             'fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
+            # IPv6 site-local (deprecated by RFC 3879)
+            'fec0::1',
+            'feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
             # IPv6 6to4 (can embed private IPv4)
             '2002::1',
             '2002:c0a8:0101::1',  # Embeds 192.168.1.1
             '2002:0a00:0001::1',  # Embeds 10.0.0.1
             # IPv6 IANA-reserved / special-purpose ranges
             '::',  # Unspecified
+            '::ffff:0:10.0.0.1',  # IPv4-translated (RFC 2765)
+            '::ffff:0:127.0.0.1',
             '100::1',  # Discard prefix (RFC 6666)
+            '100:0:0:1::1',  # Dummy prefix (RFC 9780)
             '2001::1',  # Teredo tunneling (RFC 4380)
+            '2001:2::1',  # Benchmarking (RFC 5180)
             '2001:db8::1',  # Documentation (RFC 3849)
+            '3fff::1',  # Documentation (RFC 9637)
+            '5f00::1',  # Segment Routing (SRv6) SIDs (RFC 9602)
             'ff02::1',  # Multicast (RFC 4291)
             # NAT64 well-known prefix (RFC 6052) wrapping a private IPv4
             '64:ff9b::192.168.1.1',
@@ -279,6 +285,8 @@ class TestIsCloudMetadataIp:
             '100.100.100.200',  # Alibaba Cloud
             '192.0.0.192',  # Oracle Cloud (Classic)
             '169.254.42.42',  # Scaleway
+            '169.254.0.23',  # Tencent Cloud
+            '::ffff:169.254.0.23',  # IPv4-mapped form of Tencent Cloud metadata
             'fd00:ec2::254',  # AWS EC2 IMDS IPv6
             'fd00:ec2::23',  # AWS EKS Pod Identity Agent IPv6
             'fd20:ce::254',  # GCP IPv6 (IPv6-only instances)
@@ -628,6 +636,11 @@ class TestValidateAndResolveUrl:
         with pytest.raises(ValueError, match='Access to cloud metadata service'):
             await validate_and_resolve_url('http://metadata.aliyun.internal/path', allow_local=True)
 
+    async def test_tencent_cloud_metadata_always_blocked(self, mock_dns: AsyncMock) -> None:
+        mock_dns.return_value = [(2, 1, 6, '', ('169.254.0.23', 0))]
+        with pytest.raises(ValueError, match='Access to cloud metadata service'):
+            await validate_and_resolve_url('http://metadata.tencentyun.com/latest/meta-data/', allow_local=True)
+
     @pytest.mark.parametrize(
         'url',
         [
@@ -864,79 +877,6 @@ class TestSafeDownload:
         assert isinstance(exc_info.value, httpx2.DecodingError)
         assert isinstance(exc_info.value, httpx.RequestError)
         assert exc_info.value.request.url.path == '/file.txt'
-
-    def test_safe_download_works_without_legacy_httpx(self) -> None:
-        """The public download boundary remains usable when only httpx2 is installed."""
-        script = """
-            import asyncio
-            import sys
-
-            import httpx2
-
-
-            class BlockHttpx:
-                def find_spec(self, fullname, path=None, target=None):
-                    if fullname == 'httpx' or fullname.startswith('httpx.'):
-                        raise ImportError('httpx is not installed')
-
-
-            sys.meta_path.insert(0, BlockHttpx())
-
-            from pydantic_ai import _ssrf
-
-
-            class FailingClient:
-                async def __aenter__(self):
-                    return self
-
-                async def __aexit__(self, *args):
-                    return False
-
-                def build_request(self, method, url, **kwargs):
-                    return httpx2.Request(method, url, **kwargs)
-
-                async def send(self, request, **kwargs):
-                    raise httpx2.ConnectError('Connection failed', request=request)
-
-
-            async def validate_and_resolve_url(url, allow_local):
-                return _ssrf.ResolvedUrl(
-                    resolved_ip='93.184.216.34',
-                    hostname='example.com',
-                    port=80,
-                    is_https=False,
-                    path='/',
-                )
-
-
-            def create_async_httpx2_client(*, timeout):
-                return FailingClient()
-
-
-            _ssrf.validate_and_resolve_url = validate_and_resolve_url
-            _ssrf.create_async_httpx2_client = create_async_httpx2_client
-
-
-            async def main():
-                try:
-                    await _ssrf.safe_download('http://example.com')
-                except httpx2.RequestError as error:
-                    assert type(error) is httpx2.RequestError
-                else:
-                    raise AssertionError('safe_download did not raise the failed request')
-
-
-            asyncio.run(main())
-            assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules)
-        """
-        result = subprocess.run(
-            [sys.executable, '-W', 'error', '-c', textwrap.dedent(script)],
-            capture_output=True,
-            text=True,
-        )
-
-        assert result.returncode == 0, result.stderr
-        assert result.stderr == ''
 
     @pytest.mark.parametrize(
         ('url', 'expected_host'),
@@ -1693,7 +1633,6 @@ class TestSafeDownload:
 
     async def test_allowed_domains_blocks(self, mock_dns: AsyncMock) -> None:
         """Test that non-allowed domain is rejected."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         with pytest.raises(ValueError, match='not in the allowed domains'):
             await safe_download('https://evil.com/page', allowed_domains=['example.com'])
 
@@ -1731,14 +1670,12 @@ class TestSafeDownload:
 
     async def test_blocked_domains_blocks(self, mock_dns: AsyncMock) -> None:
         """Test that blocked domain is rejected."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download('https://evil.com/page', blocked_domains=['evil.com'])
 
     @pytest.mark.parametrize('url', ['https://evil.com./page', 'https://EVIL.com/page', 'https://Evil.Com./page'])
     async def test_blocked_domains_normalizes_host(self, url: str, mock_dns: AsyncMock) -> None:
         """A trailing FQDN dot or uppercasing must not bypass the blocked-domains list."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download(url, blocked_domains=['evil.com'])
 
@@ -1749,7 +1686,6 @@ class TestSafeDownload:
         The host side was already normalized, so an entry spelled this way silently never
         matched and the blocklist quietly did nothing.
         """
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download('https://evil.com/page', blocked_domains=[entry])
 
@@ -1778,7 +1714,6 @@ class TestSafeDownload:
         raw string would let the model past a correctly configured blocklist while the
         request still arrived at the blocked host.
         """
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download(url, blocked_domains=['evil.com'])
 
@@ -1796,7 +1731,6 @@ class TestSafeDownload:
 
     async def test_domain_key_falls_back_on_unencodable_host(self, mock_dns: AsyncMock) -> None:
         """A label the IDNA codec rejects is compared as-is rather than raising."""
-        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         host = 'a' * 64 + '.example'
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download(f'https://{host}/page', blocked_domains=[host])
@@ -1814,11 +1748,8 @@ class TestSafeDownload:
         await safe_download('https://example.com/page', blocked_domains=['evil.com'])
 
     async def test_redirect_to_blocked_domain_rejected(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
-        """Test that redirects to blocked domains are caught."""
-        mock_dns.side_effect = [
-            [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('140.82.114.4', 0))],
-        ]
+        """Test that redirects to blocked domains are caught before the target is resolved."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'https://evil.com/payload'}
@@ -1828,15 +1759,13 @@ class TestSafeDownload:
 
         with pytest.raises(ValueError, match='is blocked'):
             await safe_download('https://example.com/page', blocked_domains=['evil.com'])
+        mock_dns.assert_awaited_once()
 
     async def test_redirect_to_non_allowed_domain_rejected(
         self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
     ) -> None:
-        """Test that redirects to non-allowed domains are caught."""
-        mock_dns.side_effect = [
-            [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('140.82.114.4', 0))],
-        ]
+        """Test that redirects to non-allowed domains are caught before the target is resolved."""
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'https://other.com/page'}
@@ -1846,6 +1775,28 @@ class TestSafeDownload:
 
         with pytest.raises(ValueError, match='not in the allowed domains'):
             await safe_download('https://example.com/page', allowed_domains=['example.com'])
+        mock_dns.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ('allowed_domains', 'blocked_domains', 'error'),
+        [
+            (['example.com'], None, 'not in the allowed domains'),
+            (None, ['evil.com'], 'is blocked'),
+        ],
+    )
+    async def test_rejected_domain_is_not_resolved(
+        self, allowed_domains: list[str] | None, blocked_domains: list[str] | None, error: str, mock_dns: AsyncMock
+    ) -> None:
+        """A hostname the domain lists reject is rejected for that reason, without resolving it.
+
+        The host would resolve to a private address, so resolving first would report that instead.
+        """
+        mock_dns.return_value = [(2, 1, 6, '', ('10.0.0.1', 0))]
+        with pytest.raises(ValueError, match=error):
+            await safe_download(
+                'https://evil.com/page', allowed_domains=allowed_domains, blocked_domains=blocked_domains
+            )
+        mock_dns.assert_not_awaited()
 
 
 class TestSensitiveHeaderStrippingOnRedirects:

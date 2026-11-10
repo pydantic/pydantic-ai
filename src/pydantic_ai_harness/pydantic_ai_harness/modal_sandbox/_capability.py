@@ -5,19 +5,24 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
-
-from typing_extensions import Never
+from typing import TYPE_CHECKING, Any, Never
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir
+from pydantic_ai_harness._workspace_provider import (
+    check_integer,
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+)
 from pydantic_ai_harness.modal_sandbox._backend import (
     DEFAULT_APP_NAME,
     DEFAULT_SANDBOX_TIMEOUT,
+    MAX_SANDBOX_TIMEOUT,
+    MIN_SANDBOX_TIMEOUT,
     ModalSandboxBackend,
     terminate_sandbox,
 )
@@ -133,6 +138,22 @@ def _removed_arguments_message(names: list[str]) -> str:
     )
 
 
+def _sandbox_id_ref(sandbox_id: object) -> WorkspaceRef | None:
+    """The ref the deprecated `sandbox_id=` names.
+
+    `removed_arguments` is typed `Never` to close the signature, so its values arrive here as
+    `object`, whatever the caller passed, and are checked before they become a ref.
+    """
+    if sandbox_id is None:
+        return None
+    if not isinstance(sandbox_id, str):
+        raise UserError(f'`sandbox_id` must be a string naming a Modal sandbox, got {sandbox_id!r}.')
+    if not sandbox_id:
+        # Treating it as absent would silently create and bill a new sandbox.
+        raise UserError('`sandbox_id` must name a Modal sandbox, got an empty string.')
+    return WorkspaceRef(provider='modal', id=sandbox_id)
+
+
 @dataclass(kw_only=True, init=False)
 class ModalSandbox(AbstractCapability[AgentDepsT]):
     """Supply a Modal sandbox as the run's workspace.
@@ -168,6 +189,14 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command in the sandbox gets; a command's own `env` is layered on top."""
 
+    client: modal.Client | None = None
+    """The `modal.Client` to create, attach and destroy with, such as one from `modal.Client.from_credentials`;
+    Modal's client from the environment or config when `None`. A spec cannot set it.
+
+    To use different credentials for each user, supply the workspace from a capability of your own, which can build
+    the client from the run's `deps` and pass it to `ModalSandboxBackend`.
+    """
+
     warn_if_no_tools: bool = True
     """Warn, once per `ModalSandbox` instance, when none of a run's tools has a `Shell` or `FileSystem` tool name.
 
@@ -198,6 +227,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         env: Mapping[str, str] | None = None,
         warn_if_no_tools: bool = True,
         workdir: str | None = None,
+        client: modal.Client | None = None,
         **removed_arguments: Never,
     ) -> None:
         # Hand-written, with the same parameters a dataclass would generate, so the previous
@@ -215,16 +245,13 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
                 raise UserError('Pass `working_dir` only; `workdir` is its deprecated name.')
             warn_argument_renamed('ModalSandbox', 'workdir', 'working_dir')
             working_dir = workdir
-        if defer_loading:
-            raise UserError(
-                '`ModalSandbox` does not support `defer_loading=True`: '
-                'the workspace is selected before deferred capabilities load.'
-            )
+        reject_defer_loading('ModalSandbox', defer_loading)
         # Checked here rather than when the backend first creates a sandbox, so a bad value fails
         # where it is written instead of at the first workspace operation of some later run.
-        if type(sandbox_timeout) is not int or not 10 <= sandbox_timeout <= 86_400:
+        if type(sandbox_timeout) is not int or not MIN_SANDBOX_TIMEOUT <= sandbox_timeout <= MAX_SANDBOX_TIMEOUT:
             raise UserError(
-                f'sandbox_timeout must be an integer between 10 and 86400 seconds, got {sandbox_timeout!r}.'
+                f'sandbox_timeout must be an integer between {MIN_SANDBOX_TIMEOUT} and {MAX_SANDBOX_TIMEOUT} '
+                f'seconds, got {sandbox_timeout!r}.'
             )
         check_integer('idle_timeout', idle_timeout, optional=True)
         check_working_dir(working_dir)
@@ -238,27 +265,61 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.idle_timeout = idle_timeout
         self.working_dir = working_dir
         self.env = env
+        self.client = client
         self.warn_if_no_tools = warn_if_no_tools
         self._warned_no_tools = False
-        # `removed_arguments` is typed `Never` to close the signature; its values are whatever the caller passed.
-        sandbox_id = cast('str | None', removed_arguments.get('sandbox_id'))
-        if sandbox_id == '':
-            # Treating it as absent would silently create and bill a new sandbox.
-            raise UserError('`sandbox_id` must name a Modal sandbox, got an empty string.')
-        self._sandbox_id_ref = WorkspaceRef(provider='modal', id=sandbox_id) if sandbox_id is not None else None
+        self._sandbox_id_ref = _sandbox_id_ref(removed_arguments.get('sandbox_id'))
+
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        image: str | None = None,
+        app_name: str = DEFAULT_APP_NAME,
+        create_app_if_missing: bool = True,
+        sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
+        idle_timeout: int | None = None,
+        working_dir: str | None = None,
+        env: Mapping[str, str] | None = None,
+        warn_if_no_tools: bool = True,
+        **kwargs: Any,
+    ) -> ModalSandbox[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back
+        to the variadic base `from_spec`, because `__init__`'s `modal.Image` hint is a
+        `TYPE_CHECKING` import, and publishes only the bare `'ModalSandbox'`. A spec names an
+        image by its registry tag. `**kwargs` reaches
+        `__init__` unchanged, so deprecated arguments keep their guidance and `defer_loading`
+        its refusal.
+        """
+        return cls(
+            id=id,
+            description=description,
+            image=image,
+            app_name=app_name,
+            create_app_if_missing=create_app_if_missing,
+            sandbox_timeout=sandbox_timeout,
+            idle_timeout=idle_timeout,
+            working_dir=working_dir,
+            env=env,
+            warn_if_no_tools=warn_if_no_tools,
+            **kwargs,
+        )
 
     def backend(self, ref: WorkspaceRef) -> ModalSandboxBackend:
         """Construct a backend for a stored Modal ref without opening the sandbox."""
-        return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env)
+        return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env, client=self.client)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Terminate a sandbox by ID without running commands or restoring its workspace.
 
         A sandbox that no longer exists is already gone, so destroying it returns quietly.
         """
-        if ref.provider != 'modal':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'modal'")
-        await terminate_sandbox(ref.id)
+        check_provider(ref, 'modal')
+        await terminate_sandbox(ref.id, client=self.client)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build a backend without performing Modal I/O."""
@@ -274,6 +335,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             idle_timeout=self.idle_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            client=self.client,
         )
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:

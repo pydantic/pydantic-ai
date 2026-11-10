@@ -6,15 +6,40 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
+import httpx2
 import pytest
 from cassetter import Body, Cassette, RecordMode, WsFrame
 from coverage.python import get_python_source
 
 from . import conftest
-from .conftest import BLOCKBUSTER_EXEMPTIONS, check_vcr_cassette_usage
+from .conftest import BLOCKBUSTER_EXEMPTIONS, RequestCapture, check_vcr_cassette_usage
 
 if TYPE_CHECKING:
     from blockbuster import BlockBuster, BlockingError
+
+
+@pytest.mark.parametrize(
+    'content_encoding, content',
+    [
+        ('identity', b'{"answer":true}'),
+        pytest.param(
+            'zstd',
+            bytes.fromhex('28b52ffd200f7900007b22616e73776572223a747275657d'),
+            marks=pytest.mark.skipif(sys.version_info < (3, 14), reason='stdlib zstd requires Python 3.14+'),
+        ),
+    ],
+)
+async def test_request_capture_decodes_content_encoding(
+    request_capture: RequestCapture, content_encoding: str, content: bytes
+) -> None:
+    await request_capture.client.event_hooks['request'][0](
+        httpx2.Request(
+            'POST', 'https://example.com/questions', content=content, headers={'content-encoding': content_encoding}
+        )
+    )
+
+    assert request_capture.raw_bodies == [content]
+    assert request_capture.body('/questions') == {'answer': True}
 
 
 @pytest.fixture
@@ -125,6 +150,7 @@ def test_blockbuster_disabled_when_explicitly_configured(monkeypatch: pytest.Mon
         next(fixture)
 
 
+@pytest.mark.subprocess(reason='asserts what a fresh interpreter imports')
 def test_disabled_blockbuster_does_not_import_instrumentation() -> None:
     subprocess.run(
         [

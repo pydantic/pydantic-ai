@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import functools
 import sys
+import warnings
 from collections.abc import Callable
 from functools import partial
 from typing import Any
@@ -13,13 +14,7 @@ import pytest
 import trio
 from dirty_equals import HasRepr
 
-from ..conftest import try_import
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
-
+from ..conftest import no_leaked_tasks, try_import
 
 with try_import() as imports_successful:
     from pydantic_evals._utils import (
@@ -52,7 +47,6 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
             cleaned.append('cleaned')
 
     loop = get_event_loop()
-    tasks_before = asyncio.all_tasks(loop)
     real_run_until_complete = loop.run_until_complete
     calls = 0
 
@@ -66,13 +60,12 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
             raise KeyboardInterrupt
         return real_run_until_complete(future)
 
-    with pytest.MonkeyPatch.context() as mp:
+    with no_leaked_tasks(loop), pytest.MonkeyPatch.context() as mp:
         mp.setattr(loop, 'run_until_complete', interrupt_once)
         with pytest.raises(KeyboardInterrupt):
             run_until_complete(coro())
 
     assert cleaned == ['cleaned']  # our coroutine's cleanup ran
-    assert asyncio.all_tasks(loop) == tasks_before  # our task didn't leak, nothing else was touched
 
 
 def test_run_until_complete_propagates_coroutine_error():
@@ -239,3 +232,12 @@ async def test_running_on_asyncio_without_sniffio(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr('pydantic_evals._utils._sniffio', None)
     assert running_on_asyncio()
     assert not await anyio.to_thread.run_sync(running_on_asyncio)
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 14), reason='Python 3.14 raises instead of warning, which is handled')
+@pytest.mark.usefixtures('fresh_event_loop_policy')
+def test_get_event_loop_does_not_warn_without_a_current_loop():
+    """On Python 3.12 and 3.13, `evaluate_sync` in a script used to warn `There is no current event loop` (#1196)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        get_event_loop()

@@ -10,6 +10,7 @@ import re
 
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import BinaryContent
 
 from ._backends import filesystem
 from .shared import MAX_TOOL_OUTPUT, attach_context, clip
@@ -69,8 +70,8 @@ def _fit_to_output_budget(prefix: str, body: str) -> str:
 
 async def read_file(
     ctx: RunContext[object], file_path: str, offset: int | None = None, limit: int | None = None
-) -> str:
-    """Read a UTF-8 text file. Relative paths resolve under the workspace.
+) -> str | list[str | BinaryContent]:
+    """Read a UTF-8 text file, or view an image or PDF. Relative paths resolve under the workspace.
 
     Optional 1-based line `offset` and line `limit` mirror Claude's Read tool.
     """
@@ -90,6 +91,9 @@ async def read_file(
         # `OSError` (e.g. `ENAMETOOLONG` while resolving the path) would otherwise
         # escape and abort the whole run, where the old tool returned an error.
         return f'error: {exc}'
+    if not isinstance(body, str):
+        # An image or PDF: its header and the file, which the model sees directly.
+        return body
     if body.startswith('Path not found: '):
         # The harness returns a missing path as a plain result (file contents always
         # start with its header instead); the shim's tools report it as an error.

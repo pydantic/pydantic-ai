@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import UUID
 
@@ -355,6 +356,28 @@ def test_serialization_honors_a_redaction_inside_metadata() -> None:
     assert adapter.dump_python(result)['metadata'] == {'api_key': 'secret', 'tenant': 'acme'}
 
 
+def test_serialization_honors_a_one_level_spec_written_as_a_mapping() -> None:
+    """Pydantic takes `{'api_key': True}` as the same one-level spec as `{'api_key'}`."""
+    result = Agent(TestModel(custom_output_text='filtered')).run_sync(
+        'Filter this', metadata={'api_key': 'secret', 'tenant': 'acme'}
+    )
+    adapter = TypeAdapter(AgentRunResult[str])
+
+    assert adapter.dump_python(result, exclude={'metadata': {'api_key': True}})['metadata'] == {'tenant': 'acme'}
+    assert b'secret' not in adapter.dump_json(result, exclude={'metadata': {'api_key': True}})
+    assert adapter.dump_python(result, include={'metadata': {'tenant': True}}) == {'metadata': {'tenant': 'acme'}}
+    assert (
+        len(adapter.dump_python(result, exclude={'messages': {0: True}})['messages']) == len(result.all_messages()) - 1
+    )
+
+    # An empty mapping names no keys, and `True` names the whole key, so either way the value stays whole.
+    assert adapter.dump_python(result, include={'metadata': {}})['metadata'] == {'api_key': 'secret', 'tenant': 'acme'}
+    assert adapter.dump_python(result, include={'metadata': True})['metadata'] == {
+        'api_key': 'secret',
+        'tenant': 'acme',
+    }
+
+
 def test_a_filtered_out_output_is_left_out_rather_than_failing_the_dump() -> None:
     """The wrap handler drops `output` when the caller filters it, and the serializer follows."""
     adapter = TypeAdapter(AgentRunResult[Any])
@@ -387,3 +410,103 @@ def test_legacy_shape_tolerates_a_sparse_state() -> None:
     assert sparse.all_messages() == []
     assert sparse.usage == RunUsage()
     assert UUID(sparse.run_id).version == 7
+
+
+def _resolve(schema: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
+    """Follow `node` to its definition in `schema` when it is a `$ref`."""
+    if '$ref' in node:
+        return schema['$defs'][node['$ref'].removeprefix('#/$defs/')]
+    return node
+
+
+def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
+    """The published input schema describes the public keys, not the private dataclass fields.
+
+    The JSON schema is generated from the dataclass, but the validator replaces its fields with the
+    public ones, so without the override an `AgentRunResult` in an API request model advertised
+    `_state` and pulled `GraphAgentState`, tool schemas included, into the published `$defs`.
+    """
+    adapter = TypeAdapter(AgentRunResult[str])
+    validation = adapter.json_schema(mode='validation')
+    serialization = adapter.json_schema(mode='serialization')
+    accepted = _resolve(validation, validation)
+    produced = _resolve(serialization, serialization)
+
+    assert set(accepted['properties']) == set(produced['properties'])
+    assert {k: v for k, v in accepted.items() if k != '$defs'} == snapshot(
+        {
+            'description': 'The final result of an agent run.',
+            'properties': {
+                'output': {'title': 'Output', 'type': 'string'},
+                'messages': {
+                    'items': {
+                        'discriminator': {
+                            'mapping': {'request': '#/$defs/ModelRequest', 'response': '#/$defs/ModelResponse'},
+                            'propertyName': 'kind',
+                        },
+                        'oneOf': [{'$ref': '#/$defs/ModelRequest'}, {'$ref': '#/$defs/ModelResponse'}],
+                    },
+                    'title': 'Messages',
+                    'type': 'array',
+                },
+                'new_message_index': {'title': 'New Message Index', 'type': 'integer'},
+                'output_tool_name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Output Tool Name'},
+                'usage': {'$ref': '#/$defs/RunUsage'},
+                'run_id': {'title': 'Run Id', 'type': 'string'},
+                'conversation_id': {'title': 'Conversation Id', 'type': 'string'},
+                'conversation_revision': {
+                    'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                    'title': 'Conversation Revision',
+                },
+                'conversation_unsaved': {
+                    'items': {
+                        'discriminator': {
+                            'mapping': {'request': '#/$defs/ModelRequest', 'response': '#/$defs/ModelResponse'},
+                            'propertyName': 'kind',
+                        },
+                        'oneOf': [{'$ref': '#/$defs/ModelRequest'}, {'$ref': '#/$defs/ModelResponse'}],
+                    },
+                    'title': 'Conversation Unsaved',
+                    'type': 'array',
+                },
+                'conversation_unchecked': {'title': 'Conversation Unchecked', 'type': 'boolean'},
+                'conversation_saved': {'title': 'Conversation Saved', 'type': 'boolean'},
+                'metadata': {
+                    'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
+                    'title': 'Metadata',
+                },
+                'traceparent': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Traceparent'},
+            },
+            'required': ['output'],
+            'title': 'AgentRunResult',
+            'type': 'object',
+        }
+    )
+    assert not [
+        name
+        for name in ('_state', '_new_message_index', '_AgentRunResult', 'GraphAgentState', 'ModelRequestParameters')
+        if name in json.dumps(validation)
+    ]
+    assert adapter.validate_python({'output': 'hi'}).output == 'hi'
+
+    bare = TypeAdapter(AgentRunResult).json_schema(mode='validation')
+    assert set(bare['properties']) == set(accepted['properties'])
+    assert bare['required'] == ['output']
+
+
+def test_each_output_type_keeps_its_own_validation_schema() -> None:
+    """Two parameterizations in one API each publish their own `output`, not one shared definition."""
+
+    class City(BaseModel):
+        name: str
+
+    class Request(BaseModel):
+        text: AgentRunResult[str]
+        city: AgentRunResult[City]
+
+    schema = Request.model_json_schema(mode='validation')
+    text = _resolve(schema, schema['properties']['text'])
+    city = _resolve(schema, schema['properties']['city'])
+
+    assert text['properties']['output'] == {'title': 'Output', 'type': 'string'}
+    assert city['properties']['output'] == {'$ref': '#/$defs/City'}

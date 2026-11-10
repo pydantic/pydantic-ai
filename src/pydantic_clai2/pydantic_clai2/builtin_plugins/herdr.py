@@ -1,12 +1,11 @@
-"""Opt-in herdr state, session, metadata, and conversation-title integration."""
+"""Herdr state, session, metadata, and conversation-title integration in managed terminal panes."""
 
-import asyncio
-import logging
 import os
-import sqlite3
+import re
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import anyio
 from pydantic import JsonValue
@@ -23,12 +22,39 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai_harness.ask_user import AskUserAnsweredEvent, AskUserRequestedEvent
 from pydantic_ai_harness.compaction import ContextUsageEvent
-from pydantic_clai2.builtin_plugins._herdr_client import HerdrClient
-from pydantic_clai2.plugins import NoSettings, Plugin, PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.builtin_plugins.herdr_client import SOURCE, HerdrClient
+from pydantic_clai2.config.settings_store import config_dir
+from pydantic_clai2.plugins import (
+    ConversationChanged,
+    NoSettings,
+    Plugin,
+    PluginHost,
+    SessionEnd,
+    SessionStart,
+    TurnEnd,
+    TurnStart,
+)
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.ui.rendering.usage_report import session_usage
 
-_LOGGER = logging.getLogger(__name__)
+_UNSAFE_ARGUMENT = re.compile(r"['\x00-\x1f\x7f-\x9f]")
+"""Herdr rejects the whole report when a resume argument contains an apostrophe or a control character."""
+
+
+def _resume_argv(conversation_id: str, settings_database: Path | None, *, saved: bool) -> list[JsonValue] | None:
+    """The command herdr runs to reopen this conversation after a restart, if its settings path is known.
+
+    Herdr keeps the last command it accepted, so an unsaved conversation needs one too: `--resume` cannot open it
+    yet, and `--session-id` refuses an ID once it is saved.
+    """
+    if settings_database is None:
+        return None
+    argv = ['clai2', '--resume' if saved else '--session-id', conversation_id]
+    if settings_database.resolve() != (config_dir() / 'config.db').resolve():
+        argv += ['--database', str(settings_database.resolve())]
+    if any(_UNSAFE_ARGUMENT.search(argument) for argument in argv):
+        return None
+    return list[JsonValue](argv)
 
 
 class _Reporter:
@@ -38,11 +64,10 @@ class _Reporter:
         self.depth = 0
         self.waiting: set[str] = set()
         self.last_state: tuple[str, str] | None = None
-        self.last_session: tuple[str, str] | None = None
+        self.last_session: tuple[str, Path, bool] | None = None
         self.last_metadata: dict[str, JsonValue] | None = None
         self.last_title: str | None = None
         self.context: str | None = None
-        self.watcher: asyncio.Task[None] | None = None
 
     def report(self, message: str = 'thinking') -> None:
         state = 'blocked' if self.waiting else 'working' if self.depth else 'idle'
@@ -54,39 +79,40 @@ class _Reporter:
         self.client.submit(lane, 'pane.report_agent', {'state': state, 'message': message})
         self.last_state = current
 
-    async def title(self) -> str | None:
+    def title(self) -> str | None:
         conversation = self.host.conversation
-        if not isinstance(conversation, Session) or conversation.conversations is None:
-            return None
-        reference = (conversation.summary.id, str(conversation.conversations.database.resolve()))
-        if reference != self.last_session:
-            self.context = None
-            self.client.submit(
-                'session',
-                'pane.report_agent_session',
-                {'agent_session_id': reference[0], 'agent_session_path': reference[1]},
+        if isinstance(conversation, Session) and conversation.conversations is not None:
+            # Saving the first prompt makes the conversation resumable, so it is part of the reference.
+            reference = (
+                conversation.conversation_id,
+                conversation.conversations.database.resolve(),
+                bool(conversation.summary.revision),
             )
-            self.last_session = reference
-        if not conversation.summary.revision:
-            return None
-        try:
-            summaries = await conversation.conversations.listing(query=reference[0])
-            saved = next((summary for summary in summaries if summary.id == reference[0]), None)
-            # A resume/clear may happen while the database read is in flight.
-            if saved is not None and conversation.summary.id == reference[0]:
-                return saved.title
-        except (OSError, sqlite3.Error, ValueError):
-            _LOGGER.debug('herdr session metadata unavailable', exc_info=True)
-        return None
+            if reference != self.last_session:
+                conversation_id, database, saved = reference
+                if self.last_session is None or self.last_session[:2] != reference[:2]:
+                    self.context = None
+                params: dict[str, JsonValue] = {
+                    'agent_session_id': conversation_id,
+                    'agent_session_path': str(database),
+                }
+                resume_argv = _resume_argv(conversation_id, self.host.settings_database, saved=saved)
+                if resume_argv is not None:
+                    params['resume_argv'] = resume_argv
+                self.client.submit('session', 'pane.report_agent_session', params)
+                self.last_session = reference
+        return conversation.title
 
-    async def refresh(self) -> None:
-        title = await self.title()
+    def refresh(self) -> None:
+        title = self.title()
         total = session_usage(self.host.conversation.messages).total
-        tokens: dict[str, JsonValue] = {'model': self.host.status.model, 'tokens': f'{total.total_tokens:,}'}
-        if self.context is not None:
-            tokens['context'] = self.context
+        tokens: dict[str, JsonValue] = {
+            'model': self.host.status.model,
+            'tokens': f'{total.total_tokens:,}',
+            'context': self.context,
+        }
         metadata: dict[str, JsonValue] = {
-            'applies_to_source': 'herdr:clai2',
+            'applies_to_source': SOURCE,
             'ttl_ms': 86_400_000,
             'tokens': tokens,
         }
@@ -101,31 +127,17 @@ class _Reporter:
             self.client.submit('title', 'tab.rename', {'label': title})
             self.last_title = title
 
-    async def watch(self) -> None:
-        while True:
-            await asyncio.sleep(2)
-            await self.refresh()
-
     async def stop(self, event: SessionEnd) -> None:
         with anyio.CancelScope(shield=True):
-            try:
-                if self.watcher is not None:
-                    self.watcher.cancel()
-                    try:
-                        await self.watcher
-                    except asyncio.CancelledError:
-                        pass
-            finally:
-                await anyio.to_thread.run_sync(self.client.close)
+            await anyio.to_thread.run_sync(self.client.close)
 
     async def start(self, event: SessionStart) -> None:
         self.report()
-        await self.refresh()
-        self.watcher = asyncio.create_task(self.watch(), name='clai2-herdr-titles')
+        self.refresh()
 
     async def prompt(self, event: TurnStart) -> None:
         self.context = None
-        await self.refresh()
+        self.refresh()
 
     async def run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         self.depth += 1
@@ -163,11 +175,13 @@ class _Reporter:
 
     async def usage(self, ctx: RunContext[None], event: ContextUsageEvent) -> None:
         self.context = f'{event.fraction:.0%}' if event.resolved else None
+        # Mid-turn, so the sidebar's context figure keeps up during a long run.
+        self.refresh()
 
     async def finished(self, event: TurnEnd) -> None:
         self.waiting.clear()
         self.report()
-        await self.refresh()
+        self.refresh()
 
 
 @dataclass
@@ -204,15 +218,21 @@ class _Reporting(AbstractCapability[None]):
 
 
 class HerdrPlugin(Plugin):
-    """Report only inside a herdr pane. No IO or tasks outside herdr or on Windows."""
+    """Report only inside a herdr pane. No IO or tasks outside herdr, on Windows, or without a terminal."""
 
     def __init__(self, host: PluginHost[None], settings: NoSettings) -> None:
         super().__init__(host, settings)
         socket_path = os.environ.get('HERDR_SOCKET_PATH')
         pane_id = os.environ.get('HERDR_PANE_ID')
+        # The pane shows the session in the terminal; another session in this process, such as one the
+        # browser opened, would report over it.
         self.reporter = (
             None
-            if os.environ.get('HERDR_ENV') != '1' or not socket_path or not pane_id or sys.platform == 'win32'
+            if os.environ.get('HERDR_ENV') != '1'
+            or not socket_path
+            or not pane_id
+            or sys.platform == 'win32'
+            or not host.console.is_terminal
             else _Reporter(
                 host=host,
                 client=HerdrClient(socket_path=socket_path, pane_id=pane_id, tab_id=os.environ.get('HERDR_TAB_ID')),
@@ -233,6 +253,10 @@ class HerdrPlugin(Plugin):
     async def on_turn_end(self, event: TurnEnd) -> None:
         if self.reporter is not None:
             await self.reporter.finished(event)
+
+    async def on_conversation_changed(self, event: ConversationChanged) -> None:
+        if self.reporter is not None:
+            self.reporter.refresh()
 
     async def on_session_end(self, event: SessionEnd) -> None:
         # Failed loads also call this, so it must tolerate a session that never started.

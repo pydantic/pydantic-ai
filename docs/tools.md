@@ -38,7 +38,7 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'google:gemini-3-flash-preview',  # (1)!
+    '{{ google:medium }}',  # (1)!
     deps_type=str,  # (2)!
     instructions=(
         "You're a dice game, you should roll the die and see if the number "
@@ -99,8 +99,9 @@ print(dice_result.all_messages())
                 tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.000033'), input_tokens=54, output_tokens=2),
-        model_name='gemini-3-flash-preview',
+        usage=RequestUsage(cost=Decimal('0.0000480'), input_tokens=54, output_tokens=2),
+        model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -125,8 +126,11 @@ print(dice_result.all_messages())
                 tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.0000395'), input_tokens=55, output_tokens=4),
-        model_name='gemini-3-flash-preview',
+        usage=RequestUsage(
+            cost=Decimal('0.00005625'), input_tokens=55, output_tokens=4
+        ),
+        model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -151,8 +155,9 @@ print(dice_result.all_messages())
                 content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.000064'), input_tokens=56, output_tokens=12),
-        model_name='gemini-3-flash-preview',
+        usage=RequestUsage(cost=Decimal('0.000087'), input_tokens=56, output_tokens=12),
+        model_name='{{ google:medium.name }}',
+        model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -224,13 +229,13 @@ def get_player_name(ctx: RunContext[str]) -> str:
 
 
 agent_a = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     deps_type=str,
     tools=[roll_dice, get_player_name],  # (1)!
     instructions=instructions,
 )
 agent_b = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     deps_type=str,
     tools=[  # (2)!
         Tool(roll_dice, takes_ctx=False),
@@ -265,10 +270,10 @@ Even better, Pydantic AI extracts the docstring from functions and (thanks to [g
 
 [Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy`, and `sphinx` style docstrings. Pydantic AI will infer the format to use based on the docstring, but you can explicitly set it using [`docstring_format`][pydantic_ai.tools.DocstringFormat]. You can also enforce parameter requirements by setting `require_parameter_descriptions=True`. This will raise a [`UserError`][pydantic_ai.exceptions.UserError] if a parameter description is missing.
 
-Three parts of the docstring reach the model: the leading description, the parameter descriptions, and the
-first entry of the returns section. Other sections Griffe can parse, such as `Raises`, `Examples`, `Notes`,
-`Warnings` and `Yields`, are dropped, so anything the model needs to act on belongs in the
-leading description, a parameter description, or the first returns entry.
+Three parts of the docstring reach the model: the leading description, the parameter descriptions (including
+those under `Keyword Args` or `Other Parameters`), and the first entry of the returns section. Other sections
+Griffe can parse, such as `Raises`, `Examples`, `Notes`, `Warnings` and `Yields`, are dropped, so anything the
+model needs to act on belongs in the leading description, a parameter description, or the first returns entry.
 
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
@@ -375,6 +380,8 @@ print(test_model.last_model_request_parameters.function_tools)
 
 _(This example is complete, it can be run "as is")_
 
+A model whose [profile](models/overview.md#models-and-providers) inlines `$defs`, for example with [`InlineDefsJsonSchemaTransformer`][pydantic_ai.profiles.InlineDefsJsonSchemaTransformer], receives a copy of each referenced definition wherever it is referenced. Pydantic AI allows up to 250,000 JSON values in those copies per tool or output schema, counting each object, array, string, number, boolean and null once. Past that, it raises a [`UserError`][pydantic_ai.exceptions.UserError] before sending the request, with a message such as `The JSON schema of tool 'search' is too large` that names the limit. To fix this, refer to large definitions from fewer places, leave the tool out of requests with [`prepare_tools`](tools-advanced.md#prepare-tools) or a [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset], or use a model that keeps `$ref`s.
+
 ### Docstrings {#docstrings}
 
 A docstring written under a parameter, a field, or an enum member is the natural place to say what it means,
@@ -417,7 +424,7 @@ docstring written under each member as that option's description. Such an enum r
 values instead of a plain `enum` list:
 
 ```python {title="enum_options.py"}
-from enum import Enum
+from enum import StrEnum
 
 from pydantic_ai import (
     Agent,
@@ -429,7 +436,7 @@ from pydantic_ai import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 
-class Urgency(UseEnumMemberDocstrings, str, Enum):
+class Urgency(UseEnumMemberDocstrings, StrEnum):
     """How urgent the ticket is."""
 
     low = 'low'

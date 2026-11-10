@@ -1,6 +1,7 @@
 """One-shot CLI execution without terminal input or stream rendering."""
 
 import os
+import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -9,12 +10,16 @@ from rich.console import Console
 
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.usage import UsageLimits
-from pydantic_clai2._app import DEFAULT_PLUGINS, STOCK_PLUGINS, create_shell, create_stock_agent as create_agent
+from pydantic_clai2.app import DEFAULT_PLUGINS, STOCK_PLUGINS, create_stock_agent as create_agent
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.plugins import SessionEndReason, TurnEnd, TurnStart
+from pydantic_clai2.plugins.loader import SessionPlugins
+from pydantic_clai2.runtime.imported_sessions import ImportSource
+from pydantic_clai2.runtime.launch import launch_session_id
+from pydantic_clai2.runtime.session_runtime import create_shell
 
 
 @asynccontextmanager
@@ -24,6 +29,12 @@ async def no_screen() -> AsyncGenerator[None]:
     yield  # pragma: no cover -- async context manager protocol.
 
 
+def _report_pending(project: ProjectSettings) -> None:
+    """Name the project settings left out on stderr: nobody is at a prompt to approve them, and stdout is the answer."""
+    if project.pending_notice is not None:
+        print(project.pending_notice, file=sys.stderr)
+
+
 async def run_headless(
     *,
     text: str,
@@ -31,12 +42,23 @@ async def run_headless(
     store: SettingsStore,
     project: ProjectSettings,
     resume: str | None = None,
+    resume_from: ImportSource | None = None,
     agent: AbstractAgent[None, object] | None = None,
+    session_id: str | None = None,
+    fork_session: bool = False,
 ) -> int:
     """Print only the final answer; preserve sessions and report failures on stderr.
 
+    `resume_from` imports the `resume` session from Claude Code or Codex first.
+
     A supplied `agent` runs without any plugins, like `chat(..., load_plugins=False)`.
+    `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
     """
+    if resume == '':
+        # The browser needs a terminal, which a headless run has none of.
+        raise ValueError('A headless run needs an explicit `resume` (`--resume SESSION-ID`)')
+    session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
+    _report_pending(project)
     load_plugins = agent is None
     agent = create_agent() if agent is None else agent
     if settings.model is None and agent.model is None:
@@ -59,12 +81,15 @@ async def run_headless(
         async with agent:
             with shell.screen.bound(no_screen):  # pragma: no branch -- bound never suppresses exceptions.
                 try:
-                    # Skip before activation, even when a saved declaration overrides the built-in.
-                    for entry in shell.loader.entries():
-                        if entry.declaration.enabled and entry.name != 'ask_user':
-                            await shell.loader.load(entry.name)
+                    # Restore first, so plugins start with the conversation the user asked for.
+                    if resume is not None or session_id is not None:
+                        await shell.sessions.start(
+                            resume=resume, resume_from=resume_from, session_id=session_id, fork=fork_session
+                        )
+                    await _load_plugins(shell.loader)
                     if resume is not None:
-                        await shell.session.resume(resume)
+                        # Now that observability has subscribed, under the restored conversation.
+                        shell.session.record_resumed()
                     start = TurnStart(text=text)
                     ended = TurnEnd(text=text, outcome='cancelled')
                     try:
@@ -84,6 +109,17 @@ async def run_headless(
                     return 1
                 finally:
                     with CancelScope(shield=True):  # pragma: no branch -- this scope is never cancelled.
-                        await shell.loader.close(reason)
+                        await shell.close(reason)
     print(answer)
     return 0
+
+
+async def _load_plugins(loader: SessionPlugins[None]) -> None:
+    """Load every enabled plugin but `ask_user`, skipping one that a plugin loaded before it includes."""
+    # Skip before activation, even when a saved declaration overrides the built-in.
+    for entry in loader.entries():
+        if entry.declaration.enabled and entry.name != 'ask_user':
+            # Read afresh: a plugin loaded earlier in this loop may include this one.
+            current = next(other for other in loader.entries() if other.name == entry.name)
+            if current.included_in is None:
+                await loader.load(entry.name)

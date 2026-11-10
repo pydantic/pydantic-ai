@@ -11,8 +11,8 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2._app import create_stock_agent
-from pydantic_clai2.cli import _cli, headless
+from pydantic_clai2.app import create_stock_agent
+from pydantic_clai2.cli import cli, headless
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -143,7 +143,7 @@ async def test_missing_model(tmp_path: Path) -> None:
 def test_cli_invalid_prompt(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> None:
     monkeypatch.setattr('sys.argv', ['clai2', *args])
     with pytest.raises(SystemExit) as error:
-        _cli.run()
+        cli.run()
     assert error.value.code == 2
 
 
@@ -161,7 +161,9 @@ def test_cli_alias_and_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
         store: SettingsStore,
         project: ProjectSettings,
         resume: str | None,
+        resume_from: str | None,
         agent: object,
+        **_: object,
     ) -> int:
         assert agent is None
         assert text == 'hello'
@@ -172,7 +174,7 @@ def test_cli_alias_and_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 
     monkeypatch.setattr(headless, 'run_headless', run_headless)
     with pytest.raises(SystemExit) as error:
-        _cli.run()
+        cli.run()
     assert error.value.code == (130 if interrupt else 0)
     assert store.load().model == 'test'
 
@@ -191,19 +193,21 @@ async def test_cancel_saves_history_and_closes_plugins(
     agent = Agent(model)
     monkeypatch.setattr(headless, 'create_agent', lambda: agent)
     log = tmp_path / 'lifecycle'
-    plugin = tmp_path / 'lifecycle.py'
+    plugin = tmp_path / 'lifecycle_probe.py'
     plugin.write_text(
         'from pathlib import Path\n'
         'from pydantic_clai2.plugins import Plugin\n'
+        'def record(text, *, after=False):\n'
+        f'    log = Path({str(log)!r})\n'
+        "    log.write_text((log.read_text() + ':' if after else '') + text)\n"
         'class Lifecycle(Plugin):\n'
         '    async def on_turn_end(self, event):\n'
-        f'        Path({str(log)!r}).write_text(event.outcome)\n'
+        '        record(event.outcome)\n'
         '    async def on_session_end(self, event):\n'
-        f'        p = Path({str(log)!r})\n'
-        '        p.write_text(p.read_text() + ":" + event.reason)\n'
+        '        record(event.reason, after=True)\n'
     )
     monkeypatch.setattr(
-        headless, 'STOCK_PLUGINS', (PluginSettings(id='lifecycle', factory='lifecycle', path=str(plugin)),)
+        headless, 'STOCK_PLUGINS', (PluginSettings(id='lifecycle', factory='lifecycle_probe', path=str(plugin)),)
     )
 
     async def run() -> None:

@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Iterable
-from typing import TYPE_CHECKING
-
-from typing_extensions import Self
+from typing import TYPE_CHECKING, Self
 
 from ._warnings import PydanticAIDeprecationWarning
 from .messages import ModelMessage
@@ -16,7 +14,8 @@ if TYPE_CHECKING:
 
 _WARNING = (
     'Appending to `request_context.messages` in `before_model_request` to add messages to the history is deprecated. '
-    'Use `request_context.messages = [*request_context.messages, msg]` plus `ctx.messages.append(msg)` instead.'
+    'Use `ctx.enqueue(...)`, which adds it to this request and to the history, or '
+    '`request_context.messages = [*request_context.messages, msg]` plus `ctx.messages.append(msg)` instead.'
 )
 
 

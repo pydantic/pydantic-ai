@@ -5,12 +5,13 @@ import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import anyio
 import pytest
 from rich.console import Console
 from rich.text import Text
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.messages import ModelMessage, RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from pydantic_clai2 import Session, StreamRenderer
@@ -18,7 +19,7 @@ from pydantic_clai2 import Session, StreamRenderer
 
 def write_model(content: str) -> FunctionModel:
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-        if any(isinstance(part, (ToolReturnPart, RetryPromptPart)) for message in messages for part in message.parts):
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
             yield 'done'
         else:
             yield {0: DeltaToolCall(name='write_file', json_args=json.dumps({'path': 'file.txt', 'content': content}))}
@@ -89,7 +90,7 @@ async def test_unsuccessful_write_does_not_render_diff(tmp_path: Path, conflict:
     @agent.on_event(FileChangeRequestEvent)
     async def refuse(ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
         if conflict:
-            path.write_text('external\n')
+            await anyio.to_thread.run_sync(path.write_text, 'external\n')
         else:
             event.cancel('not approved')
 

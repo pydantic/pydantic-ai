@@ -953,6 +953,45 @@ def test_post_chat_invalid_model():
         assert response.json() == snapshot({'error': 'Model "test:different_model" is not in the allowed models list'})
 
 
+@pytest.mark.parametrize(
+    ('body', 'error_type', 'error_location'),
+    [
+        pytest.param(b'{', 'json_invalid', [], id='invalid-json'),
+        pytest.param(b'\xff', 'json_invalid', [], id='invalid-utf8'),
+        pytest.param(
+            b'{"trigger":"submit-message","id":"chat","messages":"wrong"}',
+            'list_type',
+            ['submit-message', 'messages'],
+            id='invalid-messages',
+        ),
+        pytest.param(
+            b'{"trigger":"submit-message","id":"chat","messages":[],"builtinTools":"wrong"}',
+            'list_type',
+            ['builtinTools'],
+            id='invalid-options',
+        ),
+    ],
+)
+def test_post_chat_validation_error(
+    body: bytes, error_type: str, error_location: list[str], monkeypatch: pytest.MonkeyPatch
+):
+    """Invalid protocol input and web UI options return 422 validation errors before dispatch."""
+    app = Agent(TestModel()).to_web()
+    dispatch = AsyncMock()
+    monkeypatch.setattr(VercelAIAdapter, 'dispatch_request', dispatch)
+
+    with TestClient(app, base_url=LOCAL_BASE_URL, raise_server_exceptions=False) as client:
+        response = client.post('/api/chat', content=body, headers={'content-type': 'application/json'})
+
+    assert response.status_code == 422
+    assert response.headers['content-type'] == 'application/json'
+    errors = response.json()
+    assert len(errors) == 1
+    assert errors[0]['type'] == error_type
+    assert errors[0]['loc'] == error_location
+    dispatch.assert_not_called()
+
+
 def test_post_chat_invalid_builtin_tool():
     """Test POST /api/chat returns 400 when builtin tool is not in allowed list."""
     agent = Agent(TestModel(custom_output_text='Hello'))

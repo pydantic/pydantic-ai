@@ -153,8 +153,15 @@ def _finance(
     )
 
 
+class _NoDomainFiltersModel(FunctionModel):
+    """A model whose native web search ignores domain filters, as Gemini's does."""
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return native_tool.restricting_settings
+
+
 async def _tools_sent(
-    capability: AbstractCapability[object], *, native_web_search: bool
+    capability: AbstractCapability[object], *, native_web_search: bool, applies_domain_filters: bool = True
 ) -> tuple[list[str], list[AbstractNativeTool]]:
     """The function and native tools one request carries, on a model with or without native web search."""
     sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
@@ -169,7 +176,8 @@ async def _tools_sent(
         return ModelResponse(parts=[TextPart('done')])
 
     supported = frozenset({WebSearchTool}) if native_web_search else frozenset[type[AbstractNativeTool]]()
-    model = FunctionModel(respond, profile=ModelProfile(supported_native_tools=supported))
+    model_class = FunctionModel if applies_domain_filters else _NoDomainFiltersModel
+    model = model_class(respond, profile=ModelProfile(supported_native_tools=supported))
     await Agent(model, capabilities=[capability]).run('Search the web.')
     return sent[0]
 
@@ -798,6 +806,12 @@ class TestAgentSpec:
         assert tools == ['web_search', 'get_page']
         assert natives == []
 
+    async def test_you_search_is_the_fallback_where_native_search_cannot_apply_the_domain_filters(self) -> None:
+        capability = YouSearch[object](native=True, exclude_domains=['b.dev'], client=_FakeYouClient())
+        tools, natives = await _tools_sent(capability, native_web_search=True, applies_domain_filters=False)
+        assert tools == ['web_search', 'get_page']
+        assert natives == []
+
     def test_native_search_gets_the_domain_filters(self) -> None:
         capability = YouSearch[None](native=True, include_domains=['a.dev'], client=_FakeYouClient())
         assert capability.get_native_tools() == [WebSearchTool(allowed_domains=['a.dev'])]
@@ -855,6 +869,17 @@ class TestAgentSpec:
     def test_from_spec_sets_a_distinct_id(self) -> None:
         assert YouSearch[None].from_spec(include_domains=['sec.gov'], id='sec_search').id == 'sec_search'
         assert YouResearch[None].from_spec(research_effort='deep', id='deep_research').id == 'deep_research'
+
+    @pytest.mark.parametrize('capability_type', [YouSearch, YouResearch])
+    def test_from_spec_sets_the_base_capability_fields(
+        self, capability_type: type[YouSearch[None] | YouResearch[None]]
+    ) -> None:
+        """`id`, `description` and `defer_loading` live on `AbstractCapability`, so a spec must name them too."""
+        name = capability_type.get_serialization_name()
+        definitions = AgentSpec.model_json_schema_with_capabilities([capability_type])['$defs']
+        assert {'id', 'description', 'defer_loading'} <= definitions[f'spec_params_{name}']['properties'].keys()
+        capability = capability_type.from_spec(id='second', description='The second one.', defer_loading=True)
+        assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
 
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('YDC_API_KEY', 'test-key')

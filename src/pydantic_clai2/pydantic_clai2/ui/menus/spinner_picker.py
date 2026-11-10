@@ -4,6 +4,7 @@ import math
 import time
 from collections.abc import Callable, Iterable
 
+from anyio import to_thread
 from pydantic import ValidationError
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu
@@ -11,8 +12,9 @@ from termflow.tui.menu import Menu
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 from pydantic_clai2.ui.rendering.spinners import MIN_INTERVAL, Spinner, Spinners, clamp_interval
 
 USAGE = 'Usage: /spinner [NAME [SECONDS]] | /spinner init'
@@ -77,16 +79,17 @@ class SpinnerPicker:
             MenuBuilder('Select spinner')
             .style(markdown_style())
             .items([MenuItem(f'{name}{" (current)" if name == self.current else ""}', value=name) for name in names])
-            .searchable()
             .initial_index(names.index(self.current))
             .list_width(30)
             .preview(self.preview)
-            .footer_hint('type to filter - -/+ speed - Enter apply - Esc close')
-            .key_source(lambda: menu_key() or _TICK)
         )
-        for key, delta in (('-', MIN_INTERVAL), ('left', MIN_INTERVAL), ('+', -MIN_INTERVAL), ('=', -MIN_INTERVAL)):
-            builder = builder.on_key(key, self.nudge(delta))
-        return builder.on_key('right', self.nudge(-MIN_INTERVAL)).build()
+        slower, faster = self.nudge(MIN_INTERVAL), self.nudge(-MIN_INTERVAL)
+        return slash_search(
+            builder,
+            footer='-/+ speed - Enter apply - Esc close',
+            key_source=lambda: menu_key() or _TICK,
+            hotkeys={'-': slower, 'left': slower, '+': faster, '=': faster, 'right': faster},
+        )
 
 
 def _seconds(text: str) -> float:
@@ -99,23 +102,28 @@ def _seconds(text: str) -> float:
     return seconds
 
 
+def _named(spinners: Spinners, args: list[str]) -> tuple[str, float | None]:
+    """The spinner `/spinner NAME [SECONDS]` names, and the speed it sets, if any."""
+    found = spinners.find(args[0])
+    if found is None:
+        raise ValueError(f'Unknown spinner {args[0]!r}. Choose from: {", ".join(spinners.catalogue())}')
+    return found.name, _seconds(args[1]) if len(args) == 2 else None
+
+
 async def spinner_command(
     context: CommandContext, spinners: Spinners, args: list[str], *, runners: Runners = TERMINAL
 ) -> str:
     """Apply a spinner by name or picker, saving a changed speed to `spinners.json`; cancelling changes nothing."""
     if args == ['init']:
-        if spinners.init():
+        if await to_thread.run_sync(spinners.init):
             return f'Wrote {spinners.path}. Edits show on the next frame.'
         return f'{spinners.path} already exists; edit it directly. Edits show on the next frame.'
     if len(args) > 2:
         raise ValueError(USAGE)
     if args:
-        found = spinners.find(args[0])
-        if found is None:
-            raise ValueError(f'Unknown spinner {args[0]!r}. Choose from: {", ".join(spinners.catalogue())}')
-        name, interval = found.name, _seconds(args[1]) if len(args) == 2 else None
+        name, interval = await to_thread.run_sync(_named, spinners, args)
     else:
-        picker = SpinnerPicker(spinners)
+        picker = await to_thread.run_sync(SpinnerPicker, spinners)
         result = await run_worker(lambda: runners.run_list(picker.build()))
         if result.cancelled or result.item is None or not isinstance(result.item.value, str):
             return ''
@@ -123,14 +131,14 @@ async def spinner_command(
         interval = picker.speeds.get(name)
     if interval is not None:
         try:
-            spinners.save_interval(name, interval)
+            await to_thread.run_sync(spinners.save_interval, name, interval)
         except ValidationError as exc:
             raise ValueError(f'{spinners.path} is not a JSON object; speed not saved.') from exc
     context.set_setting(['display.spinner', name])
-    spinner = spinners.active()
+    spinner, problems = await to_thread.run_sync(lambda: (spinners.active(), spinners.problems()))
     saved = f' Speed saved to {spinners.path}.' if interval is not None else ''
     lines = (f'Spinner set to {spinner.name} ({len(spinner.frames)} frames at {spinner.interval:.2f}s).{saved}',)
-    return '\n'.join((*lines, *spinners.problems()))
+    return '\n'.join((*lines, *problems))
 
 
 def spinner_completions(spinners: Spinners, args: list[str]) -> Iterable[str]:

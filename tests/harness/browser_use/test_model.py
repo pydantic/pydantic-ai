@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import base64
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import pytest
+from browser_use.agent.service import Agent as BrowserUseAgent
+from browser_use.agent.views import AgentHistoryList
+from browser_use.browser import BrowserSession
 from browser_use.llm.messages import (
     AssistantMessage,
     ContentPartImageParam,
@@ -15,8 +18,15 @@ from browser_use.llm.messages import (
     SystemMessage,
     UserMessage,
 )
+from browser_use.llm.views import ChatInvokeCompletion
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import AgentCapability, Instrumentation
+from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -25,11 +35,20 @@ from pydantic_ai.messages import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.browser_use import PydanticAIChatModel, resolve_chat_model
+from pydantic_ai.usage import RequestUsage, UsageLimits
+from pydantic_ai_harness.browser_use import (
+    BrowserAgentSettings,
+    BrowserUse,
+    PydanticAIChatModel,
+    resolve_chat_model,
+)
 from tests.harness.conftest import agent_run_names
 
 if TYPE_CHECKING:
@@ -141,6 +160,38 @@ class TestPydanticAIChatModel:
         assert usage.total_tokens == usage.prompt_tokens + usage.completion_tokens
         assert usage.prompt_cached_tokens is None
 
+    async def test_completion_usage_includes_rejected_fallback_attempts(self) -> None:
+        """A response a `FallbackModel` rejected was billed, so browser-use's cost tracking needs its tokens too.
+
+        An attempt that raised reported no usage and adds nothing.
+        """
+
+        def reject(response: ModelResponse) -> bool:
+            return response.text == 'no'
+
+        def failing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelAPIError('failing', 'unavailable')
+
+        def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('no')], usage=RequestUsage(input_tokens=100, output_tokens=10))
+
+        def accepted(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('ok')], usage=RequestUsage(input_tokens=7, output_tokens=3))
+
+        model = PydanticAIChatModel(
+            FallbackModel(
+                FunctionModel(failing),
+                FunctionModel(rejected),
+                FunctionModel(accepted),
+                fallback_on=[ModelAPIError, reject],
+            )
+        )
+        result = await model.ainvoke([UserMessage(content='hello')])
+
+        assert result.completion == 'ok'
+        assert result.usage is not None
+        assert (result.usage.prompt_tokens, result.usage.completion_tokens) == (107, 13)
+
     async def test_structured_completion(self) -> None:
         model = PydanticAIChatModel(TestModel())
         result = await model.ainvoke([UserMessage(content='hello')], output_format=_Facts)
@@ -188,3 +239,194 @@ class TestResolveChatModel:
     def test_pydantic_ai_model_is_wrapped(self) -> None:
         resolved = resolve_chat_model(TestModel())
         assert isinstance(resolved, PydanticAIChatModel)
+
+
+class TestInheritedInstrumentation:
+    @pytest.fixture(autouse=True)
+    def browser_model_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Exercise the real factory and adapter without launching a browser or calling a provider."""
+        monkeypatch.setenv('ANONYMIZED_TELEMETRY', 'false')
+
+        async def run(self: BrowserUseAgent[None, BaseModel], max_steps: int = 500) -> AgentHistoryList[BaseModel]:
+            await self.llm.ainvoke(
+                [
+                    UserMessage(
+                        content=[
+                            ContentPartTextParam(text='private page content'),
+                            ContentPartImageParam(image_url=ImageURL(url=f'data:image/png;base64,{_PNG}')),
+                        ]
+                    )
+                ]
+            )
+            return AgentHistoryList[BaseModel](history=[])
+
+        async def kill(self: BrowserSession) -> None:
+            pass
+
+        monkeypatch.setattr(BrowserUseAgent, 'run', run)
+        monkeypatch.setattr(BrowserSession, 'kill', kill)
+
+    @pytest.mark.parametrize('global_enabled', [False, True])
+    @pytest.mark.parametrize(
+        ('source', 'include_content'),
+        [
+            ('capability', False),
+            ('capability', True),
+            ('run', False),
+            ('dynamic', False),
+            ('model', False),
+            ('disabled', False),
+        ],
+    )
+    async def test_host_instrumentation_is_inherited(
+        self,
+        capfire: CaptureLogfire,
+        global_enabled: bool,
+        source: Literal['capability', 'run', 'dynamic', 'model', 'disabled'],
+        include_content: bool,
+    ) -> None:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        settings = InstrumentationSettings(
+            tracer_provider=provider,
+            include_content=include_content,
+            include_binary_content=False,
+            include_model_request_parameters=False,
+            version=6,
+        )
+        capabilities: list[AgentCapability[None]] = [BrowserUse()]
+        run_capabilities: list[AgentCapability[None]] = []
+        if source == 'capability':
+            capabilities.append(Instrumentation(settings=settings))
+        elif source == 'dynamic':
+            run_capabilities.append(lambda ctx: Instrumentation(settings=settings))
+        elif source == 'run':
+            capabilities.append(Instrumentation())
+            run_capabilities.append(Instrumentation(settings=settings))
+        model = InstrumentedModel(TestModel(), settings) if source == 'model' else TestModel()
+        agent = Agent(model, deps_type=None, capabilities=capabilities)
+        if source == 'disabled':
+            agent.instrument = False
+
+        Agent.instrument_all(global_enabled)
+        try:
+            await agent.run('Browse.', capabilities=run_capabilities)
+        finally:
+            Agent.instrument_all(False)
+            provider.shutdown()
+
+        # Neither the host nor its browser model may fall back to the global provider.
+        assert agent_run_names(capfire) == []
+        spans = exporter.get_finished_spans()
+        if source == 'disabled':
+            assert spans == ()
+        else:
+            assert any(span.name == 'invoke_agent browser_use' for span in spans)
+            assert sum(span.name == 'chat test' for span in spans) == 3  # Two host turns, one browser turn.
+            attributes = [dict(span.attributes or {}) for span in spans]
+            assert ('private page content' in str(attributes)) is include_content
+            assert _PNG not in str(attributes)
+            assert all('model_request_parameters' not in span_attributes for span_attributes in attributes)
+
+    async def test_explicit_llm_keeps_its_own_instrumentation(self, capfire: CaptureLogfire) -> None:
+        browser_model = InstrumentedModel(TestModel(), InstrumentationSettings(include_content=True))
+        agent = Agent(
+            TestModel(),
+            capabilities=[
+                Instrumentation(settings=InstrumentationSettings(include_content=False)),
+                BrowserUse(llm=browser_model),
+            ],
+        )
+
+        await agent.run('Browse.')
+
+        assert 'browser_use' in agent_run_names(capfire)
+        assert 'private page content' in str(capfire.exporter.exported_spans_as_dict())
+
+
+class TestHostUsage:
+    """Browser model calls spend the host run's usage and are bounded by its limits."""
+
+    completions: list[ChatInvokeCompletion[str]]
+    stop_requested: list[bool]
+
+    @pytest.fixture(autouse=True)
+    def browser_steps(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Run two steps and a judge call, swallowing their errors like browser-use's step loop does."""
+        monkeypatch.setenv('ANONYMIZED_TELEMETRY', 'false')
+        self.completions = []
+        self.stop_requested = []
+        completions, stop_requested = self.completions, self.stop_requested
+
+        async def run(self: BrowserUseAgent[None, BaseModel], max_steps: int = 500) -> AgentHistoryList[BaseModel]:
+            for llm in (self.llm, self.llm, self.judge_llm):
+                try:
+                    completions.append(await llm.ainvoke([UserMessage(content='page')]))
+                except Exception:
+                    pass
+            assert self.register_should_stop_callback is not None
+            stop_requested.append(await self.register_should_stop_callback())
+            return AgentHistoryList[BaseModel](history=[])
+
+        async def kill(self: BrowserSession) -> None:
+            pass
+
+        monkeypatch.setattr(BrowserUseAgent, 'run', run)
+        monkeypatch.setattr(BrowserSession, 'kill', kill)
+
+    @staticmethod
+    def _counting_model(sent: list[int]) -> FunctionModel:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(1)
+            if info.function_tools and len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('browse_web', {'task': 'Browse.'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        return FunctionModel(respond)
+
+    @pytest.mark.parametrize('llm_source', ['inherited', 'explicit', 'judge'])
+    async def test_browser_requests_count_toward_host_usage(
+        self, llm_source: Literal['inherited', 'explicit', 'judge']
+    ) -> None:
+        sent: list[int] = []
+        model = self._counting_model(sent)
+        capability: BrowserUse[None]
+        if llm_source == 'inherited':
+            capability = BrowserUse()
+        elif llm_source == 'explicit':
+            capability = BrowserUse(llm=model)
+        else:
+            capability = BrowserUse(agent_settings=BrowserAgentSettings(judge_llm=model))
+        agent = Agent(model, deps_type=None, capabilities=[capability])
+
+        result = await agent.run('Browse.', usage_limits=UsageLimits(request_limit=5))
+
+        assert len(sent) == 5  # Two host turns, two browser steps, one judge call.
+        assert result.usage.requests == 5
+        assert self.stop_requested == [False]
+        assert result.usage.total_tokens == sum(
+            message.usage.total_tokens for message in result.all_messages() if isinstance(message, ModelResponse)
+        ) + sum(completion.usage.total_tokens for completion in self.completions if completion.usage)
+
+    async def test_host_limit_stops_browser_before_an_over_budget_request(self) -> None:
+        sent: list[int] = []
+        agent = Agent(self._counting_model(sent), capabilities=[BrowserUse()])
+
+        with pytest.raises(UsageLimitExceeded, match='request_limit of 2'):
+            await agent.run('Browse.', usage_limits=UsageLimits(request_limit=2))
+
+        # The host turn and one browser step; browser-use's swallowed retries send nothing more.
+        assert len(sent) == 2
+        # browser-use is told to stop at its next step rather than count failures up to `max_failures`.
+        assert self.stop_requested == [True]
+
+    async def test_browser_completion_reports_its_own_usage(self) -> None:
+        agent = Agent(TestModel(), capabilities=[BrowserUse()])
+
+        await agent.run('Browse.')
+
+        first, second, judge = (completion.usage for completion in self.completions)
+        assert first is not None
+        assert first == second == judge
+        assert first.prompt_tokens > 0

@@ -8,21 +8,23 @@ import pytest
 from pydantic import JsonValue, TypeAdapter
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
-from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai import Agent
 from pydantic_ai.models import override_allow_model_requests
-from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_clai2.models.custom_params import expand_params
+from pydantic_clai2.models.custom_params import expand_params, parse_pair
 from pydantic_clai2.models.model_options import model_options, validate_model_options
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults, model_settings_from_json
-from pydantic_clai2.ui.menus.custom_params import CustomParamsMenu, DeleteParam, parse_pair
+from pydantic_clai2.ui.menus.custom_params import (
+    _problem,  # pyright: ignore[reportPrivateUsage]
+    edit_custom_params,
+)
+from pydantic_clai2.ui.menus.dialogs import run_settings_menu
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
-from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command, run_model_settings
-from tests.clai2.menu_script import Script, make_context, pick, typed
+from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command, model_settings_menu
+from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs, Type
+from tests.clai2.menu_script import Script, make_context, pick
 
 
 @pytest.mark.parametrize(
@@ -70,8 +72,8 @@ def test_anthropic_modes_and_effort() -> None:
     assert 'xhigh' not in adaptive['anthropic_effort']
     assert 'xhigh' in model_options(model='anthropic:claude-opus-4-7')['anthropic_effort']
     assert 'anthropic_thinking_budget' in model_options(model='anthropic:unknown')
-    for name in ('claude-opus-4-5', 'claude-sonnet-4-6'):
-        assert 'max' not in model_options(model=f'anthropic:{name}')['anthropic_effort']
+    assert 'max' not in model_options(model='anthropic:claude-opus-4-5')['anthropic_effort']
+    assert 'max' in model_options(model='anthropic:claude-sonnet-4-6')['anthropic_effort']
 
 
 @pytest.mark.parametrize(
@@ -189,51 +191,53 @@ def test_editor_validation_and_reset(tmp_path: Path) -> None:
     assert context.store.model_settings(claude.model) == {}
 
 
-def test_custom_menu_add_edit_rename_delete_cancel(tmp_path: Path) -> None:
+async def test_custom_params_add_edit_rename_remove_cancel(tmp_path: Path) -> None:
     context, _ = make_context(tmp_path)
     model = 'openai:gpt-5.6'
     context.store.save_model_settings(model, {'temperature': 1.0})
-    custom = CustomParamsMenu(store=context.store, model=model)
-    assert custom.delete_marker(None, MenuItem('Add', value=False)) is None
-    marker = custom.delete_marker(None, MenuItem('a', value='a'))
-    assert marker is not None and marker.item is not None and marker.item.value == DeleteParam(key='a')
-    script = Script(
-        lists=[
-            pick(False),
-            pick('a'),
-            pick('a'),
-            pick('b'),
-            marker,
-            pick(DeleteParam(key='b')),
-            MenuResult(cancelled=True),
-        ],
-        choices=[],
-        texts=[typed('a = true'), TextInputResult(cancelled=True), typed('b = 3'), typed('b = 4')],
+    dialogs = ScriptedDialogs(
+        [
+            Pick(value=''),
+            Type(text='a = true'),
+            Pick(value='a'),
+            Back(),
+            Pick(value='a'),
+            Type(text='b = 3'),
+            Pick(value=''),
+            Type(text=''),
+            Pick(value='b'),
+            Type(text=''),
+            Back(),
+        ]
     )
-    assert len(custom.run(runners=script.runners)) == 5
+    assert (
+        await edit_custom_params(dialogs, store=context.store, model=model) == [f'Saved custom params for {model}.'] * 3
+    )
+    assert [asked.initial for asked in dialogs.asked if asked.kind == 'text'] == [
+        '',
+        'a = true',
+        'a = true',
+        '',
+        'b = 3',
+    ]
+    assert [option.label for option in dialogs.asked[4].options] == ['a = true', '+ Add param...']
     assert context.store.model_settings(model) == {'temperature': 1.0}
-    custom.save(pairs={'nested.a': True})
+    assert _problem('a = 2') is None and _problem('a') == 'Expected format: key = value'
+
+
+async def test_model_settings_menu_opens_custom_params_and_resets_them(tmp_path: Path) -> None:
+    context, _ = make_context(tmp_path)
+    model = 'openai:gpt-5.6'
+    context.store.save_model_settings(model, {'temperature': 1.0, 'custom_params': {'nested.a': True}})
     menu = FieldMenu(ModelSettingsSource(context.store, model))
-    row = menu.row_for('custom_params')
-    assert row is not None
     reset = menu.reset_marker(None, MenuItem('custom_params', value='custom_params'))
     script = Script(
-        lists=[pick('custom_params'), MenuResult(cancelled=True), reset, MenuResult(cancelled=True)],
-        choices=[],
-        texts=[],
+        lists=[pick('custom_params'), reset, MenuResult(cancelled=True)], choices=[MenuResult(cancelled=True)], texts=[]
     )
-    assert run_model_settings(store=context.store, model=model, runners=script.runners) == [
+    assert await run_settings_menu(model_settings_menu(context.store, model), script.runners) == [
         f'Reset custom_params for {model}.'
     ]
     assert context.model_settings(model) == {**model_defaults(model=model), 'temperature': 1.0}
-
-
-def test_custom_editor_validates_before_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    context, _ = make_context(tmp_path)
-    custom = CustomParamsMenu(store=context.store, model='test')
-    keys = iter(['enter', 'a', ' ', '=', ' ', '2', 'enter'])
-    monkeypatch.setattr('pydantic_clai2.ui.menus.custom_params.menu_key', lambda: next(keys))
-    assert custom.editor(key=None).run().value == 'a = 2'
 
 
 async def test_saved_controls_and_custom_overrides_reach_openai_body(tmp_path: Path) -> None:
@@ -316,6 +320,9 @@ def test_settings_search_does_not_reset_on_lowercase_r(tmp_path: Path, monkeypat
 
 @pytest.mark.parametrize(('name', 'mode'), [('claude-sonnet-4-5', 'enabled'), ('claude-fable-5-1', 'adaptive')])
 async def test_claude_native_thinking_reaches_request(name: str, mode: str) -> None:
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
     bodies: list[dict[str, JsonValue]] = []
     adapter = TypeAdapter(dict[str, JsonValue])
 

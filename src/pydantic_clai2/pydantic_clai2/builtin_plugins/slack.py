@@ -1,6 +1,7 @@
 """Use Slack as yourself, signed in in the browser or with a token from /keys.
 
-The built-in `slack` plugin: harness `Slack`, set up in the settings menu that `/plugins configure slack` opens.
+The built-in `slack` plugin: harness `Slack`, set up in the settings menu that `/plugins configure slack` opens, or
+in the web UI's plugins panel.
 
 It connects as the user in one of two ways. A browser sign-in through the user's own CLAI Slack app (`slack_app`)
 keeps rotating tokens in the credential store. A user token from `/keys` is referenced by name only, so `/keys`
@@ -8,7 +9,6 @@ refuses to rename it while Slack uses it. The plugin's settings hold only non-se
 Client ID.
 """
 
-import asyncio
 import os
 import webbrowser
 from collections.abc import Sequence
@@ -17,7 +17,6 @@ from typing import Generic, Literal
 
 from anyio import to_thread
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from termflow.tui import TextInputBuilder
 
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
@@ -28,17 +27,15 @@ from pydantic_clai2.config.api_keys import KeyReference, load_keys, resolve_key,
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials
 from pydantic_clai2.pkce import PKCESignIn
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart, TurnStart
-from pydantic_clai2.plugins.keys import browser_sign_in, choose_key, on_loop
-from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
-from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.plugins.keys import browser_sign_in, choose_key
+from pydantic_clai2.plugins.menus import Dialogs, FieldRow, SettingsMenu
+from pydantic_clai2.ui.browser import open_browser
+from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 TOKEN_NAME = 'SLACK_USER_TOKEN'
 """The `/keys` label a newly entered token is saved under: harness `Slack`'s documented name, not an exported variable."""
 SETUP = 'Run /plugins configure slack to choose its user token from /keys.'
-RUNNERS: Runners = TERMINAL
-"""How the settings menu's widgets are shown; tests swap in scripted ones."""
 
 _ACCOUNT = 'slack'
 
@@ -69,7 +66,7 @@ class SlackConnection(BaseModel):
     token: KeyReference
 
 
-class _NotSetUp(UserError):
+class _NotSetUpError(UserError):
     """Slack was never set up: no key chosen, or no app for browser sign-in. Turns skip Slack without a warning."""
 
 
@@ -83,17 +80,18 @@ class SlackPlugin(Plugin[SlackSettings, DepsT]):
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
         return (
             Slack[DepsT](
+                defer_loading=True,
                 auth=self._current_token,
                 read_only=self.settings.read_only,
                 include_instructions=self.settings.include_instructions,
             ),
         )
 
-    async def configure(self) -> str:
-        message = await configure_menu(SlackSource(self.host))
-        # A token change needs no reload; the loader reloads for settings changes, which refreshes again.
-        await self._refresh()
-        return message
+    def settings_menu(self) -> SettingsMenu:
+        return SettingsMenu(
+            source=SlackSource(self.host),
+            actions={'token': self._pick_token, 'client_id': self._set_up_app, 'account': self._sign_in},
+        )
 
     async def on_session_start(self, event: SessionStart) -> None:
         await self._refresh()
@@ -104,6 +102,52 @@ class SlackPlugin(Plugin[SlackSettings, DepsT]):
     def _current_token(self, ctx: RunContext[DepsT]) -> str | None:
         return self.token
 
+    async def _pick_token(self, dialogs: Dialogs) -> list[str]:
+        """The User token row: pick a saved key, or save a new user token in `/keys`; Slack keeps only its name."""
+        label = f'Slack user token (xoxp-); a new one is saved in /keys as {TOKEN_NAME}'
+        try:
+            reference = await choose_key(name=TOKEN_NAME, label=label, dialogs=dialogs, check=user_token_only)
+            if reference is None:
+                return []
+            await to_thread.run_sync(save_connection, reference)
+        except (ValueError, UserError) as exc:
+            return [str(exc)]
+        await self._refresh()  # A token change needs no reload, so nothing else picks it up before the next turn.
+        return [f'Slack uses the saved key {reference.name}. Manage it in /keys.']
+
+    async def _set_up_app(self, dialogs: Dialogs) -> list[str]:
+        """The Slack app row: open Slack's create-app page when there is no app yet, take its Client ID, then sign in."""
+        source = SlackSource(self.host)
+        url = slack_app.create_app_url()
+        if source.settings.client_id is None:  # With an app set up, this only changes the ID; R starts over.
+            try:
+                await to_thread.run_sync(open_browser, url)
+            except webbrowser.Error:
+                pass  # The dialog shows the link either way.
+        client_id = await dialogs.text(
+            title="Paste your CLAI Slack app's Client ID (Basic Information > App Credentials)",
+            label='Client ID',
+            placeholder='Looks like 1234567890.1234567890',
+            check=lambda text: source.problem(_APP, text),
+            description=f'To create the app, open this URL, pick a workspace, and click Create:\n\n{url}',
+        )
+        if not client_id:
+            return []
+        return [await to_thread.run_sync(source.apply, _APP, client_id), *await self._sign_in(dialogs)]
+
+    async def _sign_in(self, dialogs: Dialogs) -> list[str]:
+        """The Browser sign-in row: sign in with PKCE behind a waiting screen that shows the link."""
+        session = SlackSource(self.host).session()
+        if session is None:
+            return ['Set up the Slack app first (Slack app row).']
+        try:
+            if not await browser_sign_in(session, dialogs):
+                return ['Slack sign-in cancelled.']
+        except UserError as exc:
+            return [str(exc)]
+        await self._refresh()  # Signing in again saves no settings, so no reload picks up the new token.
+        return ['Signed in to Slack. Tokens are kept in the OS credential store and renew themselves.']
+
     async def _refresh(self) -> None:
         try:
             if self.settings.auth == 'browser':
@@ -111,7 +155,7 @@ class SlackPlugin(Plugin[SlackSettings, DepsT]):
             else:
                 # `/keys` takes a cross-process lock that can wait up to 20 seconds; keep it off the event loop.
                 self.token = await to_thread.run_sync(connected_token)
-        except _NotSetUp:
+        except _NotSetUpError:
             self.token = None  # Not set up yet: `/plugins` and the settings menu say so, so turns stay quiet.
         except UserError as exc:
             self.token = None
@@ -121,7 +165,7 @@ class SlackPlugin(Plugin[SlackSettings, DepsT]):
 async def signed_in_token(settings: SlackSettings) -> str:
     """The browser sign-in's access token, renewed when close to expiry."""
     if settings.client_id is None:
-        raise _NotSetUp('Set up your Slack app: run /plugins configure slack.')
+        raise _NotSetUpError('Set up your Slack app: run /plugins configure slack.')
     return await slack_app.session(settings.client_id, read_only=settings.read_only).token()
 
 
@@ -131,7 +175,7 @@ def connected_token() -> str:
     if connection is None:
         if os.environ.get(TOKEN_NAME):
             raise UserError(f'CLAI does not read {TOKEN_NAME} from the environment. {SETUP}')
-        raise _NotSetUp(SETUP)
+        raise _NotSetUpError(SETUP)
     return resolve_key(token=connection.token)
 
 
@@ -315,63 +359,3 @@ class SlackSource(Generic[DepsT]):
         except UserError:  # The menu must still open, so the user can pick another sign-in.
             return '/keys is unreadable'
         return '' if connection.token.name in keys else 'missing from /keys'
-
-
-async def configure_menu(source: SlackSource[DepsT]) -> str:
-    """The settings menu: Enter edits a row, Save & close or Esc closes, and every change is saved as it is made."""
-    loop = asyncio.get_running_loop()
-
-    def pick_token() -> list[str]:
-        name = TOKEN_NAME
-        label = f'Slack user token (xoxp-); a new one is saved in /keys as {name}'
-        try:
-            reference = on_loop(
-                lambda: choose_key(name=name, label=label, runners=RUNNERS, check=user_token_only), loop
-            )
-            if reference is None:
-                return []
-            save_connection(reference)
-        except (ValueError, UserError) as exc:
-            return [str(exc)]
-        return [f'Slack uses the saved key {reference.name}. Manage it in /keys.']
-
-    def sign_in() -> list[str]:
-        session = source.session()
-        if session is None:
-            return ['Set up the Slack app first (Slack app row).']
-        try:
-            if not on_loop(lambda: browser_sign_in(session, RUNNERS), loop):
-                return ['Slack sign-in cancelled.']
-        except UserError as exc:
-            return [str(exc)]
-        return ['Signed in to Slack. Tokens are kept in the OS credential store and renew themselves.']
-
-    def set_up_app() -> list[str]:
-        title = "Paste your CLAI Slack app's Client ID (Basic Information > App Credentials)"
-        if source.settings.client_id is None:  # With an app set up, Enter only changes the ID; R starts over.
-            url = slack_app.create_app_url()
-            try:
-                opened = webbrowser.open(url)
-            except webbrowser.Error:
-                opened = False
-            if not opened:
-                title = f'Open this URL, pick a workspace, and click Create:\n{url}\n\n{title}'
-        builder = (
-            TextInputBuilder(title)
-            .style(markdown_style())
-            .prompt('Client ID: ')
-            .placeholder('Looks like 1234567890.1234567890')
-            .footer_hint('Enter save - Esc cancel')
-            .key_source(menu_key)
-        )
-        answer = RUNNERS.run_text(builder.build())
-        if answer.cancelled or not isinstance(answer.value, str) or not answer.value.strip():
-            return []
-        if problem := source.problem(_APP, answer.value.strip()):
-            return [problem]
-        return [source.apply(_APP, answer.value.strip()), *sign_in()]
-
-    menu = FieldMenu(source)
-    submenus = {'token': pick_token, 'client_id': set_up_app, 'account': sign_in}
-    messages = await run_worker(lambda: run_flow(menu, RUNNERS, submenus=submenus))
-    return '\n'.join(messages) or 'Slack settings unchanged.'

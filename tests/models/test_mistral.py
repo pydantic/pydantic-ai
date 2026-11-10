@@ -2,35 +2,39 @@ from __future__ import annotations as _annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
 from functools import cached_property
-from typing import Any, cast
+from typing import Any, NotRequired, cast
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import httpx2
 import pytest
 from cassetter import Cassette
 from pydantic import BaseModel
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
+    AgentStreamEvent,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    PartDeltaEvent,
+    RetryInfo,
+    RunContext,
     StructuredDict,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UploadedFile,
     UseEnumMemberDocstrings,
@@ -38,7 +42,14 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelRetry,
+    TransportPhase,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.settings import ThinkingLevel
@@ -172,6 +183,32 @@ class MockMistralAI:
         return response
 
 
+async def test_tool_call_args_sent_as_canonical_json_string(allow_model_requests: None):
+    """String and dict args for the same call go on the wire as the same compact JSON string.
+
+    Mistral returns arguments with whitespace (`{"city": "Paris"}`), while a history loaded back from a UI
+    protocol or storage may hold the same call's args as a dict. Sending both as one string keeps the request
+    bytes, and the prompt cache, stable across that round trip.
+    """
+
+    def history(args: str | dict[str, Any]) -> list[ModelMessage]:
+        return [
+            ModelRequest(parts=[UserPromptPart('What is the weather in Paris?')]),
+            ModelResponse(parts=[ToolCallPart('get_weather', args, tool_call_id='call_1')]),
+            ModelRequest(parts=[ToolReturnPart('get_weather', 'sunny', tool_call_id='call_1')]),
+        ]
+
+    sent: list[Any] = []
+    for args in ('{"city": "Paris", "days": 2}', {'city': 'Paris', 'days': 2}):
+        mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='OK')))
+        model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+        await Agent(model).run(message_history=history(args))
+        assistant = cast(MockMistralAI, mock_client).chat_completion_kwargs[0]['messages'][1]
+        sent.append(assistant.tool_calls[0].function.arguments)
+
+    assert sent == snapshot(['{"city":"Paris","days":2}', '{"city":"Paris","days":2}'])
+
+
 def completion_message(
     message: MistralAssistantMessage, *, usage: MistralUsageInfo | None = None, with_created: bool = True
 ) -> MistralChatCompletionResponse:
@@ -271,8 +308,8 @@ async def test_multiple_completions(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -280,7 +317,8 @@ async def test_multiple_completions(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={'finish_reason': 'stop'},
@@ -290,8 +328,8 @@ async def test_multiple_completions(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -299,12 +337,13 @@ async def test_multiple_completions(allow_model_requests: None):
                 parts=[TextPart(content='hello again')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -346,8 +385,8 @@ async def test_three_completions(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -355,12 +394,13 @@ async def test_three_completions(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -368,8 +408,8 @@ async def test_three_completions(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -377,12 +417,13 @@ async def test_three_completions(allow_model_requests: None):
                 parts=[TextPart(content='hello again')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -390,8 +431,8 @@ async def test_three_completions(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='final message', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='final message', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -399,12 +440,13 @@ async def test_three_completions(allow_model_requests: None):
                 parts=[TextPart(content='final message')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -685,8 +727,8 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -700,12 +742,13 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -718,10 +761,10 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -762,8 +805,8 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc))],
-                timestamp=IsNow(tz=timezone.utc),
+                parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=UTC))],
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -777,12 +820,13 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -795,10 +839,10 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -834,10 +878,10 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
         [
             ModelRequest(
                 parts=[
-                    UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(content='User prompt value', timestamp=IsNow(tz=UTC)),
                 ],
                 instructions='System prompt value',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -851,12 +895,13 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -869,10 +914,10 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1640,10 +1685,10 @@ async def test_request_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=timezone.utc)),
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                    SystemPromptPart(content='this is the system prompt', timestamp=IsNow(tz=UTC)),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC)),
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1657,12 +1702,13 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -1671,14 +1717,16 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1692,12 +1740,13 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=3, output_tokens=2),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -1710,10 +1759,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1721,12 +1770,13 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -1818,10 +1868,10 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC)),
                 ],
                 instructions='this is the system prompt',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1835,12 +1885,13 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -1849,15 +1900,17 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1871,12 +1924,13 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=3, output_tokens=2),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -1889,11 +1943,11 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 instructions='this is the system prompt',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1907,12 +1961,13 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='mistral-large-123',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -1925,10 +1980,10 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1993,7 +2048,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot([{'won': True}, {'won': True}])
         assert result.is_complete
-        assert result.timestamp == IsNow(tz=timezone.utc)
+        assert result.timestamp == IsNow(tz=UTC)
         assert result.usage.input_tokens == 4
         assert result.usage.output_tokens == 4
 
@@ -2004,10 +2059,10 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(content='User prompt value', timestamp=IsNow(tz=UTC)),
                 ],
                 instructions='this is the system prompt',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2021,12 +2076,13 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='gpt-4',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='x',
                 finish_reason='tool_call',
@@ -2039,11 +2095,11 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 instructions='this is the system prompt',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2051,12 +2107,13 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 parts=[ToolCallPart(tool_name='final_result', args='{"won": true}', tool_call_id='1')],
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='gpt-4',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='x',
                 finish_reason='tool_call',
@@ -2069,10 +2126,10 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2124,7 +2181,7 @@ async def test_stream_tool_call(allow_model_requests: None):
         v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(['final ', 'final response', 'final response'])
         assert result.is_complete
-        assert result.timestamp == IsNow(tz=timezone.utc)
+        assert result.timestamp == IsNow(tz=UTC)
         assert result.usage.input_tokens == 6
         assert result.usage.output_tokens == 6
 
@@ -2135,10 +2192,10 @@ async def test_stream_tool_call(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(content='User prompt value', timestamp=IsNow(tz=UTC)),
                 ],
                 instructions='this is the system prompt',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2152,12 +2209,13 @@ async def test_stream_tool_call(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='gpt-4',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='x',
                 finish_reason='tool_call',
@@ -2170,11 +2228,11 @@ async def test_stream_tool_call(allow_model_requests: None):
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 instructions='this is the system prompt',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2182,12 +2240,13 @@ async def test_stream_tool_call(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(input_tokens=4, output_tokens=4),
                 model_name='gpt-4',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='x',
                 finish_reason='stop',
@@ -2196,6 +2255,157 @@ async def test_stream_tool_call(allow_model_requests: None):
             ),
         ]
     )
+
+
+@dataclass(frozen=True)
+class StreamedToolCallsCase:
+    id: str
+    chunks: list[list[tuple[int, str, str, str]]]
+    """Tool-call deltas per chunk, each as `(index, id, name, arguments)`."""
+    expected: list[tuple[str, str, str]]
+    """The response's tool calls, each as `(tool_name, args, tool_call_id)`."""
+
+
+STREAMED_TOOL_CALLS_CASES = [
+    StreamedToolCallsCase(
+        id='fragments_name_first',
+        chunks=[[(0, 'c1', 'search', '')], [(0, 'null', '', '{"query": "ver')], [(0, 'null', '', 'rous"}')]],
+        expected=[('search', '{"query": "verrous"}', 'c1')],
+    ),
+    StreamedToolCallsCase(
+        id='fragments_name_later',
+        chunks=[[(0, 'null', '', '{"query":')], [(0, 'c1', 'search', ' "verrous"}')]],
+        expected=[('search', '{"query": "verrous"}', 'c1')],
+    ),
+    StreamedToolCallsCase(
+        id='fragments_without_id',
+        chunks=[[(0, 'null', 'search', '{"query":')], [(0, 'null', '', ' "verrous"}')]],
+        expected=[('search', '{"query": "verrous"}', IsStr(regex=r'pyd_ai_.+'))],
+    ),
+    StreamedToolCallsCase(
+        id='interleaved_fragments',
+        chunks=[
+            [(0, 'c1', 'search', '{"query": '), (1, 'c2', 'lookup', '{"city": ')],
+            [(0, 'null', '', '"verrous"}'), (1, 'null', '', '"Paris"}')],
+        ],
+        expected=[('search', '{"query": "verrous"}', 'c1'), ('lookup', '{"city": "Paris"}', 'c2')],
+    ),
+    StreamedToolCallsCase(
+        id='whole_calls_in_separate_chunks',
+        chunks=[[(0, 'c1', 'search', '{"query": "verrous"}')], [(1, 'c2', 'lookup', '{"city": "Paris"}')]],
+        expected=[('search', '{"query": "verrous"}', 'c1'), ('lookup', '{"city": "Paris"}', 'c2')],
+    ),
+    StreamedToolCallsCase(
+        id='whole_call_without_arguments',
+        chunks=[[(0, 'c1', 'ping', '')]],
+        expected=[('ping', '', 'c1')],
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in STREAMED_TOOL_CALLS_CASES])
+async def test_stream_tool_call_deltas(allow_model_requests: None, case: StreamedToolCallsCase):
+    """Streamed tool-call deltas accumulate per wire `index`, in shapes `test_mistral_stream_parallel_tool_calls` doesn't record.
+
+    A mock stream, since no live model was seen sending these shapes. Continuation deltas carry an empty name and the
+    SDK-default `'null'` id, which must not replace the call's own.
+    """
+    # Built inside the test so importing this module does not require the mistral package.
+    tool_call_chunks = [
+        func_chunk(
+            [
+                MistralToolCall(index=index, id=call_id, function=MistralFunctionCall(name=name, arguments=arguments))
+                for index, call_id, name, arguments in deltas
+            ],
+            finish_reason='tool_calls' if n == len(case.chunks) - 1 else None,
+        )
+        for n, deltas in enumerate(case.chunks)
+    ]
+    mock_client = MockMistralAI.create_stream_mock(
+        [tool_call_chunks, [text_chunk('final response', finish_reason='stop')]]
+    )
+    agent = Agent(MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client)))
+
+    @agent.tool_plain
+    def search(query: str) -> str:
+        return 'found'
+
+    @agent.tool_plain
+    def lookup(city: str) -> str:
+        return 'found'
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    async with agent.run_stream('User prompt value') as result:
+        await result.get_output()
+
+    response = result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    assert [(call.tool_name, call.args, call.tool_call_id) for call in response.tool_calls] == case.expected
+
+
+PARALLEL_TOOL_CALLS_EXPECTATIONS: dict[str, tuple[list[tuple[str, dict[str, Any], str]], bool]] = {
+    'mistral-small-latest': snapshot(
+        (
+            [
+                ('get_weather', {'city': 'Paris'}, 'Fi65w8Plu'),
+                ('get_weather', {'city': 'London'}, 'NpJQUR1bV'),
+                ('get_time', {'tz': 'UTC'}, 'lPaisIfGU'),
+            ],
+            False,
+        )
+    ),
+    'zai-glm-5-3': snapshot(
+        (
+            [
+                ('get_weather', {'city': 'Paris'}, 'chatcmpl-tool-a3e7e88e93ca0b08'),
+                ('get_weather', {'city': 'London'}, 'chatcmpl-tool-9c49fd171e27c24f'),
+                ('get_time', {'tz': 'UTC'}, 'chatcmpl-tool-9a5a1060e45bc189'),
+            ],
+            True,
+        )
+    ),
+}
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize('model_name', ['mistral-small-latest', 'zai-glm-5-3'])
+async def test_mistral_stream_parallel_tool_calls(allow_model_requests: None, mistral_api_key: str, model_name: str):
+    """Parallel tool calls survive streaming, whether a model sends each call whole or in fragments.
+
+    `mistral-small-latest` sends every call whole, all in one chunk, each under its own `index`. `zai-glm-5-3` splits
+    each call across chunks under its `index`: continuation fragments carry an empty name and the SDK-default `'null'`
+    id, and one chunk ends one call and starts the next. The expectation pins whether the stream was fragmented.
+    """
+    agent = Agent(MistralModel(model_name, provider=MistralProvider(api_key=mistral_api_key)))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'Sunny in {city}.'
+
+    @agent.tool_plain
+    def get_time(tz: str) -> str:
+        return f'12:00 in {tz}.'
+
+    tool_call_deltas = 0
+
+    async def count_tool_call_deltas(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        nonlocal tool_call_deltas
+        async for event in stream:
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, ToolCallPartDelta):
+                tool_call_deltas += 1
+
+    result = await agent.run(
+        'Call get_weather for Paris, get_weather for London, and get_time for UTC. Call all three tools at once.',
+        event_stream_handler=count_tool_call_deltas,
+    )
+
+    response = result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    tool_calls = [(call.tool_name, call.args_as_dict(), call.tool_call_id) for call in response.tool_calls]
+    assert (tool_calls, tool_call_deltas > 0) == PARALLEL_TOOL_CALLS_EXPECTATIONS[model_name]
 
 
 async def test_stream_tool_call_with_retry(allow_model_requests: None):
@@ -2255,7 +2465,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
         v = [c async for c in result.stream_text(debounce_by=None)]
         assert v == snapshot(['final ', 'final response'])
         assert result.is_complete
-        assert result.timestamp == IsNow(tz=timezone.utc)
+        assert result.timestamp == IsNow(tz=UTC)
         assert result.usage.input_tokens == 7
         assert result.usage.output_tokens == 7
 
@@ -2266,10 +2476,10 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
         [
             ModelRequest(
                 parts=[
-                    UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc)),
+                    UserPromptPart(content='User prompt value', timestamp=IsNow(tz=UTC)),
                 ],
                 instructions='this is the system prompt',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2283,12 +2493,13 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='gpt-4',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='x',
                 finish_reason='tool_call',
@@ -2297,15 +2508,17 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2319,12 +2532,13 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='gpt-4',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'tool_calls',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='x',
                 finish_reason='tool_call',
@@ -2337,11 +2551,11 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                         tool_name='get_location',
                         content='{"lat": 51, "lng": 0}',
                         tool_call_id='2',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 instructions='this is the system prompt',
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2349,12 +2563,13 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(input_tokens=4, output_tokens=4),
                 model_name='gpt-4',
-                timestamp=IsNow(tz=timezone.utc),
+                model_id='mistral:mistral-large-latest',
+                timestamp=IsNow(tz=UTC),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='x',
                 finish_reason='stop',
@@ -2630,7 +2845,7 @@ async def test_image_as_binary_content_tool_response(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2638,6 +2853,7 @@ async def test_image_as_binary_content_tool_response(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='FI5qQGzDE')],
                 usage=RequestUsage(input_tokens=65, output_tokens=16, cost=Decimal('0.00001215')),
                 model_name='pixtral-12b-latest',
+                model_id='mistral:pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2656,7 +2872,7 @@ async def test_image_as_binary_content_tool_response(
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2668,6 +2884,7 @@ async def test_image_as_binary_content_tool_response(
                 ],
                 usage=RequestUsage(input_tokens=1540, output_tokens=54, cost=Decimal('0.0002391')),
                 model_name='pixtral-12b-latest',
+                model_id='mistral:pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -2723,7 +2940,7 @@ async def test_image_url_input(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2731,12 +2948,13 @@ async def test_image_url_input(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -2769,7 +2987,7 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2777,12 +2995,13 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -2848,7 +3067,7 @@ async def test_pdf_url_input(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2856,12 +3075,13 @@ async def test_pdf_url_input(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -2893,7 +3113,7 @@ async def test_pdf_as_binary_content_input(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2901,12 +3121,13 @@ async def test_pdf_as_binary_content_input(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -3018,8 +3239,76 @@ async def test_uploaded_file_input(allow_model_requests: None):
         await agent.run(['hello', UploadedFile(file_id='file-123', provider_name='anthropic')])
 
 
+class _StreamBreakingOff(httpx2.AsyncByteStream):
+    """A response body that sends `first` and then breaks off with `error`."""
+
+    def __init__(self, first: bytes, error: Exception):
+        self.first = first
+        self.error = error
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self.first
+        raise self.error
+
+
+_TEXT_CHUNK = {
+    'id': '1',
+    'object': 'chat.completion.chunk',
+    'created': 0,
+    'model': 'mistral-small-latest',
+    'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': 'Hello'}, 'finish_reason': None}],
+}
+
+
+def _connect_error(request: httpx2.Request) -> httpx2.Response:
+    raise httpx2.ConnectError('connection refused', request=request)
+
+
+def _stream_breaking_off(request: httpx2.Request) -> httpx2.Response:
+    return httpx2.Response(
+        200,
+        headers={'content-type': 'text/event-stream'},
+        stream=_StreamBreakingOff(
+            f'data: {json.dumps(_TEXT_CHUNK)}\n\n'.encode(), httpx2.ReadError('connection reset')
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ('handler', 'stream', 'message', 'cause', 'phase'),
+    [
+        pytest.param(_connect_error, False, 'connection refused', httpx2.ConnectError, 'connect', id='connect'),
+        pytest.param(_connect_error, True, 'connection refused', httpx2.ConnectError, 'connect', id='stream-connect'),
+        pytest.param(_stream_breaking_off, True, 'connection reset', httpx2.ReadError, 'read', id='mid-stream'),
+    ],
+)
+async def test_model_transport_error(
+    allow_model_requests: None,
+    handler: Callable[[httpx2.Request], httpx2.Response],
+    stream: bool,
+    message: str,
+    cause: type[Exception],
+    phase: TransportPhase,
+) -> None:
+    """`mistralai` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        provider = MistralProvider(api_key='test-key', http_client=http_client, base_url='http://localhost')
+        agent = Agent(MistralModel('mistral-small-latest', provider=provider))
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('hello') as result:
+                    await result.get_output()
+            else:
+                await agent.run('hello')
+
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == phase
+    assert exc_info.value.message == message
+    assert isinstance(exc_info.value.__cause__, cause)
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
-    response = httpx.Response(500, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, content=b'test error')
+    response = httpx2.Response(500, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, content=b'test error')
     mock_client = MockMistralAI.create_mock(SDKError('test error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
@@ -3027,14 +3316,14 @@ def test_model_status_error(allow_model_requests: None) -> None:
         agent.run_sync('hello')
     exc = exc_info.value
     assert str(exc) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
-    # SDKError.headers is httpx.Headers; _map_api_errors converts it with dict() — verify it lands correctly.
+    # SDKError.headers is httpx2.Headers; _map_api_errors converts it with dict() — verify it lands correctly.
     assert exc.headers is not None
     assert exc.headers.get('retry-after') == '30'
     assert exc.headers.get('x-request-id') == 'rid-1'
 
 
 def test_model_non_http_error(allow_model_requests: None) -> None:
-    response = httpx.Response(300, content=b'redirect')
+    response = httpx2.Response(300, content=b'redirect')
     mock_client = MockMistralAI.create_mock(SDKError('Connection error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
@@ -3113,7 +3402,7 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
         [
             ModelRequest(
                 parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 instructions='You are a helpful assistant.',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3122,12 +3411,13 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
                 parts=[TextPart(content='world')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                    'timestamp': datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
                 },
                 provider_response_id='123',
                 finish_reason='stop',
@@ -3162,7 +3452,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
         [
             ModelRequest(
                 parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3198,12 +3488,14 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                     cost=Decimal('0.0071247'),
                 ),
                 model_name='o3-mini-2025-01-31',
+                model_id='openai:o3-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 5, 22, 29, 38, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 5, 22, 29, 38, tzinfo=UTC),
                     'service_tier': 'default',
                 },
                 provider_response_id='resp_68bb6452990081968f5aff503a55e3b903498c8aa840cf12',
@@ -3229,7 +3521,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3240,12 +3532,13 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                 ],
                 usage=RequestUsage(input_tokens=664, output_tokens=747, cost=Decimal('0.005063')),
                 model_name='magistral-medium-latest',
+                model_id='mistral:magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 9, 5, 22, 30, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 9, 5, 22, 30, tzinfo=UTC),
                 },
                 provider_response_id='9abe8b736bff46af8e979b52334a57cd',
                 finish_reason='stop',
@@ -3278,7 +3571,7 @@ async def test_mistral_model_thinking_part_iter(allow_model_requests: None, mist
                         timestamp=IsDatetime(),
                     )
                 ],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3311,12 +3604,13 @@ By following these steps, you can ensure a safe crossing.\
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=232, cost=Decimal('0.00118')),
                 model_name='magistral-medium-latest',
+                model_id='mistral:magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
                 provider_details={
                     'finish_reason': 'stop',
-                    'timestamp': datetime(2025, 11, 28, 2, 19, 53, tzinfo=timezone.utc),
+                    'timestamp': datetime(2025, 11, 28, 2, 19, 53, tzinfo=UTC),
                 },
                 provider_response_id='9f9d90210f194076abeee223863eaaf0',
                 finish_reason='stop',
@@ -3425,6 +3719,45 @@ async def test_text_document_binary_content_mapping(text_document_content: Binar
     assert text_document_content.identifier in inlined
 
 
+async def test_parameterized_media_type_text_file_inlined() -> None:
+    """Test that a parameterized text-like media type is inlined as MistralTextChunk.
+
+    Unit test, not VCR: `BinaryContent.from_data_uri` stores `application/json;charset=utf-8`
+    verbatim, and before the classifier ignored parameters the mapping raised
+    `NotImplementedError` for this content.
+    """
+    json_content = BinaryContent.from_data_uri('data:application/json;charset=utf-8;base64,eyJhIjogMX0=')
+    m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
+
+    messages = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'What is in this document?',
+                        json_content,
+                    ]
+                )
+            ]
+        )
+    ]
+
+    mapped = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    user_msg = mapped[0]
+    assert isinstance(user_msg, UserMessage)
+    assert user_msg.content is not None
+    assert isinstance(user_msg.content, list)
+    assert len(user_msg.content) == 2
+    text_chunks = [chunk for chunk in user_msg.content if isinstance(chunk, MistralTextChunk)]
+    assert len(text_chunks) == 2
+    inlined = text_chunks[1].text
+    assert '-----BEGIN FILE' in inlined
+    assert '{"a": 1}' in inlined
+    assert '-----END FILE' in inlined
+    assert json_content.media_type in inlined
+    assert json_content.identifier in inlined
+
+
 async def test_document_url_force_download() -> None:
     """Test that force_download=True calls download_item for DocumentUrl PDF in MistralModel."""
     m = MistralModel('mistral-large-2512', provider=MistralProvider(api_key='test-key'))
@@ -3504,7 +3837,7 @@ def test_get_timeout_ms() -> None:
     assert MistralModel._get_timeout_ms(30) == 30000  # pyright: ignore[reportPrivateUsage]
     assert MistralModel._get_timeout_ms(1.5) == 1500  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(NotImplementedError, match=re.escape('Timeout object is not yet supported for MistralModel.')):
-        MistralModel._get_timeout_ms(httpx.Timeout(30))  # pyright: ignore[reportPrivateUsage]
+        MistralModel._get_timeout_ms(httpx2.Timeout(30))  # pyright: ignore[reportPrivateUsage]
 
 
 def test_map_content_handles_reference_chunk() -> None:
@@ -3546,6 +3879,7 @@ async def test_stream_cancel(allow_model_requests: None):
                 parts=[TextPart(content='hello ')],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='gpt-4',
+                model_id='mistral:mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_url='https://api.mistral.ai',
@@ -3562,7 +3896,7 @@ async def test_stream_cancel(allow_model_requests: None):
 async def test_mistral_empty_response_skipped_in_history(allow_model_requests: None):
     """An empty `ModelResponse(parts=[])` must not be sent back as an assistant message with
     neither content nor tool calls, which Mistral rejects with a 400. The agent graph retries
-    empty responses by emitting a `RetryPromptPart`, relying on the model adapter to omit the
+    empty responses by emitting a `RetryFeedbackPart`, relying on the model adapter to omit the
     empty response from the API payload.
     """
     completions = [
@@ -3577,11 +3911,13 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
     assert result.output == 'hello back'
 
     # The empty response is omitted from the payload (no assistant message with neither content nor
-    # tool calls, which would trigger a 400); a retry prompt is appended instead so the model can
-    # self-correct.
+    # tool calls, which would trigger a 400); the retry feedback is appended instead so the model can
+    # self-correct. Mistral honors a mid-conversation system message, so the feedback keeps the
+    # system voice rather than degrading to `<system>`-tagged user text.
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
-    assert [message.role for message in second_call_messages] == ['user', 'user']
+    assert [message.role for message in second_call_messages] == ['user', 'system']
+    assert second_call_messages[-1].content == snapshot('Please return text.')
 
 
 #####################
@@ -3605,13 +3941,22 @@ async def test_mistral_empty_response_skipped_in_history(allow_model_requests: N
         pytest.param('xhigh', 'high', id='xhigh'),
     ],
 )
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'mistral-small-latest',
+        # Aliases of Mistral Medium 3.5 and Small 4, which reason only when asked to.
+        'magistral-medium-latest',
+        'magistral-small-latest',
+    ],
+)
 async def test_reasoning_effort_with_unified_thinking(
-    allow_model_requests: None, thinking: ThinkingLevel, expected: str
+    allow_model_requests: None, thinking: ThinkingLevel, expected: str, model_name: str
 ) -> None:
     """Unified `thinking` values map to Mistral's `reasoning_effort` ('high' for any enabled level, 'none' only for `False`)."""
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
-    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
     result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
@@ -3635,11 +3980,11 @@ async def test_reasoning_effort_not_sent_for_unsupported_model(allow_model_reque
 async def test_reasoning_effort_not_sent_for_always_on_model(
     allow_model_requests: None, thinking: ThinkingLevel
 ) -> None:
-    """`magistral` always reasons, so `reasoning_effort` is never sent: enabled levels are dropped
-    by `_translate_thinking`'s always-on guard, `False` is stripped upstream in `prepare_request`."""
+    """A dated `magistral` id always reasons and has no effort knob, so `reasoning_effort` is never sent,
+    not even for `False`: there is nothing to turn down."""
     c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
     mock_client = MockMistralAI(completions=c)
-    m = MistralModel('magistral-medium-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel('magistral-medium-2509', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
     result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
@@ -3715,6 +4060,36 @@ async def test_reasoning_effort_stream_with_tools(allow_model_requests: None) ->
     assert text == 'done'
     assert len(mock_client.chat_completion_kwargs) == 2
     assert all(kwargs['reasoning_effort'] == 'none' for kwargs in mock_client.chat_completion_kwargs)
+
+
+@pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0'])
+async def test_large4_adjustable_reasoning_sends_reasoning_effort_high(
+    allow_model_requests: None, model_name: str
+) -> None:
+    """Large 4 ids behave like the Small 4/Medium 3.5 ids: `thinking=True` maps to `reasoning_effort='high'`."""
+    c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=True))
+    assert result.output == 'thought deeply'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'high'
+
+
+@pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0'])
+async def test_large4_thinking_disabled_sends_reasoning_effort_none(
+    allow_model_requests: None, model_name: str
+) -> None:
+    """Large 4 ids behave like the Small 4/Medium 3.5 ids: only `thinking=False` maps to `reasoning_effort='none'`."""
+    c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=False))
+    assert result.output == 'thought deeply'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'none'
 
 
 #####################
@@ -3825,7 +4200,7 @@ async def test_parallel_tool_calls_stream(allow_model_requests: None) -> None:
 
 # Opted in, and the cassette was recorded with the described options in the request, so the recording only
 # matches what the code sends while the enum keeps opting in.
-class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """How urgent the ticket is."""
 
     low = 'low'
@@ -3876,4 +4251,116 @@ async def test_mistral_enum_member_docstrings_reach_the_wire(
             'required': ['priority'],
             'type': 'object',
         }
+    )
+
+
+def _tool_call_ids_on_the_wire(body: dict[str, Any]) -> list[tuple[str, list[str]]]:
+    """Each message's role with the tool call IDs it carries: an assistant's calls, or a tool message's answer."""
+    ids: list[tuple[str, list[str]]] = []
+    for message in cast(list[dict[str, Any]], body['messages']):
+        if tool_calls := cast(list[dict[str, Any]], message.get('tool_calls') or []):
+            ids.append((message['role'], [call['id'] for call in tool_calls]))
+        elif message['role'] == 'tool':
+            ids.append(('tool', [message['tool_call_id']]))
+    return ids
+
+
+@pytest.mark.vcr()
+async def test_mistral_foreign_tool_call_ids_are_rewritten(
+    allow_model_requests: None, mistral_api_key: str, request_capture: RequestCapture
+):
+    """A history with IDs from other providers and Pydantic AI continues on a model that only takes 9 alphanumerics.
+
+    `voxtral-small` rejects every other ID with a 400. The rewrite is a function of the history, so a second
+    request over the same history sends the same bytes, and the stored history keeps its original IDs.
+    """
+    provider = MistralProvider(api_key=mistral_api_key, http_client=request_capture.client)
+    agent = Agent(MistralModel('voxtral-small-latest', provider=provider))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'Sunny in {city}.'  # pragma: no cover
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What is the weather in Paris, London and Berlin?')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_abc123def456ghi789jkl012'),
+                ToolCallPart('get_weather', {'city': 'Londres'}, tool_call_id='toolu_01A09q90qw90lq917835lq9'),
+                ToolCallPart('get_weather', {'city': 'Berlin'}, tool_call_id='pyd_ai_0123456789abcdef0123456789abcdef'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_weather', 'Sunny, 21C', tool_call_id='call_abc123def456ghi789jkl012'),
+                ToolReturnPart(
+                    'get_weather',
+                    'Use the English city name.',
+                    tool_call_id='toolu_01A09q90qw90lq917835lq9',
+                    outcome='retried',
+                ),
+                ToolReturnPart('get_weather', 'Cloudy, 15C', tool_call_id='pyd_ai_0123456789abcdef0123456789abcdef'),
+            ]
+        ),
+        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='aB3dE5gH9')]),
+        ModelRequest(parts=[ToolReturnPart('get_weather', 'Rainy, 12C', tool_call_id='aB3dE5gH9')]),
+    ]
+
+    prompt = 'Summarize the weather in those three cities in one sentence, without calling tools.'
+    first = await agent.run(prompt, message_history=history)
+    second = await agent.run(prompt, message_history=history)
+
+    assert first.output and second.output
+    first_body, _ = request_capture.bodies('/chat/completions')
+    # The valid ID passes through, the others become hashes, and every call still pairs with its answer.
+    assert _tool_call_ids_on_the_wire(first_body) == snapshot(
+        [
+            ('assistant', ['2pESUE4jw', 'l4LUGq9qS', '9qOPVjwIC']),
+            ('tool', ['2pESUE4jw']),
+            ('tool', ['l4LUGq9qS']),
+            ('tool', ['9qOPVjwIC']),
+            ('assistant', ['aB3dE5gH9']),
+            ('tool', ['aB3dE5gH9']),
+        ]
+    )
+    assert request_capture.raw_bodies[0] == request_capture.raw_bodies[1]
+    assert [part.tool_call_id for part in history[1].parts if isinstance(part, ToolCallPart)] == [
+        'call_abc123def456ghi789jkl012',
+        'toolu_01A09q90qw90lq917835lq9',
+        'pyd_ai_0123456789abcdef0123456789abcdef',
+    ]
+
+
+@pytest.mark.vcr()
+async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
+    allow_model_requests: None, mistral_api_key: str, request_capture: RequestCapture, image_content: BinaryImage
+):
+    """The `<tool_result>` tags framing a tool's image name the same rewritten ID as the call and its tool message."""
+    provider = MistralProvider(api_key=mistral_api_key, http_client=request_capture.client)
+    agent = Agent(MistralModel('mistral-small-latest', provider=provider))
+
+    @agent.tool_plain
+    def get_image() -> BinaryImage:
+        return image_content  # pragma: no cover
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Get the image.')]),
+        ModelResponse(parts=[ToolCallPart('get_image', {}, tool_call_id='call_abc123def456ghi789jkl012')]),
+        ModelRequest(parts=[ToolReturnPart('get_image', image_content, tool_call_id='call_abc123def456ghi789jkl012')]),
+    ]
+
+    result = await agent.run('Which fruit is in the image? Answer in one word.', message_history=history)
+
+    assert result.output
+    body = request_capture.body('/chat/completions')
+    assert _tool_call_ids_on_the_wire(body) == snapshot([('assistant', ['2pESUE4jw']), ('tool', ['2pESUE4jw'])])
+    tags = [
+        chunk['text']
+        for message in cast(list[dict[str, Any]], body['messages'])
+        if message['role'] == 'user' and isinstance(message['content'], list)
+        for chunk in cast(list[dict[str, Any]], message['content'])
+        if chunk['type'] == 'text' and chunk['text'].startswith('<tool_result')
+    ]
+    assert tags == snapshot(
+        [f'<tool_result tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">']
     )

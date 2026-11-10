@@ -77,7 +77,7 @@ def test_roles_support_raw_terminal_surfaces(name: str, truecolor: bool, monkeyp
 @pytest.mark.parametrize(
     ('name', 'addition', 'deletion', 'marker'),
     [
-        ('default', '#465258', '#682B36', '#d2f6ff'),
+        ('default', '#225C2B', '#7A2936', '#66ff81'),
         ('tokyo_night', '#3F4D39', '#583443', '#bde7ab'),
         ('github_light', '#C3E6CB', '#F4C8CC', '#617365'),
     ],

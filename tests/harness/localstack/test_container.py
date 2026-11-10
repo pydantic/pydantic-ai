@@ -16,7 +16,7 @@ import pytest
 
 from pydantic_ai_harness.localstack import LocalStackContainer, LocalStackError
 
-from ._http_server import HttpResponse, http_server, unused_tcp_port
+from ._http_server import HttpResponse, http_server, refused_tcp_port
 
 _LOCALSTACK_ENV_NAMES = (
     'LOCALSTACK_AUTH_TOKEN',
@@ -115,6 +115,13 @@ class TestProperties:
             == 'http://127.0.0.2:4599'
         )
 
+    def test_endpoint_url_brackets_an_ipv6_binding(self, tmp_path: Path) -> None:
+        docker, _ = _docker_stub(tmp_path)
+        assert (
+            LocalStackContainer(docker_path=docker, host_address='::1', host_port=4599).endpoint_url
+            == 'http://[::1]:4599'
+        )
+
     def test_readiness_url_uses_host_binding(self, tmp_path: Path) -> None:
         docker, _ = _docker_stub(tmp_path)
         assert (
@@ -128,6 +135,17 @@ class TestProperties:
             LocalStackContainer(docker_path=docker, host_address='0.0.0.0', host_port=4599)._readiness_url  # pyright: ignore[reportPrivateUsage]
             == 'http://127.0.0.1:4599/_localstack/health'
         )
+
+    def test_ipv6_all_interface_binding_is_reached_at_loopback(self, tmp_path: Path) -> None:
+        docker, _ = _docker_stub(tmp_path)
+        container = LocalStackContainer(docker_path=docker, host_address='::', host_port=4599)
+        assert container.endpoint_url == 'http://[::1]:4599'
+        assert container._readiness_url == 'http://[::1]:4599/_localstack/health'  # pyright: ignore[reportPrivateUsage]
+
+    def test_scoped_ipv6_binding_is_rejected(self, tmp_path: Path) -> None:
+        docker, _ = _docker_stub(tmp_path)
+        with pytest.raises(ValueError, match=r"`host_address` 'fe80::1%eth0' is a scoped IPv6 address"):
+            LocalStackContainer(docker_path=docker, host_address='fe80::1%eth0')
 
     def test_container_id_is_none_before_start(self, tmp_path: Path) -> None:
         docker, _ = _docker_stub(tmp_path)
@@ -273,10 +291,9 @@ class TestLifecycle:
 
     async def test_readiness_timeout_stops_container(self, tmp_path: Path) -> None:
         docker, log = _docker_stub(tmp_path)
-        port = unused_tcp_port()
         # startup_timeout also bounds `docker run` (the stub subprocess); keep it well
         # above subprocess-spawn time so the readiness poll, not the launch, times out.
-        with pytest.raises(LocalStackError, match=r'did not become ready within 1.0s'):
+        with refused_tcp_port() as port, pytest.raises(LocalStackError, match=r'did not become ready within 1.0s'):
             async with LocalStackContainer(docker_path=docker, host_port=port, startup_timeout=1.0, poll_interval=0.01):
                 pass  # pragma: no cover
         assert 'stop container-abc123' in log.read_text()
@@ -324,7 +341,6 @@ class TestLifecycle:
 
     async def test_readiness_failure_raises_original_error_even_if_stop_fails(self, tmp_path: Path) -> None:
         docker = _stop_failing_docker_stub(tmp_path)
-        port = unused_tcp_port()
-        with pytest.raises(LocalStackError, match=r'did not become ready within 1.0s'):
+        with refused_tcp_port() as port, pytest.raises(LocalStackError, match=r'did not become ready within 1.0s'):
             async with LocalStackContainer(docker_path=docker, host_port=port, startup_timeout=1.0, poll_interval=0.01):
                 pass  # pragma: no cover

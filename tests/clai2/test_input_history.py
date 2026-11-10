@@ -33,7 +33,7 @@ async def test_chat_reuses_input_history(tmp_path: Path) -> None:
     input_history(path).append_string('/help')
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('\x1b[A\n/exit\n')
+        pipe.send_text('\x1b[A\r/exit\r')
         await chat(Agent(TestModel()), deps=None, console=Console(file=output), store=store)
     assert 'Show commands' in output.getvalue()
     assert '/exit' in [text async for text in input_history(path).load()]

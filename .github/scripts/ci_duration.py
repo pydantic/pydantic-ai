@@ -12,7 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -27,8 +27,9 @@ BASELINE_COLLECTION_MAX_SECONDS = 90
 MIN_BASELINE_SAMPLES = 10
 # Must stay above the number of tracked jobs so a full run renders every row: `no_baseline` sorts
 # into the truncated tail with `normal`, and every newly-minted signature starts there. Today's
-# `ci.yml` matrices give 5 pythons x (5 installs + 2 all-extras shards + 2 lowest-versions
-# shards) + 5 x 2 durable-exec + 3.10's third all-extras shard = 56.
+# `ci.yml` matrices give 4 pythons x (5 installs + 2 all-extras shards + 2 lowest-versions
+# shards) + 4 x 2 durable-exec + 3.11's third all-extras shard + 3.15's 5 installs, 2 all-extras
+# shards, and locked durable-exec leg = 53.
 REPORT_ROW_LIMIT = 60
 WARNING_MIN_SECONDS = 60
 SLOW_THRESHOLD_MULTIPLIER = 1.25
@@ -601,7 +602,7 @@ def render_report(pr_number: int, head_sha: str, workflow: JsonObject, rows: lis
     lines.extend(
         [
             '',
-            '<sub>Re-add the `trigger:ci-duration-report` label to refresh this report.</sub>',
+            f'<sub>Re-add the `{REPORT_LABEL}` label to refresh this report.</sub>',
         ]
     )
     return '\n'.join(lines)
@@ -615,7 +616,7 @@ def render_waiting_report(head_sha: str) -> str:
             '',
             f'No completed `CI` run was found for commit `{head_sha[:7]}` yet.',
             '',
-            '<sub>Re-add the `trigger:ci-duration-report` label after CI completes, or rerun with a longer poll window.</sub>',
+            f'<sub>Re-add the `{REPORT_LABEL}` label after CI completes, or rerun with a longer poll window.</sub>',
         ]
     )
 
@@ -839,7 +840,7 @@ def _parse_timestamp(value: str) -> datetime:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    return datetime.now(UTC).isoformat().replace('+00:00', 'Z')
 
 
 def _format_seconds(value: float | None) -> str:

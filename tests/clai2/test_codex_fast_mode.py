@@ -17,10 +17,10 @@ from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command
 from tests.clai2.menu_script import Script, make_context, pick
@@ -181,7 +181,7 @@ async def test_fast_command_tracks_active_model(tmp_path: Path, model: str | Non
     if not available:
         with pytest.raises(ValueError, match='Unknown command /fast'):
             await shell.commands.execute_async('/fast')
-    for command in ('/set model openai-codex:xyz', '/add_model openai-codex:xyz', '/model openai-codex:xyz'):
+    for command in ('/set model openai-codex:xyz', '/model add openai-codex:xyz', '/model openai-codex:xyz'):
         await shell.commands.execute_async(command)
         assert '/fast:' in await shell.commands.execute_async('/help')
         assert 'Fast mode on' in await shell.commands.execute_async('/fast on')

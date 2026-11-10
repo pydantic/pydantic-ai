@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 
 import httpx
 import httpx2
 import pytest
-from typing_extensions import assert_never
 
 from pydantic_ai import Agent, ModelHTTPError
 from pydantic_ai.models import infer_model
@@ -42,36 +41,36 @@ GatewayProvider = Literal['openai-responses', 'openai-chat', 'anthropic', 'googl
     [
         pytest.param(
             'openai-responses',
-            'gpt-5.2-proo',
-            'gateway/openai:gpt-5.2-pro',
+            'gpt-5.6-sool',
+            'gateway/openai:gpt-5.6-sol',
             id='openai-responses',
             marks=pytest.mark.skipif(not openai_imports(), reason='openai not installed'),
         ),
         pytest.param(
             'openai-chat',
-            'gpt-5.2-proo',
-            'gateway/openai:gpt-5.2-pro',
+            'gpt-5.6-sool',
+            'gateway/openai:gpt-5.6-sol',
             id='openai-chat',
             marks=pytest.mark.skipif(not openai_imports(), reason='openai not installed'),
         ),
         pytest.param(
             'anthropic',
-            'claude-sonet-4-5',
-            'gateway/anthropic:claude-sonnet-4-5',
+            'claude-sonet-5-5',
+            'gateway/anthropic:claude-sonnet-5-5',
             id='anthropic',
             marks=pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),
         ),
         pytest.param(
             'google',
-            'gemini-3.6-flahs',
-            'gateway/google-cloud:gemini-3.6-flash',
+            'gemini-3.8-flahs',
+            'gateway/google-cloud:gemini-3.8-flash',
             id='google',
             marks=pytest.mark.skipif(not google_imports(), reason='google not installed'),
         ),
         pytest.param(
             'groq',
-            'llama-3.3-70b-versatlie',
-            'gateway/groq:llama-3.3-70b-versatile',
+            'openai/gpt-oss-120bb',
+            'gateway/groq:openai/gpt-oss-120b',
             id='groq',
             marks=pytest.mark.skipif(not groq_imports(), reason='groq not installed'),
         ),
@@ -127,6 +126,9 @@ async def test_gateway_direct_model_suggests_gateway_model_id(
         case 'anthropic':
             model = AnthropicModel(model_name, provider='gateway')
         case 'google':
+            monkeypatch.setattr(
+                'pydantic_ai.providers.google._create_google_httpx2_client', create_gateway_httpx2_client
+            )
             model = GoogleModel(model_name, provider='gateway')
         case 'groq':
             model = GroqModel(model_name, provider='gateway')
@@ -189,14 +191,14 @@ async def test_inferred_gateway_model_suggests_gateway_model_id(
     env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'test-key')
     env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.example.com/proxy')
     monkeypatch.setattr('pydantic_ai.providers.gateway.create_async_httpx2_client', _openai_model_not_found_client)
-    model = infer_model('gateway/openai:gpt-5.2-proo')
+    model = infer_model('gateway/openai:gpt-5.6-sool')
 
     assert model.system == 'openai'
-    assert model.model_id == 'openai:gpt-5.2-proo'
+    assert model.model_id == 'openai:gpt-5.6-sool'
     with pytest.raises(ModelHTTPError) as exc_info:
         await Agent(model).run('hello')
 
-    assert exc_info.value.suggested_model_id == 'gateway/openai:gpt-5.2-pro'
+    assert exc_info.value.suggested_model_id == 'gateway/openai:gpt-5.6-sol'
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -208,15 +210,15 @@ async def test_explicit_gateway_provider_suggests_gateway_model_id(allow_model_r
             base_url='https://gateway.example.com/proxy',
             http_client=http_client,
         )
-        model = OpenAIResponsesModel('gpt-5.2-proo', provider=provider)
+        model = OpenAIResponsesModel('gpt-5.6-sool', provider=provider)
 
         assert provider.name == 'openai'
         assert model.system == 'openai'
-        assert model.model_id == 'openai:gpt-5.2-proo'
+        assert model.model_id == 'openai:gpt-5.6-sool'
         with pytest.raises(ModelHTTPError) as exc_info:
             await Agent(model).run('hello')
 
-    assert exc_info.value.suggested_model_id == 'gateway/openai:gpt-5.2-pro'
+    assert exc_info.value.suggested_model_id == 'gateway/openai:gpt-5.6-sol'
 
 
 @pytest.mark.skipif(not google_imports(), reason='google not installed')
@@ -242,7 +244,7 @@ async def test_google_not_found_without_model_resolution_does_not_suggest(
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
         model = GoogleModel(
-            'gemini-3.6-flahs',
+            'gemini-3.8-flahs',
             provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='https://google.example.com'),
         )
         with pytest.raises(ModelHTTPError) as exc_info:

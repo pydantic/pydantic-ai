@@ -2,7 +2,14 @@
 emoji: "♻️"
 name: "Pydantic AI Round-Trip Sweep"
 description: "Find serialize/deserialize state-loss bugs across a message round-trip boundary and file a reproducible report. Runs on the Pydantic AI gh-aw shim; the prompt is iterable from a Logfire managed variable."
-on: daily
+on:
+  schedule: daily
+  workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
 permissions:
   contents: read
   issues: read
@@ -21,8 +28,15 @@ safe-outputs:
   # `gh-aw.pydantic-ai-roundtrip-sweep`) via the otel-logfire import + the shim's
   # `instrument_pydantic_ai`, so we don't also file an auto-generated failure issue.
   report-failure-as-issue: false
+  report-failed-jobs: false
   noop:
     report-as-issue: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   create-issue:
     max: 1
     title-prefix: "[roundtrip-sweep] "
@@ -43,6 +57,10 @@ env:
   # `agentic_workflow_guard.py` fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "45"
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
+engine:
+  model: anthropic/${{ vars.GH_AW_MODEL }}
+# Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
+max-daily-ai-credits: -1
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
@@ -53,9 +71,9 @@ imports:
   - shared/checkout.md
   - shared/engine-zai.md
   - shared/provider-health.md
-  - shared/pre-steps.md
   - shared/pre-agent-steps.md
   - shared/issue-filing-context.md
+  - shared/security-findings.md
 
 jobs:
   fetch_dynamic_prompt:

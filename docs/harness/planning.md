@@ -5,24 +5,13 @@ description: "Give a Pydantic AI agent a todo list it plans and updates itself, 
 
 # Planning
 
-`Planning` gives the model a structured, self-updating task list through a small toolset -- and surfaces the current plan back to the model every turn without ever invalidating the prompt cache. It can stay in memory for a single run or persist to SQLite/Postgres, break steps into subtasks with dependencies, and emit events from granular changes.
+`Planning` gives the model a structured task list it maintains through a small toolset. The plan reaches the model in the tools' results rather than the system prompt, so editing it doesn't change the cached prompt prefix. Optionally persist it, break steps into subtasks with dependencies, and react to changes through events.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)
 
-> This capability incorporates the task-list features of the standalone [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) library -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed:
->
-> | `pydantic-ai-todo` | `Planning` |
-> |---|---|
-> | `write_todos` | `write_plan` |
-> | `read_todos` | `read_plan` |
-> | `add_todo` | `add_task` |
-> | `update_todo_status` / `update_todo_statuses` | `update_task_status` / `update_task_statuses` |
-> | `remove_todo` | `remove_task` |
-> | `add_subtask`, `set_dependency`, `get_available_tasks` | unchanged |
->
-> Two differences to plan for: there is no connection-string convenience (`create_storage(backend=...)` and friends are gone -- you construct your own asyncpg pool or Redis client, which is what keeps the harness driver-free), and `PlanEvent` carries no `timestamp`, so a consumer that ordered or logged by it supplies its own clock.
-
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+
+![The model keeps a task plan with the Planning tools: write_plan, read_plan, add_task, update_task_status, update_task_statuses and remove_task, plus add_subtask, set_dependency and get_available_tasks with enable_subtasks. The plan lives in a PlanStore, in memory by default or in SQLite, Postgres or Redis. Every tool that changes the plan ends its result with the whole plan as a checklist in a <plan_reminder> tag, so the plan stays in the conversation and never in the system prompt. Before each model request Planning reads the store and records the plan itself only when the model cannot see the current one.](../img/harness/planning.svg)
 
 ## The problem
 
@@ -30,14 +19,17 @@ Long agentic runs drift: the model loses track of what it set out to do and what
 
 ## The solution
 
-The model owns the plan through the `planning` toolset. The current plan is surfaced back as an ephemeral reminder appended to the tail of each request, with the single cache breakpoint anchored on the last durable user content:
+The model owns the plan through the `planning` toolset. Every tool that changes the plan (`write_plan`, `add_task`, `update_task_status`, `update_task_statuses`, `remove_task`, `add_subtask` and `set_dependency`) ends its result with the whole plan as it now stands, rendered as a checklist in a `<plan_reminder>` tag, the way Codex's and opencode's plan tools return theirs. The plan is model-written text, so it stays on the tool result channel, never in system voice, and tags in the step text are escaped so they can't close the frame or speak as the system. A fixed note in `Planning`'s instructions, after its tool guidance, tells the model that the latest `<plan_reminder>` tag holds its current plan, and that the plan records its own progress rather than instructions from the user. The note is the same on every request, so it stays in the cached prefix.
 
-- The reminder is added after the durable history is persisted, so it reaches the model but is never written to `message_history`. No reminders accumulate across turns.
-- The `CachePoint` sits on the last durable user content, so the prefix it saves is a prefix of the next request and cache hits survive turn over turn. The reminder carries no breakpoint, so re-sending its mutable content never invalidates the cache.
+So in a tool loop, the latest plan is always in the conversation already, and `Planning` adds nothing to it: each request starts with everything the previous one sent, the cached prefix holds turn over turn, and on models with [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking) the model's earlier reasoning stays valid.
 
-As with all capability cache breakpoints, provider mapping applies: OpenAI models only receive the `CachePoint` when the model profile enables explicit cache control, and with no durable user content to anchor on the reminder is sent without a breakpoint.
+The plan tools' results carry `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`, which the model doesn't see. Before each model request, `Planning` reads the plan from its store and looks for the latest plan the model can see, by that metadata, never by text. Only when there's none, or it differs from the store's, does `Planning` record the current plan itself, on the user channel in the same `<plan_reminder>` tag:
 
-Note that the anchor lands on the last `UserPromptPart` present in the request. A capability listed before `Planning` that appends user content each request (for example `SystemReminders`) displaces the anchor onto that part, so the prefix stays cache-stable only while that content is stable across turns.
+- after compaction took the plan tools' results, so the model works from a window without them, or cleared them (`ClearToolResults`): a cleared result keeps its metadata, so a plan tool's result only counts while its content still shows the plan;
+- in a run that starts without them in its history, such as an executor reading a plan another agent wrote to a shared store;
+- after something outside the plan tools changed the store.
+
+That record is kept in the history and marked with the same `origin`, so compaction tells it from something the user said. A plan emptied outside the plan tools after the model was shown one is recorded as `No plan yet.`, once, so the old plan doesn't read as current. A custom `guidance` replaces the tool guidance but keeps the note; `inject=False` means the model isn't shown the plan: it drops the note and the record, and the plan tools don't return the plan (`write_plan` replies with the bare checklist, the others with just their message).
 
 ## Usage
 
@@ -47,7 +39,7 @@ Construct an `Agent` with `Planning()` in its `capabilities`. The tools are regi
 from pydantic_ai import Agent
 from pydantic_ai_harness import Planning
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[Planning()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[Planning()])
 
 result = agent.run_sync('Refactor the auth module and add tests.')
 print(result.output)
@@ -86,7 +78,7 @@ Pass `enable_subtasks=True` to add three more tools, the `blocked` status, and a
 | `set_dependency(task_id, depends_on_id)` | Make one step wait for another; the dependent step is auto-`blocked` until its prerequisite is resolved (completed or cancelled). Self-dependencies, cycles, and duplicates are rejected. |
 | `get_available_tasks()` | List steps with no incomplete dependencies -- the ones that can start now. |
 
-`parent_id`, `depends_on`, and the `blocked` status are rejected by `write_plan` unless `enable_subtasks` is set: without the subtask tools nothing reconciles a dependency and no view renders the hierarchy, so storing them would be a write the plan does not reflect.
+`parent_id`, `depends_on`, and the `blocked` status are rejected by `write_plan` unless `enable_subtasks` is set: without the subtask tools nothing reconciles a dependency and no view renders the hierarchy.
 
 ## Persistence
 
@@ -99,9 +91,9 @@ from pydantic_ai_harness.planning import SqlitePlanStore
 planning = Planning(store=SqlitePlanStore('plan.db', session='user-123'))
 ```
 
-Built-in stores are `InMemoryPlanStore`, `SqlitePlanStore`, `PostgresPlanStore` (over a caller-owned asyncpg pool), and `RedisPlanStore` (over a caller-owned `redis.asyncio` client) -- so the harness needs no database driver. Any `PlanStore` implementation works, and `store_resolver` selects one per run. `SqlitePlanStore` keeps its database on the machine running the agent, not in the workspace. It requires a file-backed database; use `InMemoryPlanStore` for ephemeral plans rather than `':memory:'`.
+Built-in stores are `InMemoryPlanStore`, `SqlitePlanStore`, `PostgresPlanStore` (over a caller-owned asyncpg pool), and `RedisPlanStore` (over a caller-owned `redis.asyncio` client), so the harness needs no database driver. Any `PlanStore` implementation works, and `store_resolver` selects one per run. `SqlitePlanStore` keeps its database on the machine running the agent, not in the workspace. It requires a file-backed database; use `InMemoryPlanStore` for ephemeral plans rather than `':memory:'`.
 
-The tail reminder reads the store on every model request, so a store that raises fails the run rather than degrading -- the reminder is not best-effort. That is deliberate: a plan the model can no longer see is not a state to continue running in silently. Retry and fallback policy belongs to the store, not to `Planning`, and `PlanStore` is a protocol precisely so you can wrap one:
+`Planning` reads the store before every model request, so a store that raises fails the run rather than degrading -- the reminder is not best-effort. A plan the model can no longer see is not a state to continue running in silently. Retry and fallback policy belongs to the store, not to `Planning`; wrap a `PlanStore` to add one:
 
 ```python
 class BestEffort:
@@ -127,14 +119,14 @@ A shared store is the whole handoff mechanism between two runs. One agent writes
 ```python
 store = SqlitePlanStore('plan.db', session='issue-403')
 
-planner = Agent('anthropic:claude-opus-4-7', capabilities=[Planning(store=store)])
-executor = Agent('anthropic:claude-sonnet-4-6', capabilities=[Planning(store=store)])
+planner = Agent('{{ anthropic:large }}', capabilities=[Planning(store=store)])
+executor = Agent('{{ anthropic:medium }}', capabilities=[Planning(store=store)])
 
 await planner.run('Investigate the issue and write a plan. Do not implement anything.')
 await executor.run('Implement the plan.')
 ```
 
-The executor starts with no `message_history`, so it never pays for the planner's investigation. Its first request carries only the new prompt plus the plan reminder, which the capability rebuilds from the store. That is why the two agents can run on different models: a large-context model can do the reading and the reasoning, and a smaller one can execute against the resulting checklist.
+The executor starts with no `message_history`, so it never pays for the planner's investigation. Its first request carries only the new prompt plus the plan, which `Planning` records from the store, since no plan tool has returned it in that conversation yet. That is why the two agents can run on different models: a large-context model can do the reading and the reasoning, and a smaller one can execute against the resulting checklist.
 
 The planner's read-only discipline is a property of how you configure that agent (which toolsets it gets, and what its instructions say), not something the capability enforces.
 
@@ -147,7 +139,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import Planning
 from pydantic_ai_harness.planning import PlanCompletedEvent
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[Planning()])
+agent = Agent('{{ anthropic:medium }}', capabilities=[Planning()])
 
 @agent.on_event(PlanCompletedEvent)
 async def announce(ctx, event):
@@ -166,12 +158,22 @@ and store `event_emitter` parameters remain supported but are deprecated.
 
 Addressing steps by mutable integer index (insert/remove/reorder) is error-prone for both the code and the model. `write_plan` restates the whole plan each call, so there are no indices to track. Granular edits (`add_task`, `update_task_status`, `remove_task`) instead reference the stable `id` shown by `read_plan`.
 
-## Caching guarantee
+## Prompt caching
 
-The plan is never injected into the system prompt or instructions. Static usage guidance goes there (cache-stable); only the mutable plan rides the ephemeral tail reminder, which lives solely in the per-request copy and is never persisted. Set `inject=False` to disable it. Pydantic AI maps `CachePoint` for models whose profiles support prompt caching; on other models it is ignored.
+The system prompt and instructions carry only the static guidance and the note on the plan's tag. The plan reaches the model in the plan tools' results, or in a part `Planning` records when the latest plan isn't visible; both are appended to the history, so the cached prefix stays valid. With `inject=True`, a tool that changes the plan returns a `ToolReturn` with `metadata` when called through the agent, and a plain string when you call the `PlanningToolset` method directly; the read tools and refusals return plain strings.
 
-With a durable-execution capability attached, the plan read used to build that reminder is a
-journaled capability operation. Replay reuses the recorded plan instead of reading the store again.
+`Planning` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoints it places cover the plan tools' results with the rest of the history. `cache_ttl` is deprecated and has no effect; setting it warns. The tag was `<plan-reminder>` in earlier releases; update any prompt or parser that names the old spelling.
+
+With a [UI adapter](../ui/overview.md#trust-model-for-client-submitted-messages), history that goes through the client may lose the metadata that marks a plan tool's result or a plan record (AG-UI drops it). Then when the client sends that history back, `Planning` records the plan on the next request, and compaction may keep an old record as a user turn. Keep history on the server when that matters.
+
+With a durable-execution capability attached, every plan store call is a journaled capability
+operation: the plan read before each model request, which decides whether the plan is recorded, and each
+read and write the plan tools make.
+Replay reuses the recorded result instead of calling the store again, so recovering a run doesn't
+append a step to a persistent store a second time. Under an engine that runs function tools in workflow code,
+like DBOS, a plan tool call runs alone, without overlapping other tool calls, and emits its run
+events after its last store call. So its recorded store calls keep the same order on replay,
+including relative to the steps an `event_stream_handler` runs for those events.
 `Planning` carries the stable default `id='planning'`, so durable recovery works without
 configuration.
 Engines that run tools and capability operations in a separate worker, like Temporal, don't
@@ -185,11 +187,10 @@ the plan across steps.
 from pydantic_ai_harness import Planning
 
 Planning(
-    guidance=None,           # static system-prompt guidance; None = default, '' = omit
-    cache_ttl='5m',          # TTL for the cache breakpoint anchored on the last durable user content ('5m' | '1h')
+    guidance=None,           # static tool guidance; None = default, '' = omit (the plan note stays)
     store=None,              # None = fresh in-memory plan per run; or a PlanStore to persist
     enable_subtasks=False,   # add subtask/dependency tools and the 'blocked' status
-    inject=True,             # surface the current plan as a cache-safe tail reminder
+    inject=True,             # show the model the plan: in the plan tools' results, the note, and a record
     tools=None,              # None = every tool the mode registers; or an allowlist of names
     descriptions=None,       # optional per-tool description overrides, keyed by tool name
 )
@@ -201,7 +202,7 @@ Planning(
 
 ```yaml
 # agent.yaml
-model: anthropic:claude-sonnet-4-6
+model: {{ anthropic:medium }}
 capabilities:
   - Planning: {}
 ```
@@ -214,6 +215,21 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[Planning])
 result = agent.run_sync('...')
 print(result.output)
 ```
+
+## Relationship to `pydantic-ai-todo`
+
+`Planning` incorporates the task-list features of [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo), a community package by [Vstorm](https://vstorm.co/) -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed:
+
+| `pydantic-ai-todo` | `Planning` |
+|---|---|
+| `write_todos` | `write_plan` |
+| `read_todos` | `read_plan` |
+| `add_todo` | `add_task` |
+| `update_todo_status` / `update_todo_statuses` | `update_task_status` / `update_task_statuses` |
+| `remove_todo` | `remove_task` |
+| `add_subtask`, `set_dependency`, `get_available_tasks` | unchanged |
+
+There is no connection-string convenience (`create_storage(backend=...)` is gone): you construct your own asyncpg pool or Redis client. `PlanEvent` carries no `timestamp`, so a consumer that ordered or logged by it supplies its own clock.
 
 ## Further reading
 

@@ -5,27 +5,32 @@ import gc
 import time
 import weakref
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from threading import Barrier
 
 import pytest
+from pydantic_core import PydanticSerializationError
 from pytest_mock import MockerFixture
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
+    from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.trace import ProxyTracerProvider, SpanContext
 
+    from pydantic_evals._task_run import CURRENT_TASK_RUN, run_task
     from pydantic_evals.otel._context_in_memory_span_exporter import (
+        _add_context_span_exporter,  # pyright: ignore[reportPrivateUsage]
         _context_in_memory_providers,  # pyright: ignore[reportPrivateUsage]
         _ContextInMemorySpanExporter,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_evals.otel._context_subtree import (
         context_subtree,
     )
-    from pydantic_evals.otel.span_tree import AttributeValue, SpanNode, SpanQuery, SpanTree
+    from pydantic_evals.otel._errors import SpanTreeRecordingError
+    from pydantic_evals.otel.span_tree import SPAN_TREE_ADAPTER, AttributeValue, SpanNode, SpanQuery, SpanTree
 
 with try_import() as logfire_import_successful:
     import logfire
@@ -122,7 +127,7 @@ def span_tree() -> SpanTree:
         duration: int,
         **attributes: AttributeValue,
     ) -> SpanNode:
-        start_timestamp = datetime.fromtimestamp(start, tz=timezone.utc)
+        start_timestamp = datetime.fromtimestamp(start, tz=UTC)
         return SpanNode(
             name=name,
             trace_id=1,
@@ -331,6 +336,47 @@ async def test_span_node_matches_native_sequence_attributes():
 
     assert node.matches(SpanQuery(has_attributes={'seq_attr': [1, 2, 3]}))
     assert not node.matches(SpanQuery(has_attributes={'seq_attr': [1, 2]}))
+
+
+@pytest.mark.parametrize(
+    'attribute_value,expected',
+    [
+        pytest.param([1, 2], [1, 2], id='flat-sequence'),
+        pytest.param({'nested': [1, 'value', None]}, {'nested': [1, 'value', None]}, id='nested-mapping'),
+        pytest.param([1, 'value', None], [1, 'value', None], id='mixed-sequence'),
+        pytest.param(None, None, id='null'),
+        pytest.param(b'value', 'value', id='legacy-byte-string'),
+    ],
+)
+def test_span_tree_attribute_json_roundtrip(attribute_value: AttributeValue, expected: AttributeValue):
+    readable_span = ReadableSpan(
+        name='span',
+        context=SpanContext(trace_id=1, span_id=1, is_remote=False),
+        attributes={'value': attribute_value},
+        start_time=1_000_000_000,
+        end_time=2_000_000_000,
+    )
+    span_tree = SpanTree()
+    span_tree.add_readable_spans([readable_span])
+    restored = SPAN_TREE_ADAPTER.validate_json(SPAN_TREE_ADAPTER.dump_json(span_tree))
+    assert restored.roots[0].attributes['value'] == expected
+    assert restored.roots[0].matches(SpanQuery(has_attributes={'value': expected}))
+
+
+def test_span_tree_byte_encoding_is_unchanged(span_tree: SpanTree):
+    span_tree.roots[0].attributes['value'] = b'\xff'
+    with pytest.raises(PydanticSerializationError, match='utf-8'):
+        SPAN_TREE_ADAPTER.dump_json(span_tree)
+
+
+def test_span_node_null_attribute_query_matches_missing_key(span_tree: SpanTree):
+    node = span_tree.roots[0]
+    node.attributes['nullable'] = None
+    assert node.matches(SpanQuery(has_attributes={'nullable': None}))
+    assert node.matches(SpanQuery(has_attributes={'missing': None}))
+    assert not node.matches(SpanQuery(has_attributes={'missing': 'value'}))
+    assert node.matches(SpanQuery(has_attributes={'nullable': None}, has_attribute_keys=['nullable']))
+    assert not node.matches(SpanQuery(has_attributes={'missing': None}, has_attribute_keys=['missing']))
 
 
 async def test_span_tree_repr(span_tree: SpanTree):
@@ -1116,8 +1162,6 @@ async def test_context_subtree_custom_tracer_provider_without_add_span_processor
 
 async def test_context_subtree_not_configured(mocker: MockerFixture):
     """A tracer provider that cannot take a span processor yields an error, not a tree."""
-    from opentelemetry.trace import ProxyTracerProvider
-
     mocker.patch(
         'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=ProxyTracerProvider()
     )
@@ -1129,6 +1173,65 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
         'refer to the documentation at '
         'https://pydantic.dev/docs/ai/evals/evaluators/span-based/.'
     )
+
+
+async def test_run_task_without_span_capture_when_task_raises(mocker: MockerFixture):
+    """`run_task` records no span metrics when a failing task has no span tree to extract them from.
+
+    Without a span-capturing tracer provider `context_subtree()` yields a `SpanTreeRecordingError`
+    rather than a `SpanTree`, so there is nothing to extract and the original error still propagates.
+    """
+    mocker.patch(
+        'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=ProxyTracerProvider()
+    )
+    with pytest.raises(RuntimeError, match='boom'):
+        with run_task() as get_eval_context_kwargs:
+            raise RuntimeError('boom')
+
+    kwargs = get_eval_context_kwargs()  # pyright: ignore[reportPossiblyUnboundVariable]
+    assert isinstance(kwargs['_span_tree'], SpanTreeRecordingError)
+    assert kwargs['metrics'] == {}
+    assert CURRENT_TASK_RUN.get() is None
+
+
+async def test_context_subtree_finalizes_tree_on_exception():
+    """Spans completed before an exception are still added to the yielded SpanTree.
+
+    Regression test for #6927: the tree was only finalized after the inner span
+    context exited normally, so an exception escaping `context_subtree()` left the
+    yielded tree empty even though spans had completed before the failure.
+    """
+    with pytest.raises(RuntimeError, match='boom'):
+        with context_subtree() as tree:
+            with logfire.span('before-error'):
+                pass
+            raise RuntimeError('boom')
+
+    assert isinstance(tree, SpanTree)  # pyright: ignore[reportPossiblyUnboundVariable]
+    assert [node.name for node in tree] == ['before-error']
+
+
+async def test_context_subtree_clears_exporter_on_exception():
+    """The span exporter does not retain spans when an exception escapes the context.
+
+    Regression test for #6927: the exporter context was only cleared after the
+    yield in `_context_subtree_spans`, so failed evaluations leaked their completed
+    spans into the shared in-memory exporter.
+    """
+    exporter = _add_context_span_exporter()
+    assert isinstance(exporter, _ContextInMemorySpanExporter)
+    exporter._finished_spans.clear()  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(RuntimeError, match='boom'):
+        with context_subtree():
+            with logfire.span('before-error'):
+                pass
+            raise RuntimeError('boom')
+
+    # Assert on the mapping, not on `get_finished_spans()`: the flattened view would also be
+    # empty if the context's key survived holding an empty list, which is the unbounded-growth
+    # half of #6927.
+    assert exporter._finished_spans == {}  # pyright: ignore[reportPrivateUsage]
 
 
 class RecordingTracerProvider:

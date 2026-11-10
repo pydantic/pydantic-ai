@@ -1,4 +1,4 @@
-"""Opt-in desktop integration: this test replaces the system clipboard."""
+"""Opt-in desktop integration: these tests replace the system clipboard."""
 
 import os
 import subprocess
@@ -10,6 +10,30 @@ import pytest
 from PIL import Image
 
 from pydantic_clai2.ui.prompt.image_input import clipboard_images, read_image
+from pydantic_clai2.ui.prompt.text_clipboard import copy_command, run_copy
+
+
+@pytest.mark.skipif(os.environ.get('CLAI_TEST_CLIPBOARD') != '1', reason='requires an isolated desktop clipboard')
+def test_native_text_copy() -> None:
+    """A drag-selection's copy reaches the clipboard through the platform's own command."""
+    command = copy_command()  # Imported before the suite's fixture replaces it.
+    assert command is not None
+    text = 'copied from CLAI \u2713\nsecond line'
+    run_copy(command=command, text=text)
+    if sys.platform == 'darwin':
+        paste = ['pbpaste']
+    elif sys.platform == 'win32':
+        paste = [
+            'powershell',
+            '-NoProfile',
+            '-Command',
+            '[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-Clipboard -Raw',
+        ]
+    else:
+        paste = ['xclip', '-selection', 'clipboard', '-o']
+    environment = {**os.environ, 'LC_CTYPE': 'UTF-8'}  # `pbpaste` writes Mac Roman without it.
+    pasted = subprocess.run(paste, check=True, timeout=15, capture_output=True, env=environment).stdout.decode()
+    assert pasted.replace('\r\n', '\n').rstrip('\n') == text
 
 
 @pytest.mark.skipif(os.environ.get('CLAI_TEST_CLIPBOARD') != '1', reason='requires an isolated desktop clipboard')

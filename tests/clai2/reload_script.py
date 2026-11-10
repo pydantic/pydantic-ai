@@ -1,10 +1,13 @@
 """Exercise real module reloads in a process isolated from pytest's imported class identities."""
 
 import asyncio
+import gc
 import io
 import sys
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
+from threading import Thread
 from typing import Generic, TypeVar
 
 import prompt_toolkit
@@ -12,6 +15,7 @@ import pytest
 from prompt_toolkit.completion import CompleteEvent, Completer
 from prompt_toolkit.document import Document
 from rich.console import Console
+from rich.text import Text
 
 import pydantic_clai2
 from pydantic_ai import Agent, ModelRequestContext, RunContext, models
@@ -19,31 +23,48 @@ from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2 import DEFAULT_PLUGINS, chat
-from pydantic_clai2._app import STOCK_PLUGINS
+from pydantic_clai2 import DEFAULT_PLUGINS, chat, warm_imports
+from pydantic_clai2.app import STOCK_PLUGINS
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.runtime._session import StockAgent
+from pydantic_clai2.runtime.session import StockAgent
 from pydantic_clai2.ui.rendering import theme
 
 models.ALLOW_MODEL_REQUESTS = False
+start_warming = warm_imports.start
+
+
+def start_warming_and_wait(modules: Sequence[str] = warm_imports.FIRST_USE_MODULES) -> Thread:
+    # The `gc.get_objects()` scan in `prompt_async` can hold a tuple the warm-import thread is still building, and
+    # before Python 3.14 `tuple()` then fails to resize it with `SystemError`, failing that thread's import. A module
+    # it finished first, such as `openai.types.responses.response_output_text`, stays cached but missing from its
+    # re-imported parent package, so `/set model` fails for the rest of the process. Finish warming before prompting.
+    # `/reload` re-executes `warm_imports` and drops this wrapper, which holds only because CLAI2 starts warming once
+    # per process, before any reload.
+    thread = start_warming(modules)
+    thread.join()
+    return thread
+
+
+warm_imports.start = start_warming_and_wait
 PromptT = TypeVar('PromptT')
 
 
 async def main(root: Path, mode: str) -> None:
     package = root / 'pydantic_clai2'
-    app = package / '_app.py'
-    original = app.read_text()
-    updated = original.replace("prompt_async('> ')", "prompt_async('updated> ')")
-    updated = updated.replace('New session started.', 'Updated session started.')
+    app = package / 'app.py'
+    updated = app.read_text()
+    runtime = package / 'runtime' / 'session_runtime.py'
+    updated_runtime = runtime.read_text().replace("prompt_async('> ')", "prompt_async('updated> ')")
+    updated_runtime = updated_runtime.replace("'Goodbye.'", "'Updated goodbye.'")
     commands = package / 'commands.py'
     commands.write_text(commands.read_text().replace('Use /help.', 'Use updated /help.'))
     if mode == 'new_imports':
         commands.write_text(commands.read_text() + '\nRELOAD_MARKER = "source graph"\n')
         (package / 'reload_bridge.py').write_text('from .commands import RELOAD_MARKER\n')
         updated += '\nfrom .reload_bridge import RELOAD_MARKER\nassert RELOAD_MARKER == "source graph"\n'
-    session = package / 'runtime' / '_session.py'
+    session = package / 'runtime' / 'session.py'
     session.write_text(
         session.read_text().replace('                        content,', "                        content + ' updated',")
     )
@@ -110,12 +131,16 @@ async def main(root: Path, mode: str) -> None:
                 'reload'
             ]
             labels.append(label)
+            # The terminal's session stays live through every reload, failed ones included, and is the only one.
+            live = [len(o.listing()) for o in gc.get_objects() if type(o).__name__ == 'LiveRuntimes']
+            assert sum(live) == 1, live
             text = next(prompts)
             if text == '/reload' and mode != 'unchanged':
                 reloads += 1
                 sys.path.insert(0, str(root))
                 pydantic_clai2.__path__.insert(0, str(package))
                 app.write_text(updated)
+                runtime.write_text(updated_runtime)
                 if reloads == 1:
                     if mode == 'syntax':
                         app.write_text(updated + '\ninvalid syntax!\n')
@@ -125,8 +150,11 @@ async def main(root: Path, mode: str) -> None:
                     elif mode == 'harness':
                         app.write_text(updated + '\nfrom pydantic_ai_harness.subagents import _missing_reload_symbol\n')
                     elif mode == 'build':
-                        app.write_text(
-                            updated.replace('    commands = Commands()', '    raise RuntimeError("bad build")')
+                        runtime.write_text(
+                            updated_runtime.replace(
+                                '    commands = Commands(workspace=lambda: Path(session.workspace))',
+                                '    raise RuntimeError("bad build")',
+                            )
                         )
             return text
 
@@ -163,7 +191,7 @@ async def main(root: Path, mode: str) -> None:
         agent.override(model=TestModel(call_tools=[], custom_output_text='hello')),
     ):
         patch.setattr(prompt_toolkit, 'PromptSession', Prompt)
-        patch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+        patch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
         await chat(
             agent,
             deps=deps,
@@ -191,7 +219,7 @@ async def main(root: Path, mode: str) -> None:
     text = output.getvalue()
     assert '/reload: Reload CLAI2 code without restarting' in text, text
     assert 'Usage: /reload' in text, text
-    assert ('New session started.' if mode == 'unchanged' else 'Updated session started.') in text, text
+    assert ('Goodbye.' if mode == 'unchanged' else 'Updated goodbye.') in text, text
     assert text.count('plugin end') == 3, text
     assert text.count('plugin start test False') == 2, text
     assert all(f'plugin turn {prompt}' in text for prompt in ('first', 'second', 'third')), text
@@ -223,4 +251,54 @@ async def main(root: Path, mode: str) -> None:
         assert 'Keep the worktree if asked to remove it.' in text, text
 
 
-asyncio.run(main(Path(sys.argv[1]), sys.argv[2]))
+async def transcript_reload(root: Path) -> None:
+    """Reload live transcript instances, including their nested lines and Markdown streams."""
+    import pydantic_clai2.app as app
+    from pydantic_clai2.runtime.reloading import reload_clai
+    from pydantic_clai2.ui.prompt import prompt_transcript
+
+    transcript = prompt_transcript.TranscriptBuffer(max_lines=3, max_chars=100)
+    transcript.write('before\n')
+
+    def render(*, source: str, width: int) -> str:
+        return source + '\n'
+
+    block = transcript.markdown(render=render, width=80, changed=lambda: None)
+    block.extend('markdown')
+    block.write('markdown\n')
+    model = TestModel(call_tools=[], custom_output_text='hello')
+    agent = Agent(model)
+    output = io.StringIO()
+    for _ in range(2):
+        previous_type = type(transcript)
+        shell = reload_clai(
+            lambda: app.create_shell(
+                agent,
+                deps=None,
+                console=Console(file=output),
+                store=SettingsStore(root / 'transcript-config.db'),
+                transcript=transcript,
+                plugins=(),
+                usage_limits=None,
+                settings=None,
+                builtin_plugins=(),
+                project=ProjectSettings(),
+                load_plugins=False,
+            )
+        )
+        assert shell.transcript is transcript
+        assert type(transcript) is prompt_transcript.TranscriptBuffer
+        assert type(transcript) is not previous_type
+        assert type(block) is prompt_transcript.MarkdownBlock
+        block.write('continued\n')
+        with transcript.capture(shell.console):
+            shell.console.print('notice')
+        # Eviction exercises isinstance checks on objects created before module reload.
+        transcript.write('after\n')
+        frame = transcript.frame(width=80, height=24)
+        assert Text.from_ansi('\n'.join(frame.rows)).plain.splitlines()[-2:] == ['notice', 'after']
+
+
+asyncio.run(
+    transcript_reload(Path(sys.argv[1])) if sys.argv[2] == 'transcript' else main(Path(sys.argv[1]), sys.argv[2])
+)

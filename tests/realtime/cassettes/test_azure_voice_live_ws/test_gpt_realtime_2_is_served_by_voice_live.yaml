@@ -4,10 +4,10 @@ interactions:
   direction: received
   at: 0.0
   data:
-    event_id: event_6DBN7z8J9e9VIB69lfNfaJ
+    event_id: event_2zCLUy5GsAs9hSV1sDlwkU
     type: session.created
     session:
-      id: sess_ETFPsfVLiAPKNDkIBuvuF
+      id: sess_ETb0sAs8Xl0QRENWR7Q5n
       model: gpt-realtime-2-global-standard
       modalities:
       - audio
@@ -39,7 +39,7 @@ interactions:
       tools: []
       tool_choice: auto
       max_response_output_tokens: inf
-      expires_at: 1790643080
+      expires_at: 1790726098
       object: realtime.session
       input_audio_sampling_rate: 24000
       animation: null
@@ -70,12 +70,12 @@ interactions:
         model: whisper-1
 - kind: message
   direction: received
-  at: 0.087
+  at: 0.08
   data:
-    event_id: event_709N1p3W1lAjxfuud05kSN
+    event_id: event_3gWT2TEtdfu07bB9N46ohZ
     type: session.updated
     session:
-      id: sess_ETFPsfVLiAPKNDkIBuvuF
+      id: sess_ETb0sAs8Xl0QRENWR7Q5n
       model: gpt-realtime-2-global-standard
       modalities:
       - text
@@ -107,7 +107,7 @@ interactions:
       tools: []
       tool_choice: auto
       max_response_output_tokens: inf
-      expires_at: 1790643080
+      expires_at: 1790726098
       object: realtime.session
       input_audio_sampling_rate: 24000
       animation: null
@@ -120,11 +120,12 @@ interactions:
       handoff: null
 - kind: message
   direction: sent
-  at: 0.087
+  at: 0.08
   data:
     type: conversation.item.create
     event_id: pydantic_ai.content.0
     item:
+      id: pydantic_ai_item_0
       type: message
       role: user
       content:
@@ -132,19 +133,22 @@ interactions:
         text: Say a short greeting.
 - kind: message
   direction: sent
-  at: 0.087
+  at: 0.08
   data:
     type: response.create
     event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
 - kind: message
   direction: received
-  at: 0.163
+  at: 0.173
   data:
-    event_id: event_1znD6g0d1EuGoy61J4Ghua
+    event_id: event_63cQ2PEwgWE3qbRLyc56ck
     type: conversation.item.created
     previous_item_id: null
     item:
-      id: item_17Wgjmiu3MMJi0jRVuVtN9
+      id: pydantic_ai_item_0
       object: realtime.item
       type: message
       status: completed
@@ -154,18 +158,18 @@ interactions:
         text: Say a short greeting.
 - kind: message
   direction: received
-  at: 0.193
+  at: 0.192
   data:
-    event_id: event_3HD2dtPw00hPoPxPUAf1tb
+    event_id: event_72nfu5uSofTnxfPl7cUD0D
     type: response.created
     response:
       object: realtime.response
-      id: resp_ETFPspS7Eg1RupelZCKm0
+      id: resp_ETb0sZW7tOykzGwkxCNIs
       status: in_progress
       status_details: null
       output: []
       usage: null
-      conversation_id: conv_ETFPs1ynkxnPb0JSiLg5O
+      conversation_id: conv_ETb0sB5vSBkJ6YF0qeFTx
       modalities:
       - text
       voice:
@@ -174,17 +178,18 @@ interactions:
       output_audio_format: pcm16
       temperature: null
       max_output_tokens: inf
-      metadata: null
+      metadata:
+        pydantic_ai_inputs: '0'
 - kind: message
   direction: received
-  at: 0.446
+  at: 0.444
   data:
-    event_id: event_2DHSRgpzzPaMrkqbq62sEg
+    event_id: event_3VrL83pshsuMKIL0N3wX2q
     type: response.output_item.added
-    response_id: resp_ETFPspS7Eg1RupelZCKm0
+    response_id: resp_ETb0sZW7tOykzGwkxCNIs
     output_index: 0
     item:
-      id: item_ETFPsXyqrH6dENzGJYAfQ
+      id: item_ETb0s7PiPMBpPvlwzOyno
       object: realtime.item
       type: message
       status: in_progress
@@ -193,13 +198,13 @@ interactions:
       phase: final_answer
 - kind: message
   direction: received
-  at: 0.446
+  at: 0.444
   data:
-    event_id: event_3qGsbk6c3efImZhAuO8UF8
+    event_id: event_gm5ARlNOQCkAqlb63LFNP
     type: conversation.item.created
-    previous_item_id: item_17Wgjmiu3MMJi0jRVuVtN9
+    previous_item_id: pydantic_ai_item_0
     item:
-      id: item_ETFPsXyqrH6dENzGJYAfQ
+      id: item_ETb0s7PiPMBpPvlwzOyno
       object: realtime.item
       type: message
       status: in_progress
@@ -208,12 +213,12 @@ interactions:
       phase: final_answer
 - kind: message
   direction: received
-  at: 0.446
+  at: 0.447
   data:
-    event_id: event_3EXa0PRdeykIEBCpVvwvIz
+    event_id: event_6apJ5BjBCST6XD7Lgcid9s
     type: response.content_part.added
-    response_id: resp_ETFPspS7Eg1RupelZCKm0
-    item_id: item_ETFPsXyqrH6dENzGJYAfQ
+    response_id: resp_ETb0sZW7tOykzGwkxCNIs
+    item_id: item_ETb0s7PiPMBpPvlwzOyno
     output_index: 0
     content_index: 0
     part:
@@ -221,56 +226,56 @@ interactions:
       text: ''
 - kind: message
   direction: received
-  at: 0.446
+  at: 0.447
   data:
-    event_id: event_4g58W9xdscBbbgS3IW2NpI
+    event_id: event_3ABFXPga1DbL9wgBG5jnIR
     type: response.text.delta
-    response_id: resp_ETFPspS7Eg1RupelZCKm0
-    item_id: item_ETFPsXyqrH6dENzGJYAfQ
+    response_id: resp_ETb0sZW7tOykzGwkxCNIs
+    item_id: item_ETb0s7PiPMBpPvlwzOyno
     output_index: 0
     content_index: 0
-    delta: Hey
+    delta: Hello
 - kind: message
   direction: received
-  at: 0.45
+  at: 0.456
   data:
-    event_id: event_2yqoovEKRWy53wgJren76k
+    event_id: event_426wqMj7bcuPeOO7YKy0ti
     type: response.text.delta
-    response_id: resp_ETFPspS7Eg1RupelZCKm0
-    item_id: item_ETFPsXyqrH6dENzGJYAfQ
+    response_id: resp_ETb0sZW7tOykzGwkxCNIs
+    item_id: item_ETb0s7PiPMBpPvlwzOyno
     output_index: 0
     content_index: 0
     delta: ' there'
 - kind: message
   direction: received
-  at: 0.458
+  at: 0.459
   data:
-    event_id: event_3vwsLPnQRzWY22t0twTyBb
+    event_id: event_4IlCDz1hrVW8FierjaWvCd
     type: response.text.delta
-    response_id: resp_ETFPspS7Eg1RupelZCKm0
-    item_id: item_ETFPsXyqrH6dENzGJYAfQ
+    response_id: resp_ETb0sZW7tOykzGwkxCNIs
+    item_id: item_ETb0s7PiPMBpPvlwzOyno
     output_index: 0
     content_index: 0
     delta: '!'
 - kind: message
   direction: received
-  at: 0.485
+  at: 0.486
   data:
-    event_id: event_7AbT5IR8f8grCeZG0vBNUC
+    event_id: event_40bVTpjQ6gc9BYBKp7OBDu
     type: response.text.done
-    response_id: resp_ETFPspS7Eg1RupelZCKm0
-    item_id: item_ETFPsXyqrH6dENzGJYAfQ
+    response_id: resp_ETb0sZW7tOykzGwkxCNIs
+    item_id: item_ETb0s7PiPMBpPvlwzOyno
     output_index: 0
     content_index: 0
-    text: Hey there!
+    text: Hello there!
 - kind: message
   direction: received
-  at: 0.485
+  at: 0.486
   data:
-    event_id: event_5I5D6wMFuBlkKITi75A6eF
+    event_id: event_5jLUqk5rYgYEo8GHqDPoNX
     type: response.content_part.done
-    response_id: resp_ETFPspS7Eg1RupelZCKm0
-    item_id: item_ETFPsXyqrH6dENzGJYAfQ
+    response_id: resp_ETb0sZW7tOykzGwkxCNIs
+    item_id: item_ETb0s7PiPMBpPvlwzOyno
     output_index: 0
     content_index: 0
     part:
@@ -278,42 +283,42 @@ interactions:
       text: ''
 - kind: message
   direction: received
-  at: 0.485
+  at: 0.492
   data:
-    event_id: event_HCaM6NKSegmrIznVPGJKF
+    event_id: event_61xegl5XxlwSwYLdXqB9hR
     type: response.output_item.done
-    response_id: resp_ETFPspS7Eg1RupelZCKm0
+    response_id: resp_ETb0sZW7tOykzGwkxCNIs
     output_index: 0
     item:
-      id: item_ETFPsXyqrH6dENzGJYAfQ
+      id: item_ETb0s7PiPMBpPvlwzOyno
       object: realtime.item
       type: message
       status: completed
       role: assistant
       content:
       - type: text
-        text: Hey there!
+        text: Hello there!
       phase: final_answer
 - kind: message
   direction: received
-  at: 0.485
+  at: 0.492
   data:
-    event_id: event_1aObqBdtcitGZMSL5Cgbf2
+    event_id: event_4Hisq4RcrJCTn7Bzfo0dRx
     type: response.done
     response:
       object: realtime.response
-      id: resp_ETFPspS7Eg1RupelZCKm0
+      id: resp_ETb0sZW7tOykzGwkxCNIs
       status: completed
       status_details: null
       output:
-      - id: item_ETFPsXyqrH6dENzGJYAfQ
+      - id: item_ETb0s7PiPMBpPvlwzOyno
         object: realtime.item
         type: message
         status: completed
         role: assistant
         content:
         - type: text
-          text: Hey there!
+          text: Hello there!
         phase: final_answer
       usage:
         total_tokens: 30
@@ -333,7 +338,7 @@ interactions:
           text_tokens: 7
           audio_tokens: 0
           reasoning_tokens: 0
-      conversation_id: conv_ETFPs1ynkxnPb0JSiLg5O
+      conversation_id: conv_ETb0sB5vSBkJ6YF0qeFTx
       modalities:
       - text
       voice:
@@ -342,4 +347,5 @@ interactions:
       output_audio_format: pcm16
       temperature: null
       max_output_tokens: inf
-      metadata: null
+      metadata:
+        pydantic_ai_inputs: '0'

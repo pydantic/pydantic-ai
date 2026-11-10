@@ -139,13 +139,13 @@ NOT_OPTIONAL = ': only a pick-one of strings or whole numbers can be optional, s
 NOT_A_LIST = ': a list must be of two or more string options'
 
 
-class OneArea(str, Enum):
+class OneArea(str, Enum):  # noqa: UP042
     """The only area."""
 
     billing = 'billing'
 
 
-class Areas(UseEnumMemberDocstrings, str, Enum):
+class Areas(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
     """Which area."""
 
     billing = 'billing'

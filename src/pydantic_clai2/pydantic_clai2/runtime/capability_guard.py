@@ -9,7 +9,6 @@ Only setup is guarded: `for_run`, and `wrap_run` until it hands over to the rest
 Anything raised once the run is under way, by the model, a tool, or a hook, propagates as is.
 """
 
-import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import cast
@@ -19,9 +18,6 @@ from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Wrappe
 from pydantic_ai.capabilities.abstract import WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup
 
 
 class CapabilitySetupError(Exception):
