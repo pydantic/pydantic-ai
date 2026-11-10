@@ -55,7 +55,6 @@ if TYPE_CHECKING:
     )
     from .ipython_code_mode import IPythonCodeMode
     from .keenable import KeenableSearch
-    from .spider import Spider
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -80,6 +79,7 @@ if TYPE_CHECKING:
     from .smart_search import SmartSearch
     from .smol_sandbox import SmolSandbox, SmolSandboxBackend
     from .spend import SpendLimits
+    from .spider import Spider
     from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
     from .ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
     from .stackone import StackOne

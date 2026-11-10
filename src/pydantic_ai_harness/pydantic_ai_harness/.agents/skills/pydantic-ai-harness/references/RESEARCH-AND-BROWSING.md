@@ -345,6 +345,31 @@ Fields: `headless=True`, `allowed_domains=None` (exact host plus subdomains), `p
 either), `chromium_sandbox=True`, `auto_install_chromium=False`, `storage_state=None` (Playwright
 cookies + localStorage object, for logged-in runs), `cdp_url=None` (attach to a running Chromium).
 
+## Spider
+
+`Spider` adds `crawl_site`, `web_search`, and `scrape_page` over Spider's JSON API. All fields are
+keyword-only.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import Spider
+
+agent = Agent('openai:gpt-4o', capabilities=[Spider()])
+```
+
+`Spider`: `api_key=None` (or `SPIDER_API_KEY`), `base_url=None` (or `SPIDER_API_URL`; default
+`https://api.spider.cloud`), `max_crawl_pages=5`, `num_search_results=5`, `max_page_chars=10_000`,
+`client=None`, `id='spider'`. Uses the harness's existing `httpx` dependency; no extra install.
+
+Gotchas:
+
+- The API key is read when the client is built; a missing key raises `UserError` when a tool runs.
+  Passing `client=` skips that check: for tests, pass a fake satisfying the exported `SpiderClient`
+  protocol (async `crawl`, `search`, and `scrape` methods returning lists of page dicts).
+- Crawl and page output are capped (`max_crawl_pages`, `max_page_chars`) to keep untrusted web
+  content within predictable context budgets.
+- A malformed API response raises `ModelRetry` so the model retries the request.
 `EgressPolicy` (from `pydantic_ai_harness.playwright`) fields: `allowed_domains=None`,
 `blocked_domains=None`, `block_private_addresses=True`, `include_subdomains=True`,
 `allowlist_reach=frozenset({'navigation', 'data'})`, `resolved_kinds` (all kinds). Request kinds are
@@ -364,7 +389,7 @@ policy = EgressPolicy(
 )
 public = ('93.184.215.14',)
 print(policy.refuse(EgressRequest('https://evil.test/', 'subframe', resolved_addresses=public)))
-#> domain not in allowed_domains
+# > domain not in allowed_domains
 ```
 
 Gotchas:
