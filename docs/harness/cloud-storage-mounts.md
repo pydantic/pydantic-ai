@@ -169,6 +169,8 @@ A mount belongs to the sandbox, not the run. The run's first command or file ope
 
 A different bucket at the same folder is refused while the keys of the one there are valid; after they expire, the new one replaces it. Files written into the folder while nothing was mounted there are moved to `.pydantic-ai-recovered/` next to it, with a warning.
 
+A run cancelled while the helper is mounting waits for the helper to finish, so no mount is left half made. The helper gives up after 30 minutes; a mount usually takes seconds, plus the first run's install.
+
 To clear mounts, destroy the sandbox. In a sandbox you keep, run `fusermount3 -u <folder>` as root.
 
 ## How it works
@@ -200,7 +202,7 @@ In a Sprite, the `sprite` user that runs every command can read any file and bec
 
 In Docker, `--cap-add SYS_ADMIN` and `apparmor:unconfined` give every command in the container more access to the kernel it shares with your machine, which makes it a weaker boundary, so add these flags only to containers that use mounts.
 
-The helper runs as root and makes the mount folder inside the working directory, which the agent's user owns. It doesn't follow links that user puts in the folder, but a command running at the same moment as a mount can still swap the folder for a link to elsewhere before rclone mounts on it. That matters only when commands run as a user that can't already become root, as in a Docker image with a non-root `USER`: there, treat the agent as able to reach root.
+The helper runs as root and makes the mount folder inside the working directory, which the agent's user owns. It checks the folder isn't a link and doesn't follow links that user puts in it, but a command running at the same moment as a mount can swap the folder for a link after that check. The helper then works in the folder the link points to: it can mount there, move files found there into `.pydantic-ai-recovered/`, or delete a file there named `.pydantic-ai-mount`. That matters only when commands run as a user that can't already become root, as in a Docker image with a non-root `USER`: there, treat the agent as able to reach root.
 
 ## Telemetry
 

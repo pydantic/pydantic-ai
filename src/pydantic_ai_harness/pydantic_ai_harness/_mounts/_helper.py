@@ -29,7 +29,7 @@ import time
 import urllib.request
 import uuid
 import zipfile
-from typing import Any
+from typing import Any, Literal
 
 STATE = '/dev/shm/pydantic-ai-mounts'
 """Daemon socket, lock and each mount's key expiry. In memory, so a restarted sandbox starts clean, as its kernel
@@ -68,8 +68,15 @@ DEADLINE_SECONDS = 1800
 """The most one call may take, all steps together, so a caller that waits for it is never left waiting for ever."""
 
 
+VERSION = re.compile(r'rclone v(\d+)\.(\d+)\.(\d+)')
+KERNEL_ESCAPE = re.compile(rb'\\([0-7]{3})')
+"""How the kernel writes a space, tab, newline or backslash in a mount table path: as three octal digits."""
+
+
 class MountFailed(Exception):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self, code: Literal['busy', 'conflict', 'fuse', 'mount', 'rclone', 'stuck', 'timeout'], message: str
+    ) -> None:
         super().__init__(message)
         self.code = code
 
@@ -100,7 +107,7 @@ def new_enough(rclone: str) -> bool:
         result = subprocess.run([rclone, 'version'], capture_output=True, text=True, timeout=PROBE_SECONDS)
     except (OSError, subprocess.TimeoutExpired):
         return False
-    found = re.match(r'rclone v(\d+)\.(\d+)\.(\d+)', result.stdout)
+    found = VERSION.match(result.stdout)
     return found is not None and tuple(int(part) for part in found.groups()) >= RCLONE_MIN
 
 
@@ -195,7 +202,7 @@ def kernel_mounts() -> dict[str, str]:
 
 def _unescape(field: bytes) -> str:
     """Undo the kernel's escapes: it writes a space, tab, newline or backslash in a path as three octal digits."""
-    return re.sub(rb'\\([0-7]{3})', lambda match: bytes([int(match[1], 8)]), field).decode(errors='surrogateescape')
+    return KERNEL_ESCAPE.sub(lambda match: bytes([int(match[1], 8)]), field).decode(errors='surrogateescape')
 
 
 def alive(path: str) -> bool:
@@ -393,12 +400,12 @@ def ensure(request: dict[str, Any]) -> dict[str, Any]:
     return {'recovered': [moved for wanted in request['mounts'] if (moved := place(wanted, owner))]}
 
 
-def _out_of_time(signum: int, frame: object) -> None:
+def out_of_time(signum: int, frame: object) -> None:
     raise MountFailed('timeout', f'Mounting took longer than {DEADLINE_SECONDS} seconds. Try again.')
 
 
 def main() -> None:
-    signal.signal(signal.SIGALRM, _out_of_time)
+    signal.signal(signal.SIGALRM, out_of_time)
     signal.alarm(DEADLINE_SECONDS)
     request = json.loads(sys.stdin.readline())
     try:
