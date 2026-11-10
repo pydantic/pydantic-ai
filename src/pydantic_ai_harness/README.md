@@ -328,7 +328,7 @@ agent = Agent(
 
 result = agent.run_sync('What changed in the top three Python agent frameworks this month? Cite sources.')
 print(result.output)
-# > ...
+#> ...
 ```
 
 `logfire.instrument_pydantic_ai()` records [a full trace of every run](https://logfire-us.pydantic.dev/public-trace/84bcf123-2106-49da-9f6f-5c26395339bb?spanId=7650806a0785b946): every model call and tool call, with token and cost tracking. It's standard OpenTelemetry, so any OTLP backend works; run `uvx logfire-cli wizard --task pydantic-ai` once to [set up Logfire](https://pydantic.dev/docs/ai/integrations/logfire/#using-logfire).
