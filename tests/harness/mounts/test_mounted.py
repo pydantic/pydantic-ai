@@ -15,6 +15,7 @@ import threading
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -22,6 +23,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings, strategies as st
 from inline_snapshot import snapshot
 
+import pydantic_ai_harness._mounts as mounts_package
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -106,6 +108,7 @@ async def test_the_first_operation_mounts_and_later_ones_do_not() -> None:
     assert len(root.calls) == 1
     argv, stdin = root.calls[0]
     assert argv[:2] == ['python3', '-c']
+    assert argv[2] == (Path(mounts_package.__file__).parent / '_helper.py').read_text(encoding='utf-8')
     assert stdin.endswith(b'\n') and stdin.count(b'\n') == 1
     assert root.requests() == snapshot(
         [

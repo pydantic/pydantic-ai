@@ -22,6 +22,7 @@ from typing import Any, assert_never
 import anyio
 import anyio.to_thread
 from pydantic import TypeAdapter, ValidationError
+from typing_extensions import TypedDict
 
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import (
@@ -51,7 +52,16 @@ _CALL_SECONDS = DEADLINE_SECONDS + 60
 _ERROR_TAIL = 500
 """How much of the helper's output a `MountError` quotes when the helper didn't answer."""
 
-_REPLY = TypeAdapter(dict[str, Any])
+
+class _Reply(TypedDict, total=False):
+    """What the helper prints: the folders strays were moved to, or why it refused."""
+
+    recovered: list[str]
+    error: str
+    message: str
+
+
+_REPLY = TypeAdapter(_Reply)
 
 _URL = re.compile(r's3://(?P<bucket>[^/]*)(?:/(?P<prefix>.*))?', re.DOTALL)
 _BUCKET = re.compile(r'[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]')
@@ -168,10 +178,10 @@ def _request(mounts: Sequence[S3Mount], working_dir: str) -> tuple[dict[str, Any
     return {'working_dir': working_dir, 'mounts': wanted}, min(mount.expires_at for mount in mounts)
 
 
-def _reply(result: CommandResult) -> dict[str, Any]:
+def _reply(result: CommandResult) -> _Reply:
     """The helper's answer: the last line that starts with `{`, since `sudo` or a login shell may print around it."""
     line = next((line for line in reversed(result.stdout.splitlines()) if line.startswith('{')), None)
-    answer: dict[str, Any] | None = None
+    answer: _Reply | None = None
     if line is not None:
         try:
             answer = _REPLY.validate_json(line)
@@ -181,7 +191,7 @@ def _reply(result: CommandResult) -> dict[str, Any]:
         output = (result.stderr or result.stdout).strip()[-_ERROR_TAIL:]
         raise MountError(f'Could not mount storage in the sandbox: {output}')
     if 'error' in answer:
-        raise MountError(str(answer.get('message', answer['error'])))
+        raise MountError(answer.get('message', answer['error']))
     return answer
 
 
@@ -294,15 +304,17 @@ class _Mounted(WrapperWorkspace):
             refresh_at = expires_at - _REFRESH_MARGIN
             self._remount_at = refresh_at if refresh_at > now else expires_at
 
-    async def _call(self, request: Mapping[str, Any]) -> dict[str, Any]:
-        # Each key as written, and as written inside JSON, where quotes, backslashes and control characters are escaped.
-        secrets = {
+    async def _call(self, request: Mapping[str, Any]) -> _Reply:
+        # Each key as written, and as written inside JSON, where quotes, backslashes and control characters are escaped;
+        # longest first, so a form inside a longer one doesn't leave the rest of the longer one showing.
+        forms = {
             form
             for wanted in request['mounts']
             for value in wanted['keys'].values()
             if value
             for form in (value, json.dumps(value)[1:-1])
         }
+        secrets = sorted(forms, key=len, reverse=True)
         # A cancelled caller waits for the helper, which has a deadline of its own: stopped halfway, it could leave a
         # mount half made, or keep the lock that every later call waits for.
         # The helper's own deadline starts only once it runs, so a sandbox that never starts it is timed out here.
@@ -311,7 +323,7 @@ class _Mounted(WrapperWorkspace):
             result = await self._run_as_root(['python3', '-c', _HELPER], f'{json.dumps(request)}\n'.encode())
         if result is None:
             raise MountError(f'The sandbox did not run the mount helper within {_CALL_SECONDS} seconds. Try again.')
-        # Blanked out, so no error message can quote a key.
+        # Blanked out in both spellings, so an error message doesn't quote a key as the helper or rclone wrote it.
         stdout, stderr = result.stdout, result.stderr
         for secret in secrets:
             stdout, stderr = stdout.replace(secret, '***'), stderr.replace(secret, '***')
