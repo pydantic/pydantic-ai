@@ -54,6 +54,7 @@ __all__ = ('DaytonaSandboxBackend',)
 
 try:
     import daytona
+    from daytona.common.errors import SOURCE_PROXY
 except ImportError as error:
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
 
@@ -872,7 +873,8 @@ class DaytonaSandboxBackend(
             status = await computer_use.get_status(request_timeout=_REQUEST_TIMEOUT)
             await computer_use.start(request_timeout=_REQUEST_TIMEOUT)
         except daytona.DaytonaServiceUnavailableError as error:
-            # Checked live: once the desktop answers 503, only stopping and starting the sandbox brings it back.
+            if not _desktop_broken(error):
+                raise
             raise WorkspaceUnavailableError(
                 f"The Daytona sandbox {sandbox.id!r}'s desktop stopped answering; stopping and starting the "
                 f'sandbox brings it back. ({error})'
@@ -889,13 +891,25 @@ class DaytonaSandboxBackend(
         if self._display is None:
             raise UserError('This Daytona workspace has no display: create it with `desktop=True`.')
         async with self._display_scope():
-            await self._display.driver()
             sandbox = await self.get_sandbox()
+            # The sandbox may have stopped and started since the desktop last started, which leaves the viewer down.
+            status = await sandbox.computer_use.get_status(request_timeout=_REQUEST_TIMEOUT)
+            if status.status != 'active':
+                self._display.reset()
+            await self._display.driver()
             async with _mapped_errors('Could not create a live view link', sandbox=sandbox):
                 signed = await sandbox.create_signed_preview_url(
                     _VNC_PORT, expires_in_seconds=expires_in, request_timeout=_REQUEST_TIMEOUT
                 )
         return f'{signed.url.rstrip("/")}/vnc.html?autoconnect=true&resize=scale'
+
+
+def _desktop_broken(error: daytona.DaytonaServiceUnavailableError) -> bool:
+    """Whether a 503 comes from a desktop that broke for good, rather than a proxy that is briefly refusing traffic.
+
+    Checked live: a desktop that took input before it started answers every request with `connection is shut down`.
+    """
+    return error.source != SOURCE_PROXY and 'connection is shut down' in error.message
 
 
 def _check_path(path: str) -> None:

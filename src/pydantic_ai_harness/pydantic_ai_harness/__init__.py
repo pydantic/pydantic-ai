@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
     from .detect_loops import DetectLoops
-    from .docker_sandbox import DockerSandbox, DockerSandboxBackend
+    from .docker_sandbox import DESKTOP_DOCKERFILE, DockerSandbox, DockerSandboxBackend
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
@@ -114,6 +114,7 @@ __all__ = [
     'DaytonaSandboxBackend',
     'DeduplicateFileReads',
     'DetectLoops',
+    'DESKTOP_DOCKERFILE',
     'DockerSandbox',
     'DockerSandboxBackend',
     'DynamicWorkflow',
@@ -203,6 +204,7 @@ _CAPABILITY_EXPORTS = {
     'ConversationSearch': 'conversation_search',
     'DayAI': 'day_ai',
     'DaytonaSandbox': 'daytona_sandbox',
+    'DESKTOP_DOCKERFILE': 'docker_sandbox',
     'DockerSandbox': 'docker_sandbox',
     'DeduplicateFileReads': 'compaction',
     'DetectLoops': 'detect_loops',
