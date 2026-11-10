@@ -478,6 +478,8 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         await agent.run('Go on.', message_history=earlier_screen)
         (tool,) = seen
         assert (tool.name, tool.sequential, tool.tool_kind) == ('computer', True, COMPUTER_KIND.id)
+        # The call's display work is its own durable unit with its own policy, so no engine wraps the whole tool.
+        assert tool.metadata == {'temporal': False, 'prefect': False, 'render_workflows': False, 'aws_lambda': False}
         # A model with a native computer tool sends it in this tool's place, declaring the display as it is now, not
         # the last screenshot's size. With `native=False`, every model gets the function tool.
         assert natives == ([ComputerTool(display_size=(1280, 800), optional=True)] if native else [])
@@ -1191,6 +1193,27 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.metadata is not None and tool_return.metadata['performed'] == 1
+        assert provider.actions == [MouseDown(), MouseUp()]
+
+    async def test_a_button_whose_press_took_effect_but_failed_is_released(self) -> None:
+        class LostReply(ScreenBackend):
+            async def act(self, action: ComputerAction) -> None:
+                await super().act(action)
+                if isinstance(action, MouseDown):
+                    raise WorkspaceError('the reply was lost')
+
+        class Provider(ScreenProvider):
+            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+                return LostReply(self, ref)
+
+        provider = Provider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}, {'type': 'move', 'x': 5, 'y': 5}, {'type': 'mouse_up'}]),
+            capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
+        )
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        assert tool_return.metadata is not None and tool_return.metadata['performed'] == 0
         assert provider.actions == [MouseDown(), MouseUp()]
 
     @pytest.mark.parametrize(

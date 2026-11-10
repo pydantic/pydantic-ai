@@ -342,6 +342,28 @@ def _has_safety_checks(call: ToolCallPart) -> bool:
     return call.tool_kind == COMPUTER_KIND.id and bool((call.provider_details or {}).get(_SAFETY_CHECKS))
 
 
+def _require_safety_approval(validated: ValidatedToolCall[AgentDepsT]) -> ValidatedToolCall[AgentDepsT]:
+    """Make a `computer` call carrying a provider's safety checks wait for a person's approval.
+
+    This runs once arguments are accepted, whichever route accepted them (the schema, a hook's corrected
+    arguments, or `SkipToolValidation`), so no route runs the call unseen. The model's adapter tells the provider
+    the checks were acknowledged once the call has a result.
+    """
+    if validated.ctx.tool_call_approved or not _has_safety_checks(validated.call):
+        return validated
+    if isinstance(validated.deferral, ApprovalRequired):
+        return validated
+    tool = validated.tool
+    if isinstance(validated.deferral, CallDeferred) or (tool is not None and tool.tool_def.kind == 'external'):
+        # Approving a call leads to running it here, which an external or deferred call can't do yet.
+        raise UserError(
+            f'The {validated.call.tool_name!r} call carries safety checks from the provider, which need a person'
+            ' to approve it before it runs, but it is handed to an external or deferred executor that approval'
+            ' cannot reach. Run the computer tool in this process so approval can gate it.'
+        )
+    return replace(validated, deferral=ApprovalRequired())
+
+
 def _validate_hook_deferral_error(hook_name: str, error: CallDeferred | ApprovalRequired) -> UserError:
     """Build the error for a tool validation hook that deferred before the arguments were validated.
 
@@ -648,11 +670,6 @@ class ToolManager(Generic[AgentDepsT]):
                 # deliberately chose to request approval or defer. Carry the validated arguments
                 # out with the deferral so `validate_tool_call` can report the call as valid.
                 raise _ValidationDeferral(e, args_dict) from e
-
-        if not ctx.tool_call_approved and _has_safety_checks(call):
-            # The provider asks a person to look before this call runs, whichever tool runs it, and the model's
-            # adapter tells the provider the checks were acknowledged once the call has a result.
-            raise _ValidationDeferral(ApprovalRequired(), args_dict)
 
         return args_dict
 
@@ -988,11 +1005,11 @@ class ToolManager(Generic[AgentDepsT]):
             _name, tool = self._resolve_tool(call)
             ctx = self._build_tool_context(call, tool, allow_partial=False, approved=approved, metadata=metadata)
             validated_args = await self._run_validate_hooks(call, tool, ctx, allow_partial=False)
-            return self._make_validation_success(call, tool, ctx, validated_args)
+            validated = self._make_validation_success(call, tool, ctx, validated_args)
         except SkipToolValidation as e:
             assert tool is not None
             # Hook asked us to skip validation entirely; accept the args it provided.
-            return self._make_validation_success(call, tool, ctx, e.validated_args)
+            validated = self._make_validation_success(call, tool, ctx, e.validated_args)
         except _ValidationDeferral as e:
             assert tool is not None
             # The `args_validator` requested approval or deferred the call. The arguments passed
@@ -1000,7 +1017,7 @@ class ToolManager(Generic[AgentDepsT]):
             # consumed, no `on_tool_validate_error`) and the deferral is carried on the result for
             # `execute_tool_call` to raise, which routes it into the same deferred-call handling as
             # a deferral raised by the tool function.
-            return replace(self._make_validation_success(call, tool, ctx, e.validated_args), deferral=e.deferral)
+            validated = replace(self._make_validation_success(call, tool, ctx, e.validated_args), deferral=e.deferral)
         except (ValidationError, ModelRetry) as e:
             if not wrap_validation_errors:
                 raise
@@ -1021,6 +1038,7 @@ class ToolManager(Generic[AgentDepsT]):
                 validated_args=None,
                 validation_error=self._wrap_error_as_failed(call.tool_name, call, e),
             )
+        return _require_safety_approval(validated)
 
     async def execute_tool_call(
         self,
