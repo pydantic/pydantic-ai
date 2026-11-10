@@ -1558,7 +1558,8 @@ source, as in the terminal, which prints what each one saved. Any other bare com
 terminal menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead. When CLAI has no terminal, as for `clai2 --web` started from a script or
 service, a command that opens a terminal menu or prompt, such as `/model add`, fails with an error
-notice instead of closing as cancelled, and `/login NAME` asks in the page, as Keys & accounts does.
+notice instead of closing as cancelled; `/login openai-codex` and a plugin's `read_line` ask in the
+page instead.
 
 The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
 `host.tasks` and `on_task_progress`: each delegated task under the one that started it, with its
@@ -3206,8 +3207,7 @@ When no terminal shows the session and stdin is not a terminal either, as for
 command's error. Call `require_terminal()` from
 `pydantic_clai2.ui.menus.menu_worker` before a prompt of your own that reads the
 terminal, such as a prompt_toolkit `PromptSession`; `instead='/NAME'` names a
-command the page can run instead. `read_line` from
-`pydantic_clai2.ui.prompt.line_input` asks in the page there, as a dialog.
+command the page can run instead.
 
 When no editor or stream is active, taking the screen is a no-op. It only settles
 the screen; drawing, and restoring the terminal afterwards, is the widget's job. One
@@ -3798,7 +3798,8 @@ such as an authorization code. Cancelling the task that awaits it, because the
 browser's callback won the race, closes the prompt. A slash command or
 `/login` handler can call it directly; a tool or hook asking mid-run takes the
 screen first, inside `async with host.full_screen()`. Without the live editor it
-is a plain terminal prompt.
+is a plain terminal prompt. Where CLAI has no terminal and the web UI runs, it is
+a dialog in the page, titled with the prompt; what you printed is not shown there.
 
 Do not draw a prompt yourself from a `run_worker` operation. By default
 `run_worker` takes the live panel, and the transcript with your URL, off the

@@ -49,7 +49,7 @@ def without_terminal(command: str, *, instead: str | None = None, dialogs: 'Dial
 
     A menu would read EOF from stdin and close as if cancelled; the command fails with `require_terminal`'s
     error instead. `instead` names a command that does the same in the web UI. `dialogs` are a remote
-    UI's, where `/login NAME` and `line_input.read_line` ask instead of failing; see `remote_dialogs`.
+    UI's, where a Codex sign-in and `line_input.read_line` ask instead of failing; see `remote_dialogs`.
     """
     token = _NO_TERMINAL.set(_NoTerminal(command=command, instead=instead, dialogs=dialogs))
     try:

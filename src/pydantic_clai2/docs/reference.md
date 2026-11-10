@@ -950,8 +950,8 @@ ChatGPT/Codex and GitHub Copilot sign in behind a waiting screen showing the lin
 API-key account saves its key in `/keys` (as `PROVIDER_PROFILE` unless you pick a saved one),
 and connections and plugins' sign-ins are run as `/login NAME` in the terminal. Usage shows
 only in the terminal. `/login NAME` typed in the page opens in the terminal that runs CLAI;
-when there is none, it asks in the page too, and a plugin's sign-in asks for what it would
-have you paste in a dialog.
+when there is none, `/login openai-codex` waits in the page too, and a plugin's sign-in asks
+in a dialog for what it would have you paste.
 
 When you pick a model in `/model add` and its provider has more than one account,
 CLAI asks which account runs it, or **all accounts**. All accounts saves the model
@@ -2786,8 +2786,8 @@ many sessions run at once.
   `/resume claude`, or `/set api_key`, opens it in the terminal that runs CLAI. When
   there is none, as for `clai2 --web` started from a script or service, the command
   fails with an error saying to enter it in a terminal, and names the page's
-  equivalent when there is one, such as `/model` or `/keys`. `/login NAME` asks in
-  the page instead.
+  equivalent when there is one, such as `/model` or `/keys`. `/login openai-codex`
+  and a plugin's sign-in ask in the page instead.
 - **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
   every session.
 
