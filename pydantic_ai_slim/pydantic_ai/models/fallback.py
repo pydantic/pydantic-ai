@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import anyio
 from opentelemetry.trace import Span, get_current_span
@@ -81,6 +81,8 @@ class FallbackModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    _answers_requests_itself: ClassVar[bool] = False
+
     models: list[Model]
 
     _predicates: FallbackPredicates = field(repr=False)
@@ -114,16 +116,22 @@ class FallbackModel(Model):
                 If the first parameter is hinted as `ModelResponse`, it's a response handler.
                 Otherwise (including untyped handlers and lambdas), it's an exception handler.
 
+                Naming [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] also rejects a
+                refusal: any response with `finish_reason='content_filter'`, empty or with partial text. The
+                agent only raises the error after a response is accepted, so in `fallback_on` it stands for that
+                response.
+
                 Response handlers only apply to non-streamed requests. A streamed request accepts
                 the response as is and emits a `UserWarning`. A request is streamed whenever
                 something consumes the run's events, including `run()` with an
-                `event_stream_handler` or an event listener.
+                `event_stream_handler` or an event listener. A streamed refusal is accepted too, without a
+                warning, as whether the content filter ended a stream is only known once it was streamed.
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
         self._entered_count = 0
 
-        self._predicates = FallbackPredicates.parse(fallback_on, owner='FallbackModel')
+        self._predicates = FallbackPredicates.parse(fallback_on, owner='FallbackModel', default='(ModelAPIError,)')
 
     async def __aenter__(self) -> FallbackModel:
         """Enter all sub-models so their providers can manage HTTP client lifecycle."""
@@ -266,9 +274,7 @@ class FallbackModel(Model):
                 abandoned_response: ModelResponse | None = suspended_response
             else:
                 if not await chain.falls_back(response):
-                    if response.state == 'suspended':
-                        _stamp_continuation(response, pinned)
-                        carry_deadline(response, deadline)
+                    _stamp_if_suspended(response, pinned, deadline)
                     self._set_span_attributes(pinned, prepared_parameters)
                     return response
                 failure = response
@@ -335,9 +341,7 @@ class FallbackModel(Model):
             # abandoned suspended turn (whether it ends complete or suspended), so mark it as a replace.
             if rewound:
                 _stamp_replace_previous(response)
-            if response.state == 'suspended':
-                _stamp_continuation(response, model)
-                carry_deadline(response, deadline)
+            _stamp_if_suspended(response, model, deadline)
             self._set_span_attributes(model, prepared_parameters)
             return response
 
@@ -406,9 +410,7 @@ class FallbackModel(Model):
                     # Unlike `request()`, which stamps before returning, the streaming path stamps
                     # after `yield`: the final `state` is only known once the caller has consumed the
                     # stream. Callers must therefore call `get()` after the `async with` exits.
-                    if streamed_response.state == 'suspended':
-                        _stamp_continuation(streamed_response, pinned)
-                        carry_deadline(streamed_response, deadline)
+                    _stamp_if_suspended(streamed_response, pinned, deadline)
                     return
 
         try:
@@ -454,20 +456,12 @@ class FallbackModel(Model):
                     yield streamed_response
                     # Stamp after `yield` (see the pinned path above): `state` is only final once the
                     # caller has consumed the stream, so callers must call `get()` after the context exits.
-                    if streamed_response.state == 'suspended':
-                        _stamp_continuation(streamed_response, model)
-                        carry_deadline(streamed_response, deadline)
+                    _stamp_if_suspended(streamed_response, model, deadline)
                     return
 
             chain.exhausted()
         except BaseException as error:
-            if rewound:
-                # The job of the response this request continued was cancelled when it was rewound, so the
-                # continuation loop the error reaches mustn't cancel it again.
-                mark_suspended_job_cancelled(error)
-            if not handed_over:
-                # Once the stream is handed over, the attempts it carries are counted with it.
-                carry_attempts(error, chain.log.attempts)
+            _annotate_stream_error(error, chain, rewound=rewound, handed_over=handed_over)
             raise
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
@@ -623,8 +617,9 @@ class FallbackModel(Model):
             start,
             parent=span,
             tracer=policy.tracer if policy else None,
-            # Only a `fallback_on` response handler rejects a response here, unlike in the agent's attempt loop.
-            rejected_status='Response rejected by a `fallback_on` response handler',
+            # Only `fallback_on` rejects a response here, by a response handler or `ContentFilterError`, unlike in the
+            # agent's attempt loop.
+            rejected_status='Response rejected by `fallback_on`',
         )
 
 
@@ -637,6 +632,26 @@ def _pinned_request_deadline(
     to it. A nested `FallbackModel` gets none, as it carries over the deadlines of the model it picked itself.
     """
     return resume_deadline(start_request_deadline(model, model_settings, stream=stream), suspended_response)
+
+
+def _annotate_stream_error(error: BaseException, chain: FallbackChain, *, rewound: bool, handed_over: bool) -> None:
+    """Annotate an error leaving `FallbackModel.request_stream` for the code it reaches."""
+    if rewound:
+        # The job of the response this request continued was cancelled when it was rewound, so the
+        # continuation loop the error reaches mustn't cancel it again.
+        mark_suspended_job_cancelled(error)
+    if not handed_over:
+        # Once the stream is handed over, the attempts it carries are counted with it.
+        carry_attempts(error, chain.log.attempts)
+
+
+def _stamp_if_suspended(
+    response: ModelResponse | StreamedResponse, model: Model, deadline: RequestDeadline | None
+) -> None:
+    """Pin a suspended response to the model that produced it, and carry its request deadline to the continuation."""
+    if response.state == 'suspended':
+        _stamp_continuation(response, model)
+        carry_deadline(response, deadline)
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:

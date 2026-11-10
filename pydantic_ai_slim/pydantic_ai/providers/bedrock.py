@@ -20,7 +20,10 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles.openai import (
+    _GptOssInlineDefsJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    openai_model_profile,
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
@@ -136,17 +139,7 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
         if schema_type == 'object':
             schema['additionalProperties'] = False
 
-        incompatible: dict[str, object] = {}
-        if isinstance(schema_type, str):
-            for key in self._unsupported_keys_by_type.get(schema_type, ()):
-                if key in schema:
-                    incompatible[key] = schema[key]
-            if schema_type == 'array' and schema.get('minItems', 0) > 1:
-                incompatible['minItems'] = schema['minItems']
-        pattern = schema.get('pattern')
-        if isinstance(pattern, str) and _regex_contains_unsupported_syntax(pattern):
-            incompatible['pattern'] = pattern
-
+        incompatible = self._strict_incompatible_keys(schema, schema_type)
         if incompatible:
             notes: list[str] = []
             for key, value in incompatible.items():
@@ -157,6 +150,20 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
             schema['description'] = notes_str if not desc else f'{desc} ({notes_str})'
 
         return schema
+
+    def _strict_incompatible_keys(self, schema: JsonSchema, schema_type: object) -> dict[str, object]:
+        """The keys of `schema` that Bedrock rejects in strict mode, with their values."""
+        incompatible: dict[str, object] = {}
+        if isinstance(schema_type, str):
+            for key in self._unsupported_keys_by_type.get(schema_type, ()):
+                if key in schema:
+                    incompatible[key] = schema[key]
+            if schema_type == 'array' and schema.get('minItems', 0) > 1:
+                incompatible['minItems'] = schema['minItems']
+        pattern = schema.get('pattern')
+        if isinstance(pattern, str) and _regex_contains_unsupported_syntax(pattern):
+            incompatible['pattern'] = pattern
+        return incompatible
 
 
 class _BedrockJsonSchemaTransformerWithoutContains(BedrockJsonSchemaTransformer):
@@ -666,6 +673,8 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         return BedrockModelProfile(bedrock_supported_on_converse=False)
     # Converse rejects `reasoning_effort='none'`, so gpt-oss can't turn reasoning off.
     return BedrockModelProfile(
+        # gpt-oss doesn't see a tool schema's `$defs`, as on every other host (see `openai_model_profile`).
+        json_schema_transformer=_GptOssInlineDefsJsonSchemaTransformer,
         bedrock_thinking_variant='openai',
         supports_thinking=True,
         thinking_always_enabled=True,

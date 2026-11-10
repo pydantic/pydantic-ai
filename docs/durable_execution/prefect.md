@@ -170,6 +170,13 @@ when runs arrive in a different order on a flow retry. Repeated identical calls 
 keep separate recorded results. Automatically derived run IDs still depend on
 arrival order, so pass explicit IDs for branches that can reorder.
 
+The operation's arguments are part of the cache key too. An operation whose arguments are measured
+in flow code, such as a duration, a timestamp, or a random value, gets different arguments on a
+flow retry, misses its recorded result, and runs again. Where running twice matters, pass arguments
+that stay the same across retries, measuring a changing value inside the operation where you can. This
+is why [online evaluation](../evals/online-evaluation.md#durable-execution) can evaluate a run again
+on a flow retry.
+
 !!! warning "Upgrading custom capability task cache keys"
 
     Persisted custom capability task results from versions before this change use different cache
@@ -380,6 +387,9 @@ Prefect 3.0 provides built-in caching and transactional semantics. A task whose 
 
 !!! warning "Dynamic-tool cache keys changed"
     Dynamic-tool task keys now include the prepared tool definition. Existing cached results for dynamic tools will miss once after upgrading and recompute. The discovery, argument-validation and tool-call tasks of a dynamic toolset listed under a prefix or rename also key on those prefixes and renames, and miss once after upgrading in the same way. No manual cache deletion is required; subsequent calls reuse the new value-addressed keys.
+
+!!! warning "Binary cache keys changed"
+    Task keys now hash `bytes` and `bytearray` values that aren't valid UTF-8, such as an image in the message history, by value. A task whose inputs hold such a value directly, as a dict value, or in a list, tuple or dataclass misses once after upgrading and runs again, as does one whose dependencies, `metadata`, `validation_context` or tool definition hold it in a Pydantic model that Prefect can't hash, for example because it also holds a lock. Ordinary dictionary keys starting with `__pydantic_ai_binary__` are escaped to keep those inputs distinct from the internal binary encoding; tasks with such keys also miss once, even if their values are only text. Let in-flight flows with either kind of affected input finish before upgrading. Other tasks with only text or UTF-8 bytes keep their keys. No manual cache deletion is required.
 
 * **Task inputs**: A model request's messages, settings and parameters; a tool call's name, arguments, definition and [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] (so two parallel calls to the same tool with the same arguments each execute); the prefixes and renames a dynamic toolset is listed under (so one dynamic toolset under two prefixes keeps a result per prefix); and the run state the task's work can depend on: dependencies, [`metadata`][pydantic_ai.tools.RunContext.metadata], [`validation_context`][pydantic_ai.tools.RunContext.validation_context], the prompt, and the message history.
 
