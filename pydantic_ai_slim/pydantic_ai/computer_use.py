@@ -519,7 +519,8 @@ class SafetyCheck:
     A call with safety checks waits for approval whichever tool runs it, as a
     [deferred tool](../deferred-tools.md#human-in-the-loop-tool-approval) does, and the model adapter acknowledges the
     checks once the approved call has a result; see
-    [`ComputerCallPart.safety_checks`][pydantic_ai.computer_use.ComputerCallPart.safety_checks].
+    [`ComputerCallPart.safety_checks`][pydantic_ai.computer_use.ComputerCallPart.safety_checks]. A call with safety
+    checks for an external or deferred tool raises a `UserError`, since approval can't gate a tool run elsewhere.
     """
 
     message: str | None = None
