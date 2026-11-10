@@ -122,6 +122,8 @@ def test_actions_round_trip_through_json_and_refuse_bad_shapes() -> None:
         lambda: TypeText(text='a\x00b'),
         lambda: PressKeys(keys=('a+b+c+d+e+f+g+h+i',)),
         lambda: HoldKeys(keys=('',), seconds=1),
+        # Splitting a combination can leave an empty key between two `+`.
+        lambda: PressKeys(keys=('ctrl+++',)),
         # Modifiers are checked before anything runs, so an unknown one can't be skipped mid-action.
         lambda: Click(modifiers=('ctrl', 'exec')),
         # A known key that isn't a modifier is refused too.

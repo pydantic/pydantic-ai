@@ -215,6 +215,8 @@ _UNKNOWN_KEY = 'is not a key: use a single character or one of ' + ', '.join(
 
 
 def _normalize_key(key: str) -> str:
+    if not key:
+        raise ValueError('a key name must not be empty')
     lower = key.lower()
     name = _KEY_ALIASES.get(lower, lower)
     if len(name) > 1 and name not in _KEY_NAMES:
@@ -227,8 +229,6 @@ _COMBINATION = re.compile(r'(?<=.)\+(?=.)')
 
 
 def _normalize_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
-    if '' in keys:
-        raise ValueError('a key name must not be empty')
     normalized = tuple(_normalize_key(part) for key in keys for part in _COMBINATION.split(key))
     if len(normalized) > 8:
         raise ValueError('at most 8 keys, counting each key of a combination such as `ctrl+s`')
@@ -273,7 +273,10 @@ class Point:
 
 @dataclass(frozen=True, kw_only=True, config=ACTION_CONFIG)
 class Region:
-    """A rectangle on the screenshot, from its top left corner to its bottom right one."""
+    """A rectangle on the screenshot, from its top left corner to its bottom right one.
+
+    `right` and `bottom` are just outside it: `left=0, right=10` is 10 pixels wide.
+    """
 
     left: _Coordinate
     top: _Coordinate

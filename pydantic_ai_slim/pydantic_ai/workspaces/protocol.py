@@ -61,7 +61,6 @@ __all__ = (
     'SupportsDisplay',
     'SupportsFilesystem',
     'SupportsRealpath',
-    'SupportsRestartCount',
     'SupportsScaledScreenshot',
     'SupportsZoom',
 )
@@ -247,9 +246,8 @@ class Display(Protocol):
     It can come from a different source than the backend's commands, such as this machine's screen beside a local
     workspace, and may start on its first call. It can also implement
     [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom],
-    [`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot],
-    [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition] and
-    [`SupportsRestartCount`][pydantic_ai.workspaces.SupportsRestartCount].
+    [`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot] and
+    [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition].
     """
 
     async def display_size(self) -> tuple[int, int]:
@@ -324,20 +322,6 @@ class SupportsCursorPosition(Protocol):
 
     async def cursor_position(self) -> Point:
         """The pointer's position in screenshot pixels."""
-        ...
-
-
-@runtime_checkable
-class SupportsRestartCount(Protocol):
-    """Optional on a [`Display`][pydantic_ai.workspaces.Display] that restarts itself, such as after its process stopped.
-
-    A restart can lose what was on the screen, so a caller compares the count before and after an operation to tell
-    whoever needs to know.
-    """
-
-    @property
-    def restart_count(self) -> int:
-        """How many times this display has restarted since it was built, read without I/O."""
         ...
 
 

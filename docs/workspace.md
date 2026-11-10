@@ -542,7 +542,7 @@ A `Display` has three methods: `display_size()`, `screenshot()` (PNG bytes), and
 
 - [`SupportsZoom`][pydantic_ai.workspaces.SupportsZoom]: capture part of the screen at full resolution.
 - [`SupportsScaledScreenshot`][pydantic_ai.workspaces.SupportsScaledScreenshot]: capture the whole screen smaller, for
-  a model with a [screenshot size limit][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_limit].
+  a model with a [screenshot size limit][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_max_side].
 - [`SupportsCursorPosition`][pydantic_ai.workspaces.SupportsCursorPosition]: report where the pointer is.
 
 Coordinates are screenshot pixels, and `display_size()` reports the screen's real size. Raise

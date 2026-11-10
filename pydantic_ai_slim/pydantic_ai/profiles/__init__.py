@@ -158,12 +158,19 @@ class ModelProfile(TypedDict, total=False):
     coordinates from 0 to 999 across the screenshot and scales them to pixels. Gemini 3 profiles set it.
     """
 
-    computer_use_screenshot_limit: tuple[int, int]
-    """The largest screenshot the model takes, as `(longest side, pixel count)`. Default: unset, meaning no limit.
+    computer_use_screenshot_max_side: int
+    """The longest side, in pixels, of a screenshot the model takes. Default: unset, meaning no limit.
 
     A computer-use capability, such as Pydantic AI Harness's `ComputerUse`, sends a larger screen scaled down to fit
-    and scales the model's coordinates back up. Claude profiles set it: Claude refuses a larger image, or, on its
-    earlier computer use tools, is sent it scaled down and answers in the smaller image's pixels.
+    this and `computer_use_screenshot_max_pixels`, and scales the model's coordinates back up. Claude profiles set
+    both: Claude refuses a larger image, or, on its earlier computer use tools, is sent it scaled down and answers in
+    the smaller image's pixels.
+    """
+
+    computer_use_screenshot_max_pixels: int
+    """The most pixels, width times height, in a screenshot the model takes. Default: unset, meaning no limit.
+
+    See `computer_use_screenshot_max_side`.
     """
 
     supports_inline_system_prompts: bool
