@@ -297,7 +297,7 @@ Child workflows are only supported for async tools in a [`FunctionToolset`][pyda
 
 Every run of an agent records its model requests and tool calls as steps with the same names, and DBOS replays a recovered workflow's steps in the order they start, checking only their names. When one workflow runs the same agent more than once at the same time, like `asyncio.gather(agent.run(...), agent.run(...))` or parallel tool calls that each run the same nested agent, the runs can start their steps in a different order during recovery than they originally did. Recovery then hands each run the results the other one recorded, and the workflow carries on with them.
 
-A run holding a `Tool` instance that a `FunctionToolset` made sequential or deferred also patches its workflow when it starts, which raises `DBOSPatchNondeterminismError` if another run in the workflow starts a step at that moment.
+A run holding a `Tool` instance that a `FunctionToolset` made sequential or deferred also patches its workflow when it starts. If another run in the workflow starts a step at that moment, the workflow lists those tools without `sequential` and `defer_loading`, as Pydantic AI did before applying them. If the patch was recorded, recovery can fail with `DBOSUnexpectedStepError` when another run starts a step while recovery checks for it.
 
 Give each concurrent run a workflow of its own, so its steps are recorded and replayed in a sequence of their own: call a `@DBOS.workflow` function that runs the agent once, or run a tool that runs a nested agent in a [child workflow](#child-workflows).
 

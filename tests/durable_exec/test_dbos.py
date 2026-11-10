@@ -118,7 +118,7 @@ from ..realtime_connections import InferredConnection
 pytest.importorskip('dbos')
 
 from dbos import DBOS, DBOSConfig, SetWorkflowID
-from dbos._error import DBOSAwaitedWorkflowCancelledError
+from dbos._error import DBOSAwaitedWorkflowCancelledError, DBOSPatchNondeterminismError
 
 from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
 from pydantic_ai.durable_exec.dbos import (
@@ -6945,6 +6945,37 @@ async def test_dbos_function_toolset_defaults_on_tool_instances_recover(
         assert (result if isinstance(result, str) else result.output) == 'done'
     assert await recorded_steps(unpatched_id) == _in_parallel
     assert (await recorded_steps(patched_id))[1:] == patched_steps
+
+
+async def test_dbos_tool_instance_defaults_patch_interrupted(dbos: DBOS, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run whose patch probe another run's step interrupts lists the tools as before the patch, and recovers that way.
+
+    `DBOS.patch_async` raises `DBOSPatchNondeterminismError` when another step in the workflow starts during its
+    probe, before it records anything. The run then lists the tools without the toolset's `sequential`, and
+    recovery, whose probe finds the run's first model request at that position, takes the same branch.
+
+    Not a VCR test: it pins the steps DBOS records and replays; the model is a `FunctionModel`.
+    """
+    workflow_id = f'tool-instances-interrupted-{uuid.uuid4()}'
+
+    async def interrupted(patch_name: str) -> bool:
+        raise DBOSPatchNondeterminismError(workflow_id, patch_name, 'another step started during the probe')
+
+    async def recorded_steps() -> list[str]:
+        steps = await dbos.list_workflow_steps_async(workflow_id)
+        return [re.sub(r'^\w+__model\.', '__model.', step['function_name']) for step in steps]
+
+    monkeypatch.setattr(DBOS, 'patch_async', interrupted)
+    tool_instances_crash_armed.set()
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await tool_instances_workflow('sequential')
+    monkeypatch.undo()
+    assert await recorded_steps() == _in_parallel[:-1]
+
+    await asyncio.sleep(0.01)
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert await handle.get_result() == 'done'
+    assert await recorded_steps() == _in_parallel
 
 
 @DBOS.workflow()
