@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 
 import anyio
 
+from pydantic_ai.durable_exec import record_durable_unit, replay_scope
 from pydantic_ai.exceptions import UserError
 
 if TYPE_CHECKING:
@@ -271,6 +272,15 @@ class _Finished(Generic[T]):
     error: BaseException | None
 
 
+def _record(item: _StepRequest | _CallbackRequest, *, executed: bool) -> None:
+    """Report a completed step in the requesting task's context, so it counts for the spans it ran under.
+
+    A callback wait runs no work of its own, so it says nothing about what was replayed.
+    """
+    if not isinstance(item, _CallbackRequest):
+        item.context.run(record_durable_unit, executed=executed)
+
+
 class StepBridge:
     """Runs durable steps on the handler thread on behalf of the agent loop."""
 
@@ -373,22 +383,38 @@ class StepBridge:
                 if item.error is not None:
                     raise item.error
                 return item.result
+            executed = False
+
+            def body(step_context: Any, item: Any = item) -> Any:
+                nonlocal executed
+                executed = True
+                return item.body(step_context)
+
             try:
-                if isinstance(item, _CallbackRequest):
-                    value = item.context.run(self._wait_for_callback, item)
-                else:
-                    value = item.context.run(self._context.step, item.body, name=item.name, config=item.config)
+                value = self._run(item, body)
             except Exception as exc:
                 # An ordinary step failure, already past the SDK's retry policy. Hand it to the agent
                 # so the run can surface or handle it.
+                _record(item, executed=executed)
                 item.reply(False, exc)
             except BaseException as exc:
                 # SDK control flow (suspension, interruption). Resolve the waiting step so the agent
-                # task is not left on a future, then let it out of the handler untouched.
+                # task is not left on a future, then let it out of the handler untouched. A body that
+                # ran before the suspension (a failed attempt awaiting its retry) was real work.
+                if executed:
+                    _record(item, executed=True)
                 item.reply(False, exc)
                 raise
             else:
+                # In the requesting task's context, so it counts for the spans that step ran under, and
+                # before the reply, so they see it when they end.
+                _record(item, executed=executed)
                 item.reply(True, value)
+
+    def _run(self, item: _StepRequest | _CallbackRequest, body: Callable[[Any], Any]) -> Any:
+        if isinstance(item, _CallbackRequest):
+            return item.context.run(self._wait_for_callback, item)
+        return item.context.run(self._context.step, body, name=item.name, config=item.config)
 
     def _wait_for_callback(self, request: _CallbackRequest) -> Any:
         callback = self._context.create_callback(name=request.name, config=request.callback_config)
@@ -647,7 +673,9 @@ def _run_durable_on_agent_loop(
 
     async def run() -> None:
         try:
-            bridge.finish(result=await agent_run())
+            with replay_scope():
+                result = await agent_run()
+            bridge.finish(result=result)
         except BaseException as exc:
             bridge.finish(error=exc)
 

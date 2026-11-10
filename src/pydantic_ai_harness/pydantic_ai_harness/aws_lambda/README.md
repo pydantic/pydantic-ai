@@ -268,6 +268,11 @@ A model operation that does not use the agent's default model records its model 
 (for example, `{name}__model.request.{model_id}`), so the execution history shows which model each
 checkpoint came from. The default model keeps the plain, suffix-less name.
 
+A step served from its checkpoint emits no telemetry: [instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/)
+records a model request's or tool call's span, and a model request's token and cost metrics, in the
+invocation that ran it, and an agent run's span in each invocation that did work for it. A resumed
+execution's traces show only the work that invocation did, and costs are counted once.
+
 ## Constraints
 
 - **Steps are at least once, and retried by default.** A step is checkpointed after it runs, so an

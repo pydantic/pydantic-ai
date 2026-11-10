@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import detach_dbos_logging, without_admin_server
+from tests.harness.step_persistence._histories import lookup_twice
 
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -15,7 +16,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos not installed', allow_module_level=True)
 
-from pydantic_ai import Agent, AgentStreamEvent, RunContext
+from pydantic_ai import Agent, AgentStreamEvent, ModelRetry, RunContext
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -259,3 +260,46 @@ async def test_dbos_planning_events_replay_with_sqlite_step_persistence(dbos: DB
     assert await fork.get_result() == 'done'
     assert await store.list_runs() == runs
     assert await store.list_snapshots(run_id=runs[0].run_id) == snapshots
+
+
+async def test_dbos_replay_keeps_a_retried_tool_call_failed(dbos: DBOS) -> None:
+    """A fork replays the journaled writes, so the retried call stays `failed` and nothing is written twice."""
+
+    store = InMemoryStepStore()
+    agent = Agent(
+        FunctionModel(lookup_twice),
+        name='retried_tool_step_persistence',
+        deps_type=type(None),
+        capabilities=[StepPersistence[None](store=store), DBOSDurability[None]()],
+    )
+
+    @agent.tool_plain
+    def lookup(q: str) -> str:
+        if q == 'x':
+            raise ModelRetry('try another query')
+        return 'found'
+
+    @DBOS.workflow()
+    async def run_workflow() -> str:
+        return (await agent.run('look it up')).output
+
+    workflow_id = str(uuid.uuid4())
+    with SetWorkflowID(workflow_id):
+        assert await run_workflow() == 'done'
+    (run,) = await store.list_runs()
+    effect = await store.get_tool_effect(run_id=run.run_id, tool_call_id='call-1')
+    assert effect is not None
+    assert (effect.status, effect.effect_summary) == ('failed', "ToolRetryError('try another query')")
+    events = await store.list_events(run_id=run.run_id)
+    assert [event.kind for event in events if event.tool_call_id == 'call-1'] == [
+        'tool_call_started',
+        'tool_call_failed',
+    ]
+
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    fork = await dbos.fork_workflow_async(workflow_id, steps[-1]['function_id'])
+    assert await fork.get_result() == 'done'
+
+    assert await store.list_unresolved_tool_effects(run_id=run.run_id) == []
+    assert await store.get_tool_effect(run_id=run.run_id, tool_call_id='call-1') == effect
+    assert await store.list_events(run_id=run.run_id) == events
