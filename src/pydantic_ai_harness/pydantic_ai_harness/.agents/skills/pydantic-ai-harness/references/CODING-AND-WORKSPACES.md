@@ -463,7 +463,8 @@ Python up to 3.14.
   (called again near expiry, in a thread); a plain list fails with `MountError` once `expires_at` passes. Needs
   `docker_args=['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`, else
   `MountError`. A mount outlives the run; another bucket at the same folder is refused until the keys there expire.
-  Code in the sandbox can read the keys: pass short-lived keys scoped to the bucket. Not in agent specs.
+  Overlapping paths or a bad `S3Mount` raise `UserError`. Code in the sandbox can read the keys: pass short-lived
+  keys scoped to the bucket. Not in agent specs.
   See `docs/harness/cloud-storage-mounts.md`.
 
 ### OpenSandbox

@@ -25,6 +25,7 @@ from inline_snapshot import snapshot
 
 import pydantic_ai_harness._mounts as mounts_package
 from pydantic_ai import RunContext
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import CommandResult, Workspace, WrapperWorkspace
@@ -279,7 +280,7 @@ async def test_a_function_that_returns_no_mounts_mounts_nothing_and_is_not_calle
 async def test_a_function_returning_overlapping_paths_is_refused_at_the_first_operation() -> None:
     workspace = wrap(FakeRoot(), lambda: [s3('data'), s3('data/inner', 's3://other/')])
 
-    with pytest.raises(MountError, match="The mount paths 'data' and 'data/inner' overlap"):
+    with pytest.raises(UserError, match="The mount paths 'data' and 'data/inner' overlap"):
         await workspace.exists('data')
 
 
@@ -291,14 +292,14 @@ def test_a_folder_beside_another_with_a_longer_name_is_not_inside_it() -> None:
 
 @pytest.mark.parametrize(('first', 'second'), [('data', 'data'), ('data', 'data/inner')])
 def test_overlapping_paths_are_refused(first: str, second: str) -> None:
-    with pytest.raises(MountError, match=f"The mount paths '{first}' and '{second}' overlap"):
+    with pytest.raises(UserError, match=f"The mount paths '{first}' and '{second}' overlap"):
         mounted(FakeWorkspace('box'), FakeRoot(), [s3(first), s3(second, 's3://other/')], CTX)
 
 
 def test_overlapping_paths_with_a_folder_sorted_between_them_are_refused() -> None:
     mounts = [s3('data'), s3('data-other', 's3://other/'), s3('data/inner', 's3://third/')]
 
-    with pytest.raises(MountError, match="The mount paths 'data' and 'data/inner' overlap"):
+    with pytest.raises(UserError, match="The mount paths 'data' and 'data/inner' overlap"):
         mounted(FakeWorkspace('box'), FakeRoot(), mounts, CTX)
 
 
@@ -355,9 +356,7 @@ async def test_mounts_that_change_between_calls_are_refused(changed: Callable[[]
     await workspace.exists('data')
 
     clock.now = NOW + timedelta(minutes=55)
-    with pytest.raises(
-        MountError, match=re.escape('`mounts=` must return the same mounts each time, with fresh keys.')
-    ):
+    with pytest.raises(UserError, match=re.escape('`mounts=` must return the same mounts each time, with fresh keys.')):
         await workspace.exists('data')
 
 
@@ -529,7 +528,7 @@ def test_invalid_mounts_are_refused(changes: dict[str, Any], message: str) -> No
         'secret_access_key': 'key',
         'expires_at': NOW + timedelta(hours=1),
     } | changes
-    with pytest.raises(MountError, match=re.escape(message)):
+    with pytest.raises(UserError, match=re.escape(message)):
         S3Mount(**fields)
 
 
@@ -540,7 +539,7 @@ def test_any_accepted_path_is_a_folder_inside_the_working_directory(path: str) -
         mount = S3Mount(
             path=path, url='s3://bucket/', access_key_id='', secret_access_key='', expires_at=NOW + timedelta(hours=1)
         )
-    except MountError:
+    except UserError:
         return
     joined = posixpath.normpath(posixpath.join('/workspace', mount.path))
     assert joined.startswith('/workspace/') and joined == posixpath.join('/workspace', mount.path)
@@ -553,7 +552,7 @@ async def test_any_accepted_url_names_a_bucket_and_a_clean_prefix(url: str) -> N
         mount = S3Mount(
             path='data', url=url, access_key_id='', secret_access_key='', expires_at=NOW + timedelta(hours=1)
         )
-    except MountError:
+    except UserError:
         return
     helper = FakeRoot()
     await wrap(helper, [mount]).exists('data')

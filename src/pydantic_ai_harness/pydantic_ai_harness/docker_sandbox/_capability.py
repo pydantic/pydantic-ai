@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._mounts import S3Mount, mounted
@@ -99,6 +100,8 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
 
         Core reads this signature to generate the spec's JSON schema. `mounts` is left out: a spec can't hold keys.
         """
+        if 'mounts' in kwargs:
+            raise UserError('`mounts` holds keys, so an agent spec cannot set it. Pass it to `DockerSandbox` in code.')
         return cls(
             id=id,
             description=description,

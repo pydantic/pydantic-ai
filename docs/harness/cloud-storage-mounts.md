@@ -40,7 +40,7 @@ agent = Agent(
 result = agent.run_sync('Summarize the CSV files in reports/ into reports/summary.md.')
 ```
 
-`reports/` in the sandbox's working directory now shows the `2026/` prefix of the `acme-reports` bucket; `url='s3://acme-reports/'` shows the whole bucket. The folder is created if it's missing. Each mount needs a folder of its own: two mounts at the same folder, or one inside another, are refused with `MountError`.
+`reports/` in the sandbox's working directory now shows the `2026/` prefix of the `acme-reports` bucket; `url='s3://acme-reports/'` shows the whole bucket. The folder is created if it's missing. Each mount needs a folder of its own: two mounts at the same folder, or one inside another, are refused with `UserError`. So is an `S3Mount` whose path leaves the working directory, whose URL is malformed, or whose `expires_at` has no time zone or has passed. `MountError` is for what goes wrong in the sandbox.
 
 `expires_at` is required, and is when the keys stop working. A plain list's keys are used until then; an operation after that raises `MountError`. For runs that may outlast the keys, pass a function instead.
 
