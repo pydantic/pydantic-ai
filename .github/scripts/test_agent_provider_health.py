@@ -1424,6 +1424,71 @@ def test_shim_time_limit_opens_a_task_incident_that_does_not_blame_the_provider(
     assert 'Confirm provider credentials' not in issue.body
 
 
+def test_shim_awf_cache_miss_refusal_stays_local_to_its_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AWF's API proxy refusing a run at its consecutive cache-miss cap opens no incident."""
+    workflow = 'CI Review'
+    task_key = 'CI Review:workflow_run:pr-123:head-a1b2'
+    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', task_key)
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_run')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    # The 403 body in the agent log of https://github.com/pydantic/pydantic-ai/actions/runs/42546498160.
+    refusal: dict[str, object] = {
+        'error': {
+            'type': 'max_cache_misses_exceeded',
+            'message': 'Maximum consecutive cache misses exceeded (7 / 5).',
+            'consecutive_cache_misses': 7,
+            'max_cache_misses': 5,
+        }
+    }
+    shim.emit_result(
+        'agent run failed', usage=None, session_id='s', is_error=True, error=ModelHTTPError(403, 'glm-5.3', refusal)
+    )
+    agent_artifact = tmp_path / 'agent-stdio.log'
+    agent_artifact.write_text(capsys.readouterr().out)
+    assert health.parse_run_result(agent_artifact) == health.RunResult(
+        workflow, task_key, 'workflow_run', 1, health.Failure('cache_miss_limit', 403, None)
+    )
+    health_artifact = tmp_path / 'provider-health.json'
+    _write_health(
+        health_artifact,
+        health.Health(
+            workflow,
+            task_key,
+            'workflow_run',
+            1,
+            True,
+            'Provider health check passed',
+            '2026-10-01T12:00:00Z',
+            health.Quota('healthy'),
+        ),
+    )
+    client = FakeGitHub()
+    # Without the typed result, this failed inference step would open a task incident.
+    client.jobs[('70', 1)] = _FAILED_INFERENCE_JOBS
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+
+    _monitor_command(
+        argparse.Namespace(
+            repository=None,
+            run_id=70,
+            run_attempt=1,
+            conclusion='failure',
+            health_artifact=health_artifact,
+            agent_artifact=agent_artifact,
+            dry_run=False,
+            recover_issue=None,
+        )
+    )
+
+    assert client.posts == []
+    assert 'Transient request failure remains local to this attempt' in capsys.readouterr().out
+
+
 @pytest.mark.parametrize('stale_is_error', [False, True])
 def test_monitor_uses_fresh_quota_when_agent_result_is_from_prior_attempt(
     stale_is_error: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

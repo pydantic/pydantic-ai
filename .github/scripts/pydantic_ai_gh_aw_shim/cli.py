@@ -497,14 +497,14 @@ _ZAI_PLAN_LIMIT_CODES = frozenset(
 _ERROR_BODY_ADAPTER = TypeAdapter(dict[str, object])
 
 
-def _zai_error_code(body: object) -> str | None:
-    """Return the `error.code` of a decoded Z.ai error body, or `None` when it has none."""
+def _error_field(body: object, name: str) -> str | None:
+    """Return `error.<name>` of a decoded error body, or `None` when it has none."""
     try:
         error = _ERROR_BODY_ADAPTER.validate_python(_ERROR_BODY_ADAPTER.validate_python(body).get('error'))
     except ValidationError:
         return None
-    code = error.get('code')
-    return str(code) if isinstance(code, (str, int)) and not isinstance(code, bool) else None
+    value = error.get(name)
+    return str(value) if isinstance(value, (str, int)) and not isinstance(value, bool) else None
 
 
 def _give_up_on_rate_limit(state: RetryCallState) -> httpx2.Response | None:
@@ -562,7 +562,7 @@ def rate_limit_retry_transport(wrapped: httpx2.AsyncBaseTransport | None = None)
             body = _ERROR_BODY_ADAPTER.validate_json(await response.aread())
         except ValidationError:
             return True
-        if _zai_error_code(body) in _ZAI_PLAN_LIMIT_CODES:
+        if _error_field(body, 'code') in _ZAI_PLAN_LIMIT_CODES:
             response.headers['x-should-retry'] = 'false'
             return False
         return True
@@ -1369,10 +1369,14 @@ def failure_details(error: BaseException | None) -> dict[str, object]:
         kind = 'timeout'
     elif isinstance(error, ModelHTTPError):
         http_status = error.status_code
-        if error.status_code in (401, 403):
+        # AWF's API proxy refuses every request once the run's consecutive cache misses reach its cap.
+        # Its counter spans this run's root agent and sub-agents, so the refusal says nothing about Z.ai.
+        if error.status_code == 403 and _error_field(error.body, 'type') == 'max_cache_misses_exceeded':
+            kind = 'cache_miss_limit'
+        elif error.status_code in (401, 403):
             kind = 'authentication'
         elif error.status_code == 429:
-            kind = 'plan_limit' if _zai_error_code(error.body) in _ZAI_PLAN_LIMIT_CODES else 'rate_limit'
+            kind = 'plan_limit' if _error_field(error.body, 'code') in _ZAI_PLAN_LIMIT_CODES else 'rate_limit'
     failure: dict[str, object] = {'kind': kind}
     if http_status is not None:
         failure['http_status'] = http_status

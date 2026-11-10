@@ -73,7 +73,9 @@ QuotaDiagnostic = Literal[
     'invalid_reset_time',
     'missing_windows',
 ]
-FailureKind = Literal['authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'other']
+FailureKind = Literal[
+    'authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'cache_miss_limit', 'other'
+]
 
 
 @dataclass(frozen=True)
@@ -791,7 +793,16 @@ def _failure_from(value: object) -> Failure | None:
     if data is None:
         return None
     kind = data.get('kind')
-    if kind not in ('authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'other'):
+    if kind not in (
+        'authentication',
+        'rate_limit',
+        'plan_limit',
+        'request_limit',
+        'time_limit',
+        'timeout',
+        'cache_miss_limit',
+        'other',
+    ):
         return None
     status = data.get('http_status')
     if status is not None and (isinstance(status, bool) or not isinstance(status, int) or not 100 <= status <= 599):
@@ -1042,9 +1053,10 @@ def _monitor_workflow_outcome(
         result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
     # The runner reports a Z.ai account or plan limit as `plan_limit`, and a request-rate 429 that outlasts its
     # retry window as `rate_limit`. Runners on older branches report every 429 as `rate_limit`; the next run's
-    # quota check still blocks on an exhausted plan.
+    # quota check still blocks on an exhausted plan. `cache_miss_limit` is AWF's API proxy refusing this run
+    # after its consecutive cache misses reached the cap; the next run starts a fresh count.
     if result.failure is not None and (
-        result.failure.kind in ('timeout', 'rate_limit') or result.failure.http_status == 529
+        result.failure.kind in ('timeout', 'rate_limit', 'cache_miss_limit') or result.failure.http_status == 529
     ):
         print('Transient request failure remains local to this attempt')
         return 0
@@ -1098,6 +1110,7 @@ def _failure_reason(failure: Failure | None) -> str:
         'request_limit': 'The agent reached its per-run request limit',
         'time_limit': 'The agent reached its per-run time limit',
         'timeout': 'A provider request timed out',
+        'cache_miss_limit': "AWF's API proxy stopped the run at its consecutive cache-miss limit",
         'other': 'The provider request failed with a typed error',
     }
     reason = reasons[failure.kind]
