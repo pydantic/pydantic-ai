@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     ToolCallPart,
@@ -42,21 +44,23 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
     open_calls: set[str] = set()
     for msg in messages:
         if isinstance(msg, ModelResponse):
-            for part in msg.parts:
-                if isinstance(part, ToolCallPart):
-                    open_calls.add(part.tool_call_id)
-        else:
-            for part in msg.parts:
-                if isinstance(part, ToolReturnPart):
-                    if part.tool_call_id not in open_calls:
-                        return False
-                    open_calls.discard(part.tool_call_id)
-                # TODO(v3): remove `RetryPromptPart`
-                elif isinstance(part, RetryPromptPart) and part.tool_name is not None:  # pyright: ignore[reportDeprecated]
-                    if part.tool_call_id not in open_calls:
-                        return False
-                    open_calls.discard(part.tool_call_id)
+            open_calls.update(part.tool_call_id for part in msg.parts if isinstance(part, ToolCallPart))
+            continue
+        for tool_call_id in _answered_call_ids(msg):
+            if tool_call_id not in open_calls:
+                return False
+            open_calls.discard(tool_call_id)
     return not open_calls
+
+
+def _answered_call_ids(request: ModelRequest) -> Iterator[str]:
+    """The ids of the tool calls `request` answers, in order: its tool returns and its tool-bound legacy retries."""
+    for part in request.parts:
+        if isinstance(part, ToolReturnPart):
+            yield part.tool_call_id
+        # TODO(v3): remove `RetryPromptPart`
+        elif isinstance(part, RetryPromptPart) and part.tool_name is not None:  # pyright: ignore[reportDeprecated]
+            yield part.tool_call_id
 
 
 async def continue_run(store: StepStore, *, run_id: str, include_interrupted: bool = False) -> list[ModelMessage]:

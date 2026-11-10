@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
 from pydantic_ai.agent import AbstractAgent, AgentRunResult
@@ -73,7 +74,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..batch_utils import FAST_BATCH_SETTINGS
-from ..conftest import try_import
+from ..conftest import try_import, without_admin_server
 from ..model_lifecycle_utils import LifecycleTrackingModel
 
 with try_import() as logfire_installed:
@@ -425,6 +426,64 @@ async def test_capability_operation_is_direct_outside_durable_context() -> None:
     assert events == []
     assert built_models == []
     assert not any('__capability__' in name for name, _ in durability.calls)
+
+
+async def test_capability_operation_maps_serialization_failure() -> None:
+    """The engine's backend receives the error that `serialization_failure` maps an unserializable result to."""
+
+    class TerminalFailure(Exception):
+        pass
+
+    backend_errors: list[Exception] = []
+
+    def serialization_failure(exc: Exception) -> TerminalFailure:
+        return TerminalFailure()
+
+    class SerializationBackend(_RecordingBackend):
+        async def execute(
+            self,
+            *,
+            operation_id: DurableOperationId,
+            name: str,
+            body: Callable[[], Awaitable[object]],
+            cache_key: tuple[object, ...],
+            config: object,
+        ) -> object:
+            try:
+                return await super().execute(
+                    operation_id=operation_id, name=name, body=body, cache_key=cache_key, config=config
+                )
+            except Exception as exc:
+                backend_errors.append(exc)
+                raise
+
+    class SerializationDurability(RecordingDurability):
+        engine_spec = replace(RecordingDurability.engine_spec, serialization_failure=serialization_failure)
+
+        def get_durable_operation_backend(self) -> SerializationBackend:
+            return SerializationBackend(self)
+
+    class NonSerializableCapability(AbstractCapability[None]):
+        id = 'non_serializable'
+
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            await self.read(ctx=ctx)
+
+        @durable_operation('read')
+        async def read(self, ctx: RunContext[None]) -> object:
+            return object()
+
+    agent = Agent(
+        TestModel(),
+        deps_type=type(None),
+        name='serialization_failure',
+        capabilities=[NonSerializableCapability(), SerializationDurability()],
+    )
+    with pytest.raises(TerminalFailure) as exc_info:
+        await agent.run('test')
+
+    assert backend_errors == [exc_info.value]
+    assert isinstance(exc_info.value.__cause__, PydanticSerializationError)
 
 
 async def test_capability_operation_model_id_swap_resolves_and_manages_model() -> None:
@@ -1617,6 +1676,20 @@ def test_decorated_capability_requires_explicit_stable_id() -> None:
         Agent(TestModel(), name='missing_id', capabilities=[MissingId(), RecordingDurability()])
 
 
+def test_capability_can_opt_its_id_less_instances_out_of_binding() -> None:
+    class OptionalId(AbstractCapability[Any]):
+        _durable_operations_need_id = False
+
+        @durable_operation('operation')
+        async def operation(self, ctx: RunContext[Any]) -> None:
+            pass  # pragma: no cover
+
+    agent = Agent(TestModel(), name='optional_id', capabilities=[OptionalId(), RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert durability._bound_capability_operations == {}  # pyright: ignore[reportPrivateUsage]
+
+
 def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     class Duplicate(AbstractCapability[Any]):
         id = 'duplicate'
@@ -2367,9 +2440,8 @@ def dbos(tmp_path: Any) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'capability_durable_operations',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
-    instance = DBOS(config=config)
+    instance = DBOS(config=without_admin_server(config))
     DBOS.launch()
     try:
         yield instance

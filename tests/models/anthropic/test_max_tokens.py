@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -124,22 +124,31 @@ async def test_default_max_tokens_without_a_known_safe_maximum(
 
 
 @pytest.mark.parametrize(
-    'model_settings',
+    ('model_settings', 'default_headers'),
     [
-        pytest.param({'anthropic_betas': ['output-300k-2026-03-24']}, id='anthropic_betas'),
+        pytest.param({'anthropic_betas': ['output-300k-2026-03-24']}, {}, id='anthropic_betas'),
         pytest.param(
-            {'extra_headers': {'anthropic-beta': 'files-api-2025-04-14, output-300k-2026-03-24'}}, id='header'
+            {'extra_headers': {'anthropic-beta': 'files-api-2025-04-14, output-300k-2026-03-24'}}, {}, id='header'
         ),
+        pytest.param({'extra_headers': {'Anthropic-Beta': 'output-300k-2026-03-24'}}, {}, id='header-capitalized'),
+        pytest.param({}, {'anthropic-beta': 'output-300k-2026-03-24'}, id='client-default-header'),
     ],
 )
 async def test_max_tokens_is_left_alone_with_an_output_extending_beta(
-    allow_model_requests: None, model_settings: AnthropicModelSettings
+    allow_model_requests: None, model_settings: AnthropicModelSettings, default_headers: dict[str, str]
 ) -> None:
-    """A beta like `output-300k-2026-03-24`, for Message Batches, raises the maximum output, so it isn't capped."""
+    """A beta like `output-300k-2026-03-24`, for Message Batches, raises the maximum output, so it isn't capped.
+
+    That holds wherever the request gets the beta from: the setting, its `anthropic-beta` header in any spelling, or
+    the client's `default_headers`.
+    """
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='391', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
     )
+    cast(MockAnthropic, mock_client).default_headers.update(default_headers)
     agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client)))
     await agent.run('What is 17 * 23?', model_settings={**model_settings, 'max_tokens': 300_000})
 
-    assert get_mock_chat_completion_kwargs(mock_client)[0]['max_tokens'] == 300_000
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['max_tokens'] == 300_000
+    assert 'output-300k-2026-03-24' in kwargs['betas']
