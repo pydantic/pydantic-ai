@@ -266,6 +266,7 @@ Override them with `resource_limits={'max_duration_seconds': 10, 'max_memory': 1
 `max_tool_calls=25`. Pass `resource_limits='unlimited'` only when another execution boundary
 supplies equivalent limits. It removes the time and memory caps, but leaves Monty's default
 suspension budget in place; suspensions cannot be unlimited.
+`max_duration_secs` is the deprecated name of `max_duration_seconds` and still works, with a warning.
 
 Nested tool calls also count toward the run's
 [`tool_calls_limit`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits), together with the

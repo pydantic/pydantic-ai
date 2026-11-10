@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness._warn import warn_callable_renamed
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.spend._capability import SpendLimits
@@ -29,9 +28,3 @@ def make_toolset(limits: SpendLimits[AgentDepsT]) -> FunctionToolset[AgentDepsT]
         )
 
     return FunctionToolset[AgentDepsT]([get_spend], id='spend')
-
-
-def build_toolset(limits: SpendLimits[AgentDepsT]) -> FunctionToolset[AgentDepsT]:
-    """Deprecated: renamed to `make_toolset`."""
-    warn_callable_renamed('build_toolset', 'make_toolset')
-    return make_toolset(limits)

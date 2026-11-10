@@ -32,7 +32,7 @@ from anyio.from_thread import BlockingPortal, start_blocking_portal
 from opentelemetry import context as otel_context
 from typing_extensions import TypedDict, TypeVarTuple, Unpack
 
-from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_callable_renamed
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 try:
     from pydantic_monty import (
@@ -125,7 +125,7 @@ def in_temporal_workflow() -> bool:
 async def call_monty(
     portal: BlockingPortal | None, func: Callable[[Unpack[_Args]], Awaitable[_T]], *args: *_Args
 ) -> _T:
-    """Await one call into Monty's async bindings, `fn(*args)`, through `portal` when there is one."""
+    """Await one call into Monty's async bindings, `func(*args)`, through `portal` when there is one."""
     if portal is None:
         return await func(*args)
     return portal.call(func, *args)
@@ -253,11 +253,6 @@ class MontyRunState:
             await self.reset()
         finally:
             await self._release_pool()
-
-    async def close(self) -> None:
-        """Deprecated: renamed to `aclose`."""
-        warn_callable_renamed('MontyRunState.close', 'MontyRunState.aclose')
-        await self.aclose()
 
     async def _release_pool(self) -> None:
         stack, self._pool_stack = self._pool_stack, AsyncExitStack()

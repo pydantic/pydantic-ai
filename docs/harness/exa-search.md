@@ -71,6 +71,7 @@ page ends with `[... page text truncated at N characters]`. At the
 10,000-character API maximum Exa cannot return the extra character that reveals
 truncation, so no marker appears. `web_search` returns at most `max_results`
 results, even if Exa returns more.
+`num_results` is the deprecated name of `max_results` and still works, with a warning.
 
 A `web_search` query with no matches returns `No results found for {query!r}.`,
 which the model can relay to the user. An empty page or deep search answer, an

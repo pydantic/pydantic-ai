@@ -560,6 +560,12 @@ class TestExaSearch:
             )
         await toolset.web_search('q')
         assert client.search_calls[0]['num_results'] == 2
+        with pytest.raises(TypeError, match='`num_results` is its deprecated name'):
+            ExaSearchToolset[None](
+                client=client, max_results=4, num_results=2, max_text_chars=10_000, include_deep_search=False
+            )
+        with pytest.raises(TypeError, match="missing required keyword argument: 'max_results'"):
+            ExaSearchToolset[None](client=client, max_text_chars=10_000, include_deep_search=False)
 
     @pytest.mark.parametrize('max_text_chars', [0, 10_001])
     def test_max_text_chars_out_of_bounds_rejected(self, max_text_chars: int) -> None:

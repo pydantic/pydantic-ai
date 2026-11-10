@@ -1131,7 +1131,7 @@ def rebuild_with_cleared(
 
 
 def _clear_returns(message: ModelRequest, clear_return_ids: set[str], placeholder: str) -> ModelRequest:
-    """*msg* with the returns in *clear_return_ids* blanked, or *msg* itself when none changes."""
+    """*message* with the returns in *clear_return_ids* blanked, or *message* itself when none changes."""
     request_parts: list[ModelRequestPart] = []
     changed = False
     for part in message.parts:
@@ -1151,7 +1151,7 @@ def _clear_returns(message: ModelRequest, clear_return_ids: set[str], placeholde
 
 
 def _clear_inputs(message: ModelResponse, clear_input_ids: set[str]) -> ModelResponse:
-    """*msg* with the call arguments in *clear_input_ids* blanked, or *msg* itself when none changes."""
+    """*message* with the call arguments in *clear_input_ids* blanked, or *message* itself when none changes."""
     response_parts: list[ModelResponsePart] = []
     changed = False
     for part in message.parts:

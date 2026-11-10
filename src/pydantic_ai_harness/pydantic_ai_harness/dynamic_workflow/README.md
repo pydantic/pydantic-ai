@@ -351,7 +351,8 @@ DynamicWorkflow(agents=[...], resource_limits={'max_duration_seconds': 30})
 >
 > Pass `'unlimited'` to remove every sandbox resource limit; the separate 10 MiB print cap remains.
 > A partial dict like `{'max_memory': ...}` merges onto the backstop, so you override only the caps
-> you name.
+> you name. `max_duration_secs` is the deprecated name of `max_duration_seconds` and still works,
+> with a warning.
 
 ### Workflows do not nest
 

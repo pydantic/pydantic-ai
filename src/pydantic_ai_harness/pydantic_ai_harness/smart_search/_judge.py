@@ -22,7 +22,6 @@ from pydantic_ai._framing import TOOL_RESULT_TAG, neutralize_tags, wrap
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness._judge import claim_request, claimed_request_limits
-from pydantic_ai_harness._warn import warn_callable_renamed
 from pydantic_ai_harness.smart_search._chunks import Chunk
 
 REQUEST_TIMEOUT_SECONDS = 30
@@ -87,12 +86,6 @@ def make_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
     # ignore the host agent's content or opt-out settings.
     agent.instrument = False
     return agent
-
-
-def build_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
-    """Deprecated: renamed to `make_agent`."""
-    warn_callable_renamed('build_agent', 'make_agent')
-    return make_agent(model, query)
 
 
 def judgment_allowance(ctx: RunContext[Any]) -> int | None:

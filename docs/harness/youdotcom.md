@@ -76,6 +76,7 @@ page exceeds the cap the output ends with a
 `[... page text truncated at N characters]` marker. The number of results is
 limited the same way: `max_results` is sent to You.com, and applied again to
 the response that comes back.
+`num_results` is the deprecated name of `max_results` and still works, with a warning.
 
 A `web_search` query that matches nothing is a valid answer, not an error: the
 tool returns `No results found for {query!r}.`. Other failures reach the model

@@ -102,7 +102,7 @@ def recoverable(
             reason = _RECOVERABLE_ERRNOS.get(exc.errno)
             if reason is None:
                 raise
-            # `str(e)` embeds the absolute host path; the reason alone doesn't.
+            # `str(exc)` embeds the absolute host path; the reason alone doesn't.
             raise ModelRetry(reason) from exc
 
     return wrapper

@@ -20,7 +20,7 @@ from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import ToolOperation, raise_retry
-from pydantic_ai_harness._warn import renamed_argument
+from pydantic_ai_harness._warn import warn_argument_renamed
 from pydantic_ai_harness._web_search import defer_to_native_web_search
 
 try:
@@ -293,7 +293,7 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         self,
         *,
         client: ExaClient | None,
-        max_results: int = 5,
+        max_results: int | None = None,
         max_text_chars: int,
         include_deep_search: bool,
         include_domains: Sequence[str] = (),
@@ -307,9 +307,14 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         super().__init__(id=id)
         self._client = client if client is not None else default_client()
         self._operations = operations
-        self._max_results = renamed_argument(
-            'ExaSearchToolset', 'num_results', 'max_results', old_value=num_results, new_value=max_results, default=5
-        )
+        if num_results is not None:
+            if max_results is not None:
+                raise TypeError('Pass `max_results` only: `num_results` is its deprecated name.')
+            warn_argument_renamed('ExaSearchToolset', 'num_results', 'max_results')
+            max_results = num_results
+        if max_results is None:
+            raise TypeError("ExaSearchToolset() missing required keyword argument: 'max_results'")
+        self._max_results = max_results
         self._max_text_chars = max_text_chars
         self._include_domains = list(include_domains) if include_domains else None
         self._exclude_domains = list(exclude_domains) if exclude_domains else None

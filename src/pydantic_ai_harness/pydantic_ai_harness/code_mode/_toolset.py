@@ -350,7 +350,6 @@ class CodeModeResourceLimits(TypedDict, total=False):
 
 def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited'] | None) -> ResourceLimits:
     """Merge caller overrides onto the `run_code` backstop."""
-    limits = renamed_duration_limit(limits, 'CodeMode')
     if limits == 'unlimited':
         return {}
     overrides: CodeModeResourceLimits = {} if limits is None else limits

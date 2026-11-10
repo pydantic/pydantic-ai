@@ -100,10 +100,11 @@ def _default_resource_limits() -> ResourceLimits:
     }
 
 
-# The keys `WorkflowResourceLimits` accepts. A `total=False` TypedDict does not validate keys at
-# runtime, so a typo (e.g. `max_durations_seconds`) would otherwise merge through and be silently
-# dropped -- quietly disabling the only guard against a pure-CPU `while True`. We reject unknowns.
-_RESOURCE_LIMIT_KEYS = frozenset(WorkflowResourceLimits.__annotations__)
+# The keys `WorkflowResourceLimits` accepts, without the deprecated one `__post_init__` renames.
+# A `total=False` TypedDict does not validate keys at runtime, so a typo (e.g. `max_durations_seconds`)
+# would otherwise merge through and be silently dropped -- quietly disabling the only guard against
+# a pure-CPU `while True`. We reject unknowns.
+_RESOURCE_LIMIT_KEYS = frozenset(WorkflowResourceLimits.__annotations__) - {'max_duration_secs'}
 _MODEL_SAFE_EXCEPTION_MESSAGE_TYPES = (UsageLimitExceeded,)
 _MAX_COMPLETED_DISPATCHES = 20
 _MAX_TASK_PREVIEW_CHARS = 120
@@ -121,7 +122,6 @@ def _resolve_resource_limits(limits: WorkflowResourceLimits | Literal['unlimited
     A partial mapping merges *onto* the backstop rather than replacing it. Full semantics:
     `DynamicWorkflow.resource_limits`.
     """
-    limits = renamed_duration_limit(limits, 'DynamicWorkflow')
     if limits is None:
         return _default_resource_limits()
     if limits == 'unlimited':
