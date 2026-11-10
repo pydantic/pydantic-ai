@@ -26,6 +26,15 @@ from pydantic_ai_harness._display import ManagedDisplay, png_from_base64
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
 from pydantic_ai_harness.computer_use import ComputerAction, UnsupportedActionError
 
+DISPLAY = ':1'
+"""The X display the desktop runs on, as `DISPLAY` names it."""
+
+DISPLAY_NUMBER = DISPLAY[1:]
+
+START_LOCK = f'exec 9>/tmp/.pydantic-ai-display-{DISPLAY_NUMBER}.lock; ! command -v flock >/dev/null || flock 9; '
+"""Waits for another start of the same display to finish, so two don't both find no X server and start two.
+What starts in the background while it is held must close it with `9>&-`, or it holds it as long as it runs."""
+
 _BUTTONS: dict[str, str] = {'left': '1', 'middle': '2', 'right': '3', 'back': '8', 'forward': '9'}
 
 _WHEEL_BUTTONS = {'up': '4', 'down': '5', 'left': '6', 'right': '7'}
@@ -109,20 +118,46 @@ _SCROLL_TICK_DELAY_MS = '20'
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
 
-_DISPLAY_SIZE = 'if command -v xwininfo >/dev/null; then xwininfo -root; else xdotool getdisplaygeometry; fi'
-"""Prints the root window's size, which spans every monitor as a screenshot does. `xdotool getdisplaygeometry`, used
-where `xwininfo` is missing, gives only the first monitor's."""
+_DISPLAY_SIZE = ['xwininfo', '-root']
+"""Prints the root window's size, which spans every monitor as a screenshot does. (`xdotool getdisplaygeometry`
+gives only the first monitor's, so a click on a second monitor would be scaled onto the first.)"""
 
 _ROOT_SIZE = re.compile(r'^\s*(Width|Height): (\d+)$', re.MULTILINE)
 
-_CAPTURE = 'd=$(mktemp -d) && scrot "$@" "$d/s.png" && base64 < "$d/s.png"; status=$?; rm -rf "$d"; exit $status'
-"""Captures into a fresh directory (scrot picks the format from the `.png` name) and prints it as base64; arguments
+_CAPTURES = '/tmp/pydantic-ai-captures'
+"""Where screenshots are captured before they are printed. Each capture removes captures older than a few minutes
+there, such as one a cancel stopped before it removed its own file, so they don't pile up."""
+
+_CAPTURE_INTO = (
+    f'd={_CAPTURES}; mkdir -p "$d" && find "$d" -type f -mmin +5 -exec rm -f {{}} + 2>/dev/null; f="$d/$$.png"; '
+)
+
+_CAPTURE = _CAPTURE_INTO + 'scrot "$@" "$f" && base64 < "$f"; status=$?; rm -f "$f"; exit $status'
+"""Captures to a file of its own (scrot picks the format from the `.png` name) and prints it as base64; arguments
 go to scrot, such as `-a x,y,width,height` for a region."""
 
 _CAPTURE_SCALED = (
-    'd=$(mktemp -d) && scrot -t "$1" "$d/s.png" && base64 < "$d/s-thumb.png"; status=$?; rm -rf "$d"; exit $status'
+    _CAPTURE_INTO + 'scrot -t "$1" "$f" && base64 < "$d/$$-thumb.png"; status=$?; rm -f "$f" "$d/$$-thumb.png"; '
+    'exit $status'
 )
 """Captures the whole screen and prints a copy scaled to the `WIDTHxHEIGHT` in `$1`, which scrot writes beside it."""
+
+_INPUT_PID = f'/tmp/.pydantic-ai-input-{DISPLAY_NUMBER}'
+"""Holds the process id of the input command running on the display. Only one runs at a time, since `ComputerUse`
+runs one batch at a time on a display."""
+
+_INPUT = f'echo $$ > {_INPUT_PID}; exec "$@"'
+"""Runs the input command in `$@` as the process whose id `_INPUT_PID` records."""
+
+_STOP_INPUT = (
+    f'p=$(cat {_INPUT_PID} 2>/dev/null) || exit 0; [ "$(cat /proc/$p/comm 2>/dev/null)" = xdotool ] || exit 0; '
+    'kill "$p" 2>/dev/null; '
+    'while [ -e /proc/$p ] && ! grep -q "^State:[[:space:]]*Z" /proc/$p/status 2>/dev/null; do sleep 0.05; done'
+)
+"""Stops the input command `_INPUT_PID` names, if it is still running, and waits for it to exit.
+
+A cancelled command can keep running in the environment after the call that started it returns, and could press
+keys again after they were released."""
 
 STARTED = 'pydantic-ai-display-started'
 """What a start script prints when it started a new X server, rather than finding one running."""
@@ -168,9 +203,6 @@ def _move(x: int | None, y: int | None) -> list[str]:
     return [] if x is None or y is None else ['mousemove', str(x), str(y)]
 
 
-DISPLAY = ':1'
-"""The X display the desktop runs on, as `DISPLAY` names it."""
-
 _ENV = {'DISPLAY': DISPLAY}
 
 
@@ -178,8 +210,8 @@ _X_LOCK = f'/tmp/.X{DISPLAY[1:]}-lock'
 _X_SOCKET_DIR = '/tmp/.X11-unix'
 _X_SOCKET = f'{_X_SOCKET_DIR}/X{DISPLAY[1:]}'
 
-_PROGRAMS = ('Xvfb', 'xdotool', 'scrot', 'setsid')
-_PACKAGES = 'xvfb xdotool scrot util-linux'
+_PROGRAMS = ('Xvfb', 'xdotool', 'xwininfo', 'scrot', 'setsid')
+_PACKAGES = 'xvfb xdotool x11-utils scrot util-linux'
 """The Debian and Ubuntu packages that have `_PROGRAMS`."""
 
 _START_TIMEOUT = 600
@@ -191,12 +223,14 @@ def start_x_server(log: str, *, then: str = '') -> str:
 
     It first installs any of `_PROGRAMS` that's missing with `apt-get`, as root or through `sudo -n`, even when an X
     server already answers. Before starting Xvfb, it makes the directory for the X server's socket, which Xvfb makes
-    only when it runs as root. It gives up as soon as the X
-    server exits, or after 10 seconds, with the end of `log` as the reason, and runs `RECORD_START` once a new X
-    server answers. `then` runs then, such as to start a panel.
+    only when it runs as root. It gives up as soon as the X server exits, or after 10 seconds, with the end of `log`
+    as the reason, and runs `RECORD_START` once a new X server answers. `then` runs then, such as to start a panel.
+
+    It holds `START_LOCK` while it installs, checks for and starts the X server, so a second start of the display
+    waits and finds the first one's.
     """
     return (
-        f'missing=; for p in {" ".join(_PROGRAMS)}; do command -v $p >/dev/null 2>&1 || missing="$missing $p"; done; '
+        f'{START_LOCK}missing=; for p in {" ".join(_PROGRAMS)}; do command -v $p >/dev/null 2>&1 || missing="$missing $p"; done; '
         # `elevate` prefixes a command that needs root: empty as root, `sudo -n` with passwordless sudo, and
         # `none` when neither works.
         'if [ "$(id -u)" = 0 ]; then elevate=; elif sudo -n true >/dev/null 2>&1; then elevate="sudo -n"; '
@@ -217,11 +251,12 @@ def start_x_server(log: str, *, then: str = '') -> str:
         # belongs to another process. A running X server's lock stays, whichever server it is, such as `Xvnc`.
         f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
         f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
-        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{log} & xvfb=$!; i=0; '
+        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{log} 9>&- & xvfb=$!; i=0; '
         'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
         'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
         f"echo 'the X server did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "
-        f'sleep 0.1; i=$((i+1)); done; {RECORD_START}{then} fi; '
+        # Let go of the lock before starting anything else, which would otherwise hold it as long as it runs.
+        f'sleep 0.1; i=$((i+1)); done; {RECORD_START}exec 9>&-; {then} fi; exec 9>&-; '
     )
 
 
@@ -242,7 +277,7 @@ def x11_display(
         result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env=_ENV, timeout=_START_TIMEOUT)
         if result.exit_code != 0:
             raise WorkspaceUnavailableError(
-                f'Could not start the display in {where()}: it needs Xvfb, xdotool, scrot and setsid '
+                f'Could not start the display in {where()}: it needs Xvfb, xdotool, xwininfo, scrot and setsid '
                 f'({(result.stderr or result.stdout).strip()})'
             )
         if STARTED in result.stdout.splitlines():
@@ -273,7 +308,8 @@ def desktop_display(
 class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 
-    The X server must already be running on `DISPLAY`. Needs `xdotool`, `scrot`, `base64`, and `mktemp` in the environment.
+    The X server must already be running on `DISPLAY`. Needs `xdotool`, `xwininfo` (in Debian's `x11-utils`), `scrot`
+    and `base64` in the environment.
     """
 
     def __init__(self, backend: SupportsCommands):
@@ -297,16 +333,25 @@ class X11Computer:
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
         keydown = ['keydown', *keysyms] if keysyms else []
-        await self._input(['xdotool', *_RELEASE_MODIFIERS, *keydown, *args, *keyup], [*release, *keyup])
+        await self._input(['xdotool', *_RELEASE_MODIFIERS, *keydown, *args, *keyup], [list(release), keyup])
 
-    async def _input(self, command: list[str], release: list[str]) -> None:
-        """Run an input command; if it fails or is cancelled, let go of what it may hold with `xdotool <release>`."""
+    async def _input(self, command: list[str], releases: list[list[str]]) -> None:
+        """Run an input command; if it fails or is cancelled, stop it and let go of what it may hold.
+
+        Each of `releases` is an `xdotool` chain, run on its own so one that fails doesn't keep the others from
+        running.
+        """
         try:
-            result = await self._run(command)
+            result = await self._run(['sh', '-c', _INPUT, 'sh', *command])
         except BaseException:
-            if release:
-                with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
-                    await self._run(['xdotool', *release])
+            with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
+                # Before letting go, or the command could press again what was just released.
+                with suppress(Exception):
+                    await self._run(['sh', '-c', _STOP_INPUT])
+                for release in releases:
+                    if release:
+                        with suppress(Exception):
+                            await self._run(['xdotool', *release])
             raise
         # xdotool skips a key name the display doesn't know and still succeeds.
         if 'No such key name' in result.stderr:
@@ -317,12 +362,11 @@ class X11Computer:
         return png_from_base64((await self._run(['sh', '-c', script, 'sh', *args])).stdout, 'The screenshot command')
 
     async def display_size(self) -> tuple[int, int]:
-        output = (await self._run(['sh', '-c', _DISPLAY_SIZE])).stdout
+        output = (await self._run(_DISPLAY_SIZE)).stdout
         root = dict(_ROOT_SIZE.findall(output))
         try:
-            width, height = (root['Width'], root['Height']) if root else output.split()
-            return int(width), int(height)
-        except (KeyError, ValueError):
+            return int(root['Width']), int(root['Height'])
+        except KeyError:
             raise WorkspaceError(f'Unexpected display size output: {output.strip()!r}') from None
 
     async def screenshot(self) -> bytes:
@@ -347,7 +391,11 @@ class X11Computer:
     async def act(self, action: ComputerAction) -> None:
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
-                await self._xdotool([*_move(x, y), 'click', '--repeat', str(count), _BUTTONS[button]], hold=modifiers)
+                await self._xdotool(
+                    [*_move(x, y), 'click', '--repeat', str(count), _BUTTONS[button]],
+                    hold=modifiers,
+                    release=('mouseup', _BUTTONS[button]),
+                )
             case MoveMouse(x=x, y=y, modifiers=modifiers):
                 await self._xdotool(_move(x, y), hold=modifiers)
             case Drag(path=path, modifiers=modifiers):
@@ -373,13 +421,13 @@ class X11Computer:
                 # A cancel can land between a key's press and release, and X then repeats the key without end.
                 release = ['keyup', *_LEVEL_SHIFTS, *dict.fromkeys(keysyms)]
                 command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--delay', _TYPING_DELAY_MS, '--', *keysyms]
-                await self._input(command, release)
+                await self._input(command, [release])
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.
                 release = ['keyup', *reversed(keysyms)]
                 command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--repeat', str(repeat), '--', '+'.join(keysyms)]
-                await self._input(command, release)
+                await self._input(command, [release])
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys)
             case _:

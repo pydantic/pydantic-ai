@@ -41,6 +41,9 @@ from daytona import (
     ScreenshotOptions,
     ScreenshotRegion,
 )
+from daytona.common.errors import SOURCE_PROXY
+
+from ..display_fakes import FAKE_SCREENSHOT
 
 
 class CreateParams(Protocol):
@@ -387,7 +390,9 @@ class FakeComputerUse:
         self.started = False
         # Input before `start` breaks Daytona's desktop for good, so `_call` asserts it never happens.
         self.broken = False
-        self.png = b'\x89PNG\r\n\x1a\nfake'
+        self.proxy_unavailable = 0
+        """How many of the next desktop requests the proxy refuses with a 503 before passing them on."""
+        self.png = FAKE_SCREENSHOT
         self.position = SimpleNamespace(x=7, y=8)
         self.displays = [SimpleNamespace(width=1280, height=800, is_active=True)]
 
@@ -396,6 +401,9 @@ class FakeComputerUse:
         self.started = False
 
     def _check_broken(self) -> None:
+        if self.proxy_unavailable:
+            self.proxy_unavailable -= 1
+            raise DaytonaServiceUnavailableError('no available server', status_code=503, source=SOURCE_PROXY)
         if self.broken:
             raise DaytonaServiceUnavailableError('connection is shut down', status_code=503)
 
