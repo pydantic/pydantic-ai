@@ -40,10 +40,6 @@ from pydantic_ai_harness.media._store import (
 if TYPE_CHECKING:
     import httpx
 
-# Bound at import so a test that patches `httpx2.AsyncClient` to count constructions does not
-# change how an injected client is classified.
-_ASYNC_CLIENT = httpx2.AsyncClient
-
 _ALGORITHM = 'AWS4-HMAC-SHA256'
 _SERVICE = 's3'
 # Conservative subset for x-amz-meta-* keys: ASCII letters/digits/dash. S3
@@ -220,7 +216,7 @@ class S3MediaStore:
         key_strategy: KeyStrategy = default_key_strategy,
         public_url: PublicUrlResolver | None = None,
     ) -> None:
-        if client is not None and not isinstance(client, _ASYNC_CLIENT):
+        if client is not None and not isinstance(client, httpx2.AsyncClient):
             warnings.warn(
                 'Passing an `httpx.AsyncClient` to `S3MediaStore` is deprecated; use `httpx2.AsyncClient` instead.',
                 HarnessDeprecationWarning,
@@ -270,7 +266,7 @@ class S3MediaStore:
         # key_strategy emitting reserved chars (`@`, `(`, `=`, ...) would diverge
         # from the signed path -> SignatureDoesNotMatch.
         url = httpx2.URL(self._endpoint).copy_with(raw_path=_canonical_uri(path).encode('ascii'))
-        if isinstance(self._client, _ASYNC_CLIENT):
+        if isinstance(self._client, httpx2.AsyncClient):
             return await self._client.request(method, url, content=body, headers=headers)
         if self._client is not None:
             # A legacy `httpx` client rejects an `httpx2.URL`; its string keeps the signed percent-encoding.

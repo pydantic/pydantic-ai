@@ -1643,12 +1643,11 @@ class TestS3MediaStoreWithMockTransport:
             captured.append(request)
             return Response(200)
 
-        original_async_client = httpx2.AsyncClient
+        class _MockTransportClient(httpx2.AsyncClient):
+            def __init__(self) -> None:
+                super().__init__(transport=MockTransport(handler))
 
-        def patched_client(*args: object, **kwargs: object) -> httpx2.AsyncClient:
-            return original_async_client(transport=MockTransport(handler))
-
-        monkeypatch.setattr(httpx2, 'AsyncClient', patched_client)
+        monkeypatch.setattr(httpx2, 'AsyncClient', _MockTransportClient)
 
         store = S3MediaStore(
             bucket='my-bucket',
