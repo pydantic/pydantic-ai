@@ -866,10 +866,25 @@ class TestSpeculationEdgeCases:
         assert not [e for e in emitted(ctx) if isinstance(e, SpeculativeCallEvictedEvent)]
 
     async def test_close_is_a_deprecated_alias_of_aclose(self) -> None:
-        async with prepared_toolset([], CodeMode[None](speculate=['search'])) as (_, toolset, _, _):
+        def search(query: str) -> str:
+            """Return a canned result."""
+            return f'result:{query}'  # pragma: no cover - the launch is cancelled before the body runs
+
+        part = ToolCallPart(
+            tool_name='run_code', args='{"code": "a = await search(query=\\"alpha\\")"}', tool_call_id='c1'
+        )
+        async with prepared_toolset([Tool(search)], CodeMode[None](speculate=['search'])) as (
+            run_capability,
+            toolset,
+            ctx,
+            _run_code,
+        ):
+            await observe(run_capability, ctx, [PartStartEvent(index=0, part=part), PartEndEvent(index=0, part=part)])
+            assert (run_capability.speculation_stats.launched, run_capability.speculation_stats.evicted) == (1, 0)
             assert toolset.speculation is not None
             with pytest.warns(HarnessDeprecationWarning, match=r'`SpeculationCoordinator\.close\(\)` has been renamed'):
                 await toolset.speculation.close()
+            assert run_capability.speculation_stats.evicted == 1
 
     @pytest.mark.parametrize(
         ('padding_lines', 'chunk_size', 'prefetched'),
