@@ -1,0 +1,13 @@
+// Pyright skips every path under a dot directory, so the `/review-branch` suite is its own project,
+// as `.github/scripts` is. `make typecheck-pyright` runs it with `pyright -p .agents/skills/review-branch`.
+{
+  "extends": "../../../pyproject.toml",
+  "include": ["."],
+  "exclude": [
+    // Fixtures for the mechanical checks, deliberately written to break the rules.
+    "mechanical/testdata",
+    // These tests index the loose JSON report `preconditions.py` writes; pytest covers them,
+    // while the module they test stays checked.
+    "test_preconditions.py"
+  ]
+}

@@ -1,0 +1,67 @@
+# description: Checks each Monday that the `/review-branch` suite still matches the code on `main`, and notifies Slack when it does not.
+name: Review Branch Drift
+
+# The suite's lanes and `preconditions.py` name repo paths, family members and surfaces. A code change
+# can leave one stale without touching the suite, so this runs on a schedule, never as a PR gate.
+on:
+  schedule:
+    # Run weekly on Monday at 09:00 UTC.
+    - cron: '0 9 * * 1'
+  workflow_dispatch: {}
+
+env:
+  COLUMNS: 150
+  UV_PYTHON: 3.12
+  UV_FROZEN: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  review-branch-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The dispatch replay reads the last month of `main`.
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-suffix: review-branch-drift
+
+      # The suite is stdlib-only; the test needs only pytest and its plugins.
+      - name: Install dependencies
+        run: uv sync --only-dev
+
+      - name: Check the review-branch suite against main
+        run: uv run pytest .agents/skills/review-branch/test_drift.py
+
+      - name: Notify Slack on failure
+        if: failure() && !cancelled()
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          errors: true
+          webhook: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: ":x: Review branch drift failed in ${{ github.repository }} on ${{ github.ref_name }}."
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: ":x: *Review branch drift failed*: a lane or `preconditions.py` no longer matches the code."
+              - type: section
+                fields:
+                  - type: mrkdwn
+                    text: "*Repository*\n<${{ github.server_url }}/${{ github.repository }}|${{ github.repository }}>"
+                  - type: mrkdwn
+                    text: "*Trigger*\n${{ github.event_name }}"
+                  - type: mrkdwn
+                    text: "*Ref*\n`${{ github.ref_name }}`"
+                  - type: mrkdwn
+                    text: "*Run*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow run>"

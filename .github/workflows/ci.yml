@@ -323,6 +323,17 @@ jobs:
           .github/scripts/test_ci_matrix.py
           scripts/test_gather_pydantic_ai_review_context.py
 
+      # The `/review-branch` suite's scripts, outside `testpaths` like the scripts above. Its drift test
+      # runs weekly in `review-branch-drift.yml` instead: it checks the suite against `main`, not this PR.
+      - name: Test the review-branch suite
+        env:
+          UV_NO_SYNC: "1"
+        run: >-
+          uv run pytest
+          .agents/skills/review-branch/test_prepare.py
+          .agents/skills/review-branch/test_preconditions.py
+          .agents/skills/review-branch/mechanical/test_checks.py
+
       - name: Test threat detector telemetry
         run: node --test .github/scripts/test_detector_telemetry.cjs .github/scripts/test_workflow_telemetry.cjs
 

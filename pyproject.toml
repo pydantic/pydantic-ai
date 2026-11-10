@@ -411,7 +411,10 @@ include = [
     ".github/scripts/douwebot_opencode_result.py",
     ".github/scripts/test_douwebot_opencode_run.py",
     ".github/scripts/test_douwebot_opencode_result.py",
+    ".agents/skills/review-branch/**/*.py",
 ]
+# Fixtures for the `/review-branch` mechanical checks, deliberately written to break the rules.
+extend-exclude = [".agents/skills/review-branch/mechanical/testdata"]
 
 [tool.ruff.lint]
 preview = true  # For `PLW1514`
@@ -505,6 +508,7 @@ quote-style = "single"
 ".github/scripts/test_latest_versions_canary_report.py" = ["D"]
 ".github/scripts/test_clai2_web_bundle.py" = ["D"]
 ".github/scripts/test_douwebot_usage_limit.py" = ["D"]
+".agents/skills/review-branch/**/*.py" = ["D"]
 ".github/scripts/test_douwebot_opencode_run.py" = ["D"]
 ".github/scripts/test_douwebot_opencode_result.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
@@ -607,6 +611,7 @@ markers = [
     "temporal: starts or connects to a local Temporal dev server",
     "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
     "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",
+    "drift_replay: replays a month of commits through the review-branch suite's dispatch; only the weekly drift workflow needs it",
 ]
 filterwarnings = [
     "error",
@@ -772,4 +777,4 @@ skip = '.git*,*.svg,*.lock,*.css,*.yaml,tests/harness/absurd/fixtures/absurd.sql
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
-ignore-words-list = 'asend,fpr,aci,aks,gage'
+ignore-words-list = 'asend,fpr,aci,aks,gage,assertin'
