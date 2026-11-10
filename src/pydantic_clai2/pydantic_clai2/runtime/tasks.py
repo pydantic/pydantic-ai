@@ -47,7 +47,7 @@ from pydantic_ai_harness.subagents import (
     DelegationTasks,
     DelegationWorkspaceRequest,
     SubAgent,
-    TaskQuestionEvent,
+    TaskQuestionAskedEvent,
 )
 from pydantic_clai2.plugins import TaskInfo, TaskProgress
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
@@ -141,7 +141,7 @@ def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_mod
         model = f' · {terminal_text(model_name, keep="")}' if show_model and model_name else ''
         row.append(f' [{(event.task_id or "")[:8]}]{model} {prompt}', style=theme.color(theme.MUTED))
         return row
-    if isinstance(event, TaskQuestionEvent):
+    if isinstance(event, TaskQuestionAskedEvent):
         return question_row(event)
     if isinstance(event, DelegationEndEvent) and event.outcome != 'ok':
         return Text(
@@ -153,7 +153,7 @@ def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_mod
 
 def question_row(event: AgentStreamEvent) -> Text | None:
     """A task's question to its parent, which a run shows even without the task panel."""
-    if not isinstance(event, TaskQuestionEvent):
+    if not isinstance(event, TaskQuestionAskedEvent):
         return None
     name = _display_name(event.agent_name)
     question = ' '.join(terminal_text(event.question).split())
@@ -378,7 +378,7 @@ class Tasks:
             await self.fire(TaskProgress(task=self.info(record), event=event))
         if record.parent_id is None and self.wake is not None and self._for_main_run(record):
             self.wake()
-        if isinstance(event, TaskQuestionEvent) and event.task_id != record.id:
+        if isinstance(event, TaskQuestionAskedEvent) and event.task_id != record.id:
             # The copy in a parent task's stream: it shows once, as the asking task's own event.
             return
         if isinstance(event, DelegationStartEvent) and self.show_task_models():
@@ -387,17 +387,17 @@ class Tasks:
             return
         held = self._pending_rows.get(record.id)
         if held is not None and (
-            update.model_name is not None or isinstance(event, (DelegationEndEvent, TaskQuestionEvent))
+            update.model_name is not None or isinstance(event, (DelegationEndEvent, TaskQuestionAskedEvent))
         ):
             del self._pending_rows[record.id]
             self._row_models[record.id] = update.model_name
             await self._show_row(held)
-        if isinstance(event, (DelegationStartEvent, DelegationEndEvent, TaskQuestionEvent)):
+        if isinstance(event, (DelegationStartEvent, DelegationEndEvent, TaskQuestionAskedEvent)):
             await self._show_row(event)
         if isinstance(event, DelegationEndEvent):
             self._row_models.pop(record.id, None)
 
-    async def _show_row(self, event: DelegationStartEvent | DelegationEndEvent | TaskQuestionEvent) -> None:
+    async def _show_row(self, event: DelegationStartEvent | DelegationEndEvent | TaskQuestionAskedEvent) -> None:
         if self.sink is not None:
             await self.sink(event)
         elif (row := self.row(event)) is not None:

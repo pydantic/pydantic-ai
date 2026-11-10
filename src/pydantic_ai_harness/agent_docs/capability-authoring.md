@@ -127,6 +127,22 @@ warnings where practical.
 - Line offsets in model-facing file tools are 1-indexed, matching `grep -n`,
   editors, and stack traces (`filesystem` is 0-based pending migration).
 
+### A Listener Stops An Immediate Event With `cancel()` Or `veto()`
+
+An immediately dispatched event that a listener can stop carries a flag, a
+reason and a method. The harness spells them two ways, on purpose:
+
+- `cancelled` / `cancel_reason` / `cancel()` is the default, as on
+  `FileChangeRequestEvent` and in core's `CapabilityEvent` example.
+- `vetoed` / `veto_reason` / `veto()` is for an event family where "cancel"
+  already names something else. The sub-agent events (`ParentMessageEvent`,
+  `AgentCreatedEvent`) sit beside task cancellation (`TaskCancelRequestedEvent`,
+  `TaskCancelledEvent`), where `event.cancel()` on a `TaskCancelRequestedEvent`
+  would read as cancelling the task when it stops the cancellation.
+
+Pick by that test for a new event, and keep one spelling within a family. Do
+not add a third.
+
 ### Internal Agents Carry The Capability's Name
 
 A capability that constructs its own `Agent` (a summarizer, an advisor, a

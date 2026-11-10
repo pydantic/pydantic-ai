@@ -26,20 +26,20 @@ from pydantic_ai_harness._sub_agent_output import (
 )
 from pydantic_ai_harness.subagents._control import TaskLink, task_group, validate_agent_name
 from pydantic_ai_harness.subagents._events import (
-    TaskAnswerEvent,
+    TaskAnsweredEvent,
     TaskCancelledEvent,
-    TaskCancelRequestEvent,
+    TaskCancelRequestedEvent,
     TaskCompletedEvent,
     TaskFailedEvent,
-    TaskFollowUpEvent,
-    TaskForceCancelEvent,
-    TaskMessageEvent,
+    TaskForceCancelRequestedEvent,
     TaskProgressEvent,
-    TaskQuestionEvent,
+    TaskQuestionAskedEvent,
     TaskRequestEvent,
-    TaskRetryEvent,
+    TaskResumedEvent,
+    TaskRetriedEvent,
     TaskSettledEvent,
     TaskStartedEvent,
+    TaskSteeredEvent,
     agent_mailbox,
     task_mailbox,
 )
@@ -83,7 +83,7 @@ class _WorkerLink(TaskLink):
         answer: list[str] = []
         self._answers[question_id] = (answered, answer)
         await self.transport.send(
-            TaskQuestionEvent(
+            TaskQuestionAskedEvent(
                 task_id=self.start.task_id, agent_name=self.start.agent_name, question_id=question_id, question=question
             )
         )
@@ -106,24 +106,24 @@ class _WorkerLink(TaskLink):
         while True:
             message = await self.transport.receive(mailbox)
             match message:
-                case TaskMessageEvent():
+                case TaskSteeredEvent():
                     self._handle_message(message)
-                case TaskAnswerEvent():
+                case TaskAnsweredEvent():
                     self._handle_answer(message)
-                case TaskCancelRequestEvent():
+                case TaskCancelRequestedEvent():
                     self._handle_cancel_request()
                 case _:
-                    assert isinstance(message, TaskForceCancelEvent), f'Unexpected message {message.kind!r}.'
+                    assert isinstance(message, TaskForceCancelRequestedEvent), f'Unexpected message {message.kind!r}.'
                     self.forced = True
                     self.token.cancel()
 
-    def _handle_message(self, message: TaskMessageEvent) -> None:
+    def _handle_message(self, message: TaskSteeredEvent) -> None:
         if self._ctx is None:
             self._pending_messages.append(message.message)
         else:
             _steer(self._ctx, message.message)
 
-    def _handle_answer(self, message: TaskAnswerEvent) -> None:
+    def _handle_answer(self, message: TaskAnsweredEvent) -> None:
         if (waiter := self._answers.pop(message.question_id, None)) is not None:
             answered, answer = waiter
             answer.append(message.answer)
@@ -287,7 +287,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
     ) -> TaskSettledEvent:
         task_id, agent_name = start.task_id, start.agent_name
         history: list[ModelMessage] | None = None
-        if isinstance(start, TaskFollowUpEvent):
+        if isinstance(start, TaskResumedEvent):
             history = self._histories.get(task_id)
             if history is None:
                 return TaskFailedEvent(
@@ -321,7 +321,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
                 if attempt > self.retries:
                     return TaskFailedEvent(task_id=task_id, agent_name=agent_name, error=error, usage=usage)
                 await self.transport.send(
-                    TaskRetryEvent(task_id=task_id, agent_name=agent_name, attempt=attempt + 1, error=error)
+                    TaskRetriedEvent(task_id=task_id, agent_name=agent_name, attempt=attempt + 1, error=error)
                 )
                 continue
             self._keep(task_id, result.all_messages())

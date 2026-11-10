@@ -201,9 +201,9 @@ orchestrator = Agent(
   its observer then gets every task event as `DelegationTaskEvent(event=...)`.
 - `TaskControl` fields `auto_background_after=None`, `max_running_tasks=None`, `forward_events=False`
   are opt-in.
-- Every step is a `SubAgentMessage` capability event (`TaskAssignedEvent`, `TaskQuestionEvent`,
+- Every step is a `SubAgentMessageEvent` capability event (`TaskAssignedEvent`, `TaskQuestionAskedEvent`,
   `TaskCompletedEvent`, ...) plus `TaskBackgroundedEvent`; `@on_event` listeners can rewrite or
-  `veto()` the ones sent to a task, and answer a `TaskQuestionEvent` by setting `answer`.
+  `veto()` the ones sent to a task, and answer a `TaskQuestionAskedEvent` by setting `answer`.
 - Remote agents: `TaskControl(remote_agents=[RemoteSubAgent(name=...)], transport=...)` (`SubAgentTransport`;
   `InMemoryTransport` in process), served by `SubAgentWorker(agents={name: agent}, transport=..., deps=...)`
   in the other process. `accept_timeout=30.0` fails a task no worker picks up.
