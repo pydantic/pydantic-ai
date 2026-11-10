@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import timedelta
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Self, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeVar
 
 import anyio
 
@@ -102,10 +102,12 @@ class WrapperModel(Model):
     Does nothing on its own, used as a base class.
     """
 
+    _answers_requests_itself: ClassVar[bool] = False
+
     wrapped: Model
     """The underlying model being wrapped."""
 
-    def __init__(self, wrapped: Model | KnownModelName):
+    def __init__(self, wrapped: Model | KnownModelName | str):
         super().__init__()
         self.wrapped = infer_model(wrapped)
 

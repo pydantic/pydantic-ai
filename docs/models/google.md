@@ -166,6 +166,14 @@ streams for longer than it isn't cut off by the server. A per-request [`timeout`
 doesn't change the header. To set a different server deadline, send the header yourself in
 [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers].
 
+A user-agent you send in `extra_headers`, in any spelling, replaces Pydantic AI's on
+[`GoogleModel`][pydantic_ai.models.google.GoogleModel] and
+[`GoogleImageGenerationModel`][pydantic_ai.images.google.GoogleImageGenerationModel] requests. `google-genai` puts its
+own label in front of it, so it goes out as one `user-agent: google-genai-sdk/… gl-python/… <your value>` header. It
+also replaces a user-agent set on a client you pass. If that client spells the header other than `user-agent`, as in
+`HttpOptions(headers={'User-Agent': ...})`, `google-genai` keeps its own lowercase `user-agent` beside it, so your value
+goes out on both lines.
+
 The Google providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
 
 ## HTTP Retries
@@ -372,8 +380,10 @@ keeps the full scale. For a model id the table doesn't cover, declare its
 levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
 (default: the full scale); unsupported efforts resolve to the nearest supported level.
 
-`gemini-4-argon` supports the `low`, `medium` and `high` levels, so `thinking=False` and `'minimal'` resolve to
-`low`. On Google Cloud it rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
+`gemini-4-argon` and `gemini-4-carbon` support the `low`, `medium` and `high` levels, so `thinking=False` and
+`'minimal'` resolve to `low`.
+
+On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
 `thinking_level` instead.
 
 `thinking=False` turns thinking off where the model allows it. The Pro models can't turn it off, so they think as
@@ -534,7 +544,7 @@ A job that fails or is cancelled before it writes any results doesn't report whi
 
 ## Long decode
 
-`gemini-4-argon` caps the output of each request; Google's
+`gemini-4-argon` and `gemini-4-carbon` cap the output of each request; Google's
 [long decode docs](https://ai.google.dev/gemini-api/docs/generate-content/long-decode) give the caps and defaults. When
 [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] is above the cap, a request that reaches it returns a
 continuation token, and the `google-genai` SDK continues the response from it in another request, until the response

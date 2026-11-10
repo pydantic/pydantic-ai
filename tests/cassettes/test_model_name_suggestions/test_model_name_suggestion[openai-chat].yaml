@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
     headers:
       accept:
       - application/json
@@ -8,20 +11,21 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '94'
+      - "86"
       content-type:
       - application/json
       host:
       - api.openai.com
-    method: POST
-    parsed_body:
-      messages:
-      - content: hello
-        role: user
-      model: gpt-5.2-proo
-      stream: false
-    uri: https://api.openai.com/v1/chat/completions
+    body:
+      type: json
+      content:
+        model: gpt-5.6-sool
+        stream: false
+        messages:
+        - role: user
+          content: hello
   response:
+    status: 404
     headers:
       access-control-expose-headers:
       - CF-Ray
@@ -30,8 +34,6 @@ interactions:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
-      content-length:
-      - '173'
       content-type:
       - application/json; charset=utf-8
       strict-transport-security:
@@ -40,13 +42,12 @@ interactions:
       - chunked
       vary:
       - Origin
-    parsed_body:
-      error:
-        code: model_not_found
-        message: The model `gpt-5.2-proo` does not exist or you do not have access to it.
-        param: null
-        type: invalid_request_error
-    status:
-      code: 404
-      message: Not Found
-version: 1
+    body:
+      type: json
+      content:
+        error:
+          message: The model `gpt-5.6-sool` does not exist or you do not have access to it.
+          type: invalid_request_error
+          param: null
+          code: model_not_found
+  recorded_at: 2026-11-07T19:13:54.961355+00:00
