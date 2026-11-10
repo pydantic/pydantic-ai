@@ -1004,9 +1004,10 @@ picker, under **Fallback chains** below your models (`/model chains` opens it th
   or deleted.
 
 Outside a turn, such as when compacting a conversation or naming a session, a chain or
-`@*` also moves on when a model refuses a request. A turn, a delegated task's included,
-streams its responses, and a refusal is only known once it has streamed, so a refusal
-still ends the turn. A chain uses its first model's
+`@*` also moves on when a model refuses a request. A turn streams its responses, and so
+does a delegated task. A refusal is only known once it has streamed, so it still ends
+the turn. A delegated task on the session's model falls back through its chain; a task
+on a delegate's own model does not. A chain uses its first model's
 `/model settings` controls and defaults, and saves overrides under
 `chain:NAME`, so `/fast` works for a chain that starts with Codex, as it does for
 `openai-codex@*`. A chain cannot contain another chain, but it can contain `@*`. A model whose profile is not signed in fails the turn

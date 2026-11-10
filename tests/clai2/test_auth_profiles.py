@@ -385,6 +385,17 @@ async def test_a_stock_agent_falls_back_only_on_the_sessions_selection(tmp_path:
         await session.agent.run('task', model=FunctionModel(fails))
 
 
+async def test_switching_between_single_models_keeps_the_stock_agent() -> None:
+    session = Session(create_stock_agent(TestModel()), deps=None)
+    session.resolve_model = lambda name: TestModel(call_tools=[], custom_output_text=name)
+    session.model = 'a:x'
+    assert (await session.prompt('hello')).output == 'a:x'
+    agent = session.agent
+    session.model = 'a:y'
+    assert (await session.prompt('hello')).output == 'a:y'
+    assert session.agent is agent
+
+
 async def test_a_chain_does_not_hide_a_profile_that_is_not_signed_in(tmp_path: Path) -> None:
     models = resolver(tmp_path, {'pooled': ModelProvider(prefix='pooled', resolve=echo)})
     assert models.store is not None
