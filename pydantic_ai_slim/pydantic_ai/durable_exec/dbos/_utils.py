@@ -1,6 +1,7 @@
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any
+from dataclasses import replace
+from typing import Any, TypeVar
 from weakref import WeakKeyDictionary
 
 import anyio
@@ -14,6 +15,8 @@ from pydantic_ai.durable_exec._toolset import guard_run_context
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.tools import AgentDepsT, RunContext
+
+_ResponseT = TypeVar('_ResponseT')
 
 _run_ids_by_workflow: WeakKeyDictionary[DBOSContext, set[str | None]] = WeakKeyDictionary()
 """The `run_id`s of the agent runs each workflow execution has started."""
@@ -63,21 +66,19 @@ def record_workflow_run(run_id: str | None) -> None:
     _run_ids_by_workflow.setdefault(context, set()).add(run_id)
 
 
-def reject_other_runs_response(response: object, ctx: RunContext[Any]) -> None:
-    """Raise if a model-request step returned a response recorded by another run of this workflow execution.
+def replayed_response_for_run(response: _ResponseT, ctx: RunContext[Any]) -> _ResponseT:
+    """Return a replayed model-request step's response to the run that replayed it, with that run's `run_id`.
 
-    DBOS replays a recovered workflow's steps by position, checking only their names, so concurrent runs
-    of one agent can take each other's recorded steps. A response recorded before steps were stamped
-    with their run's `run_id` has none, and isn't checked.
+    The recorded `run_id` names the run that recorded the step. DBOS replays a recovered workflow's steps by
+    position, checking only their names, so concurrent runs of one agent can take each other's recorded steps:
+    a response recorded by another run of this workflow execution raises. Any other recorded `run_id` names
+    this run in an earlier execution, such as the workflow a fork was copied from. A response recorded before
+    steps carried a `run_id` has none, and is returned as is.
     """
+    if not isinstance(response, ModelResponse) or response.run_id in (None, ctx.run_id):
+        return response
     context = get_local_dbos_context()
-    if (
-        isinstance(response, ModelResponse)
-        and response.run_id is not None
-        and response.run_id != ctx.run_id
-        and context is not None
-        and response.run_id in _run_ids_by_workflow.get(context, ())
-    ):
+    if context is not None and response.run_id in _run_ids_by_workflow.get(context, ()):
         raise UserError(
             f'Recovering DBOS workflow {context.workflow_id!r} replayed a model response that agent run '
             f'{response.run_id!r} recorded into agent run {ctx.run_id!r}. DBOS replays steps by position, so '
@@ -85,6 +86,7 @@ def reject_other_runs_response(response: object, ctx: RunContext[Any]) -> None:
             'concurrent run a workflow of its own: a `@DBOS.workflow` function that runs the agent once, or a '
             'tool with `child_workflow` metadata that runs a nested agent.'
         )
+    return replace(response, run_id=ctx.run_id)
 
 
 async def _durable_sleep(seconds: float) -> None:

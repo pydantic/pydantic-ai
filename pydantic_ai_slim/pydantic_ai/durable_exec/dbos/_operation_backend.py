@@ -38,7 +38,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 from ._operation_names import DBOSOperationNamer
-from ._utils import StepConfig, reject_other_runs_response
+from ._utils import StepConfig, replayed_response_for_run
 
 if TYPE_CHECKING:
     from dbos import StepOptions, StepReservation
@@ -231,8 +231,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                         _live_model_responses.reset(token)
                     if live_responses:
                         return operation.result_codec.load(live_responses[-1])
-                    reject_other_runs_response(payload, model_params.run_context)
-                    return operation.result_codec.load(payload)
+                    return replayed_response_for_run(operation.result_codec.load(payload), model_params.run_context)
 
                 dispatch: Callable[[Callable[..., Any], ParamsT], Any] = dispatch_model
 

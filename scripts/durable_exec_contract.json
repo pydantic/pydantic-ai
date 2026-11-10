@@ -1077,7 +1077,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._prepare_event_dispatch",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.wrap_run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_operation_backend.py::DBOSOperationBackend._bind_model_or_event.model_step",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_utils.py::reject_other_runs_response",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_utils.py::replayed_response_for_run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_operation_backend.py::PrefectOperationBackend.execute"
       ]
     },
@@ -4114,7 +4114,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_operation_backend.py::DBOSOperationBackend._bind_model_or_event.model_step",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_utils.py::reject_other_runs_response"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_utils.py::replayed_response_for_run"
       ]
     },
     "ModelResponse.state": {

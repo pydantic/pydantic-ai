@@ -6448,6 +6448,38 @@ async def test_dbos_response_carrying_an_earlier_runs_run_id(dbos: DBOS, recover
     assert run_ids == ['<workflow>:1', '<workflow>:2', '<workflow>:1', second_response_run_id]
 
 
+fork_run_ids_agent = Agent(TestModel(), name='fork_run_ids_agent', capabilities=[DBOSDurability()])
+
+
+@fork_run_ids_agent.tool_plain
+def fork_noop() -> str:
+    return 'ok'
+
+
+@DBOS.workflow()
+async def fork_run_ids_workflow() -> list[str | None]:
+    result = await fork_run_ids_agent.run('Go.')
+    return [result.run_id, *(message.run_id for message in result.all_messages())]
+
+
+async def test_dbos_forked_workflow_responses_carry_the_fork_runs_run_id(dbos: DBOS) -> None:
+    """A forked workflow's replayed model responses carry the fork's run, not the run that recorded them.
+
+    A fork gets a workflow ID of its own, so its run's default `run_id` differs from the one the copied steps
+    were recorded with.
+    """
+    workflow_id = f'fork-run-ids-{uuid.uuid4()}'
+    with SetWorkflowID(workflow_id):
+        await fork_run_ids_workflow()
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    assert [step['function_name'] for step in steps] == ['fork_run_ids_agent__model.request'] * 2
+
+    fork = await dbos.fork_workflow_async(workflow_id, len(steps) + 1)
+    run_id, *message_run_ids = await fork.get_result()
+    assert run_id == f'{fork.get_workflow_id()}:1'
+    assert message_run_ids == [run_id] * 4
+
+
 deadline_agent = Agent(TestModel(), name='deadline_agent', capabilities=[DBOSDurability()])
 deadline_seen: list[datetime | None] = []
 
