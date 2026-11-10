@@ -5,16 +5,14 @@ from __future__ import annotations
 import asyncio
 import math
 import posixpath
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from typing import TypeVar
 
 import anyio
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceCommand, WorkspaceRef, WorkspaceTimeoutError
-from pydantic_ai_harness._mounts import RunAsRoot, S3Mount, mounted
+from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceRef, WorkspaceTimeoutError
 
 # Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
 try:
@@ -251,15 +249,3 @@ def check_timeout(timeout: float | None) -> None:
     """Raise `ValueError` unless a command `timeout` is a positive finite number or `None`, as core's backends do."""
     if timeout is not None and (not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0):
         raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
-
-
-def with_mounts(
-    backend: WorkspaceBackend,
-    run_as_root: RunAsRoot,
-    mounts: Sequence[S3Mount] | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]],
-    ctx: RunContext[AgentDepsT],
-) -> WorkspaceBackend:
-    """`backend`, mounting a sandbox capability's `mounts=` before its first command or file operation."""
-    if callable(mounts):
-        return mounted(backend, run_as_root, lambda: mounts(ctx))
-    return mounted(backend, run_as_root, lambda: mounts)

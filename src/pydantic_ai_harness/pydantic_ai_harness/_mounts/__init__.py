@@ -22,6 +22,7 @@ import anyio
 import anyio.to_thread
 from pydantic import TypeAdapter, ValidationError
 
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -196,14 +197,34 @@ def _check_paths(mounts: Sequence[S3Mount]) -> None:
 
 
 def mounted(
-    backend: WorkspaceBackend, run_as_root: RunAsRoot, mounts: Callable[[], Sequence[S3Mount]]
+    backend: WorkspaceBackend,
+    run_as_root: RunAsRoot,
+    mounts: Sequence[S3Mount] | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]],
+    ctx: RunContext[AgentDepsT],
 ) -> WorkspaceBackend:
-    """`backend`, mounting `mounts()` before its first command or file operation; `backend` itself without mounts."""
-    first = tuple(mounts())
-    if not first:
+    """`backend`, mounting a sandbox capability's `mounts=` before its first command or file operation.
+
+    A function is not called here, since building a workspace does no I/O and the function may ask a service such as
+    AWS STS for keys: the first operation calls it, in a worker thread. An empty list leaves `backend` as it is.
+    """
+    if callable(mounts):
+        # The function stands for the mounts it will return, so a run-level capability with another one is told apart.
+        return _Mounted(_as_workspace(backend), run_as_root, lambda: mounts(ctx), policy=(mounts,))
+    listed = tuple(mounts)
+    if not listed:
         return backend
-    _check_paths(first)
-    return _Mounted(backend if isinstance(backend, Workspace) else Workspace(backend), run_as_root, mounts, first)
+    _check_paths(listed)
+    policy = sorted((mount.path, mount.url, mount.endpoint, mount.region, mount.read_only) for mount in listed)
+    return _Mounted(_as_workspace(backend), run_as_root, lambda: listed, policy=tuple(policy))
+
+
+def _as_workspace(backend: WorkspaceBackend) -> Workspace:
+    return backend if isinstance(backend, Workspace) else Workspace(backend)
+
+
+def _shown(mounts: Sequence[S3Mount]) -> frozenset[S3Mount]:
+    """What the folders show: `S3Mount` equality leaves out the keys and their expiry."""
+    return frozenset(mounts)
 
 
 class _Mounted(WrapperWorkspace):
@@ -214,13 +235,15 @@ class _Mounted(WrapperWorkspace):
         wrapped: Workspace,
         run_as_root: RunAsRoot,
         mounts: Callable[[], Sequence[S3Mount]],
-        first: Sequence[S3Mount],
+        *,
+        policy: tuple[object, ...],
     ) -> None:
         super().__init__(wrapped)
         self._run_as_root = run_as_root
         self._mounts = mounts
-        # `S3Mount` equality leaves out the keys and their expiry, so these are what the folders show.
-        self._first = frozenset(first)
+        self._policy = policy
+        self._first: frozenset[S3Mount] | None = None
+        """What the first call returned, which every later call must match."""
         self._remount_at: datetime | None = None
         """When the next operation mounts again to refresh the keys; `None` before the first."""
 
@@ -230,8 +253,8 @@ class _Mounted(WrapperWorkspace):
         return anyio.Lock()
 
     def durable_policy(self) -> tuple[object, ...]:
-        mounts = sorted((mount.path, mount.url, mount.endpoint, mount.region, mount.read_only) for mount in self._first)
-        return (*super().durable_policy(), *mounts)
+        """What the folders show for a list, never the keys; the function itself for a function."""
+        return (*super().durable_policy(), *self._policy)
 
     def _due(self) -> bool:
         return self._remount_at is None or _now() >= self._remount_at
@@ -245,9 +268,16 @@ class _Mounted(WrapperWorkspace):
                 return
             # In a worker thread: the function may ask a service such as AWS STS for keys.
             fresh = tuple(await anyio.to_thread.run_sync(self._mounts))
-            if len(fresh) != len(self._first) or frozenset(fresh) != self._first:
+            if self._first is None:
+                _check_paths(fresh)
+            elif len(fresh) != len(self._first) or _shown(fresh) != self._first:
                 raise MountError('`mounts=` must return the same mounts each time, with fresh keys.')
             now = _now()
+            if not fresh:
+                # A function that returned no mounts: nothing to mount, and nothing to refresh.
+                self._first = frozenset()
+                self._remount_at = datetime.max.replace(tzinfo=UTC)
+                return
             for mount in fresh:
                 if mount.expires_at <= now:
                     raise MountError(
@@ -256,6 +286,7 @@ class _Mounted(WrapperWorkspace):
                     )
             request, expires_at = _request(fresh, await self.working_dir())
             reply = await self._call(request)
+            self._first = _shown(fresh)
             for folder in reply.get('recovered', []):
                 warnings.warn(
                     f'Files written into a mount folder while the bucket was not mounted there were moved to {folder}.',

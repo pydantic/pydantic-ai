@@ -115,7 +115,7 @@ agent = Agent(
 result = agent.run_sync('Tidy up the files in files/.', deps=Customer(id='c-1042'))
 ```
 
-The function is called when the run picks its workspace, to check the mounts, and again from a worker thread each time the sandbox needs keys: before the run's first command or file operation, and before the first operation in the five minutes before the keys expire. Each call must return the same mounts, by path, bucket, endpoint, region and `read_only`, with only the keys changing; otherwise the operation raises `MountError`.
+The function is called from a worker thread each time the sandbox needs keys: before the run's first command or file operation, and before the first operation in the five minutes before the keys expire. Building the run's workspace doesn't call it, so a slow call to a key service delays only the first operation. Each call must return the same mounts, by path, bucket, endpoint, region and `read_only`, with only the keys changing; otherwise the operation raises `MountError`.
 
 ## Cloudflare R2, MinIO and other S3-compatible stores
 

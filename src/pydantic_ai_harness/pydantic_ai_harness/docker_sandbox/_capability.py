@@ -9,12 +9,11 @@ from typing import Any
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._mounts import S3Mount
+from pydantic_ai_harness._mounts import S3Mount, mounted
 from pydantic_ai_harness._workspace_provider import (
     check_provider,
     check_working_dir,
     reject_defer_loading,
-    with_mounts,
 )
 from pydantic_ai_harness.docker_sandbox._backend import (
     PROVIDER,
@@ -140,4 +139,4 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
                 docker_args=self.docker_args,
                 executable=self._executable_path,
             )
-        return with_mounts(backend, backend._run_as_root, self.mounts, ctx)  # pyright: ignore[reportPrivateUsage]
+        return mounted(backend, backend._run_as_root, self.mounts, ctx)  # pyright: ignore[reportPrivateUsage]

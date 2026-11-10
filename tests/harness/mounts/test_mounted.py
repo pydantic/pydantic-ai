@@ -10,6 +10,7 @@ import inspect
 import json
 import posixpath
 import re
+import threading
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -20,6 +21,9 @@ import pytest
 from hypothesis import HealthCheck, given, settings, strategies as st
 from inline_snapshot import snapshot
 
+from pydantic_ai import RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import CommandResult, Workspace
 from pydantic_ai_harness import MountError, S3Mount
 from pydantic_ai_harness._mounts import (
@@ -32,6 +36,7 @@ from pydantic_ai_harness._mounts import (
 from tests.workspace_fakes import FakeWorkspace
 
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
+CTX = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
 SECRETS = ('AKIA-the-key-id', 'the-secret-key', 'the-session-token')
 
 
@@ -89,8 +94,9 @@ def s3(
     )
 
 
-def wrap(root: FakeRoot, mounts: Callable[[], Sequence[S3Mount]]) -> Workspace:
-    backend = mounted(FakeWorkspace('box'), root, mounts)
+def wrap(root: FakeRoot, mounts: Sequence[S3Mount] | Callable[[], Sequence[S3Mount]]) -> Workspace:
+    """Mount `mounts`: a list as it is, a function as a `mounts=` function that ignores the run context."""
+    backend = mounted(FakeWorkspace('box'), root, (lambda _: mounts()) if callable(mounts) else mounts, CTX)
     assert isinstance(backend, Workspace)
     return backend
 
@@ -193,7 +199,7 @@ async def test_every_operation_that_touches_files_mounts_first(
 ) -> None:
     root = FakeRoot()
     backend = FakeWorkspace('box', {'/workspace/data/a': b''})
-    workspace = mounted(backend, root, lambda: [s3()])
+    workspace = mounted(backend, root, [s3()], CTX)
     assert isinstance(workspace, Workspace)
 
     await operation(workspace)
@@ -227,33 +233,76 @@ def test_every_workspace_coroutine_is_gated_or_explained() -> None:
 
 async def test_a_workspace_is_wrapped_as_it_is() -> None:
     inner = Workspace(FakeWorkspace('box'))
-    workspace = mounted(inner, FakeRoot(), lambda: [s3()])
+    workspace = mounted(inner, FakeRoot(), [s3()], CTX)
 
     assert isinstance(workspace, _Mounted)
     assert workspace.wrapped is inner
 
 
-def test_no_mounts_leave_the_backend_as_it_is() -> None:
+def test_an_empty_list_leaves_the_backend_as_it_is() -> None:
     backend = FakeWorkspace('box')
 
-    assert mounted(backend, FakeRoot(), lambda: []) is backend
+    assert mounted(backend, FakeRoot(), [], CTX) is backend
+
+
+async def test_a_function_is_first_called_by_the_first_operation_in_a_worker_thread() -> None:
+    loop_thread = threading.get_ident()
+    threads: list[int] = []
+
+    def mounts(ctx: RunContext[None]) -> list[S3Mount]:
+        assert ctx is CTX
+        threads.append(threading.get_ident())
+        return [s3()]
+
+    root = FakeRoot()
+    workspace = mounted(FakeWorkspace('box'), root, mounts, CTX)
+    assert threads == []
+
+    assert isinstance(workspace, Workspace)
+    await workspace.exists('data')
+    assert len(threads) == 1 and threads[0] != loop_thread
+    assert len(root.calls) == 1
+
+
+async def test_a_function_that_returns_no_mounts_mounts_nothing_and_is_not_called_again() -> None:
+    calls: list[None] = []
+
+    def mounts(_: RunContext[None]) -> list[S3Mount]:
+        calls.append(None)
+        return []
+
+    root = FakeRoot()
+    workspace = mounted(FakeWorkspace('box'), root, mounts, CTX)
+    assert isinstance(workspace, Workspace)
+
+    await workspace.exists('data')
+    await workspace.exists('data')
+
+    assert root.calls == [] and len(calls) == 1
+
+
+async def test_a_function_returning_overlapping_paths_is_refused_at_the_first_operation() -> None:
+    workspace = wrap(FakeRoot(), lambda: [s3('data'), s3('data/inner', 's3://other/')])
+
+    with pytest.raises(MountError, match="The mount paths 'data' and 'data/inner' overlap"):
+        await workspace.exists('data')
 
 
 def test_a_folder_beside_another_with_a_longer_name_is_not_inside_it() -> None:
     assert isinstance(
-        mounted(FakeWorkspace('box'), FakeRoot(), lambda: [s3('data'), s3('database', 's3://other/')]), _Mounted
+        mounted(FakeWorkspace('box'), FakeRoot(), [s3('data'), s3('database', 's3://other/')], CTX), _Mounted
     )
 
 
 @pytest.mark.parametrize(('first', 'second'), [('data', 'data'), ('data', 'data/inner')])
 def test_overlapping_paths_are_refused(first: str, second: str) -> None:
     with pytest.raises(MountError, match=f"The mount paths '{first}' and '{second}' overlap"):
-        mounted(FakeWorkspace('box'), FakeRoot(), lambda: [s3(first), s3(second, 's3://other/')])
+        mounted(FakeWorkspace('box'), FakeRoot(), [s3(first), s3(second, 's3://other/')], CTX)
 
 
 async def test_fresh_keys_are_fetched_before_the_old_ones_expire(clock: Clock) -> None:
     root = FakeRoot()
-    keys = iter(['first', 'second', 'third'])
+    keys = iter(['first', 'second'])
     workspace = wrap(root, lambda: [s3(key=next(keys), expires_in=clock.now - NOW + timedelta(hours=1))])
 
     await workspace.exists('data')
@@ -262,7 +311,7 @@ async def test_fresh_keys_are_fetched_before_the_old_ones_expire(clock: Clock) -
     clock.now = NOW + timedelta(minutes=55)
     await workspace.exists('data')
 
-    assert [request['mounts'][0]['keys']['access_key_id'] for request in root.requests()] == ['second', 'third']
+    assert [request['mounts'][0]['keys']['access_key_id'] for request in root.requests()] == ['first', 'second']
 
 
 async def test_keys_shorter_lived_than_the_margin_are_used_until_they_expire(clock: Clock) -> None:
@@ -278,8 +327,7 @@ async def test_keys_shorter_lived_than_the_margin_are_used_until_they_expire(clo
 
 async def test_a_list_whose_keys_expired_is_refused(clock: Clock) -> None:
     root = FakeRoot()
-    mounts = [s3()]
-    workspace = wrap(root, lambda: mounts)
+    workspace = wrap(root, [s3()])
     await workspace.exists('data')
 
     clock.now = NOW + timedelta(hours=1)
@@ -299,10 +347,14 @@ CHANGES: dict[str, Callable[[], list[S3Mount]]] = {
 
 
 @pytest.mark.parametrize('changed', list(CHANGES.values()), ids=list(CHANGES))
-async def test_mounts_that_change_between_calls_are_refused(changed: Callable[[], list[S3Mount]]) -> None:
+async def test_mounts_that_change_between_calls_are_refused(
+    changed: Callable[[], list[S3Mount]], clock: Clock
+) -> None:
     calls = iter([[s3()], changed()])
     workspace = wrap(FakeRoot(), lambda: next(calls))
+    await workspace.exists('data')
 
+    clock.now = NOW + timedelta(minutes=55)
     with pytest.raises(
         MountError, match=re.escape('`mounts=` must return the same mounts each time, with fresh keys.')
     ):
@@ -386,12 +438,28 @@ async def test_a_cancelled_operation_lets_the_mount_finish() -> None:
 
 def test_the_durable_policy_names_the_mounts_but_not_their_keys() -> None:
     def policy(key: str) -> tuple[object, ...]:
-        workspace = mounted(FakeWorkspace('box'), FakeRoot(), lambda: [s3(key=key, region='eu-1')])
+        workspace = mounted(FakeWorkspace('box'), FakeRoot(), [s3(key=key, region='eu-1')], CTX)
         assert isinstance(workspace, Workspace)
         return workspace.durable_policy()
 
     assert policy('first') == policy('second') == snapshot((('data', 's3://bucket/reports/', None, 'eu-1', False),))
     assert not any(secret in repr(policy('first')) for secret in SECRETS)
+
+
+def test_the_durable_policy_of_a_function_is_the_function() -> None:
+    def mounts(_: RunContext[None]) -> list[S3Mount]:
+        raise AssertionError('not called to build the policy')
+
+    def other(_: RunContext[None]) -> list[S3Mount]:
+        raise AssertionError('not called to build the policy')
+
+    def policy(function: Callable[[RunContext[None]], list[S3Mount]]) -> tuple[object, ...]:
+        workspace = mounted(FakeWorkspace('box'), FakeRoot(), function, CTX)
+        assert isinstance(workspace, Workspace)
+        return workspace.durable_policy()
+
+    assert policy(mounts) == policy(mounts) == (mounts,)
+    assert policy(mounts) != policy(other)
 
 
 def test_the_repr_leaves_out_the_keys() -> None:
