@@ -130,7 +130,7 @@ def _chunks(response_id: str, tool_name: str | None) -> list[chat.ChatCompletion
 
 def _chat_model(
     *, stream: bool, response_ids: list[str], scoped: bool, base_url: str = 'https://api.openai.com/v1'
-) -> tuple[OpenAIChatModel, Any]:
+) -> tuple[OpenAIChatModel, AsyncOpenAI]:
     """A Chat Completions model whose responses call `first_tool`, then `second_tool`, both as `call_0`, then answer.
 
     With a single response ID, it only answers.
@@ -142,12 +142,13 @@ def _chat_model(
     else:
         client = MockOpenAI(completions=[_completion(response_id, tool_name) for response_id, tool_name in turns])
     client.base_url = base_url
+    sdk_client = cast(AsyncOpenAI, client)
     model = OpenAIChatModel(
         'gpt-test',
-        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, client)),
+        provider=OpenAIProvider(openai_client=sdk_client),
         profile=ModelProfile(tool_call_ids_are_response_scoped=scoped),
     )
-    return model, client
+    return model, sdk_client
 
 
 def _agent() -> Agent[None, str]:
@@ -181,7 +182,7 @@ def _history_ids(messages: list[ModelMessage]) -> list[str]:
     ]
 
 
-def _wire_ids(client: Any) -> list[list[str]]:
+def _wire_ids(client: AsyncOpenAI) -> list[list[str]]:
     """The tool call IDs each Chat Completions request sent, calls and results in message order."""
     return [
         [
