@@ -48,7 +48,7 @@ After addressing comments, obtain a clean approval on the resulting head.
 Resolve every review thread.
 
 Douwebot posts as `github-actions[bot]` through the trusted [PR Bots publisher](../../../.github/workflows/bots.yml).
-Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> engine=<claude|opencode> -->` receipt.
+Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> engine=<claude|opencode|opencode-deepinfra> -->` receipt.
 Legacy receipts omit `engine`.
 `CI Review` can use the same bot account but carries a separate gh-aw receipt; it cannot satisfy this bar.
 Associate inline comments with the `head=` in their parent review's receipt, or with the comment's `original_commit_id` when the parent has none, because GitHub can move both a review's and a comment's `commit_id` after a push.

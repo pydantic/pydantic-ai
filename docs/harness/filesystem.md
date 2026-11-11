@@ -14,7 +14,7 @@ containment-checked before any I/O, and access is filtered through allow, deny, 
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls FileSystem tools such as read_file, write_file and edit_file. Before any I/O, each path is resolved with symlinks, checked to stay inside root_dir, and matched against the allowed, denied and read-only patterns; only then does the tool touch the workspace. Four example calls show a read that succeeds, a write to .env rejected as read-only, a read of /etc/passwd rejected as outside root_dir, and an edit announced as a FileChangeRequestEvent that a listener can cancel.](../img/harness/filesystem.svg)
+![The model calls FileSystem tools such as read_file, write_file and edit_file. Before any I/O, each path is resolved with symlinks, checked to stay inside root_dir, and matched against the allowed, denied and read-only patterns; only then does the tool touch the workspace. Four example calls show a read that succeeds, a write to .env rejected as read-only, a read of /etc/passwd rejected as outside root_dir, and an edit announced as a FileChangeRequestedEvent that a listener can cancel.](../img/harness/filesystem.svg)
 
 ## The problem
 
@@ -223,15 +223,15 @@ lands, without parsing tool arguments:
 
 | Event | Dispatch | Operation | Payload |
 |---|---|---|---|
-| `FileChangeRequestEvent` | immediate | `write_file`, `edit_file`, `create_directory` | `path`, `root_dir`, `operation`, `diff`, `truncated`; `cancel(reason)` |
+| `FileChangeRequestedEvent` | immediate | `write_file`, `edit_file`, `create_directory` | `path`, `root_dir`, `operation`, `diff`, `truncated`; `cancel(reason)` |
 | `FileReadEvent` | stream | `read_file` | `path`, `root_dir`, `content_hash` |
 | `DirectoryListedEvent` | stream | `list_directory` | `path`, `root_dir`, `entry_count` |
 | `FileWrittenEvent` | stream | `write_file` | `path`, `root_dir`, `content_hash` |
 | `FileEditedEvent` | stream | `edit_file` | a `FileWrittenEvent` plus `diff`, `truncated` |
 | `DirectoryCreatedEvent` | stream | `create_directory` | `path`, `root_dir` |
-| `FilesSearchedEvent` | stream | `search_files`, `find_files`, `list_files`, `grep` | `path`, `root_dir`, `pattern`, `search` (`grep` or `find`), `match_count`, `truncated` |
+| `FilesSearchedEvent` | stream | `search_files`, `find_files`, `list_files`, `grep` | `path`, `root_dir`, `pattern`, `search_kind` (`grep` or `find`), `match_count`, `truncated` |
 
-`FileChangeRequestEvent` is a decision; the other events are notifications.
+`FileChangeRequestedEvent` is a decision; the other events are notifications.
 
 - **When it fires**: after the path has passed the access checks and, for
   `write_file` and `edit_file`, after the conflict check. A denied path, a
@@ -271,7 +271,9 @@ exceeds 65536, bounding line-matching work before calling the differ.
 A final line without a newline is marked the way `git diff` marks it, so a
 change to the final newline alone is visible. A `FilesSearchedEvent` counts
 the matches the model received; `truncated` says the search stopped at
-`max_search_results` or `max_find_results`.
+`max_search_results` or `max_find_results`. `search` is the deprecated name of
+`search_kind`: it still reads, with a warning, and a payload saved under it
+still loads.
 
 `path` is the normalized location relative to `root_dir`, never an absolute
 path, so it is safe to echo to the model or a UI. `root_dir` is the emitting
@@ -290,11 +292,11 @@ its entries are. A denied or failed operation emits no event, including a
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import FileSystem
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent
+from pydantic_ai_harness.filesystem import FileChangeRequestedEvent
 
 agent = Agent('{{ anthropic:large }}', capabilities=[LocalWorkspace('.'), FileSystem()])
 
-@agent.on_event(FileChangeRequestEvent)
+@agent.on_event(FileChangeRequestedEvent)
 async def hold_migrations(ctx, event):
     if event.path.startswith('migrations/'):
         event.cancel('migrations need a human')

@@ -56,6 +56,7 @@ _HARNESS_DOCS = (
     'permissions',
     'posthog',
     'pylon',
+    'refine_output',
     'repo_context',
     'shell',
     'skills',

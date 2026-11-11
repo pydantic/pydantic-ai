@@ -676,6 +676,8 @@ async def run_conversation(
         replays: list[bytes] = []
         for _ in range(2):
             clock.now = replay_at
+            # Response IDs count `sent`, and a replay that sends two requests echoes its first ID in the second.
+            del transport.sent[len(conversation) :]
             transport.script = [Turn(text=scenario.replay_text)]
             await run('Anything more?', message_history=history, **scenario.run_kwargs)
             replays.append(transport.sent[-1])

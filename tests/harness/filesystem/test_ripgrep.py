@@ -183,7 +183,7 @@ class TestListFiles:
     async def test_event(self, workspace: Path, cwd_name: str) -> None:
         recorder = Recorder()
         await call(workspace, 'list_files', {'glob': '*.py'}, capabilities=[recorder], working_dir=workspace / cwd_name)
-        assert recorder.events[0].search == 'find'
+        assert recorder.events[0].search_kind == 'find'
         assert recorder.events[0].pattern == '*.py'
         assert recorder.events[0].match_count == 1
         assert recorder.events[0].path == cwd_name
@@ -263,7 +263,7 @@ class TestGrep:
             capabilities=[recorder],
             working_dir=workspace / cwd_name,
         )
-        assert recorder.events[0].search == 'grep'
+        assert recorder.events[0].search_kind == 'grep'
         assert recorder.events[0].pattern == 'os'
         assert recorder.events[0].path == 'src'
         assert recorder.events[0].root_dir == str(workspace)
