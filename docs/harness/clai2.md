@@ -149,13 +149,17 @@ created, without forcing deletion. If cleanup or the ignore edit fails, the erro
 names the retained branch or checkout for recovery.
 
 On interactive exit, CLAI removes an unchanged worktree this launch created and
-tries to delete its newly created branch with `git branch -d`. Other unchanged
-worktrees are kept. If the checkout changed, CLAI asks whether to remove it.
+tries to delete its newly created branch with `git branch -d`. It also removes
+a `--worktree` checkout with no uncommitted or untracked files and no unpushed commits,
+keeping the branch, unless a saved **No, don't ask again for this worktree**
+choice keeps it. Ignored files are deleted with the checkout; lock it with
+`git worktree lock PATH` to keep it. Other unchanged worktrees are kept. If the
+checkout changed, CLAI asks whether to remove it.
 Default Git removal keeps the branch and refuses dirty or locked checkouts.
 
 You can register a user-only `worktrees.remove_commands` entry for a repository.
 After confirmation, that command runs instead of Git and may delete the branch
-and uncommitted files. Automatic removal of unchanged worktrees and
+and uncommitted files. Automatic removal and
 `/workspaces destroy` continue to use Git. See
 [the removal-command reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
 for configuration and shell-function examples.
@@ -220,9 +224,14 @@ From a source checkout:
 uv run --project pydantic-clai2 clai2
 ```
 
-Run `/login github-copilot`, then open `/model add` and choose `github-copilot`.
-The provider menu also starts login when no credentials exist. No application
-registration or client ID configuration is required. CLAI supplies the same
+Run `/login github-copilot`. Login adds every model your account's catalog lists
+to `/model` and, when you have not chosen a model, selects a recent strong one, such
+as Claude Opus 5.5 or Gemini 4 Argon; a model you chose stays selected. To switch,
+open `/model add` and choose `github-copilot`. The provider menu also starts login
+when no credentials exist. If listing the models fails, the login stays saved and
+CLAI reports why.
+
+No application registration or client ID configuration is required. CLAI supplies the same
 [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
 and requests `read:user` access to your GitHub profile. This identifies the existing
 Copilot OAuth application, not a separately registered CLAI application.
@@ -235,8 +244,8 @@ Open the link on this or another device and approve only your own session's code
 CLAI does not launch a browser, so a text browser cannot block login or take over
 an SSH terminal. Ctrl-C stops polling; GitHub controls expiry. There is no localhost callback.
 
-GitHub authorization does not establish Copilot access. The model menu queries
-your account's catalog and keeps only picker-enabled `/chat/completions` models.
+GitHub authorization does not establish Copilot access. Login and the model menu
+query your account's catalog and keep only picker-enabled `/chat/completions` models.
 It includes current-model details and `Ctrl+S` settings. Subscription and
 organization policy still control inference access. A known ID also works with
 `/model github-copilot:claude-haiku-4.5`.
@@ -280,13 +289,24 @@ Pass secret references or use plugin-owned credential storage instead of embeddi
 
 `/set` on its own opens a full-screen menu, the same kind Code Puppy uses: the
 settings on the left, details for the highlighted one on the right (current
-value, default, what it does). Type to filter. Enter edits: booleans and the
-model get a picker (the model list is searchable, with "Type a value..." for
-anything not listed), everything else a typed input that validates as you go.
+value, default, what it does). Press `/` to search. While searching, printable
+characters, including Space and `R`, are query text, not actions. Enter ends the
+search and keeps the matches; `/` resumes it. Esc clears the search or retained
+filter first; with no filter, Esc closes.
+
+Outside search, Space cycles the highlighted setting through its declared
+choices in order, wrapping from the last to the first, and saves immediately
+without moving the selection or scroll position. If the current value is unset
+or not listed, Space selects the first choice. This includes booleans, model,
+theme, spinner, and other settings with multiple choices; Space does nothing on
+free-text or single-choice rows. Enter still opens a picker for fields with
+choices (the model list is searchable, with "Type a value..." for anything not
+listed), or a typed input that validates as you go for other fields.
 The input opens holding the current value unless it is the default or not
 set: Enter without changes saves nothing, and an empty input resets.
-`R` resets the highlighted setting. Esc closes. Every
-edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
+`R` resets the highlighted setting outside search. Every edit saves and applies
+immediately, the same as `/set KEY VALUE`; **Save & close** only leaves the menu
+with those edits already saved. `/settings` is
 an alias of `/set` and accepts the same arguments.
 
 While a turn is running, `/set`, `/settings`, `/system_prompt`, `/model`, `/model add`, `/model settings`,
@@ -606,7 +626,7 @@ bounded unified diff using Termflow `DiffRenderer`, the same renderer Code Puppy
 uses. The default appearance uses Claude Code's green addition and red deletion
 backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
 Code syntax colours retain the Monokai default. Successful file writes also show the proposed diff from their matching
-`FileChangeRequestEvent`: new files show additions, overwrites show before/after
+`FileChangeRequestedEvent`: new files show additions, overwrites show before/after
 changes. Without a matching request event, only the written path is shown. Failed
 or cancelled writes do not display a success diff. Large diffs retain the
 filesystem's truncation notice. Coder shell events show the command, attached
