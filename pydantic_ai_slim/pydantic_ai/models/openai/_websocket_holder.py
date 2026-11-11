@@ -53,20 +53,26 @@ class _ResponsesWebSocketState:
                     # and a socket opened now would only serve this one request.
                     if not self.leases or self.connection_failed:
                         return None
-                    try:
-                        self.socket = await connect()
-                    except (APIConnectionError, ModelConnectionError):
-                        # Do not repeat an unavailable transport's handshake for every tool-loop request.
-                        self.connection_failed = True
-                        raise
-                    if socket is not None:
-                        # A socket replaced near OpenAI's time limit closes once its responses finish.
-                        await socket.close_if_idle()
+                    await self._replace_socket(socket, connect)
             socket = self.socket
             assert socket is not None
         if socket.headers != headers:
             return None
         return socket.reserve(response_id)
+
+    async def _replace_socket(
+        self, socket: ResponsesWebSocket | None, connect: Callable[[], Awaitable[ResponsesWebSocket]]
+    ) -> None:
+        """Open a socket in place of `socket`, which is the one this state holds. The caller holds `open_lock`."""
+        try:
+            self.socket = await connect()
+        except (APIConnectionError, ModelConnectionError):
+            # Do not repeat an unavailable transport's handshake for every tool-loop request.
+            self.connection_failed = True
+            raise
+        if socket is not None:
+            # A socket replaced near OpenAI's time limit closes once its responses finish.
+            await socket.close_if_idle()
 
 
 @dataclass(eq=False)
