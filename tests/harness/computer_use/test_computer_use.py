@@ -162,7 +162,7 @@ class TestComputerUse:
                 [{'type': 'keypress', 'keys': ['ctrl+s']}, {'type': 'wait', 'seconds': 0.01}],
             ),
             name='computer',
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0), *durability],
+            capabilities=[provider.capability(), ComputerUse(), *durability],
         )
         result = await agent.run('Type hi and save.')
 
@@ -205,7 +205,7 @@ class TestComputerUse:
         self, actions: list[dict[str, Any]], ran: list[ComputerAction], summary: str
     ) -> None:
         provider = ScreenProvider()
-        agent = Agent(_scripted(actions), capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
+        agent = Agent(_scripted(actions), capabilities=[provider.capability(), ComputerUse()])
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert provider.actions == ran
@@ -217,17 +217,21 @@ class TestComputerUse:
         }
 
     @pytest.mark.parametrize(
-        'actions,pauses',
+        'actions,settle,pauses',
         [
-            pytest.param([{'type': 'click', 'x': 1, 'y': 1}], [0.5], id='settles-after-acting'),
+            pytest.param([{'type': 'click', 'x': 1, 'y': 1}], None, [], id='no-pause-by-default'),
+            pytest.param([{'type': 'click', 'x': 1, 'y': 1}], 0.5, [0.5], id='settles-after-acting'),
             pytest.param(
-                [{'type': 'click', 'x': 1, 'y': 1}, {'type': 'wait', 'seconds': 2}], [2, 0.5], id='a-wait-adds-to-it'
+                [{'type': 'click', 'x': 1, 'y': 1}, {'type': 'wait', 'seconds': 2}],
+                0.5,
+                [2, 0.5],
+                id='a-wait-adds-to-it',
             ),
-            pytest.param([{'type': 'screenshot'}], [], id='looking-needs-no-settling'),
+            pytest.param([{'type': 'screenshot'}], 0.5, [], id='looking-needs-no-settling'),
         ],
     )
     async def test_the_screen_settles_after_acting_before_the_screenshot(
-        self, actions: list[dict[str, Any]], pauses: list[float], monkeypatch: pytest.MonkeyPatch
+        self, actions: list[dict[str, Any]], settle: float | None, pauses: list[float], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         slept: list[float] = []
 
@@ -236,7 +240,8 @@ class TestComputerUse:
                 slept.append(seconds)
 
         monkeypatch.setattr(anyio, 'sleep', sleep)
-        agent = Agent(_scripted(actions), capabilities=[ScreenProvider().capability(), ComputerUse()])
+        computer_use = ComputerUse() if settle is None else ComputerUse(settle_seconds=settle)
+        agent = Agent(_scripted(actions), capabilities=[ScreenProvider().capability(), computer_use])
         await agent.run('Go.')
         assert slept == pauses
 
@@ -252,7 +257,7 @@ class TestComputerUse:
             ],
             profile=ModelProfile(computer_use_coordinate_grid=1000),
         )
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
+        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert provider.actions == [
@@ -296,7 +301,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         agent = Agent(
             # A batch that looks and then acts is deferred whole.
             _scripted([{'type': 'screenshot'}], [{'type': 'screenshot'}, {'type': 'click', 'x': 1, 'y': 1}]),
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0), _ask_before_acting()],
+            capabilities=[provider.capability(), ComputerUse(), _ask_before_acting()],
             output_type=[str, DeferredToolRequests],
         )
         result = await agent.run('Go.')
@@ -343,7 +348,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             [{'type': 'zoom', 'region': region}, {'type': 'cursor_position'}],
             profile=ModelProfile(computer_use_coordinate_grid=1000),
         )
-        agent = Agent(model, capabilities=[ScreenProvider().capability(), ComputerUse(settle_seconds=0)])
+        agent = Agent(model, capabilities=[ScreenProvider().capability(), ComputerUse()])
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         _, zoomed, pointer, _ = cast(list[Any], tool_return.content)
@@ -364,7 +369,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
 
         agent = Agent(
             FunctionModel(respond),
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
+            capabilities=[provider.capability(), ComputerUse()],
             output_type=[str, DeferredToolRequests],
         )
         paused = await agent.run('Go.')
@@ -427,7 +432,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         agent = Agent(
             model,
             name='computer',
-            capabilities=[ScreenProvider().capability(), ComputerUse(settle_seconds=0), *durability],
+            capabilities=[ScreenProvider().capability(), ComputerUse(), *durability],
         )
         async with agent.run_stream_events('Go.') as stream:
             events = [e async for e in stream if isinstance(e, ActionsPerformedEvent)]
@@ -473,7 +478,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         model: Model = FallbackModel(scripted, fallback)
         agent = Agent(
             WrapperModel(model) if wrapped else model,
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
+            capabilities=[provider.capability(), ComputerUse()],
         )
         assert (await agent.run('Go.')).output == 'done'
         assert provider.actions == [click]
@@ -499,7 +504,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         fallback = _answering('grid', _GRID, seen, [{'type': 'click', 'x': 500, 'y': 500}])
         agent = Agent(
             _unavailable('pixels', ModelProfile()),
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0), ModelFallback(fallback)],
+            capabilities=[provider.capability(), ComputerUse(), ModelFallback(fallback)],
         )
         await agent.run('Click the middle.')
         assert 'Coordinates are on a grid from 0 to 999' in (seen[0].instructions or '')
@@ -513,9 +518,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         fallback = _answering(
             'large', ModelProfile(), seen, [{'type': 'screenshot'}], [{'type': 'click', 'x': 999, 'y': 624}]
         )
-        agent = Agent(
-            primary, capabilities=[provider.capability(), ComputerUse(settle_seconds=0), ModelFallback(fallback)]
-        )
+        agent = Agent(primary, capabilities=[provider.capability(), ComputerUse(), ModelFallback(fallback)])
         await agent.run('Click the bottom right.')
         assert seen[0].model_request_parameters.native_tools == [ComputerTool(display_size=(1000, 625), optional=True)]
         assert provider.actions == [Click(x=1279, y=799)]
@@ -537,7 +540,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             _unavailable('large', primary),
             capabilities=[
                 ScreenProvider().capability(),
-                ComputerUse(settle_seconds=0),
+                ComputerUse(),
                 ModelFallback(fallback, sticky=True),
             ],
         )
@@ -581,7 +584,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             _unavailable('primary', ModelProfile(), answers=looks),
             capabilities=[
                 ScreenProvider().capability(),
-                ComputerUse(settle_seconds=0),
+                ComputerUse(),
                 ModelFallback(*fallbacks, last),
             ],
         )
@@ -625,7 +628,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         agent = Agent(
             _scripted(actions),
             name='computer',
-            capabilities=[Provider().capability(), ComputerUse(settle_seconds=0), *durability],
+            capabilities=[Provider().capability(), ComputerUse(), *durability],
         )
         with pytest.raises(WorkspaceUnavailableError, match='the environment is gone'):
             await agent.run('Go.')
@@ -658,7 +661,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         provider = Provider()
         agent = Agent(
             _scripted([{'type': 'click', 'x': 1, 'y': 1}]),
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
+            capabilities=[provider.capability(), ComputerUse()],
         )
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
@@ -677,7 +680,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
 
         provider = Provider()
         model = _scripted([{'type': 'type', 'text': 'a'}, {'type': 'click', 'x': 1, 'y': 1}])
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
+        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.outcome == 'failed'
@@ -727,7 +730,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         agent = Agent(
             _scripted([{'type': 'click', 'x': 1, 'y': 1}]),
             name='computer',
-            capabilities=[ScreenProvider().capability(), ComputerUse(settle_seconds=0), durability],
+            capabilities=[ScreenProvider().capability(), ComputerUse(), durability],
         )
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
@@ -759,7 +762,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         agent = Agent(
             _scripted([{'type': 'click', 'x': 1, 'y': 1}]),
             name='computer',
-            capabilities=[Provider().capability(), ComputerUse(settle_seconds=0), durability],
+            capabilities=[Provider().capability(), ComputerUse(), durability],
         )
         with pytest.raises(UserError, match=message):
             await agent.run('Go.')
@@ -772,7 +775,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
     async def test_on_a_read_only_workspace_the_model_can_look_but_not_act(self) -> None:
         provider = ScreenProvider()
         model = _scripted([{'type': 'click', 'x': 1, 'y': 1}], [{'type': 'screenshot'}])
-        agent = Agent(model, capabilities=[provider.capability(read_only=True), ComputerUse(settle_seconds=0)])
+        agent = Agent(model, capabilities=[provider.capability(read_only=True), ComputerUse()])
         refused, looked = _returns((await agent.run('Go.')).all_messages())
 
         assert refused.content == snapshot(
@@ -814,7 +817,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         model = _scripted([], [], [{'type': 'click', 'x': 320, 'y': 200}])
         agent = Agent(
             model,
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
+            capabilities=[provider.capability(), ComputerUse()],
         )
         await agent.run('Click the middle.', message_history=history)
 
@@ -860,7 +863,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                 # An app's own `computer_use` metadata key must not be taken for the call's record.
                 _AppLabel(),
                 # The record is found by the tool's kind, whatever the tool is called.
-                PrefixTools(ComputerUse(settle_seconds=0), prefix='screen'),
+                PrefixTools(ComputerUse(), prefix='screen'),
                 _ask_before_acting(),
             ],
             output_type=[str, DeferredToolRequests],
@@ -878,7 +881,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         provider = ScreenProvider()
         agent = Agent(
             _scripted([{'type': 'click', 'x': 1, 'y': 1}, {'type': 'type', 'text': 'rm -rf /'}]),
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0), _ask_before_acting()],
+            capabilities=[provider.capability(), ComputerUse(), _ask_before_acting()],
             output_type=[str, DeferredToolRequests],
         )
         paused = await agent.run('Go.')
@@ -906,7 +909,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             [{'type': 'click', 'x': 500, 'y': 300}],
             profile=ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000),
         )
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
+        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
         first, second = _returns((await agent.run('Go.')).all_messages())
 
         assert first.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
@@ -919,7 +922,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             [{'type': 'screenshot'}],
             profile=ModelProfile(computer_use_screenshot_max_side=2576, computer_use_screenshot_max_pixels=10**7),
         )
-        agent = Agent(model, capabilities=[ComputerUse(settle_seconds=0)])
+        agent = Agent(model, capabilities=[ComputerUse()])
         result = await agent.run('Go.', workspace=DisplayOnlyBackend(ScreenProvider().backend(None)))
         (tool_return,) = _returns(result.all_messages())
         assert tool_return.metadata == {'performed': 1, 'screenshot_size': (1280, 800)}
@@ -932,7 +935,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             [{'type': 'click', 'x': 500, 'y': 300}],
             profile=ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000),
         )
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
+        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
         failed, ran = _returns((await agent.run('Go.')).all_messages())
 
         assert failed.content == 'Action 1 (click) at (1100, 10) is outside the 1000x625 screen, so no action ran.'
@@ -945,7 +948,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             [{'type': 'click', 'x': 1, 'y': 1}],
             profile=ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000),
         )
-        agent = Agent(model, capabilities=[ComputerUse(settle_seconds=0)])
+        agent = Agent(model, capabilities=[ComputerUse()])
         with pytest.raises(UserError, match=r'The screen is 1280x800, larger than .* Start the display at 1000x625'):
             await agent.run('Go.', workspace=DisplayOnlyBackend(provider.backend(None)))
         # The closing screenshot could never be taken, so the click didn't run either.
@@ -988,7 +991,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         agents = [
             Agent(
                 _scripted([{'type': 'click', 'x': x, 'y': 1}, {'type': 'type', 'text': text}]),
-                capabilities=[*capabilities, ComputerUse(settle_seconds=0)],
+                capabilities=[*capabilities, ComputerUse()],
             )
             for x, text in [(1, 'first'), (2, 'second')]
         ]
@@ -1026,7 +1029,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         creating.join(READY_TIMEOUT)
 
         def run(x: int) -> None:
-            agent = Agent(_scripted([{'type': 'click', 'x': x, 'y': 1}]), capabilities=[ComputerUse(settle_seconds=0)])
+            agent = Agent(_scripted([{'type': 'click', 'x': x, 'y': 1}]), capabilities=[ComputerUse()])
             outputs.append(agent.run_sync('Go.', workspace=screen).output)
 
         first = threading.Thread(target=run, args=(1,), daemon=True)
@@ -1065,7 +1068,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         async def run(x: int) -> None:
             agent = Agent(
                 _scripted([{'type': 'click', 'x': x, 'y': 1}]),
-                capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
+                capabilities=[provider.capability(), ComputerUse()],
             )
             await agent.run('Go.')
 
@@ -1094,7 +1097,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         provider = ScreenProvider()
         agent = Agent(
             _scripted([{'type': 'click', 'x': 500, 'y': 300}]),
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0), _ask_before_acting()],
+            capabilities=[provider.capability(), ComputerUse(), _ask_before_acting()],
             output_type=[str, DeferredToolRequests],
         )
         paused = await agent.run('Go.')
@@ -1114,7 +1117,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             [{'type': 'move', 'x': 701, 'y': 401}, {'type': 'cursor_position'}],
             profile=ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000),
         )
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
+        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         # 701 x 1.28 is 897.28, and 401 x 1.28 is 513.28: rounded to nearest both ways, they map back exactly.
@@ -1131,7 +1134,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             ],
             profile=ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000),
         )
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
+        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.outcome == 'failed'
@@ -1152,7 +1155,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                     computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000
                 ),
             ),
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0), _ask_before_acting()],
+            capabilities=[provider.capability(), ComputerUse(), _ask_before_acting()],
             output_type=[str, DeferredToolRequests],
         )
         paused = await agent.run('Go.')
@@ -1201,7 +1204,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         self, actions: list[dict[str, Any]], message: str
     ) -> None:
         provider = ScreenProvider()
-        agent = Agent(_scripted(actions), capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
+        agent = Agent(_scripted(actions), capabilities=[provider.capability(), ComputerUse()])
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
         assert tool_return.outcome == 'failed'
@@ -1219,7 +1222,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                     {'type': 'mouse_up'},
                 ]
             ),
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
+            capabilities=[provider.capability(), ComputerUse()],
         )
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
@@ -1240,7 +1243,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         provider = Provider()
         agent = Agent(
             _scripted([{'type': 'mouse_down'}, {'type': 'move', 'x': 5, 'y': 5}, {'type': 'mouse_up'}]),
-            capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
+            capabilities=[provider.capability(), ComputerUse()],
         )
         (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
@@ -1264,7 +1267,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         provider = ScreenProvider()
         agent = Agent(
             _scripted([{'type': 'click', 'x': 1, 'y': 1}, looking, {'type': 'type', 'text': 'not typed'}]),
-            capabilities=[ComputerUse(settle_seconds=0)],
+            capabilities=[ComputerUse()],
         )
         result = await agent.run('Go.', workspace=DisplayOnlyBackend(provider.backend(None)))
         (tool_return,) = _returns(result.all_messages())
