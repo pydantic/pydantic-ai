@@ -359,7 +359,7 @@ async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(fake
     sandbox_capability = DaytonaSandbox(desktop=True)
     agent = Agent(
         FunctionModel(_look_click_then_finish),
-        capabilities=[sandbox_capability, ComputerUse(native=False, settle_seconds=0)],
+        capabilities=[sandbox_capability, ComputerUse(native=False)],
     )
 
     result = await agent.run('Click.')
