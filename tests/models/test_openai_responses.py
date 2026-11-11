@@ -17860,7 +17860,10 @@ async def test_openai_responses_stateless_compaction_without_the_profile_flag(
 
 
 async def test_openai_responses_stateful_compaction_leaves_requested_compaction_to_the_next_capability():
-    """Only `OpenAICompaction`'s stateless mode compacts on request: the stateful one leaves it to OpenAI."""
+    """Only `OpenAICompaction`'s stateless mode compacts on request: the stateful one leaves it to OpenAI.
+
+    Not a VCR test: which capability handles the request is decided before any provider request is made.
+    """
     from pydantic_ai.models.openai import OpenAICompaction
 
     model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')]))
