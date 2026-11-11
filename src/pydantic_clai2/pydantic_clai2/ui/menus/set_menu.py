@@ -34,26 +34,33 @@ class SettingsSource:
                 continue
             info = Settings.model_fields[field]
             preview: ChoicePreview | None = None
-            if info.annotation is bool:
-                choices: tuple[str, ...] = ('true', 'false')
-            elif key == 'display.theme':
-                choices = names()
-            elif key == 'display.spinner':
-                choices = tuple(BUILTIN_SPINNERS)
-            elif key == 'model':
-                choices = tuple(known_model_names())
-            elif key == 'display.tool_calls':
-                choices = TOOL_CALL_DISPLAYS
-                preview = tool_calls_preview
-            elif key == 'updates.channel':
-                choices = UPDATE_CHANNELS
-            else:
-                choices = ()
+            match key:
+                case _ if info.annotation is bool:
+                    choices: tuple[str, ...] = ('true', 'false')
+                case 'display.theme':
+                    choices = names()
+                case 'display.spinner':
+                    choices = tuple(BUILTIN_SPINNERS)
+                case 'model':
+                    choices = tuple(known_model_names())
+                case 'display.tool_calls':
+                    choices = TOOL_CALL_DISPLAYS
+                    preview = tool_calls_preview
+                case 'updates.channel':
+                    choices = UPDATE_CHANNELS
+                case 'input.keyboard_labels':
+                    choices = ('unset', 'neutral', 'mac', 'pc')
+                case 'input.busy_delivery':
+                    choices = ('after-turn', 'next-checkpoint')
+                case 'input.question_submit':
+                    choices = ('ask', 'answer', 'follow-up')
+                case _:
+                    choices = ()
             rows.append(
                 FieldRow(
                     key=key,
                     description=info.description or '',
-                    default=shown(info.default),
+                    default=shown(Settings().model_dump(mode='json')[field]),
                     choices=choices,
                     note='project' if self._context.from_project(key) else '',
                     preview=preview,

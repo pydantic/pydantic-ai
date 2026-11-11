@@ -91,6 +91,7 @@ from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, question_row, resume_prompt
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
+from pydantic_clai2.ui.menus.input_menu import input_menu
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
 from pydantic_clai2.ui.menus.menu_worker import without_terminal
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
@@ -104,8 +105,10 @@ from pydantic_clai2.ui.menus.theme_picker import theme_command
 from pydantic_clai2.ui.menus.update_menu import update_menu
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
+from pydantic_clai2.ui.prompt.input_setup import KeyTest
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup
+from pydantic_clai2.ui.prompt.prompt_questions import PromptQuestions
 from pydantic_clai2.ui.prompt.prompt_queue import PromptInbox, QueuedPrompt, can_steer, find_queued, input_kind
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
@@ -569,6 +572,15 @@ def create_shell(
         updates=updates,
     )
     commands.register(
+        Command(
+            name='input',
+            description='Keyboard setup, bindings and question preference; /input test safely tests a key',
+            handler=shell.input_command,
+            during_turn=True,
+            args_during_turn=True,
+        )
+    )
+    commands.register(
         Command(name='reload', description='Reload CLAI2 code without restarting', handler=shell.request_reload)
     )
     commands.register(
@@ -715,6 +727,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     """Whether it runs with no terminal of its own, as one the browser opened: it restarts CLAI only while shown."""
     editor: LivePrompt | None = None
     """The terminal's editor, while the terminal shows this session and its console is a terminal."""
+    questions: PromptQuestions = field(init=False)
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
     permissions: tuple[AgentCapability[DepsT], ...] = field(init=False)
@@ -877,6 +890,11 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         telemetry.conversation_selected()
 
     def __post_init__(self) -> None:
+        self.questions = PromptQuestions(
+            paint=lambda: self.editor.paint() if self.editor is not None else None,
+            preference=lambda: self.context.settings.question_submit,
+            remember=lambda preference: self.context.set_setting(['input.question_submit', preference]),
+        )
         self.tasks = Tasks(
             console=self.console,
             conversation_id=lambda: self.session.summary.id,
@@ -942,6 +960,26 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 partial(child.repl_states.copy, source=self.session.summary.id, target=child.summary.id)
             )
         return child
+
+    def test_input_key(self) -> None:
+        """Capture only after an explicit action; the editor remains the sole input reader."""
+        if self.editor is None:
+            raise ValueError('Key testing needs the terminal composer.')
+        self.editor.key_test = KeyTest()
+
+    async def input_command(self, args: list[str]) -> str:
+        """Open setup, or explicitly start safe key capture after the command releases the screen."""
+        if args == ['test']:
+            self.test_input_key()
+            return 'Test a key now. Ctrl+G closes.'
+        if args == ['reset']:
+            return '\n'.join(
+                self.context.reset_setting(key)
+                for key in ('input.bindings', 'input.keyboard_labels', 'input.question_submit', 'input.busy_delivery')
+            )
+        if args:
+            raise ValueError('Usage: /input [test|reset]')
+        return '\n'.join(await run_settings_menu(input_menu(self.context, start_test=self.test_input_key)))
 
     async def tasks_command(self, args: list[str]) -> str:
         if not args:
@@ -1132,9 +1170,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     def _retain_images(self) -> None:
         """Let go of images that neither the draft nor a queued prompt of this session uses."""
         self.images.retain(
-            [self.editor.buffer.text, *self.editor.queued_messages]
-            if self.editor is not None
-            else [entry.text for entry in self._inbox.entries]
+            self.editor.drafts if self.editor is not None else [entry.text for entry in self._inbox.entries]
         )
 
     def bind(self, editor: LivePrompt | None) -> None:
@@ -1147,6 +1183,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.screen.editor = editor.suspended if editor is not None else None
         self.tasks.wake = editor.wake if editor is not None else None
         if editor is not None:
+            editor.questions = self.questions
             # Input a plugin entered while the editor read for another session, or did not exist yet.
             for entry in self._inbox.take():
                 editor.submit(entry)

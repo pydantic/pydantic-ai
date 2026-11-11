@@ -12,6 +12,8 @@ from prompt_toolkit.keys import Keys
 
 _MODIFIED_KEY = re.compile(r'\x1b\[(?:(\d+)(?::\d*)?(?::(\d+))?(?:;(\d+))?u|27;(\d+);(\d+)~)')
 _CSI_KEY = re.compile(r'\x1b\[(\d+);(\d+)([A-Z~])')
+# Kitty omits empty parameters for these keys; prompt-toolkit knows only their SS3 forms.
+_CSI_FUNCTION_KEYS: dict[str, str] = {'\x1b[Q': 'f2', '\x1b[S': 'f4'}
 _LOCK_MODIFIERS = 64 | 128  # Caps Lock, Num Lock.
 _SUPER = 8  # Cmd on macOS; terminals report it only through CSI-u or modifyOtherKeys.
 _SUPPORTED_MODIFIERS = 1 | 2 | 4 | _SUPER  # Shift, Alt, Ctrl, Super.
@@ -66,6 +68,8 @@ def _modifiers(value: str) -> int | None:
 
 def _modified_key(sequence: str) -> str | None:
     """Normalize the CSI-u and xterm reports requested by the editor."""
+    if sequence in _CSI_FUNCTION_KEYS:
+        return _CSI_FUNCTION_KEYS[sequence]
     # Known Alt reports become two decoder tokens; leave both on the legacy path.
     if (match := _CSI_KEY.fullmatch(sequence)) and sequence not in ANSI_SEQUENCES:
         return _function_key(match)
@@ -85,7 +89,7 @@ def _function_key(match: re.Match[str]) -> str | None:
     key = ANSI_SEQUENCES.get(f'\x1b[{params}{suffix}')
     if isinstance(key, tuple):
         return 'alt-' + _key_name(key[-1])
-    return _key_name(key) if key is not None else None
+    return _key_name(key) if key is not None else _CSI_FUNCTION_KEYS.get(f'\x1b[{params}{suffix}')
 
 
 def _codepoint_key(match: re.Match[str]) -> str | None:
@@ -126,11 +130,13 @@ class PromptKeys:
         source: Input,
         feed: Callable[[str, str], None],
         eof: Callable[[], None],
+        unknown: Callable[[str], None] = lambda _: None,
     ) -> None:
         """Keep decoder and callbacks local to this editor."""
         self.source = source
         self.feed = feed
         self.eof = eof
+        self.unknown = unknown
         self._stack: ExitStack | None = None
         self._timer: asyncio.TimerHandle | None = None
         self._escape = False
@@ -184,8 +190,14 @@ class PromptKeys:
         """Translate decoder tokens into editor actions and literal paste payloads."""
         if key.key == Keys.CPRResponse:
             # Ignore a late response left over from a previous renderer/menu.
+            self.unknown(key.data)
             return
-        if key.key != Keys.BracketedPaste and (name := _modified_key(key.data)) is not None:
+        if key.key == Keys.BracketedPaste:
+            self._escape = False
+            self._csi = ''
+            self.feed('paste', key.data)
+            return
+        if (name := _modified_key(key.data)) is not None:
             self._escape = False
             self._csi = ''
             self.feed(name, key.data)
@@ -217,3 +229,5 @@ class PromptKeys:
             sequence, self._csi = self._csi, ''
             if (name := _modified_key(sequence)) is not None:
                 self.feed(name, sequence)
+            else:
+                self.unknown(sequence)

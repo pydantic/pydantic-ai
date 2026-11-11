@@ -201,6 +201,7 @@ On non-Windows platforms, stock CLAI 2 is a broad local-execution profile: its d
 - Most tools, `shell` included, run through eager Code Mode by default, from `run_code` statements while the model is still writing. The REPL state is saved with the session.
 - `!` commands run in the host shell, not the agent workspace, and their output is saved for the next prompt.
 - Environment filtering covers selected credential names and does not isolate other secrets or files readable by the OS user.
+- Terminal question routing remembers only an interaction preference, never tool authorization. Held tool calls require explicitly focused approval choices; generic send, steering, queue actions, and custom text do not approve them. See [CLAI 2 permissions](src/pydantic_clai2/docs/reference.md#permissions).
 - `open_stock_agent` gives code and ACP hosts the same Coder and workspace defaults.
 
 See the CLAI 2 docs on [environment variables](src/pydantic_clai2/docs/reference.md#environment-variables), [Code Mode](src/pydantic_clai2/README.md#code-mode-and-speculative-execution), [agent folders](src/pydantic_clai2/docs/reference.md#agent-folders), and [the stock agent in your own code](src/pydantic_clai2/docs/reference.md#the-stock-agent-in-your-own-code).

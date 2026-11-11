@@ -79,11 +79,29 @@ A few keys to know:
 |---|---|
 | <kbd>Enter</kbd> | Send. While CLAI works, <kbd>Enter</kbd> queues your message for after the current turn. |
 | <kbd>Alt</kbd>+<kbd>Enter</kbd> (<kbd>Option</kbd>+<kbd>Enter</kbd>) | Steer: send your message to the turn that is running now. |
-| <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays. |
+| <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays, and queued messages move back into it. |
+| <kbd>Up</kbd> | Edit a queued message. <kbd>Esc</kbd> stops editing; clear it to remove it. |
 | <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
+| <kbd>Ctrl</kbd>+<kbd>J</kbd> | Insert a newline, including when Shift+Enter arrives as plain Enter. |
+| <kbd>F2</kbd> | Review a pending question or approval without losing your draft. |
+| <kbd>F4</kbd> | Queue actions: Edit, Remove, Steer, and persistent busy delivery mode. |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste an image from the clipboard. |
 | <kbd>@</kbd> then <kbd>Tab</kbd> | Complete a file path. |
 | <kbd>Ctrl</kbd>+<kbd>D</kbd> or `/exit` | Quit. |
+
+Run `/input` to configure send, steer, and newline keys and choose Mac, PC, or neutral
+labels. `/input test` safely shows the keys your connection actually reports; Ctrl+G
+closes the test. Labels cannot recover modifiers lost over SSH. The defaults above
+stay unchanged unless you remap them. Mac hints use Return and Option.
+
+F4 then `m` switches new busy prompts between **after turn** (the default) and
+**next checkpoint**, after current tool work and before the next feasible model
+request. With older queued entries or a saved edit, choose **Steer/promote** at the
+next checkpoint or **Keep queue position** for after-turn delivery. Nothing silently
+falls back; commands keep their own routing. Held edits say **Editing - not queued**,
+do not count as pending, and cannot run until you choose delivery.
+See [Prompt area](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#prompt-area)
+for queue ordering, Save/requeue, and Cancel editing.
 
 Type `/` to see every command, or `/help` for the full list.
 
@@ -231,9 +249,14 @@ a row instead, such as `● shell 4, grep 2`.
 
 ### Questions from the model
 
-When a task could go more than one way, the model can ask you instead of guessing. Pick
-an answer with the arrow keys and <kbd>Enter</kbd>, or press its number. **Other** lets you type
-your own answer. <kbd>Esc</kbd> declines; the model is told, and carries on with a choice it states.
+When a task could go more than one way, the model can ask you instead of guessing.
+Questions wait above the composer while you keep typing. Press <kbd>F2</kbd> to review
+choices, then use the arrow keys and your send key, or press an option's number.
+**Other** lets you type your own answer. <kbd>F2</kbd> returns to your draft; <kbd>Ctrl</kbd>+<kbd>C</kbd> while focused declines.
+
+Sending your draft while a question waits offers **Answer this question** or **Queue
+follow-up**, with a remember-my-choice option. Change or reset that preference in
+`/input`. It never approves tools: approvals require explicitly focusing their choices.
 
 ![The model asking which CI service to use, with three numbered choices](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/ask-user.png)
 

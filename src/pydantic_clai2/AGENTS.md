@@ -333,11 +333,11 @@ one that is not.
   hotkeys, `/` starts a search, Esc leaves it. Pass single-key actions as its
   `hotkeys` so they type into the search instead of firing while the user
   searches.
-- A widget opened mid-run (including the inline `ask_user` picker) goes inside
-  `async with host.full_screen()`, which flushes streamed text and suspends the
-  editor's input reader first, preserving its draft. Slash-command handlers
-  already run with the editor suspended. Do not start a second input reader
-  alongside the live editor.
+- A widget that reads keys mid-run goes inside `async with host.full_screen()`.
+  The handoff flushes streamed text and suspends the editor's reader, preserving its draft.
+  Slash-command handlers already run with the editor suspended.
+  Composer questions and approvals use its existing reader through `PromptQuestions`.
+  Do not start a second input reader alongside the live editor.
 - Adding a plugin is not in the menu. It needs free text, so it stays
   `/plugins add ID MODULE[:ATTR] [JSON]` or `/plugins add GIT_URL`. Git installs
   use the existing file loader, with HTTPS/SSH for network sources; see
@@ -540,9 +540,10 @@ selects painted cells in `PromptSurface` and its release copies them through
 Resize rebuilds from `TranscriptBuffer`, not guessed row coordinates or cursor
 reports. Never send erase-scrollback (CSI 3 J). Preserve the draft and scroll
 anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
-Full-screen menus leave the live panel temporarily. Inline questions borrow it
-with `run_worker(inline=True)` and pin the question text in their rows, not the
-transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
+Full-screen menus leave the live panel temporarily. Composer questions keep its
+reader and focus until the user explicitly focuses the question. Standalone
+questions borrow the released panel with `run_worker(inline=True)`.
+Pin question text in question rows so streamed output cannot push it away. Streamed text and thinking keep Markdown source,
 a tool-call group its call names, and a shell call's header its command, for width/theme repaint
 (syntax colours share hex values with brand roles under a palette, so translating them would guess);
 tool output keeps styled lines, each tagged with the
@@ -555,6 +556,8 @@ successful shell rebuild, including migration from the pre-live Text-line buffer
 The suspended `chat` coroutine still holds that transcript; do not only replace
 it on the new shell or mutate it before a rebuild that can fail.
 
-The `ask_user` picker borrows the released `PromptSurface` while the editor is
-suspended. Keep its numbered choices and Enter toggles; do not switch screens
-inside the picker or reintroduce Space-to-toggle.
+Keep `ask_user` choices numbered. The effective send binding toggles choices;
+Ctrl+J inserts a newline in custom answers and never confirms a choice.
+Keep question state on its `SessionRuntime`, not on the shared terminal.
+Generic send, steering, and remembered question routing never authorize tools.
+The standalone picker keeps its exclusive handoff and Enter toggles.

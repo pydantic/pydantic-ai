@@ -28,6 +28,7 @@ from pydantic_clai2.plugins import FullScreen, Plugin
 from pydantic_clai2.runtime.permissions import approval_handler, approval_question, decision, shown_in_full
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.question_menu import QuestionMenu
+from pydantic_clai2.ui.prompt.prompt_questions import composer_answerer
 from pydantic_clai2.ui.prompt.question_input import QuestionKey, question_input
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.rendering import prompt_line
@@ -52,6 +53,10 @@ class TerminalAnswerer:
 
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         """Answer every question or decline the entire request."""
+        if self._runner is None and (answerer := composer_answerer.get()) is not None:
+            response = await answerer(request, self._console, False)
+            if response is not None:
+                return response
         return await self._ask(request)
 
     async def ask_approval(self, request: PermissionRequest) -> AskUserResponse:
@@ -67,6 +72,12 @@ class TerminalAnswerer:
         )
         if held is not None:
             held.append(terminal_text(request.subject, keep='\t\n'))
+        if self._runner is None and (answerer := composer_answerer.get()) is not None:
+            if held is not None:
+                self._console.print(held)
+            response = await answerer(approval_question(request), self._console, True)
+            if response is not None:
+                return response
         return await self._ask(approval_question(request), held=held)
 
     async def _ask(self, request: AskUserRequest, *, held: Text | None = None) -> AskUserResponse:

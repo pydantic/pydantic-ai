@@ -59,6 +59,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext`, and `settings_menu`, the `SettingsMenu` `/set`, `/theme`, and `/spinner` declare as their `Command.menu` |
 | `ui/menus/system_prompt_menu.py` | `/system_prompt`: `system_prompt_menu`, the `SettingsMenu` the terminal runs and the web UI shows (its `Command.menu`): the user's `run.instructions`, which `Session` sends after the agent's and plugins' instructions, edited and appended in a multi-line `Dialogs.text`, and the latest request's full instructions in a read-only `Dialogs.view` |
 | `ui/menus/question_menu.py` | shared inline picker state, choice handling, framing, and terminal rendering (`QuestionMenu`) |
+| `ui/menus/input_menu.py` | `/input` settings through the shared field editor, per-action binding choices, and explicit key-test handoff |
 | `ui/menus/worktree_cleanup.py` | inline exit removal picker, with No selected by default and checkout-specific suppression |
 | `ui/menus/update_menu.py` | `/update`'s menu, which bare `/update` opens and the web UI shows as Settings > About: the running version with whether a newer one is out, whose action confirms, then closes the menu (`CloseMenu`) and enters `/update now`, and the `updates.channel` row of `/set` |
 | `ui/menus/text_editor.py` | multi-line editing for menus: `$VISUAL`/`$EDITOR` (shared with the `/mcp` form), else a built-in prompt_toolkit editor |
@@ -90,7 +91,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/rendering/history.py` | `/resume` and `--resume` replay: the last turns of restored history as synthetic stream events through a non-smoothing `StreamRenderer` |
 | `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
 | `ui/rendering/status.py` | the footer `Status` fields, `StatusSegment`, and the `StatusLine` row painter |
-| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue (told to `queue_changed`), Alt+Enter steering, timed double-Esc gesture, and menu handoff |
+| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue (told to `queue_changed`; a recalled prompt leaves the runnable queue while edited; an editor interrupt moves pending prompts into the draft), explicit mixed-queue checkpoint/queue-position choices, Alt+Enter steering, timed double-Esc gesture, and menu handoff |
 | `ui/prompt/prompt_queue.py` | `QueuedPrompt`, one queued prompt with the ID the browser edits it by; `PromptInbox`, the queue of a session no editor reads for; `input_kind` and `can_steer`, the one rule for which input steers |
 | `ui/prompt/terminal.py` | `Terminal`, the terminal driver: console, `LivePrompt`, line prompt, transcript, input history, and pasted images, attached to the one live session shown (`attach`, `show`); `drive` runs the session CLAI started with until the session shown ends; `session_console` for sessions opened beside it |
 | `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
@@ -99,6 +100,8 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/prompt/image_input.py` | the editor's image attachments: clipboard and pasted-path reading, `ImageInput`'s `[image:...]` markers, pending bytes, and the paste key bindings |
 | `ui/prompt/prompt_buffer.py` | pure draft editing, undo/redo steps (word- and run-grouped, capped, reset on submit), history navigation, search and cell-width wrapping |
 | `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
+| `ui/prompt/input_setup.py` | explicit decoded-key calibration reports, without draft/paste contents or action execution |
+| `ui/prompt/prompt_questions.py` | per-session pending questions and explicitly focused approvals, composer routing, remembered interaction choice, and batch/typeahead barriers on the editor's existing reader |
 | `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization, including Super (Cmd) for `super-z`; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
 | `ui/prompt/prompt_selection.py` | SGR mouse report decoding and left-button drag selection over painted transcript and question-widget cells: highlight and text |
 | `ui/prompt/text_clipboard.py` | copying text out: the local clipboard command on one background worker where the newest copy wins, or OSC 52 over SSH or without one |
@@ -106,6 +109,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `config/__init__.py` | `Settings`, `PluginSettings` |
 | `config/builtins.py` | `DEFAULT_PLUGINS` and `STOCK_PLUGINS`, the shipped plugin declarations |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
+| `config/input_bindings.py` | decoded composer bindings, alias/collision validation, keyboard labels, and question-routing/busy-delivery preference types |
 | `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/`, including saved models, removal of their overrides, the contents `/plugins enable` approved for each project file (`approved_files`, `file_sha256`), the project-file values `/project approve` approved per project root (`approved_project_settings`), checkout-specific cleanup suppression (`kept_worktrees`), and an isolated read of removal commands on exit; `state_dir()`, `$XDG_STATE_HOME/pydantic-clai2/`, for state that is not a preference (`aoe`, `workspaces`) |
 | `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |
 | `config/plugin_requirements.py` | pure rules for requirement tags: parse stored rows, drop unsupported settings, merge tags on save, the notice |

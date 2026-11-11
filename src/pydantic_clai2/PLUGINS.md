@@ -1414,16 +1414,35 @@ declaration under the same name changes them too:
 The second built-in, `ask_user` (`pydantic_clai2.builtin_plugins.ask_user_menu`), gives
 the model the harness's `AskUser` capability: one tool, `ask_user_question`, for
 asking you one to ten multiple-choice questions when the task is ambiguous. Each
-question appears inline above a compact numbered picker, keeping the conversation
-visible. The question is pinned with its choices, so output streamed meanwhile (a
-delegated task's, say) lands above it instead of between it and the picker. Up/Down or Tab/Shift+Tab moves the highlight; Enter or an option's number selects it.
+question waits above the composer without taking focus or changing the draft,
+cursor, undo history, or attachments. F2 explicitly focuses its numbered picker;
+F2 returns to the composer. While focused, Up/Down or Tab/Shift+Tab moves the
+highlight; the configured send key (Enter by default) or an option's number selects it.
+The question is pinned with its choices while output streams above it.
 For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
-several. Esc or Ctrl-C declines the whole request and lets the model continue.
+several. Ctrl-C while focused declines the whole request and lets the model continue.
+Esc backs out of custom entry, or returns from choices to the composer.
 The plugin's `render` replaces the tool's argument dump with a header that lists
-the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
-the editor's input reader. It keeps the live panel's alternate screen. The draft
-is restored on exit, and the question and your picks are printed to the transcript afterwards.
+the question headers. In the live composer, its existing key reader serves the
+question; no second reader or `host.full_screen()` handoff starts. Standalone
+terminal answerers retain their inline picker and exclusive full-screen handoff.
+The response is printed to the transcript afterwards.
+
+Sending composer text while a question waits offers **Answer this question** or
+**Queue follow-up**. The optional remembered choice is `input.question_submit`,
+editable/resettable through `/input`. Only the interaction preference is saved,
+not answer text or authorization. A successful text answer moves the draft;
+cancellation leaves it intact. Image-bearing drafts must be queued instead.
+Each later question in a batch needs review or an explicit routing choice so
+held Enter or pasted typeahead cannot silently answer it. Ctrl+J inserts a newline
+in custom answers; it never confirms a choice.
+
+`/input` also sets Mac/PC/neutral labels and composer bindings, without detecting
+the remote keyboard. Mac hints say Return, Option, and Cmd for the effective
+bindings, independently of the server OS. `/input test` explicitly captures decoded keys without
+sending, steering, interrupting, or recording draft/paste contents. Ctrl+G closes
+it. See [Keyboard setup](docs/reference.md#keyboard-setup).
 Drag over the question, its header, or an option to select text; releasing copies it
 to the clipboard without choosing an answer. Transcript text remains selectable too.
 `/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
@@ -1436,7 +1455,10 @@ The same picker asks about the calls [`/permissions`](docs/reference.md#permissi
 command is printed in full above the picker first, since the picker cuts its question to the rows it has
 (`TerminalAnswerer.ask_approval`); a replacement approver should show it in full too. A
 replacement for this plugin that should answer approvals binds `approval_handler` with its own approver; without
-one, held calls are denied.
+one, held calls are denied. In the live composer, approvals wait without taking
+focus and require explicit F2 focus before a choice authorizes a call. Generic
+send, steering, queue actions, custom text, and remembered question routing never
+approve tools.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
@@ -2937,7 +2959,8 @@ prompt the keyboard does:
   shell's event loop: it is trimmed, a bare `clear` runs `/clear`, and blank text does nothing. A
   prompt runs as a turn and a `/command` as a command, each echoed in the transcript; while a turn
   runs it queues behind it like a typed follow-up, and a `during_turn` command such as `/plugins`
-  opens over it at once. Input entered before the prompt opens, such as from `on_session_start`,
+  opens over it at once. Like a typed follow-up, queued input moves into the user's draft
+  instead of running if they interrupt the turn with Esc or Ctrl-C. Input entered before the prompt opens, such as from `on_session_start`,
   waits for it. Results arrive through the usual moments (`on_turn_start`, `on_turn_end`,
   `on_command_end`, `on_conversation_changed`), so switching sessions is `send_input('/resume ID')`.
   A bare command that opens a menu, such as `/model` or `/resume`, opens it in the terminal,
@@ -3127,8 +3150,30 @@ A widget opened from inside a tool call, including the inline `ask_user` picker,
 has to wait for streamed text to finish and the editor and status row to
 get out of the way. `host.full_screen()` flushes pending output, suspends the
 editor's input reader, and restores the editor and its draft when the block exits.
-The editor remains active during agent turns. Enter queues a separate turn with
-its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter) sends the typed
+The editor remains active during agent turns. By default, Enter queues a separate
+turn with its own `turn_start` and `turn_end` hooks. Opt-in
+`input.busy_delivery=next-checkpoint` instead steers new busy composer prompts
+through the same native enqueue path described below. F4 shows the saved delivery
+mode; `m` changes it, including when no input is queued. Current tool work finishes
+before the next feasible model request receives that input. It never answers
+questions or grants approval. With saved edits or older queued entries, Send opens
+a delivery choice: `s` Steer/promote only the eligible draft at the next checkpoint,
+explicitly bypassing older entries, or `q` Keep queue position for after-turn delivery
+(a separate turn once work ends). Esc/Ctrl-C cancels the choice without moving the
+draft/edit. If steering fails, the choice and draft remain; there is no silent fallback.
+Commands and shell lines keep their explicit routing and are never steered. Changing
+the mode does not promote existing entries. Accepted checkpoint input joins the
+active run and transcript, not the editable after-turn queue. Plugin `send_input`
+and browser submissions keep their existing queue behavior. See
+[Prompt area](docs/reference.md#prompt-area).
+
+A held queue edit shows **Editing - not queued; won't send until saved** and is
+excluded from pending counts and the live-session queue. Save/requeue in after-turn
+mode, or Keep queue position in the delivery choice, restores its stable ID and
+reserved ordering slot. Cancel editing restores the unchanged entry, or removes
+it if cleared; explicit Steer/send is a different action.
+
+Alt+Enter (Option+Return with Mac labels) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
 through core's `RunContext.enqueue(priority='asap')`. Accepted steering messages
 appear immediately in the transcript and are enqueued for the next model request,
