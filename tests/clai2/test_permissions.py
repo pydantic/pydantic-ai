@@ -110,7 +110,7 @@ async def test_a_session_no_one_can_be_asked_in_denies_held_calls(tmp_path: Path
     assert await shell.run() == 'exit'
     assert ran == ([COMMAND] if runs else [])
     if not runs:
-        assert UNANSWERED in output.getvalue()
+        assert f'Tool said: {UNANSWERED}' in output.getvalue()
 
 
 async def test_permissions_command_shows_and_sets_the_mode(tmp_path: Path) -> None:
