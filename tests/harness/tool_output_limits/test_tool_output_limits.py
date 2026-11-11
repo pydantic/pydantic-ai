@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from opentelemetry.trace import NoOpTracer
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, FunctionToolset
@@ -96,6 +97,8 @@ def _make_ctx(
         model: Any = dataclasses.field(default_factory=_FakeModel)
         deps: None = None
         conversation_id: str | None = None
+        tracer: NoOpTracer = dataclasses.field(default_factory=NoOpTracer)
+        trace_include_content: bool = False
 
         def tool_name_for_kind(self, kind: object) -> str | None:
             return None

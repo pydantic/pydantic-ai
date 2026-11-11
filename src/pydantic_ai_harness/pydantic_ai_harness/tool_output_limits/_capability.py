@@ -8,9 +8,10 @@ import posixpath
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
+from pydantic_ai._telemetry import current_span, set_content_attribute
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -98,6 +99,10 @@ def _default_bands() -> list[Band]:
     return [Band(over=_DEFAULT_THRESHOLD, action=Spill(then=Truncate()))]
 
 
+_CONTENT_SUFFIX = '.content'
+"""Handle suffix of a `ToolReturn`'s `content`, so it spills apart from the `return_value` of the same call."""
+
+
 @dataclass
 class _Unit:
     """One reducible piece of a tool return: its `return_value` or its `content`.
@@ -110,6 +115,16 @@ class _Unit:
     data: bytes
     value: ToolReturnContent
     suffix: str
+
+
+@dataclass
+class _Reduction:
+    """What an action replaced a unit with, and which action that was after any fallbacks."""
+
+    text: str
+    action: Literal['truncate', 'spill', 'summarize']
+    handle: str | None = None
+    """The spill handle, set only when `action` is `'spill'`."""
 
 
 @dataclass
@@ -349,10 +364,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
         bands = self._per_tool.get(call.tool_name, self._bands)
         value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
-        value_text, value_handle = await self._reduce(ctx, call, bands, value_unit)
-        content_text, content_handle = await self._reduce_content(ctx, call, bands, content)
+        value_reduction = await self._reduce(ctx, call, bands, value_unit)
+        content_reduction = await self._reduce_content(ctx, call, bands, content)
 
-        if value_text is None and content_text is None:
+        if value_reduction is None and content_reduction is None:
             return original
 
         return self._assemble(
@@ -361,10 +376,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             content=content,
             metadata=metadata,
             value_unit=value_unit,
-            value_text=value_text,
-            value_handle=value_handle,
-            content_text=content_text,
-            content_handle=content_handle,
+            value_reduction=value_reduction,
+            content_reduction=content_reduction,
         )
 
     def _assemble(
@@ -375,30 +388,31 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         content: str | Sequence[UserContent] | None,
         metadata: object,
         value_unit: _Unit,
-        value_text: str | None,
-        value_handle: str | None,
-        content_text: str | None,
-        content_handle: str | None,
+        value_reduction: _Reduction | None,
+        content_reduction: _Reduction | None,
     ) -> object:
         """Rebuild the tool result from the reduced parts, preserving the envelope."""
+        value_handle = value_reduction.handle if value_reduction is not None else None
+        content_handle = content_reduction.handle if content_reduction is not None else None
         if wrapped:
             new_metadata = metadata
             if value_handle is not None or content_handle is not None:
                 new_metadata = _with_handles(metadata, value_handle, len(value_unit.data), content_handle)
             wrapped_out: ToolReturn[object] = ToolReturn(
-                return_value=value_text if value_text is not None else return_value,
-                content=content_text if content_text is not None else content,
+                return_value=value_reduction.text if value_reduction is not None else return_value,
+                content=content_reduction.text if content_reduction is not None else content,
                 metadata=new_metadata,
             )
             return wrapped_out
 
         # A plain (non-`ToolReturn`) result has no separate content part.
+        assert value_reduction is not None
         if value_handle is not None:
             spilled_out: ToolReturn[object] = ToolReturn(
-                return_value=value_text, metadata=_with_handles(None, value_handle, len(value_unit.data))
+                return_value=value_reduction.text, metadata=_with_handles(None, value_handle, len(value_unit.data))
             )
             return spilled_out
-        return value_text
+        return value_reduction.text
 
     def _make_unit(self, value: ToolReturnContent, *, tool_name: str, suffix: str) -> _Unit:
         """Pre-render a value into the text / bytes the reduction pipeline needs."""
@@ -428,12 +442,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         bands: Sequence[Band],
         unit: _Unit,
-    ) -> tuple[str | None, str | None]:
-        """Select a band for `unit` and apply it. Returns `(replacement, handle)`.
-
-        `replacement` is None when the unit passes through unchanged; `handle` is set only
-        when the unit was spilled.
-        """
+    ) -> _Reduction | None:
+        """Select a band for `unit` and apply it. Returns `None` when the unit passes through unchanged."""
         size = (
             len(unit.data)
             if unit.binary
@@ -441,8 +451,38 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         )
         action = _select_action(bands, size)
         if action is None:
-            return None, None
-        return await self._apply(ctx, call, action, unit)
+            return None
+        reduction = await self._apply(ctx, call, action, unit)
+        if reduction is not None:
+            self._record_reduction(ctx, unit, size, reduction)
+        return reduction
+
+    def _record_reduction(
+        self, ctx: RunContext[AgentDepsT], unit: _Unit, original_size: int, reduction: _Reduction
+    ) -> None:
+        """Say on the call's `execute_tool` span how a unit was reduced, in the unit its band was measured in."""
+        span = current_span(ctx)
+        if not span.is_recording():
+            # Measuring the replacement can mean running a tokenizer.
+            return
+        if unit.binary:
+            size_unit = 'bytes'
+            reduced_size = len(reduction.text.encode('utf-8'))
+        else:
+            size_unit = 'tokens' if self.over_tokens else 'chars'
+            reduced_size = measure(reduction.text, over_tokens=self.over_tokens, tokenizer=self.tokenizer)
+        # A `ToolReturn`'s `content` is reduced on its own, so it gets its own attributes.
+        prefix = 'tool_output_limits.content' if unit.suffix == _CONTENT_SUFFIX else 'tool_output_limits'
+        span.set_attributes(
+            {
+                f'{prefix}.action': reduction.action,
+                f'{prefix}.original_size': original_size,
+                f'{prefix}.reduced_size': reduced_size,
+                f'{prefix}.size_unit': size_unit,
+            }
+        )
+        if reduction.handle is not None:
+            set_content_attribute(ctx, span, f'{prefix}.handle', reduction.handle)
 
     async def _reduce_content(
         self,
@@ -450,13 +490,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         bands: Sequence[Band],
         content: str | Sequence[UserContent] | None,
-    ) -> tuple[str | None, str | None]:
+    ) -> _Reduction | None:
         """Reduce model-visible `content`. Text content is reduced; other content warns."""
         if content is None:
-            return None, None
+            return None
         if isinstance(content, str):
             return await self._reduce(
-                ctx, call, bands, self._make_unit(content, tool_name=call.tool_name, suffix='.content')
+                ctx, call, bands, self._make_unit(content, tool_name=call.tool_name, suffix=_CONTENT_SUFFIX)
             )
 
         text = ''.join(part for part in content if isinstance(part, str))
@@ -468,7 +508,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 f'content ({len(content)} parts); leaving it unreduced.',
                 stacklevel=2,
             )
-        return None, None
+        return None
 
     async def _apply(
         self,
@@ -476,19 +516,17 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         action: Action,
         unit: _Unit,
-    ) -> tuple[str | None, str | None]:
+    ) -> _Reduction | None:
         """Apply one action to a unit, falling back to its `then` when it cannot run."""
         if isinstance(action, Passthrough):
-            return None, None
+            return None
 
         if isinstance(action, Truncate):
             if unit.binary:
                 return await self._fallback(ctx, call, action.then, unit)
             assert unit.text is not None
-            return (
-                truncate_text(unit.text, action.max_chars, action.strategy, keep_tail_lines=action.keep_tail_lines),
-                None,
-            )
+            text = truncate_text(unit.text, action.max_chars, action.strategy, keep_tail_lines=action.keep_tail_lines)
+            return _Reduction(text, 'truncate')
 
         if isinstance(action, Spill):
             return await self._spill(ctx, call, action, unit)
@@ -501,10 +539,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         then: Action | None,
         unit: _Unit,
-    ) -> tuple[str | None, str | None]:
+    ) -> _Reduction | None:
         """Run the fallback action, or keep the unit unchanged when there is none."""
         if then is None:
-            return None, None
+            return None
         return await self._apply(ctx, call, then, unit)
 
     async def _spill(
@@ -513,7 +551,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         action: Spill,
         unit: _Unit,
-    ) -> tuple[str | None, str | None]:
+    ) -> _Reduction | None:
         key = _handle_key(ctx, call, unit.suffix)
         # Text crosses the durable boundary as is; only binary needs base64 to travel as JSON.
         if unit.binary:
@@ -528,7 +566,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         preview = _build_spill_preview(
             handle, unit, action.preview_chars, over_tokens=self.over_tokens, read_hint=self._read_hint(ctx, handle)
         )
-        return preview, handle
+        return _Reduction(preview, 'spill', handle)
 
     # A durable operation, so a replay returns the recorded outcome instead of writing again: a
     # second write could return a different handle, or succeed where the first failed.
@@ -564,7 +602,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         action: Summarize,
         unit: _Unit,
-    ) -> tuple[str | None, str | None]:
+    ) -> _Reduction | None:
         if unit.binary:
             return await self._fallback(ctx, call, action.then, unit)
         assert unit.text is not None
@@ -582,7 +620,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         except Exception as exc:
             _log_fallback('Summarizing', call.tool_name, _fallback_label(action.then), exc)
             return await self._fallback(ctx, call, action.then, unit)
-        return summary, None
+        return _Reduction(summary, 'summarize')
 
     @durable_operation('summarize')
     async def _summarize(

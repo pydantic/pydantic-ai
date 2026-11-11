@@ -365,6 +365,25 @@ overwrite. And a custom `summarize` callable runs directly rather than as a dura
 arbitrary callables cannot be reconstructed on the worker side -- so it may be called again on
 replay.
 
+## Telemetry
+
+When a run is instrumented, a reduced return is recorded on the call's `execute_tool` span, so a
+query on one attribute answers "which tool's output is spilled most often". It opens no span of
+its own: the tool call is already spanned, and the reduction happens inside it.
+
+| Attribute | Value |
+|---|---|
+| `tool_output_limits.action` | the action that produced the result, after any `then` fallback: `truncate`, `spill`, or `summarize` |
+| `tool_output_limits.original_size` | the measured size of the return, the number its band was matched on |
+| `tool_output_limits.reduced_size` | the size of what the model gets instead, in the same unit |
+| `tool_output_limits.size_unit` | `chars`, `tokens` (with `over_tokens=True`), or `bytes` for a binary return |
+| `tool_output_limits.handle` | the spill handle, only when `trace_include_content` is on, since it names a path in the workspace |
+
+A `ToolReturn`'s text `content` is reduced on its own, so its reduction is recorded under
+`tool_output_limits.content.*` with the same names. A return under every band, or one whose
+fallback chain ends without reducing it, records nothing. When the default `Spill(then=Truncate())`
+can't write to its store, `action` is `truncate`, which is how a failing store shows up in a trace.
+
 ## Edge cases
 
 - Binary returns spill verbatim and are never stringify-truncated; `Truncate` / `Summarize`
