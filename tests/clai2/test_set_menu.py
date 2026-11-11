@@ -208,6 +208,65 @@ def test_space_search_text_and_filtered_toggle(tmp_path: Path, monkeypatch: pyte
     assert context.store.load().code_mode is True
 
 
+def test_filtered_choice_cycles_keep_the_match_until_search_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context, applied = make_context(tmp_path)
+    source = SettingsSource(context)
+    fields = FieldMenu(source)
+    row = next(row for row in fields.rows if row.key == 'display.theme')
+    assert len(row.choices) > 2
+    assert row.choices[0] == 'default'
+
+    def keys() -> Iterator[str]:
+        yield from ['/', *'default', 'enter']
+        for expected in (*row.choices[1:], row.choices[0]):
+            yield ' '
+            assert source.current(row) == expected
+            assert running.highlighted is not None and running.highlighted.value == 'display.theme'
+        yield from ['escape', 'end', 'enter']
+
+    pressed = keys()
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    running = fields.build()
+    result = running.run()
+    assert result.item is not None and is_save_and_close(result.item)
+    assert context.store.load().theme == 'default'
+    assert applied == ['display.theme'] * len(row.choices)
+
+
+@pytest.mark.parametrize('clear', [True, False])
+def test_filtered_cycle_recomputes_matches_after_query_edit_or_clear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], clear: bool
+) -> None:
+    context, applied = make_context(tmp_path)
+    fields = FieldMenu(SettingsSource(context, keys=['display.tool_output', 'run.speculative_code_mode']))
+
+    def keys() -> Iterator[str]:
+        yield from ['/', *'false', 'enter', ' ']
+        assert running.highlighted is not None and running.highlighted.value == 'display.tool_output'
+        assert context.settings.tool_output is True
+        frame = capsys.readouterr().out.split('\x1b[H')[-1]
+        assert 'search:' in frame and 'false' in frame
+        assert '> display.tool_output' in frame and 'run.speculative_code_mode' in frame
+        if clear:
+            yield from ['escape', '/']
+        else:
+            yield from ['/', *['backspace'] * len('false')]
+        yield from [*'false', 'enter']
+        assert running.highlighted is not None and running.highlighted.value == 'run.speculative_code_mode'
+        yield from ['escape', 'end', 'enter']
+
+    pressed = keys()
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    running = fields.build()
+    result = running.run()
+    assert result.item is not None and is_save_and_close(result.item)
+    assert context.store.load().tool_output is True
+    assert context.store.load().speculative_code_mode is False
+    assert applied == ['display.tool_output']
+
+
 @pytest.mark.parametrize('searchable', [True, False])
 def test_space_on_choice_free_field_keeps_enter_editing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, searchable: bool
@@ -264,11 +323,12 @@ def test_choice_free_search_keeps_type_to_filter_and_literal_space(
 
 
 @pytest.mark.parametrize('asynchronous', [True, False])
-async def test_space_does_not_bypass_boolean_row_actions(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], asynchronous: bool
+@pytest.mark.parametrize('key', ['run.code_mode', 'display.theme'])
+async def test_space_does_not_bypass_choice_row_actions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], asynchronous: bool, key: str
 ) -> None:
     context, applied = make_context(tmp_path)
-    fields = FieldMenu(SettingsSource(context, keys=['run.code_mode']))
+    fields = FieldMenu(SettingsSource(context, keys=[key]))
     pressed = iter([' ', 'enter', 'end', 'enter'])
     monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
     calls: list[str] = []
@@ -281,9 +341,9 @@ async def test_space_does_not_bypass_boolean_row_actions(
         return action()
 
     if asynchronous:
-        messages = await run_flow_async(fields, submenus={'run.code_mode': async_action})
+        messages = await run_flow_async(fields, submenus={key: async_action})
     else:
-        messages = run_flow(fields, submenus={'run.code_mode': action})
+        messages = run_flow(fields, submenus={key: action})
     assert messages == ['Action ran.']
     assert calls == ['action']
     assert applied == []

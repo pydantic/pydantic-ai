@@ -85,6 +85,8 @@ class FieldMenu:
         self.rows = list(source.rows())
         self.messages: list[str] = []
         self.action_keys: Collection[str] = ()
+        self.matching_filter_keys: set[str] = set()
+        self.retained_filter_keys: set[str] | None = None
 
     def items(self) -> list[MenuItem]:
         """One row per field with its current value, then Save & close."""
@@ -124,6 +126,7 @@ class FieldMenu:
     def build(self, initial: int = 0) -> Menu:
         """The field list: choice cycling uses slash search; other searchable lists filter as you type."""
         self.rows = list(self._source.rows())
+        self.reset_filter()
         cycle_hint = 'Space cycle - ' if any(self.can_cycle(row) for row in self.rows) else ''
         builder = (
             MenuBuilder(self._source.title)
@@ -134,10 +137,11 @@ class FieldMenu:
         )
         if self._searchable and cycle_hint:
             return slash_search(
-                builder,
+                builder.filter_fn(self.matches_filter),
                 footer=cycle_hint + _LIST_HINT,
                 key_source=menu_key,
                 hotkeys={' ': self.cycle, 'R': self._reset_key},
+                on_query_change=self.reset_filter,
             )
         # Only lists offering choice cycling need hotkey routing; keep ordinary filtering for the rest.
         if self._searchable:
@@ -150,6 +154,24 @@ class FieldMenu:
                 builder.on_key(' ', self.cycle)
         return builder.key_source(menu_key).build()
 
+    def reset_filter(self) -> None:
+        """Editing or clearing the query recomputes matches from the current values."""
+        self.matching_filter_keys.clear()
+        self.retained_filter_keys = None
+
+    def matches_filter(self, query: str, item: MenuItem) -> bool:
+        """Keep a searched field set stable while its displayed values change."""
+        matches = query.lower() in item.label.lower()
+        if not isinstance(item.value, str):
+            return matches
+        if self.retained_filter_keys is not None:
+            return item.value in self.retained_filter_keys
+        if matches:
+            self.matching_filter_keys.add(item.value)
+        else:
+            self.matching_filter_keys.discard(item.value)
+        return matches
+
     def can_cycle(self, row: FieldRow) -> bool:
         """Rows with multiple choices cycle; action and submenu rows keep their own flow."""
         return len(row.choices) > 1 and row.key not in self.action_keys
@@ -158,6 +180,9 @@ class FieldMenu:
         """Space advances to the next declared choice, wrapping, without reopening the list."""
         row = self.row_for(item.value)
         if row is not None and self.can_cycle(row):
+            # Cycling can change the text that matched; retain the field set until the query changes.
+            if self.retained_filter_keys is None:
+                self.retained_filter_keys = self.matching_filter_keys.copy()
             current = self._source.current(row)
             index = row.choices.index(current) + 1 if current in row.choices else 0
             self.messages.append(self.apply(row, row.choices[index % len(row.choices)]))
