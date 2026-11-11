@@ -205,10 +205,10 @@ def _validation_reason(exc: ValidationError) -> str:
 
     Its message quotes the saved prompt and history, and a deeper location can hold a key from them.
     """
-    reasons: dict[str, None] = {}
-    for error in exc.errors(include_url=False, include_context=False, include_input=False):
-        location = error['loc']
-        reasons[f'{error["type"]} at {location[0]}' if location else error['type']] = None
+    reasons = {
+        (f'{error["type"]} at {error["loc"][0]}' if error['loc'] else error['type']): None
+        for error in exc.errors(include_url=False, include_context=False, include_input=False)
+    }
     return f'ValidationError: {"; ".join(reasons)}'
 
 
