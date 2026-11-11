@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal, TypeAlias, cast
 
-from pydantic import JsonValue
 from pydantic_core import PydanticSerializationError
 from temporalio import workflow
 from temporalio.client import Client, WorkflowHandle
@@ -41,7 +40,6 @@ from pydantic_ai.exceptions import (
     ModelRequestTimeout,
     UserError,
 )
-from pydantic_ai.external_events import ExternalEventWaiter, external_event_scope
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, infer_model
 from pydantic_ai.output import OutputDataT
@@ -149,26 +147,6 @@ continuation to the next model request.
 def _replaying_history() -> bool:
     """Workflow code running while Temporal replays history already ran, and recorded its telemetry, before."""
     return workflow.in_workflow() and workflow.unsafe.is_replaying_history_events()
-
-
-class _NoExternalEvents(ExternalEventWaiter):
-    """Refuses to wait for external events, which Temporal workflows don't support yet.
-
-    Installed so that `allow_non_durable_wait` can't start an in-process wait in workflow code, which
-    nothing outside the workflow could end.
-    """
-
-    async def wait(
-        self, name: str, *, ask: Callable[[str], Awaitable[JsonValue]], timeout: timedelta | None
-    ) -> JsonValue:
-        raise UserError(
-            'Temporal workflows do not support waiting for external events yet, such as `RequestInput` and '
-            '`AskUser` answers (https://github.com/pydantic/pydantic-ai/issues/12975). End the run with '
-            '`DeferredToolRequests` output and start a new run with the results.'
-        )
-
-
-_NO_EXTERNAL_EVENTS = _NoExternalEvents()
 
 
 @dataclass(init=False, kw_only=True)
@@ -596,17 +574,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Disable threads inside Temporal workflows, keep replayed work out of telemetry, and refuse external-event waits."""
+        """Disable threads inside Temporal workflows, and keep replayed work out of telemetry."""
         if not self.in_durable_context:
             return await handler()
 
-        with (
-            disable_threads(),
-            set_agent_graph_sleep(workflow.sleep),
-            replay_scope(is_replaying=_replaying_history),
-            external_event_scope(_NO_EXTERNAL_EVENTS),
-        ):
-            return await handler()
+        with disable_threads(), set_agent_graph_sleep(workflow.sleep), replay_scope(is_replaying=_replaying_history):
+            return await super().wrap_run(ctx, handler=handler)
 
     def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
         """Pair with the terminal-event publisher when a topic is set; it wraps outside the base's companions."""

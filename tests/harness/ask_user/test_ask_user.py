@@ -968,23 +968,19 @@ class _AlwaysDurable(BaseDurabilityCapability[None]):
 
 
 class TestDurableEngineWithoutAWaiter:
-    async def test_asking_is_refused_unless_a_wait_that_is_not_recorded_is_allowed(self) -> None:
-        def agent(allow_non_durable_wait: bool = False) -> Agent[None, str]:
-            return Agent(
-                calling(raw_questions()),
-                name='asker',
-                deps_type=type(None),
-                capabilities=[
-                    AskUser(answerer=ScriptedAnswerer(), allow_non_durable_wait=allow_non_durable_wait),
-                    _AlwaysDurable(),
-                ],
-            )
+    async def test_asking_is_refused(self) -> None:
+        """A wait in process would not be recorded, so the engine refuses it rather than let a replay ask again."""
+        answerer = ScriptedAnswerer()
+        agent = Agent(
+            calling(raw_questions()),
+            name='asker',
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=answerer), _AlwaysDurable()],
+        )
 
-        with pytest.raises(UserError, match="This agent's durable engine does not support waiting for external events"):
-            await agent().run('go')
-
-        result = await agent(allow_non_durable_wait=True).run('go')
-        assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+        with pytest.raises(UserError, match='Immediate does not support waiting for external events yet'):
+            await agent.run('go')
+        assert answerer.requests == []
 
 
 class TestCheckResponse:

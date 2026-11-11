@@ -512,23 +512,11 @@ class TestInProcess:
         with pytest.raises(UserError, match='The payload for an external event must be JSON-serializable'):
             await wait_for_external_event('review', ask=lambda token: object())
 
-    async def test_a_durable_engine_that_cannot_wait_can_opt_in_to_waiting_in_process(self) -> None:
-        """With `allow_non_durable_wait`, the wait happens in process, unrecorded, instead of raising."""
-        deleted: list[str] = []
-
-        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
-            resolve_external_event(token, {'approvals': {'call-1': True}})
-
-        agent = approval_agent(RequestInput[None](ask, allow_non_durable_wait=True), deleted, durable=True)
-
-        assert (await agent.run('clean up')).output == 'done'
-        assert deleted == ['a.txt']
-
     async def test_a_durable_engine_that_cannot_wait_is_rejected(self) -> None:
         """Waiting in process inside a durable run would not be recorded, so it is refused rather than done unsafely."""
         agent = approval_agent(RequestInput[None](lambda ctx, requests, token: None), [], durable=True)
 
-        with pytest.raises(UserError, match="This agent's durable engine does not support waiting for external events"):
+        with pytest.raises(UserError, match='Immediate does not support waiting for external events yet'):
             await agent.run('clean up')
 
 

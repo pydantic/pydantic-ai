@@ -176,10 +176,10 @@ makes the wait durable on an engine that supports it:
 - On [AWS Lambda durable functions](https://pydantic.dev/docs/ai/harness/aws-lambda/#approvals), the answerer runs in a step that records its response, so
   a replay doesn't ask again. Since it runs in a step, it must return quickly: a person who may take a
   while should answer through a resume token, below.
-- On Temporal, DBOS, Prefect and other durable engines without support for waiting, asking raises a
-  `UserError`, since a wait in process would not be recorded. `AskUser(..., allow_non_durable_wait=True)`
-  asks in process anyway: the wait is then not recorded, so a replay asks the user again and a restart
-  loses the wait, and on Temporal, whose workflow code can't be woken from outside, it still raises.
+- On Temporal, DBOS, Prefect and other durable engines without support for waiting, the engine refuses
+  the wait with a `UserError`. A wait in process would not be recorded: a replay would ask the user
+  again, could get a different answer than the one the run already acted on and diverge from the
+  engine's history, and a restart would lose the wait.
 
 An answerer with three required positional parameters, satisfying `TokenAnswerer`, also receives a
 resume token. It can answer right away as the other forms do, or hand the token on, for example in a

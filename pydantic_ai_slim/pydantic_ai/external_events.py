@@ -16,6 +16,9 @@ holds no compute while it lasts. Engines whose API hands out tokens map onto it 
 durable functions call it a callback, Restate an awakeable, Trigger.dev a waitpoint token, Vercel
 Workflow a hook. An engine installs an [`ExternalEventWaiter`][pydantic_ai.external_events.ExternalEventWaiter]
 for each durable agent run with [`external_event_scope`][pydantic_ai.external_events.external_event_scope].
+In the durable runs of an engine that installs none, such as Temporal, DBOS or Prefect so far, the wait
+is refused: a wait in process would not be recorded, so a replay would ask again, could get a different
+answer than the one the run already acted on, and diverge from the engine's history.
 Engines whose external events are addressed by name rather than by token (Temporal signals, Azure
 Durable Task external events, DBOS messages) can implement the same contract by encoding the
 execution's ID and an event key in the token they hand out.
@@ -37,7 +40,6 @@ import anyio
 from pydantic import JsonValue
 from pydantic_core import PydanticSerializationError, to_jsonable_python
 
-from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._utils import await_maybe, is_async_callable, run_in_executor
 from pydantic_ai.durable_exec._operation_backend import durable_unit_scope, in_durable_unit
 from pydantic_ai.exceptions import UserError
@@ -183,12 +185,44 @@ class _InProcessWaiter(ExternalEventWaiter):
 _IN_PROCESS_WAITER = _InProcessWaiter()
 
 
+@dataclass
+class _UnsupportedWaiter(ExternalEventWaiter):
+    """Refuses to wait, for the durable runs of an engine that can't record a wait for an external event."""
+
+    engine_name: str
+
+    async def wait(
+        self, name: str, *, ask: Callable[[str], Awaitable[JsonValue]], timeout: timedelta | None
+    ) -> JsonValue:
+        raise UserError(
+            f'{self.engine_name} does not support waiting for external events yet, such as `RequestInput` and '
+            '`AskUser` answers (https://github.com/pydantic/pydantic-ai/issues/12975). A wait in process would '
+            'not be recorded: a replay would ask again and could get a different answer than the one the run '
+            'already acted on, diverging from the recorded history, and a restart would lose the wait. End the '
+            'run with `DeferredToolRequests` output and start a new run with the results, or use an engine that '
+            'supports it, such as AWS Lambda durable functions with `AWSLambdaDurability` from `pydantic-ai-harness`.'
+        )
+
+
+@contextmanager
+def _refuse_unsupported_external_events(engine_name: str) -> Generator[None]:
+    """Refuse waits inside, unless the engine already installed a waiter that supports them.
+
+    Installed by `BaseDurabilityCapability.wrap_run` around every durable run, so that every engine
+    refuses a wait it can't record instead of waiting in process.
+    """
+    if _current_waiter.get() is not None:
+        yield
+        return
+    with external_event_scope(_UnsupportedWaiter(engine_name)):
+        yield
+
+
 async def wait_for_external_event(
     name: str,
     *,
     ask: Callable[[str], Awaitable[object | None] | object | None],
     timeout: timedelta | None = None,
-    allow_non_durable_wait: bool = False,
 ) -> JsonValue:
     """Hand a resume token to `ask`, and return the answer `ask` gives or else the payload the token is resolved with.
 
@@ -206,11 +240,10 @@ async def wait_for_external_event(
     Inside a durable run on an engine that supports it, currently AWS Lambda durable functions through
     Pydantic AI Harness's `AWSLambdaDurability`, the engine records the token, the answer `ask` returns
     and the payload, and suspends the run while it waits, so the wait survives restarts and a replay
-    doesn't ask again. The token is then resolved through the engine's API. On a durable engine that
-    doesn't support it, a wait in process would not be recorded, so it is refused unless
-    `allow_non_durable_wait` is set; that is only detected while the run's context is current, as it is
-    in [`RequestInput`][pydantic_ai.capabilities.RequestInput], so call this directly only outside
-    durable runs or on an engine that supports it.
+    doesn't ask again. The token is then resolved through the engine's API. Inside an agent run on a
+    durable engine that doesn't support it, the engine refuses the wait with a `UserError`: a wait in
+    process would not be recorded, so a replay would ask again and could get a different answer than
+    the one the run already acted on, and a restart would lose the wait.
 
     Args:
         name: A name for the wait in a durable engine's history. Keep it stable across deployments.
@@ -222,20 +255,15 @@ async def wait_for_external_event(
         timeout: How long to wait before giving up, or `None` to wait without a limit (or, in a
             durable run, as long as the engine allows). In process, it also bounds `ask`: an async
             `ask` still running when it elapses is cancelled.
-        allow_non_durable_wait: Inside a durable run whose engine doesn't support waiting for external
-            events, wait in process instead of raising. The wait is then not recorded: a replay of the
-            run calls `ask` again, and a restart loses the wait. On Temporal, whose workflow code
-            can't be woken from outside the workflow, it still raises.
 
     Returns:
         The JSON payload `ask` returned, or the token was resolved with.
 
     Raises:
         ExternalEventError: The timeout elapsed, or the token was resolved with a failure.
-        UserError: The wait was requested from inside a durable unit, such as a tool call, or, with the
-            run's context current and without `allow_non_durable_wait`, inside a durable run on an engine
-            that does not support waiting for external events; or `ask` returned a value that can't be
-            converted to JSON.
+        UserError: The wait was requested from inside a durable unit, such as a tool call, or inside a
+            durable agent run on an engine that does not support waiting for external events; or `ask`
+            returned a value that can't be converted to JSON.
     """
     _check_timeout(timeout)
     if in_durable_unit():
@@ -246,19 +274,8 @@ async def wait_for_external_event(
             'durable runs or on an engine that supports waiting for external events, such as AWS Lambda durable '
             'functions with `AWSLambdaDurability`.'
         )
-    waiter = _current_waiter.get()
-    if waiter is None:
-        run_context = get_current_run_context()
-        if run_context is not None and run_context.in_durable_context and not allow_non_durable_wait:
-            raise UserError(
-                "This agent's durable engine does not support waiting for external events, and waiting in "
-                'process would not be recorded, so a recovered run would ask again and a restart would lose '
-                'the wait. Use an engine that supports it, such as AWS Lambda durable functions with '
-                '`AWSLambdaDurability` from `pydantic-ai-harness`, end the run with `DeferredToolRequests` '
-                'output and start a new run with the results, or pass `allow_non_durable_wait=True` to accept '
-                'a wait that is not recorded.'
-            )
-        waiter = _IN_PROCESS_WAITER
+    # A durable engine installs its waiter, or one that refuses, for its runs; elsewhere, wait in process.
+    waiter = _current_waiter.get() or _IN_PROCESS_WAITER
 
     async def ask_with_token(token: str) -> JsonValue:
         # `ask` runs inside the engine's durable unit, so mark it as one: a durable operation it

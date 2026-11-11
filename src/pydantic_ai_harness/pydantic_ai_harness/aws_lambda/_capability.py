@@ -43,7 +43,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 
-from ._bridge import ENGINE_NAME as _ENGINE_NAME, StepBridge, current_bridge, in_durable_context
+from ._bridge import ENGINE_NAME as _ENGINE_NAME, current_bridge, in_durable_context
 from ._operation_backend import TOOL_CONFIG_KEY as _TOOL_CONFIG_KEY, AWSLambdaOperationBackend, AWSLambdaOperationConfig
 
 
@@ -143,10 +143,9 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Let the run wait for external events, such as `RequestInput` answers, through Lambda callbacks."""
-        bridge = current_bridge()
-        if bridge is None:
+        if not in_durable_context():
             return await super().wrap_run(ctx, handler=handler)
-        waiter = _CallbackWaiter(bridge, agent_name=self.name, ask_config=self._operation_config.base_step_config)
+        waiter = _CallbackWaiter(agent_name=self.name, ask_config=self._operation_config.base_step_config)
         with external_event_scope(waiter):
             return await super().wrap_run(ctx, handler=handler)
 
@@ -154,8 +153,7 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
 class _CallbackWaiter(ExternalEventWaiter):
     """Waits for an external event with a Lambda callback: its ID is the resume token."""
 
-    def __init__(self, bridge: StepBridge, *, agent_name: str, ask_config: StepConfig | None) -> None:
-        self._bridge = bridge
+    def __init__(self, *, agent_name: str, ask_config: StepConfig | None) -> None:
         self._agent_name = agent_name
         self._ask_config = ask_config
 
@@ -169,8 +167,16 @@ class _CallbackWaiter(ExternalEventWaiter):
         # Lambda times callbacks in whole seconds, and zero means no timeout, so round up.
         seconds = 0 if timeout is None else math.ceil(timeout.total_seconds())
         callback_name = f'{self._agent_name}__external_event.{name}'
+        # Looked up when the wait starts rather than when the run does, so a wait in a branch the
+        # execution runs in parallel uses that branch's bridge.
+        bridge = current_bridge()
+        if bridge is None:
+            raise UserError(
+                f'The wait for {_ENGINE_NAME} callback {callback_name!r} started outside the durable execution '
+                'that ran the agent, so there is no execution to suspend.'
+            )
         try:
-            result = await self._bridge.wait_for_callback(
+            result = await bridge.wait_for_callback(
                 callback_name,
                 callback_config=CallbackConfig(timeout=Duration(seconds=seconds)),
                 ask=functools.partial(_ask_for_json, ask),

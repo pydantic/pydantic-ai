@@ -265,15 +265,17 @@ something outside the run resolves a token the run handed out, unless the `ask` 
 the token to answers right away, and returns the JSON payload. [`RequestInput`](../capabilities/request-input.md)
 uses it to ask for an answer on deferred tool calls without ending the run. Outside a durable run it
 waits in process, and [`resolve_external_event`][pydantic_ai.external_events.resolve_external_event]
-ends the wait. In a durable run, an in-process wait would not be recorded, so a replay would ask
-again and a restart would lose it: there, the wait goes through your engine. On an engine that
-doesn't implement it, `RequestInput`'s wait raises a `UserError` (detected through the run's
-`RunContext.in_durable_context`), unless the user passes `allow_non_durable_wait=True`.
+ends the wait. In a durable run, an in-process wait would not be recorded: a replay would ask again,
+could get a different answer than the one the run already acted on and diverge from the recorded
+history, and a restart would lose the wait. So in the durable context,
+`BaseDurabilityCapability.wrap_run` installs a waiter that refuses with a `UserError`, unless your
+engine installed its own first. Overriding `wrap_run`, call `super().wrap_run(ctx, handler=handler)`
+rather than `handler()` to keep that guard.
 
 To implement it, subclass [`ExternalEventWaiter`][pydantic_ai.external_events.ExternalEventWaiter] and
 install an instance for each durable agent run with
-[`external_event_scope`][pydantic_ai.external_events.external_event_scope], typically in your
-capability's `wrap_run` when it is in the durable context. Both are re-exported from
+[`external_event_scope`][pydantic_ai.external_events.external_event_scope] in your capability's
+`wrap_run` when it is in the durable context, around the call to `super().wrap_run(...)`. Both are re-exported from
 `pydantic_ai.durable_exec` with [`ExternalEventError`][pydantic_ai.external_events.ExternalEventError],
 and live in `pydantic_ai.external_events`. The `wait` method receives a stable `name`, an async
 `ask` callback, and an optional `timeout`, and must journal three things so a replay returns the

@@ -65,7 +65,7 @@ class AskUser(AbstractCapability[AgentDepsT]):
     Each question is a deferred tool call marked as a question, and the answerer is called from
     `handle_deferred_tool_calls` through `wait_for_external_event`, as `RequestInput` calls its `ask`.
     So the wait is in process in a plain run, and recorded by the engine in a durable run on an
-    engine that supports it, such as AWS Lambda durable functions.
+    engine that supports it, such as AWS Lambda durable functions; other durable engines refuse it.
 
     ```python
     from pydantic_ai import Agent
@@ -105,14 +105,6 @@ class AskUser(AbstractCapability[AgentDepsT]):
     indefinitely. Needs an answerer: a deferred call has nothing to wait on.
     """
 
-    allow_non_durable_wait: bool = False
-    """Ask in process inside a durable run whose engine doesn't support waiting for external events, instead of raising a `UserError`.
-
-    The wait is then not recorded: when the engine replays the run, the answerer is called again, and
-    when the process restarts, the wait and any answer to it are lost. On Temporal, whose
-    workflow code can't be woken from outside the workflow, it still raises.
-    """
-
     id: str | None = 'ask_user'
     """Stable capability ID, so its instructions are addressable and `defer_loading=True` needs none.
 
@@ -129,7 +121,6 @@ class AskUser(AbstractCapability[AgentDepsT]):
             *,
             answerer: Answerer | None,
             timeout: float | None = None,
-            allow_non_durable_wait: bool = False,
             id: str | None = 'ask_user',
             description: str | None = None,
             defer_loading: bool = False,
@@ -141,7 +132,6 @@ class AskUser(AbstractCapability[AgentDepsT]):
             *,
             answerer: ContextAnswerer[AgentDepsT] | TokenAnswerer[AgentDepsT],
             timeout: float | None = None,
-            allow_non_durable_wait: bool = False,
             id: str | None = 'ask_user',
             description: str | None = None,
             defer_loading: bool = False,
@@ -152,7 +142,6 @@ class AskUser(AbstractCapability[AgentDepsT]):
             *,
             answerer: AnyAnswerer[AgentDepsT] | None,
             timeout: float | None = None,
-            allow_non_durable_wait: bool = False,
             id: str | None = 'ask_user',
             description: str | None = None,
             defer_loading: bool = False,
@@ -226,13 +215,12 @@ class AskUser(AbstractCapability[AgentDepsT]):
         # The context the tool call had, so the answerer and the events see which call asked.
         ctx = replace(run_ctx, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
         try:
-            # Current, so the wait can tell a durable run whose engine can't wait from a plain run.
+            # Current, as it was when the answerer ran inside the tool.
             with set_current_run_context(ctx):
                 payload = await wait_for_external_event(
                     TOOL_NAME,
                     ask=partial(_ask, answerer, ctx, request),
                     timeout=None if self.timeout is None else timedelta(seconds=self.timeout),
-                    allow_non_durable_wait=self.allow_non_durable_wait,
                 )
             response = _RESPONSE_ADAPTER.validate_python(payload)
         except ExternalEventError:

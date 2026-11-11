@@ -195,9 +195,9 @@ Run outside a durable handler, for example in local development, the same agent 
 |---|---|
 | A plain process | In the process; resolve the token with `resolve_external_event` |
 | [AWS Lambda durable functions](../harness/aws-lambda.md#approvals) | A Lambda callback; resolve it with `SendDurableExecutionCallbackSuccess` |
-| Temporal, DBOS, Prefect, and other durable engines | Not supported yet: a call that needs an answer fails the run with a `UserError`, since a wait in process would not be recorded. End the run with `DeferredToolRequests` output instead, or see below |
+| Temporal, DBOS, Prefect, and other durable engines | Not supported yet: the engine refuses the wait, so a call that needs an answer fails the run with a `UserError`. End the run with `DeferredToolRequests` output instead |
 
-On an engine that doesn't support waiting, `RequestInput(..., allow_non_durable_wait=True)` waits in process instead of raising. The wait is then not recorded: when the engine replays the run, for example after a worker restart, `ask` is called again and the person is asked a second time, and when the process restarts, the wait and any answer sent to it are lost. On Temporal, whose workflow code can't be woken from outside the workflow, it still raises.
+The engine refuses rather than waiting in process because the wait has to be recorded. A wait in process would not be recorded. When the engine replays the run, for example after a worker restart, `ask` would run again: the person would be asked a second time and could answer differently than the answer the run already acted on, so the replay would diverge from the engine's recorded history (on DBOS, for example, steps recorded after the wait would no longer match). And when the process restarts, the wait and any answer sent to it would be lost.
 
 Engine authors can add support as [Building a durable execution backend](../durable_execution/backends.md#waiting-for-external-events) describes.
 
@@ -285,4 +285,4 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
-It raises [`ExternalEventError`][pydantic_ai.external_events.ExternalEventError] when the timeout elapses or the token is resolved with a failure. Don't call it from a tool that runs in a durable unit: the wait has to be recorded by the run itself, so it raises a `UserError` there. `RequestInput` also refuses to wait in process on a durable engine that doesn't support it, unless `allow_non_durable_wait` is set, but a direct call can only tell it is on such an engine while the run's context is current, so call it directly only outside durable runs or on an engine that supports it.
+It raises [`ExternalEventError`][pydantic_ai.external_events.ExternalEventError] when the timeout elapses or the token is resolved with a failure. Don't call it from a tool that runs in a durable unit: the wait has to be recorded by the run itself, so it raises a `UserError` there. In the agent runs of a durable engine that doesn't support waiting, the engine refuses it with a `UserError` too.

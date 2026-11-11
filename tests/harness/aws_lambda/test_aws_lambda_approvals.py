@@ -30,6 +30,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai_harness import AskUser
 from pydantic_ai_harness.ask_user import TOOL_NAME, AskUserAnswer, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, run_durable
+from pydantic_ai_harness.aws_lambda._capability import _CallbackWaiter  # pyright: ignore[reportPrivateUsage]
 
 from .conftest import FakeDurableContext
 
@@ -360,3 +361,14 @@ def test_an_ask_user_question_waits_on_a_callback_and_its_answer_replays() -> No
 
     assert json.loads(result.output) == {'Scope': ['All']}
     assert tokens == ['callback-2'], 'replay does not hand the question on again'
+
+
+async def test_a_wait_outside_the_durable_execution_is_refused() -> None:
+    """The waiter finds the execution's bridge when the wait starts, so a wait with none can't suspend anything."""
+    waiter = _CallbackWaiter(agent_name='a', ask_config=None)
+
+    async def ask(token: str) -> None:
+        raise AssertionError('not reached')  # pragma: no cover
+
+    with pytest.raises(UserError, match='started outside the durable execution'):
+        await waiter.wait('review', ask=ask, timeout=None)

@@ -1998,7 +1998,7 @@ _request_input_agent = Agent(
     deps_type=type(None),
     capabilities=[
         TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
-        RequestInput[None](_ask_in_process, allow_non_durable_wait=True),
+        RequestInput[None](_ask_in_process),
     ],
 )
 
@@ -2016,8 +2016,8 @@ class RequestInputDurableWorkflow:
         return result.output  # pragma: no cover
 
 
-async def test_durability_wrap_run_refuses_external_event_waits_even_when_allowed_in_process(client: Client):
-    """A workflow can't be woken from outside it yet, so even `allow_non_durable_wait` fails the workflow clearly instead of hanging."""
+async def test_durability_wrap_run_refuses_external_event_waits(client: Client):
+    """A workflow can't record a wait for an external event yet, so the engine fails the workflow clearly instead of waiting in process."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -2032,7 +2032,7 @@ async def test_durability_wrap_run_refuses_external_event_waits_even_when_allowe
                 task_queue=TASK_QUEUE,
             )
 
-    assert 'Temporal workflows do not support waiting for external events yet' in str(exc_info.value.cause)
+    assert 'does not support waiting for external events yet' in str(exc_info.value.cause)
 
 
 # --- Durability validation ---

@@ -9,7 +9,6 @@ from functools import partial
 
 from pydantic import JsonValue, TypeAdapter
 
-from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import await_maybe, is_async_callable, run_in_executor
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.external_events import (
@@ -37,12 +36,13 @@ class RequestInput(AbstractCapability[AgentDepsT]):
     continues with the approved calls executed, the denied ones reported to the model, and the
     external results filled in.
 
-    The wait is `wait_for_external_event`. In a
+    The wait is [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event]. In a
     plain run it happens in this process, and your code resolves the token with
-    `resolve_external_event`. In a durable run on
+    [`resolve_external_event`][pydantic_ai.external_events.resolve_external_event]. In a durable run on
     an engine that supports it, currently AWS Lambda durable functions with Pydantic AI Harness's
     `AWSLambdaDurability`, the engine records the answer and suspends the run while it waits, and the
-    token is resolved through the engine's API.
+    token is resolved through the engine's API. Other durable engines refuse the wait with a
+    [`UserError`][pydantic_ai.exceptions.UserError].
 
     See [Request Input](../capabilities/request-input.md).
     """
@@ -71,14 +71,6 @@ class RequestInput(AbstractCapability[AgentDepsT]):
     In process, it also bounds `ask`: an async `ask` still running when it elapses is cancelled.
     """
 
-    allow_non_durable_wait: bool = False
-    """Wait in process inside a durable run whose engine doesn't support waiting for external events, instead of raising a `UserError`.
-
-    The wait is then not recorded: when the engine replays the run, `ask` is called again, and when
-    the process restarts, the wait and any answer to it are lost. On Temporal, whose workflow code
-    can't be woken from outside the workflow, it still raises.
-    """
-
     name: str = 'deferred_tool_calls'
     """The wait's name in a durable engine's history, such as `'approve_refund'`.
 
@@ -105,14 +97,9 @@ class RequestInput(AbstractCapability[AgentDepsT]):
         requests: DeferredToolRequests,
     ) -> DeferredToolResults:
         try:
-            # Current, so the wait can tell a durable run whose engine can't wait from a plain run.
-            with set_current_run_context(ctx):
-                payload = await wait_for_external_event(
-                    self.name,
-                    ask=partial(self._ask, ctx, requests),
-                    timeout=self.timeout,
-                    allow_non_durable_wait=self.allow_non_durable_wait,
-                )
+            payload = await wait_for_external_event(
+                self.name, ask=partial(self._ask, ctx, requests), timeout=self.timeout
+            )
         except ExternalEventError as error:
             message = f'No decision on this tool call arrived: {error}'
             return requests.build_results(
