@@ -357,15 +357,25 @@ async def fails_streaming(messages: list[ModelMessage], info: AgentInfo) -> Asyn
     yield ''  # pragma: no cover
 
 
-def chain_session(tmp_path: Path, chains: dict[str, list[str]]) -> tuple[Session[None, str], list[Model]]:
-    """A stock-agent session over `limited:*` models, which fail, and `pooled:NAME` ones, which answer `NAME`.
+def chain_session(tmp_path: Path, chains: dict[str, list[str]]) -> tuple[Session[None, str], list[Model], list[str]]:
+    """A stock-agent session over `limited:NAME` models, which fail, and `pooled:NAME` ones, which answer `NAME`.
 
-    Also returns every `limited` model resolved, in order.
+    Also returns every `limited` model resolved, and the names of the `limited` models requested, in order.
     """
     limited: list[Model] = []
+    tried: list[str] = []
 
     def limit(name: str) -> Model:
-        limited.append(FunctionModel(fails, stream_function=fails_streaming))
+        def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tried.append(name)
+            return fails(messages, info)
+
+        async def fail_streaming(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            tried.append(name)
+            async for chunk in fails_streaming(messages, info):  # pragma: no branch
+                yield chunk  # pragma: no cover
+
+        limited.append(FunctionModel(fail, stream_function=fail_streaming))
         return limited[-1]
 
     providers = {
@@ -381,12 +391,12 @@ def chain_session(tmp_path: Path, chains: dict[str, list[str]]) -> tuple[Session
     session = Session(create_stock_agent(TestModel()), deps=None)
     session.resolve_model = models.resolve
     session.expand_model = models.expand
-    return session, limited
+    return session, limited, tried
 
 
 async def test_a_stock_agent_falls_back_only_on_the_sessions_selection(tmp_path: Path) -> None:
     """A delegated task on the model the session ran on falls back through the chain; one on another model does not."""
-    session, limited = chain_session(tmp_path, {'pool': ['limited:a', 'pooled:b']})
+    session, limited, _ = chain_session(tmp_path, {'pool': ['limited:a', 'pooled:b']})
     session.model = 'chain:pool'
     assert (await session.prompt('hello')).output == 'b'
     # As delegated tasks run: on the session's model, and on a delegate's own option.
@@ -395,9 +405,20 @@ async def test_a_stock_agent_falls_back_only_on_the_sessions_selection(tmp_path:
         await session.agent.run('task', model=FunctionModel(fails))
 
 
+async def test_a_delegated_task_on_a_fallen_back_model_tries_the_rest(tmp_path: Path) -> None:
+    """A task inheriting the model the session fell back to moves on to the models it skipped, not to that one again."""
+    session, limited, tried = chain_session(tmp_path, {'pool': ['limited:a', 'limited:b', 'pooled:c']})
+    session.model = 'chain:pool'
+    assert (await session.prompt('hello')).output == 'c'
+    assert tried == ['a', 'b']
+    tried.clear()
+    assert (await session.agent.run('task', model=limited[1])).output == 'c'
+    assert tried == ['b', 'a']
+
+
 async def test_a_new_chain_rebuilds_the_stock_agent(tmp_path: Path) -> None:
     """Choosing a chain, or another chain with the same first model, binds its own fallback for delegated tasks."""
-    session, limited = chain_session(tmp_path, {'one': ['limited:a', 'pooled:b'], 'two': ['limited:a', 'pooled:c']})
+    session, limited, _ = chain_session(tmp_path, {'one': ['limited:a', 'pooled:b'], 'two': ['limited:a', 'pooled:c']})
     session.model = 'pooled:z'
     assert (await session.prompt('hello')).output == 'z'
     single = session.agent

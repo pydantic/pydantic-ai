@@ -259,20 +259,22 @@ def _unwrapped(model: Model) -> Model:
 class SelectionFallback(ModelFallback[DepsT]):
     """`ModelFallback` for the steps on the session's selection: one of `selection`, or a model one of them ran on.
 
-    A stock agent binds it, so a delegated task that inherits the session's model falls back too, while one on
-    another model, such as a delegate's own option, does not fall back onto the session's.
+    A stock agent binds it, so a delegated task that inherits the session's model falls back too, through every
+    model of the selection it has not tried, while one on another model, such as a delegate's own option, does not
+    fall back onto the session's.
     """
 
     selection: frozenset[str]
-    _ran_on: list[weakref.ref[Model]] = field(repr=False)
-    """The models the selection's steps ran on, shared by every run of the agent that binds this."""
+    _ran_as: list[tuple[weakref.ref[Model], str]] = field(repr=False)
+    """The models the selection's steps ran on, with the name each ran as, shared by every run of the agent."""
     _judged_step: int | None = field(repr=False)
     _on_selection: bool = field(repr=False)
 
-    def __init__(self, first: str, *models: str) -> None:
+    def __init__(self, *models: str) -> None:
+        # Every model, the first included: an inherited model may be any of them, and core skips the ones tried.
         super().__init__(*models)
-        self.selection = frozenset((first, *models))
-        self._ran_on = []
+        self.selection = frozenset(models)
+        self._ran_as = []
         self._judged_step = None
         self._on_selection = False
 
@@ -280,22 +282,26 @@ class SelectionFallback(ModelFallback[DepsT]):
         """None: the session passes or binds its selection as the model itself."""
         return None
 
-    def _ran_on_selection(self, model: Model) -> bool:
-        return any(ref() is _unwrapped(model) for ref in self._ran_on)
+    def _ran_as_name(self, model: Model) -> str | None:
+        model = _unwrapped(model)
+        return next((name for ref, name in self._ran_as if ref() is model), None)
 
     async def prepare_model_request(
         self, ctx: RunContext[DepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
+        known = self._ran_as_name(request_context.model)
+        name = request_context.model_id or known
         if self._judged_step != ctx.run_step:
             self._judged_step = ctx.run_step
-            self._on_selection = request_context.model_id in self.selection or self._ran_on_selection(
-                request_context.model
-            )
-        if not self._on_selection:
+            self._on_selection = name in self.selection
+        if not self._on_selection or name is None:
             return request_context
-        if not self._ran_on_selection(request_context.model):
-            self._ran_on[:] = [ref for ref in self._ran_on if ref() is not None]
-            self._ran_on.append(weakref.ref(_unwrapped(request_context.model)))
+        if request_context.model_id is None:
+            # A model passed as an instance, as a delegated task inherits it: named so core skips it when moving on.
+            request_context = replace(request_context, model_id=name)
+        if known is None:
+            self._ran_as[:] = [(ref, ran_as) for ref, ran_as in self._ran_as if ref() is not None]
+            self._ran_as.append((weakref.ref(_unwrapped(request_context.model)), name))
         return await super().prepare_model_request(ctx, request_context)
 
     async def on_model_request_error(
