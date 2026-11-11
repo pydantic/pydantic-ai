@@ -171,4 +171,8 @@ class SettingsMenu:
     Read as this menu opens, so a row an action adds meanwhile opens its menu once this one opens again.
     """
     searchable: bool = True
-    """Whether `/` starts a search in the terminal list. While searching, printable keys edit the query instead of acting as hotkeys."""
+    """Whether the terminal list can be filtered.
+
+    Lists offering boolean Space toggles use `/` to start search; printable keys then edit the query.
+    Lists without eligible toggleable rows filter as you type and keep uppercase `R` for reset.
+    """

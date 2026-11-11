@@ -186,6 +186,26 @@ def test_space_hint_requires_a_boolean_row(
     assert ('Space toggle' in capsys.readouterr().out) is boolean
 
 
+def test_boolean_free_search_keeps_type_to_filter_and_literal_space(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    context, applied = make_context(tmp_path)
+    fields = FieldMenu(SettingsSource(context, keys=['model', 'run.request_limit']))
+    pressed = iter([*'request', 'enter', 'R', *'request ', 'escape'])
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    result = fields.build().run()
+    assert result.item is not None and result.item.value == 'run.request_limit'
+    assert fields.build(1).run() == fields.reset_marker(object(), result.item)
+    capsys.readouterr()
+    assert fields.build().run().cancelled
+    output = capsys.readouterr().out
+    assert '(no matches)' in output, 'Space is query text, not a hotkey, in a boolean-free list'
+    assert 'Space toggle' not in output and '/ search' not in output
+    assert 'type to filter' in output
+    assert applied == []
+    assert context.store.overrides() == {}
+
+
 @pytest.mark.parametrize('asynchronous', [True, False])
 async def test_space_does_not_bypass_boolean_row_actions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], asynchronous: bool

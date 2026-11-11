@@ -122,7 +122,7 @@ class FieldMenu:
         return '\n'.join(lines)
 
     def build(self, initial: int = 0) -> Menu:
-        """The field list: Space toggles booleans; `/` starts a search in searchable lists."""
+        """The field list: boolean toggles use slash search; other searchable lists filter as you type."""
         self.rows = list(self._source.rows())
         toggle_hint = 'Space toggle - ' if any(self.toggleable(row) for row in self.rows) else ''
         builder = (
@@ -132,21 +132,22 @@ class FieldMenu:
             .initial_index(min(initial, len(self.rows) - 1))
             .preview(self.details)
         )
-        if self._searchable:
+        if self._searchable and toggle_hint:
             return slash_search(
                 builder,
                 footer=toggle_hint + _LIST_HINT,
                 key_source=menu_key,
                 hotkeys={' ': self.toggle, 'R': self._reset_key},
             )
-        return (
-            builder.list_width(46)
-            .on_key(' ', self.toggle)
-            .on_key('r', self._reset_key)
-            .footer_hint(toggle_hint + 'Enter edit - r reset - Esc back')
-            .key_source(menu_key)
-            .build()
-        )
+        if self._searchable:
+            builder.searchable().on_key('R', self._reset_key).footer_hint('type to filter - ' + _LIST_HINT)
+        else:
+            builder.list_width(46).on_key('r', self._reset_key).footer_hint(
+                toggle_hint + 'Enter edit - r reset - Esc back'
+            )
+            if toggle_hint:
+                builder.on_key(' ', self.toggle)
+        return builder.key_source(menu_key).build()
 
     def toggleable(self, row: FieldRow) -> bool:
         """Only boolean value rows toggle; action and submenu rows keep their own flow."""

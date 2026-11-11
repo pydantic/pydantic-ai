@@ -3349,10 +3349,12 @@ menu's `Dialogs` and saves the new value for you.
 Return a `SettingsMenu` from `settings_menu` to give the plugin a settings menu.
 CLAI opens it when the plugin is turned on (Enter or Space in `/plugins`, `/plugins enable`,
 or `/plugins add`), on `c` in `/plugins`, and on `/plugins configure NAME`, with
-the shared field editor `/set` uses. In the terminal, press `/` to search. While
-searching, printable characters, including Space and `R`, are query text. Enter
-ends search and keeps the matches, so hotkeys act on them; `/` resumes search.
-Esc clears the search or retained filter first; with no filter, Esc closes.
+the shared field editor `/set` uses. Searchable terminal lists that offer boolean
+Space toggles use `/` to start searching. While searching, printable characters,
+including Space and `R`, are query text. Enter ends search and keeps the matches,
+so hotkeys act on them; `/` resumes search. Esc clears the search or retained
+filter first; with no filter, Esc closes. Searchable lists without eligible
+boolean rows filter as you type and keep uppercase `R` as the reset key.
 
 Outside search, Space toggles rows with the two choices `true` and `false`, in either order,
 excluding rows with `SettingsMenu.actions` or `SettingsMenu.menus` that keep their
@@ -3383,7 +3385,8 @@ A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
   builds it when it opens. Leaving it returns to this menu, in the terminal and in
   the web UI, which shows it beneath the row. The keys are read as the menu opens, so
   a row an action adds meanwhile opens its menu once the menu opens again.
-- `searchable`, whether `/` starts a search in the terminal (default `True`).
+- `searchable`, whether the terminal list can be filtered (default `True`): `/`
+  starts search when the list offers boolean Space toggles; otherwise, typing filters.
 
 `Dialogs` asks the user wherever the menu was opened, and every method waits for the
 answer. Backing out returns `None` or `False`, never raises:
