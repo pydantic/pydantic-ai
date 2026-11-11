@@ -1,12 +1,14 @@
 """Tests for `GoogleDecisionsModel`, the Gemini API's decisions endpoint as a decision model.
 
-The endpoint's responses here are shaped from live requests to it: answers keyed by the question IDs the request
-used, unrounded float64 probabilities, and usage in `total_input_tokens`.
+The recorded tests run against `gemini-decision-1`. The mocked ones cover what no real response produces, with bodies
+shaped like the live ones: answers keyed by the question IDs the request used, unrounded float64 probabilities, and
+usage in `total_input_tokens`.
 """
 
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable, Mapping
+from enum import StrEnum
 from typing import Annotated, Literal
 
 import httpx2
@@ -16,6 +18,7 @@ from pydantic import BaseModel, Field, JsonValue, TypeAdapter, WithJsonSchema
 from pydantic_ai import (
     Agent,
     BinaryContent,
+    BinaryImage,
     BoolCriteria,
     ModelAPIError,
     ModelHTTPError,
@@ -37,7 +40,7 @@ from pydantic_ai.models.decision import (
 from pydantic_ai.providers import Provider
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsStr, TestEnv, try_import
+from ..conftest import IsStr, RequestCapture, TestEnv, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google_decisions import GoogleDecisionsModel
@@ -46,7 +49,6 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
 
 MODEL_NAME = 'gemini-decision-1'
-DECISIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/decisions'
 
 Handler = Callable[[httpx2.Request], httpx2.Response]
 Answer = dict[str, JsonValue]
@@ -148,19 +150,27 @@ class Ticket(BaseModel):
     urgency: Urgency = Field(description='How urgent is it?')
 
 
-async def test_output_type(allow_model_requests: None):
+@pytest.fixture
+def capture_model(request_capture: RequestCapture, gemini_api_key: str) -> GoogleDecisionsModel:
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    return GoogleDecisionsModel(MODEL_NAME, provider=provider)
+
+
+@pytest.mark.vcr
+async def test_output_type(
+    allow_model_requests: None, capture_model: GoogleDecisionsModel, request_capture: RequestCapture
+):
     """Each field goes as a question under its own ID, with its wording as text and its meanings as strings.
 
-    A mocked endpoint, not a recording: the request body is what this pins.
+    The answers come back under those IDs and fill the output: a yes/no as a `bool`, a pick-one as its label, a
+    rubric as its level.
     """
-    endpoint = Captured(answering('product defect'))
-    agent = Agent(mock_model(endpoint), output_type=Ticket)
+    agent = Agent(capture_model, output_type=Ticket)
 
     result = await agent.run('The blender arrived with a cracked jar. I want my money back today.')
 
-    assert result.output == Ticket(refund=True, area='product defect', urgency=1)
-    assert [request.url for request in endpoint.requests] == [DECISIONS_URL]
-    assert endpoint.bodies == snapshot(
+    assert request_capture.paths == ['/v1beta/decisions']
+    assert request_capture.bodies('/decisions') == snapshot(
         [
             {
                 'model': 'gemini-decision-1',
@@ -188,98 +198,116 @@ async def test_output_type(allow_model_requests: None):
             }
         ]
     )
-    assert result.response.provider_name == 'google-decisions'
-    assert result.response.model_name == MODEL_NAME
-    assert result.usage.input_tokens == 280
+    assert result.output == snapshot(Ticket(refund=True, area='product defect', urgency=1))
     assert result.response.provider_details == snapshot(
         {
-            'confidence': {'refund': 0.94, 'area': 0.9, 'urgency': 0.8},
+            'confidence': {'refund': 0.966166, 'area': 0.8778519632794022, 'urgency': 0.7177949412677748},
             'probabilities': {
-                'area': {'billing': 0.1, 'product defect': 0.9},
-                'urgency': {'0': 0.1, '1': 0.8, '2': 0.1},
+                'area': {'billing': 0.12214803672059774, 'product defect': 0.8778519632794022},
+                'urgency': {'0': 0.0825415728655953, '1': 0.7177949412677748, '2': 0.19966348586662996},
             },
-            'scores': {'urgency': 1.0},
+            'scores': {'urgency': 1.1171219130010348},
         }
     )
+    assert (result.response.provider_name, result.response.model_name) == ('google-decisions', MODEL_NAME)
+    assert result.usage.input_tokens == snapshot(303)
 
 
-async def test_route_keys_round_trip(allow_model_requests: None):
+@pytest.mark.vcr
+async def test_route_keys_round_trip(
+    allow_model_requests: None, capture_model: GoogleDecisionsModel, request_capture: RequestCapture
+):
     """The route question and each route's fields go under plain IDs, and their answers come back under their names.
 
-    The planner keys a route's fields `'<route>.<field>'`, which the endpoint's ID pattern refuses.
+    The planner keys a route's fields `'<route>.<field>'`, which the endpoint's ID pattern refuses: the tool's
+    argument here is the answer to `escalate_to_human.reason`, asked beside the route question.
     """
-    endpoint = Captured(answering('escalate_to_human', 'legal threat'))
 
     def escalate_to_human(reason: Literal['legal threat', 'safety issue']) -> str:
         """Hand the ticket to a person."""
         return f'escalated: {reason}'
 
-    agent = Agent(mock_model(endpoint), output_type=Ticket, tools=[escalate_to_human])
+    agent = Agent(capture_model, output_type=Ticket, tools=[escalate_to_human])
 
     result = await agent.run('Your heater caught fire in my kitchen. My lawyer will be in touch.')
 
-    first, *_ = endpoint.bodies
-    assert isinstance(first, dict)
-    questions = first['questions']
+    questions = request_capture.body('/decisions')['questions']
     assert isinstance(questions, dict)
     assert list(questions) == [f'q{index}' for index in range(len(questions))]
     tool_call = result.all_messages()[1]
     assert isinstance(tool_call, ModelResponse)
-    assert tool_call.parts == [ToolCallPart('escalate_to_human', {'reason': 'legal threat'}, tool_call_id=IsStr())]
+    assert tool_call.parts == snapshot(
+        [
+            ToolCallPart(
+                tool_name='escalate_to_human',
+                args={'reason': 'legal threat'},
+                tool_call_id=IsStr(),
+            )
+        ]
+    )
     assert tool_call.provider_details is not None
     assert tool_call.provider_details['route'] == snapshot(
         {
             'choice': 'escalate_to_human',
-            'probabilities': {'Ticket': 0.1, 'escalate_to_human': 0.9},
+            'probabilities': {'escalate_to_human': 0.9813419372969718, 'Ticket': 0.018658062703028166},
             'offered': ['Ticket', 'escalate_to_human'],
         }
     )
-    assert result.output == Ticket(refund=True, area='billing', urgency=1)
+    assert result.output == snapshot(Ticket(refund=False, area='product defect', urgency=2))
 
 
-async def test_image_input(allow_model_requests: None):
-    """Each image goes inline after its `<image N>` label, with its `resolution` from `vendor_metadata`."""
-    endpoint = Captured(answering('green'))
-    agent = Agent(mock_model(endpoint), output_type=Literal['red', 'green'], instructions='What colour is the product?')
-    low = BinaryContent(b'\x89PNG\r\n\x1a\nlow', media_type='image/png', vendor_metadata={'resolution': 'low'})
-    default = BinaryContent(b'\xff\xd8\xffdefault', media_type='image/jpeg')
+@pytest.mark.vcr
+async def test_image_input(
+    allow_model_requests: None,
+    capture_model: GoogleDecisionsModel,
+    request_capture: RequestCapture,
+    image_content: BinaryImage,
+):
+    """An image goes inline after its `<image N>` label, with its `resolution` from `vendor_metadata`."""
+    agent = Agent(
+        capture_model, output_type=Literal['kiwi', 'apple', 'banana'], instructions='Which fruit is in the photo?'
+    )
+    image = BinaryContent(image_content.data, media_type='image/jpeg', vendor_metadata={'resolution': 'low'})
 
-    result = await agent.run(['Photos from the customer:', low, default])
+    result = await agent.run(['Photo from the customer:', image])
 
-    assert result.output == 'green'
-    body = endpoint.bodies[0]
-    assert isinstance(body, dict)
-    assert body['input'] == snapshot(
+    assert result.output == 'kiwi'
+    assert request_capture.body('/decisions')['input'] == snapshot(
         [
             {
                 'type': 'text',
                 'text': """\
-Photos from the customer:
+Photo from the customer:
 
-<image 1>
-
-<image 2>\
+<image 1>\
 """,
             },
             {'type': 'text', 'text': '<image 1>:'},
-            {'type': 'image', 'data': 'iVBORw0KGgpsb3c=', 'mime_type': 'image/png', 'resolution': 'low'},
-            {'type': 'text', 'text': '<image 2>:'},
-            {'type': 'image', 'data': '/9j/ZGVmYXVsdA==', 'mime_type': 'image/jpeg'},
+            {
+                'type': 'image',
+                'data': IsStr(),
+                'mime_type': 'image/jpeg',
+                'resolution': 'low',
+            },
         ]
     )
+    assert result.usage.input_tokens == snapshot(378)
 
 
-async def test_history_goes_as_state_text(allow_model_requests: None):
+@pytest.mark.vcr
+async def test_history_goes_as_state_text(
+    allow_model_requests: None, capture_model: GoogleDecisionsModel, request_capture: RequestCapture
+):
     """The endpoint takes no conversation turns, so the history goes in the one text it is sent."""
-    endpoint = Captured(answering())
-    agent = Agent(mock_model(endpoint), output_type=bool, instructions='Is the customer still angry?')
+    agent = Agent(capture_model, output_type=bool, instructions='Is the customer still angry?')
     history = [ModelRequest(parts=[UserPromptPart('My order is two weeks late!')])]
 
-    await agent.run('Thanks, it just arrived.', message_history=history)
+    result = await agent.run('Thanks, it just arrived.', message_history=history)
 
-    body = endpoint.bodies[0]
-    assert isinstance(body, dict)
-    assert body['input'] == snapshot('My order is two weeks late!\n\nThanks, it just arrived.')
+    assert request_capture.body('/decisions')['input'] == snapshot(
+        'My order is two weeks late!\n\nThanks, it just arrived.'
+    )
+    assert result.output == snapshot(False)
 
 
 async def test_question_mapping(allow_model_requests: None):
@@ -354,36 +382,67 @@ async def test_extra_body_refused(allow_model_requests: None, extra_body: object
     assert endpoint.requests == []
 
 
-@pytest.mark.parametrize(
-    ('status', 'body'),
-    [
-        pytest.param(
-            400,
-            {'error': {'message': "Question 'q0' must have non-empty instructions.", 'code': 'invalid_request'}},
-            id='invalid-request',
-        ),
-        pytest.param(
-            404,
-            {'error': {'message': 'Requested model not found.', 'code': 'not_found'}},
-            id='not-found',
-        ),
-        pytest.param(
-            429,
-            {'error': {'message': 'Rate limit exceeded. Please retry in 20s.', 'code': 'too_many_requests'}},
-            id='rate-limit',
-        ),
-    ],
-)
-async def test_http_error(allow_model_requests: None, status: int, body: dict[str, object]):
-    """An error response raises a `ModelHTTPError` with its status and body, for a `FallbackModel` to take over."""
-    agent = Agent(mock_model(lambda _: httpx2.Response(status, json=body)), output_type=bool, instructions='Urgent?')
+async def test_rate_limit_error(allow_model_requests: None):
+    """A 429 raises a `ModelHTTPError` with its body, for a `FallbackModel` to take over.
+
+    Mocked with the body a live 429 had: the free tier's limit can't be hit on demand.
+    """
+    body = {
+        'error': {
+            'message': 'Rate limit exceeded for model gemini-decision-1 (limit: 15 requests per minute on Free Tier). '
+            'Please retry in 20s or upgrade your tier at https://ai.dev/rate-limit.',
+            'code': 'too_many_requests',
+        }
+    }
+    agent = Agent(mock_model(lambda _: httpx2.Response(429, json=body)), output_type=bool, instructions='Urgent?')
 
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Server is down')
 
-    assert exc_info.value.status_code == status
-    assert exc_info.value.model_name == MODEL_NAME
-    assert exc_info.value.body == body
+    assert (exc_info.value.status_code, exc_info.value.model_name, exc_info.value.body) == (429, MODEL_NAME, body)
+
+
+class Handling(StrEnum):
+    refund = 'refund'
+    long = 'refund the customer ' + 'x' * 120
+
+
+@pytest.mark.vcr
+async def test_option_label_too_long(allow_model_requests: None, capture_model: GoogleDecisionsModel):
+    """The API takes option labels of up to 128 characters, and refuses a longer one with a 400."""
+    agent = Agent(capture_model, output_type=Handling, instructions='How should we handle this?')
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('I want my money back.')
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.body == snapshot(
+        {
+            'error': {
+                'message': '* CreateDecisionRequest.questions[q0].choice.criteria[refund the customer xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]: must have an id of at most 128 characters\n',
+                'code': 'invalid_request',
+            }
+        }
+    )
+
+
+@pytest.mark.vcr
+async def test_unknown_model(allow_model_requests: None, gemini_api_key: str):
+    model = GoogleDecisionsModel('gemini-decision-0', provider=GoogleProvider(api_key=gemini_api_key))
+    agent = Agent(model, output_type=bool, instructions='Urgent?')
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('Server is down')
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.body == snapshot(
+        {
+            'error': {
+                'message': 'Requested model not found. See https://ai.google.dev/gemini-api/docs/models for a list of available models.',
+                'code': 'not_found',
+            }
+        }
+    )
 
 
 async def test_connection_error(allow_model_requests: None):

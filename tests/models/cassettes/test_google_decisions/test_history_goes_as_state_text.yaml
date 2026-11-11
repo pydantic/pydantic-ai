@@ -1,0 +1,61 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/decisions
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "185"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-decision-1
+        input: |-
+          My order is two weeks late!
+
+          Thanks, it just arrived.
+        questions:
+          q0:
+            type: noul
+            instructions: Is the customer still angry?
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=181
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        answers:
+          q0:
+            confidence: 0.9544196212173374
+            noul: 0.045580378782662634
+            type: noul
+        usage:
+          total_tokens: 102
+          total_input_tokens: 102
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 102
+          total_output_tokens: 0
+  recorded_at: 2026-11-11T16:49:11.790325+00:00
