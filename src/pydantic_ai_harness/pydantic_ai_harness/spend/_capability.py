@@ -752,8 +752,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     def _refuse(self, budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT], detail: str) -> None:
         """Record the refusal as a span and raise."""
         record_decision(
+            ctx,
             'spend budget exhausted',
-            ctx=ctx,
             attributes={'spend.budget': budget.name, 'spend.window': budget.window},
             # A scope key is usually a tenant or user id, and a trace has a wider audience than the
             # application that produced it.

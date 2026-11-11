@@ -431,8 +431,8 @@ def trace_block(
     audiences are broader than the user who sees the refusal text.
     """
     record_decision(
+        ctx,
         f'guardrail blocked {direction}',
-        ctx=ctx,
         attributes=direction_attributes(direction, 'block', tool_name),
         content={'guardrail.message': message},
     )
@@ -453,8 +453,8 @@ def trace_redaction(
     spans, which see the rewritten value, keep out.
     """
     record_decision(
+        ctx,
         f'guardrail redacted {direction}',
-        ctx=ctx,
         attributes=direction_attributes(direction, 'replace', tool_name),
         content={'guardrail.replacement': str(replacement)},
     )
@@ -477,8 +477,8 @@ def trace_approval(
     it -- the one case where an operator most needs to see them.
     """
     record_decision(
+        ctx,
         f'guardrail deferred {direction}',
-        ctx=ctx,
         attributes={**direction_attributes(direction, 'approve', tool_name), 'guardrail.tool_call_id': tool_call_id},
         content={'guardrail.arguments': str(args)},
     )

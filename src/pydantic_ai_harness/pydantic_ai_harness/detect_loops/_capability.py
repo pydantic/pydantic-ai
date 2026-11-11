@@ -348,8 +348,8 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     async def _act(self, ctx: RunContext[AgentDepsT], loop: DetectedLoop) -> None:
         action = self.action
         record_decision(
+            ctx,
             'loop detected',
-            ctx=ctx,
             attributes={
                 'detect_loops.pattern': loop.pattern,
                 'detect_loops.action': action if isinstance(action, str) else 'handler',

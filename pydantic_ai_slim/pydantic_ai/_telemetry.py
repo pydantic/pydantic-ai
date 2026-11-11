@@ -1,14 +1,16 @@
 """Spans on a run's tracer that record content only when the run allows it.
 
-- `open_span`: a span around work that takes time and can fail.
-- `record_decision`: a zero-duration span marking a decision that changed the run's course.
-- `set_content_attribute`: an attribute that can quote content, set only when the run captures content.
+- `open_span(ctx, name)`: a span around work that takes time and can fail.
+- `record_decision(ctx, name)`: a decision that changed the run's course, currently a zero-duration span.
+- `set_content_attribute(ctx, span, key, value)`: an attribute that can quote content, set only when
+  the run captures content.
 
-Each takes the run's `ctx` and uses `ctx.tracer` and `ctx.trace_include_content`. Code without a
-`RunContext`, such as a `Workspace` that runs share and that can outlive a run, leaves `ctx` out, and
-they use the calling run's tracer and content policy, which the run publishes here for the context its
-body, tools and their tasks inherit. A value stored on such an object would apply one run's settings to
-another's calls. A nested run publishes its own, and outside a run there is none, so nothing is traced.
+Each takes the run's `ctx` first and uses `ctx.tracer` and `ctx.trace_include_content`. Code that runs
+during a run but has no `RunContext`, such as a `Workspace` that runs share and that can outlive a
+run, passes `None`: they then use the calling run's tracer and content policy, which the run publishes
+here for the context its body, tools and their tasks inherit. A value stored on such an object would
+apply one run's settings to another's calls. A nested run publishes its own, and outside a run there
+is none, so nothing is traced.
 
 Pass `ctx` whenever there is one: the published value only exists once `wrap_run` starts, so a
 `for_run` hook that read it would find nothing, or in a nested run its parent's.
@@ -46,7 +48,8 @@ class RunTelemetry:
     """The tracer a run's spans go to, and whether they may record content.
 
     Not `InstrumentationSettings`: a durable worker combines its own settings with the run's
-    serialized content flag. Compared by identity, so each publish is a distinct run's telemetry.
+    serialized content flag. A published value is compared by identity, so each publish is a distinct
+    run's telemetry; one built from a `ctx` is used for a single call and never published.
     """
 
     tracer: Tracer
@@ -86,54 +89,56 @@ def _run_telemetry(tracer: Tracer, include_content: bool) -> RunTelemetry | None
 
 @contextmanager
 def open_span(
+    ctx: RunContext[Any] | None,
     name: str,
     *,
-    ctx: RunContext[Any] | None = None,
     attributes: Mapping[str, AttributeValue] | None = None,
+    content: Mapping[str, AttributeValue] | None = None,
     not_errors: tuple[type[Exception], ...] = (),
 ) -> Generator[Span]:
-    """Open `name` on the tracer of `ctx`'s run, or without `ctx` the calling run's.
+    """Open `name` on the tracer of `ctx`'s run, or with `None` the calling run's.
 
-    Yields `INVALID_SPAN` outside an
-    instrumented run. `attributes` are set at the start, so Logfire's console and pending spans show
-    them; they must not hold content, which goes through `set_content_attribute`. An uncaught error is recorded
-    by its type only, unless the run captures content. An exception in `not_errors` (such as an
-    expected `FileNotFoundError`) is not recorded as a failure.
+    Yields `INVALID_SPAN` outside an instrumented run. `attributes` are always recorded; `content`,
+    which can quote what the span is about, only when the run captures content. Both are set at the
+    start, so Logfire's console and pending spans show them. An uncaught error is recorded by its type
+    only, unless the run captures content, as its message can quote content. An exception in
+    `not_errors`, such as an expected `FileNotFoundError`, is not recorded as a failure.
     """
     if (telemetry := _telemetry_of(ctx)) is None:
         yield INVALID_SPAN
         return
     with telemetry.tracer.start_as_current_span(
-        name, attributes=attributes, record_exception=False, set_status_on_exception=False
+        name,
+        attributes=_with_content(telemetry, attributes, content),
+        record_exception=False,
+        set_status_on_exception=False,
     ) as span:
         with record_uncaught_errors(span, include_content=telemetry.include_content, not_errors=not_errors):
             yield span
 
 
 def record_decision(
+    ctx: RunContext[Any] | None,
     name: str,
     *,
-    ctx: RunContext[Any] | None = None,
     attributes: Mapping[str, AttributeValue] | None = None,
     content: Mapping[str, AttributeValue] | None = None,
 ) -> None:
-    """Record a zero-duration span marking a decision that changed the run's course, such as a guard blocking a value.
+    """Record that a capability decided something that changed the run's course, such as a guard blocking a value.
 
-    The span goes to the tracer of `ctx`'s run, or without `ctx` the calling run's. `attributes` are
-    always recorded; `content`, which can quote what the decision was about, only when that run
-    captures content.
+    The record is currently a zero-duration span named `name`, on the tracer of `ctx`'s run, or with
+    `None` the calling run's. `attributes` are always recorded; `content`, which can quote what the
+    decision was about, only when the run captures content.
     """
-    if (telemetry := _telemetry_of(ctx)) is None:
-        return
-    if content and telemetry.include_content:
-        attributes = {**(attributes or {}), **content}
-    telemetry.tracer.start_span(name, attributes=attributes).end()
+    if (telemetry := _telemetry_of(ctx)) is not None:
+        telemetry.tracer.start_span(name, attributes=_with_content(telemetry, attributes, content)).end()
 
 
-def set_content_attribute(span: Span, key: str, value: AttributeValue, *, ctx: RunContext[Any] | None = None) -> None:
+def set_content_attribute(ctx: RunContext[Any] | None, span: Span, key: str, value: AttributeValue) -> None:
     """Set an attribute that can quote content, such as a path or a command, only when the run captures content.
 
-    The run is `ctx`'s, or without `ctx` the calling run's.
+    The run is `ctx`'s, or with `None` the calling run's. For content known when the span opens, pass
+    `content=` to `open_span` instead.
     """
     if (telemetry := _telemetry_of(ctx)) is not None and telemetry.include_content:
         span.set_attribute(key, value)
@@ -141,3 +146,11 @@ def set_content_attribute(span: Span, key: str, value: AttributeValue, *, ctx: R
 
 def _telemetry_of(ctx: RunContext[Any] | None) -> RunTelemetry | None:
     return _current.get() if ctx is None else _run_telemetry(ctx.tracer, ctx.trace_include_content)
+
+
+def _with_content(
+    telemetry: RunTelemetry,
+    attributes: Mapping[str, AttributeValue] | None,
+    content: Mapping[str, AttributeValue] | None,
+) -> Mapping[str, AttributeValue] | None:
+    return {**(attributes or {}), **content} if content and telemetry.include_content else attributes

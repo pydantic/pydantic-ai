@@ -534,7 +534,7 @@ class Workspace(WorkspaceBackend):
     async def _resolve_traced(self, path: str, span: Span) -> str:
         """Resolve `path`, recording it on `span` when content is captured."""
         resolved = await self.resolve(path)
-        set_content_attribute(span, 'file.path', resolved)
+        set_content_attribute(None, span, 'file.path', resolved)  # `None`: the calling run's policy
         return resolved
 
     async def run(
@@ -636,7 +636,7 @@ class Workspace(WorkspaceBackend):
             if not posixpath.isabs(path):
                 # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.
                 path = posixpath.join(await self.working_dir(), path)
-            set_content_attribute(span, 'file.path', path)
+            set_content_attribute(None, span, 'file.path', path)
             backend = self._backend
             if isinstance(backend, SupportsRealpath):
                 return await backend.realpath(path)

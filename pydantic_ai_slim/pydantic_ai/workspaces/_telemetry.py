@@ -98,9 +98,9 @@ def command_span(step: Step) -> AbstractContextManager[Span]:
 def set_command(span: Span, command: WorkspaceCommand) -> None:
     """Record `command` on a `workspace run` span, only when the run captures content."""
     if isinstance(command, str):
-        set_content_attribute(span, 'process.command_line', command)
+        set_content_attribute(None, span, 'process.command_line', command)
     else:
-        set_content_attribute(span, 'process.command_args', list(command))
+        set_content_attribute(None, span, 'process.command_args', list(command))
 
 
 @contextmanager
@@ -114,7 +114,8 @@ def _span(
     token = _opened_by.set(current_run_telemetry())
     try:
         # A missing file is often an expected answer, not a failure.
-        with open_span(f'workspace {name}', attributes=attributes, not_errors=(FileNotFoundError,)) as span:
+        # `None`: a workspace has no `RunContext`, so the span follows the calling run.
+        with open_span(None, f'workspace {name}', attributes=attributes, not_errors=(FileNotFoundError,)) as span:
             # The ref is read only when recording, so an untraced call never touches it.
             traced = backend if span.is_recording() else None
             if traced is not None:

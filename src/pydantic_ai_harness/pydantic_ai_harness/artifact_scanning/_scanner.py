@@ -268,8 +268,8 @@ def record_flagged(
     chosen by the model, and the matches are the artifact's content.
     """
     record_decision(
+        ctx,
         'artifact_scan flagged',
-        ctx=ctx,
         attributes={
             'artifact_scan.artifact': artifact,
             'artifact_scan.action': action,
