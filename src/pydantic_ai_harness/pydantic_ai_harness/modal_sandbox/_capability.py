@@ -155,6 +155,16 @@ def _sandbox_id_ref(sandbox_id: object) -> WorkspaceRef | None:
     return WorkspaceRef(provider='modal', id=sandbox_id)
 
 
+def _check_runtime(runtime: object, mounts: object) -> None:
+    if runtime not in ('gvisor', 'vm', None):
+        raise UserError(f"runtime must be 'gvisor', 'vm' or None, got {runtime!r}.")
+    # A function of the run may return no buckets, so only a list is known to need the VM runtime here.
+    if runtime == 'gvisor' and isinstance(mounts, Sequence) and mounts:
+        raise UserError(
+            "mounts need Modal's VM runtime: gVisor can't mount the FUSE file systems they use. Pass `runtime='vm'`."
+        )
+
+
 @dataclass(kw_only=True, init=False)
 class ModalSandbox(AbstractCapability[AgentDepsT]):
     """Supply a Modal sandbox as the run's workspace.
@@ -275,6 +285,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             )
         check_integer('idle_timeout', idle_timeout, optional=True)
         check_working_dir(working_dir)
+        _check_runtime(runtime, mounts)
         self.id = id
         self.description = description
         self.defer_loading = defer_loading

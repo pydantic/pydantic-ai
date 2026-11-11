@@ -11,7 +11,7 @@ import pytest
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceRef
-from pydantic_ai_harness import MountError
+from pydantic_ai_harness import MountError, S3Mount
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
 from tests.harness.mounts._requests import Request, parse_request
 from tests.harness.mounts.sandbox_fixtures import bucket, probing
@@ -108,3 +108,23 @@ def test_a_spec_cannot_set_mounts() -> None:
     assert 'mounts' not in inspect.signature(ModalSandbox.from_spec).parameters
     with pytest.raises(UserError, match='`mounts` holds keys, so an agent spec cannot set it'):
         ModalSandbox[None].from_spec(mounts=[])
+
+
+@pytest.mark.parametrize('value', ['firecracker', 'VM', 1])
+def test_runtime_must_be_gvisor_vm_or_none(value: object) -> None:
+    with pytest.raises(UserError, match=rf"runtime must be 'gvisor', 'vm' or None, got {value!r}\."):
+        ModalSandbox(runtime=value)  # pyright: ignore[reportArgumentType]
+
+
+def test_mounts_on_gvisor_are_refused_where_they_are_written() -> None:
+    with pytest.raises(UserError, match="mounts need Modal's VM runtime"):
+        ModalSandbox(runtime='gvisor', mounts=[bucket()])
+
+
+def test_gvisor_is_allowed_without_mounts_or_with_a_function_of_the_run() -> None:
+    def no_buckets(ctx: object) -> list[S3Mount]:
+        return []
+
+    assert ModalSandbox(runtime='gvisor').runtime == 'gvisor'
+    assert ModalSandbox(runtime='gvisor', mounts=no_buckets).mounts is no_buckets
+    assert ModalSandbox(mounts=[bucket()]).runtime is None

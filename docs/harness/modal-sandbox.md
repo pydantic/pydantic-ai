@@ -225,7 +225,7 @@ sandbox = ModalSandbox(
 )
 ```
 
-The run's first command or file operation mounts the bucket at `/root/data` on the default image. A sandbox on gVisor, including an attached one, is refused with `MountError`: gVisor can't mount the FUSE file system a mount uses. The sandbox must reach the store, and its image needs `python3`. See [Mounting Cloud Storage](cloud-storage-mounts.md) for fresh keys per run, other stores, read-only mounts and how long a mount lasts.
+The run's first command or file operation mounts the bucket at `/root/data` on the default image. `ModalSandbox(runtime='gvisor', mounts=[...])` raises `UserError`, and a sandbox found on gVisor when the bucket is mounted, including an attached one, is refused with `MountError`: gVisor can't mount the FUSE file system a mount uses. The sandbox must reach the store, and its image needs `python3`. See [Mounting Cloud Storage](cloud-storage-mounts.md) for fresh keys per run, other stores, read-only mounts and how long a mount lasts.
 
 ## Clean up
 
