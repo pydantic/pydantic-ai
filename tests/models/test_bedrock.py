@@ -3508,6 +3508,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     signature=IsStr(),
                     provider_name='bedrock',
                 ),
+                canonical_system='anthropic',
             ),
             PartEndEvent(
                 index=0,
@@ -3518,6 +3519,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     provider_name='bedrock',
                 ),
                 next_part_kind='thinking',
+                canonical_system='anthropic',
             ),
             PartStartEvent(
                 index=1,
@@ -3528,6 +3530,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     provider_name='bedrock',
                 ),
                 previous_part_kind='thinking',
+                canonical_system='anthropic',
             ),
             PartEndEvent(
                 index=1,
@@ -3538,6 +3541,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     provider_name='bedrock',
                 ),
                 next_part_kind='text',
+                canonical_system='anthropic',
             ),
             PartStartEvent(
                 index=2,
@@ -3986,6 +3990,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                     provider_name='bedrock',
                 ),
                 next_part_kind='text',
+                canonical_system='anthropic',
             ),
             PartStartEvent(index=1, part=TextPart(content='Hello! It'), previous_part_kind='thinking'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
@@ -4787,6 +4792,14 @@ async def test_bedrock_top_k_nova_variant(
         pytest.param(
             'us.anthropic.claude-opus-5-5', {'max_tokens': 1000}, 'Converse', {'maxTokens': 1000}, id='claude-explicit'
         ),
+        # Bedrock rejects a `max_tokens` above Claude Haiku 4.5's 64,000-token maximum output, so it's lowered to it.
+        pytest.param(
+            'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+            {'max_tokens': 100_000},
+            'Converse',
+            {'maxTokens': 64000},
+            id='claude-explicit-above-maximum',
+        ),
         pytest.param('us.amazon.nova-micro-v1:0', {}, 'Converse', {}, id='non-claude-default'),
     ],
 )
@@ -4799,7 +4812,8 @@ async def test_bedrock_default_max_tokens(
     expected_inference_config: dict[str, Any],
 ) -> None:
     """Without `max_tokens`, Claude gets its maximum output, and the request is streamed behind the scenes, since a
-    response that long can outlast the read timeout. An explicit `max_tokens` and other models keep `Converse`."""
+    response that long can outlast the read timeout. An explicit `max_tokens` and other models keep `Converse`, and an
+    explicit `max_tokens` above Claude's maximum output is lowered to it."""
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     with _capture_bedrock_request_bodies(model, expected_operation) as bodies:
         result = await Agent(model).run('Reply with the single word: ok', model_settings=model_settings)

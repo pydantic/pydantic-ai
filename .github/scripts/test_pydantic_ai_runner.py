@@ -968,6 +968,9 @@ def test_web_fetch_only_enabled_on_real_anthropic(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv('ANTHROPIC_BASE_URL', 'https://api.minimax.io/anthropic')
     assert shim._anthropic_native_capabilities() == []  # pyright: ignore[reportPrivateUsage]
 
+    monkeypatch.setenv('ANTHROPIC_BASE_URL', 'https://proxy.example.com/api.anthropic.com')
+    assert shim._anthropic_native_capabilities() == []  # pyright: ignore[reportPrivateUsage]
+
 
 def test_todo_write_renders_plan_via_harness():
     # TodoWrite maps Claude's todo schema onto the harness `planning` capability
