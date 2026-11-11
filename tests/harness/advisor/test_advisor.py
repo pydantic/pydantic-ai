@@ -611,7 +611,7 @@ class TestAdvisor:
             return ModelResponse(parts=[TextPart('done')])
 
         with pytest.warns(
-            HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored\. This will raise `UserError`'
+            UserWarning, match=r'`max_uses=2`, .* is ignored\. Remove `max_uses` or `local=False`'
         ) as warned:
             agent = Agent(
                 _ProviderFunctionModel('openrouter', executor, supports_advisor=True),
@@ -631,7 +631,7 @@ class TestAdvisor:
             return ModelResponse(parts=[TextPart('done')])
 
         agent = Agent(_ProviderFunctionModel('openrouter', executor, supports_advisor=True))
-        with pytest.warns(HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored') as warned:
+        with pytest.warns(UserWarning, match=r'`max_uses=2`, .* is ignored') as warned:
             agent.run_sync(
                 'Review this plan.',
                 capabilities=[
@@ -640,10 +640,10 @@ class TestAdvisor:
                 ],
             )
         # The run can record an unrelated warning first, such as one the garbage collector raises mid-run.
-        assert warned.pop(HarnessDeprecationWarning).filename == __file__
+        assert warned.pop(UserWarning).filename == __file__
 
     def test_merge_warning_points_at_a_direct_combine_call(self) -> None:
-        with pytest.warns(HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored') as warned:
+        with pytest.warns(UserWarning, match=r'`max_uses=2`, .* is ignored') as warned:
             Advisor[None].combine(
                 [
                     Advisor('openrouter:anthropic/claude-opus-4.8', max_uses=2),

@@ -175,7 +175,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                 raise UserError('`Advisor`: pass either the deprecated `mode` or `native`/`local`, not both')
             warnings.warn(
                 f'`Advisor(mode={mode!r})` is deprecated: {self._MODE_REPLACEMENTS[mode]}. '
-                '`mode` will be removed in a future release.',
+                '`mode` will be removed in pydantic-ai-harness 1.0.',
                 HarnessDeprecationWarning,
                 stacklevel=self._caller_stacklevel(),
             )
@@ -198,7 +198,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         """
         warnings.warn(
             '`Advisor.mode` is deprecated: `native=False` means local only, and `local=False` means native only. '
-            '`mode` will be removed in a future release.',
+            '`mode` will be removed in pydantic-ai-harness 1.0.',
             HarnessDeprecationWarning,
             stacklevel=2,
         )
@@ -211,7 +211,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         self._check_mode(mode)
         warnings.warn(
             f'`Advisor.mode` is deprecated: {self._MODE_REPLACEMENTS[mode]}. '
-            '`mode` will be removed in a future release.',
+            '`mode` will be removed in pydantic-ai-harness 1.0.',
             HarnessDeprecationWarning,
             stacklevel=2,
         )
@@ -364,8 +364,8 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         """Merge like any native-or-local capability, keeping one combination that used to merge.
 
         No single `Advisor` accepts `local=False` on OpenRouter with `max_uses`, but merging used to
-        send the native tool without `max_uses`. That merge keeps working, with a warning, rather than
-        make an agent that used to build raise.
+        send the native tool without `max_uses`. That merge keeps working, with a warning, so an agent
+        composed from two packaged advisors keeps building.
         """
         advisors = [capability for capability in capabilities if isinstance(capability, Advisor)]
         assert len(advisors) == len(capabilities)
@@ -378,8 +378,8 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             warnings.warn(
                 f'Merged `Advisor` capabilities combine `local=False` on OpenRouter with `max_uses={max_uses}`, '
                 "which OpenRouter's native advisor does not support, so `max_uses` is ignored. "
-                'This will raise `UserError` in a future release: remove `max_uses` or `local=False`.',
-                HarnessDeprecationWarning,
+                'Remove `max_uses` or `local=False` to silence this warning.',
+                UserWarning,
                 stacklevel=cls._caller_stacklevel(),
             )
             capabilities = [replace_no_init(advisor, max_uses=None) for advisor in advisors]
