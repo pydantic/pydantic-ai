@@ -2728,9 +2728,9 @@ def _add_thinking_fields(existing: dict[str, Any], thinking: ThinkingLevel, prof
         case 'anthropic':
             if 'thinking' not in existing:
                 _add_anthropic_thinking_fields(existing, thinking, profile)
-        case 'openai' | 'deepseek' | 'zai' | 'zai_effort':
+        case str() if (effort_map := _REASONING_EFFORT_MAPS.get(variant)) is not None:
             if 'reasoning_effort' not in existing:
-                existing['reasoning_effort'] = _REASONING_EFFORT_MAPS[variant][thinking]
+                existing['reasoning_effort'] = effort_map[thinking]
         case 'openai_responses':
             if 'reasoning' not in existing:
                 existing['reasoning'] = {'effort': _openai_responses_reasoning_effort(thinking, profile)}
