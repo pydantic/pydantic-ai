@@ -214,7 +214,7 @@ def _check_sub_agents(merged: Any) -> None:
 
 def _check_computer_use(merged: ComputerUse[Any]) -> None:
     # One display: the later configuration wins, defaults included.
-    assert (merged.settle_seconds, merged.native) == (0, True)
+    assert (merged.settle_seconds, merged.native) == (1, True)
 
 
 def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
@@ -267,7 +267,7 @@ COMBINE_POLICY: dict[str, Policy] = {
         'an agent has one display: the later configuration wins',
         lambda: (
             ComputerUse[Any](native=False),
-            ComputerUse[Any](settle_seconds=0),
+            ComputerUse[Any](settle_seconds=1),
         ),
         _check_computer_use,
     ),
