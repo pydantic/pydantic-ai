@@ -168,9 +168,32 @@ cancellation; ignoring it can prevent the run from stopping.
 
 ## Tracing
 
-`BackgroundTools` does not add tracing spans. Pydantic AI's tool span ends when the started message
-is returned, so it does not cover the tool's work or record a failure. The completed result remains in
-the agent's message history.
+Pydantic AI's `execute_tool {tool_name}` span for a background call ends when the started message is
+returned. `BackgroundTools` sets `background_tools.backgrounded` to `true` on that span and records the
+tool's actual work as a `background_tools execute {tool_name}` span. The task starts inside the
+`execute_tool` span, so the new span is its child. Spans the tool opens are children of the new span.
+
+| Attribute | Value |
+| --- | --- |
+| `gen_ai.tool.name` | The tool's name. |
+| `gen_ai.tool.call.id` | The call's ID, the same as on the `execute_tool` span and the result's `tool_call_id`. |
+| `background_tools.outcome` | How the call ended: `success`, `retried`, `failed`, `interrupted` or `error`. |
+
+`retried` is a `ModelRetry` or a validation error, which reaches the model as a failed result and counts
+toward the tool's `max_retries`. `failed` is a `ToolFailed`, or an `ApprovalRequired` or `CallDeferred`,
+which cannot defer a call that is already running. `interrupted` means the task was cancelled before the
+tool finished, usually because the run stopped it. `error` is any other exception, which ends the run.
+
+`retried`, `failed` and `error` set the span's status to error; `interrupted` leaves it unset, since the
+run stopped the tool rather than the tool failing. The exception's message is recorded only when the run
+includes content in traces, since it can quote the tool's arguments or results. The span has no retry
+attempt attributes, which a foreground call's span carries: a background retry is charged when its
+result is delivered, after this span ends, so the attempt number isn't known yet. A call cancelled
+before it started has no `background_tools execute` span.
+
+The tool's result is not on this span. When the run includes content in traces, it appears in the
+input of the `chat` span of the model request that delivers it, which follows all of the run's
+content settings.
 
 ## Durable execution
 
