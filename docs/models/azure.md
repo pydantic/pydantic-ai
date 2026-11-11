@@ -119,6 +119,10 @@ Or initialise the model and provider directly, for example to process a document
     ])
     ```
 
+### Tool call IDs
+
+With [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider], [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] defaults [`tool_call_id_max_length`][pydantic_ai.profiles.ModelProfile.tool_call_id_max_length] to `64`. Pydantic AI adapts oversized function tool call IDs in outgoing message history to this limit, keeping calls and their results paired. Stored message history retains the original IDs.
+
 ## Prompt caching
 
 On GPT-5.6 and later, Azure's v1 API honors OpenAI's explicit [prompt caching](openai.md#prompt-caching) settings: [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_options], [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_cache_instructions] and [`CachePoint`][pydantic_ai.messages.CachePoint] markers, with both the Chat Completions and Responses APIs. Cache writes and reads are reported as [`cache_write_tokens`][pydantic_ai.usage.RequestUsage.cache_write_tokens] and [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens] in the response's usage, as on OpenAI. See [Monitoring cache efficiency](../capabilities/caching.md#monitoring-cache-efficiency).

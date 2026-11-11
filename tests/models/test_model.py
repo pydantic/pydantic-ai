@@ -829,6 +829,78 @@ def test_prepare_messages_rejects_tool_call_id_length_without_room(length: int, 
         TestModel(profile=ModelProfile(tool_call_id_length=length)).prepare_messages(messages)
 
 
+def test_prepare_messages_fits_tool_call_ids_to_profile_max_length():
+    """Only an ID longer than `tool_call_id_max_length` is replaced, whatever characters a shorter one holds.
+
+    A unit test because the cases are about which IDs count as fitting (64 and 65 characters, a `:`, a
+    non-ASCII letter), and a model can't be asked for an ID of a chosen length.
+    """
+    ids = [
+        'call_' + 'a' * 32,
+        'r' * 20 + ':' + 'c' * 43,
+        'c' * 65,
+        'resp_' + 'r' * 52 + ':call_' + 'c' * 32,
+        'é_:-',
+    ]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        ModelResponse(parts=[ToolCallPart('a', {}, tool_call_id=tool_call_id) for tool_call_id in ids]),
+        ModelRequest(parts=[ToolReturnPart('a', 'A', tool_call_id=tool_call_id) for tool_call_id in ids]),
+    ]
+    stored = deepcopy(messages)
+    model = TestModel(profile=ModelProfile(tool_call_id_max_length=64))
+
+    prepared = model.prepare_messages(messages)
+
+    assert _tool_call_ids(prepared) == snapshot(
+        [
+            ('ToolCallPart', 'call_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', None),
+            ('ToolCallPart', 'rrrrrrrrrrrrrrrrrrrr:ccccccccccccccccccccccccccccccccccccccccccc', None),
+            ('ToolCallPart', 'eLdj2PMEVHls7kPmJ5cHt29dHpZGR6bauhagWRug9Sg000000000000000000000', None),
+            ('ToolCallPart', 'heyzUh4QMThUCCI44WiV3PmddcD3br6o1i23YIYcFLt000000000000000000000', None),
+            ('ToolCallPart', 'é_:-', None),
+            ('ToolReturnPart', 'call_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'success'),
+            ('ToolReturnPart', 'rrrrrrrrrrrrrrrrrrrr:ccccccccccccccccccccccccccccccccccccccccccc', 'success'),
+            ('ToolReturnPart', 'eLdj2PMEVHls7kPmJ5cHt29dHpZGR6bauhagWRug9Sg000000000000000000000', 'success'),
+            ('ToolReturnPart', 'heyzUh4QMThUCCI44WiV3PmddcD3br6o1i23YIYcFLt000000000000000000000', 'success'),
+            ('ToolReturnPart', 'é_:-', 'success'),
+        ]
+    )
+    # The same history prepares to the same IDs every time, and only the outgoing copy changes.
+    assert _tool_call_ids(model.prepare_messages(messages)) == _tool_call_ids(prepared)
+    assert messages == stored
+
+
+def test_prepare_messages_prefers_tool_call_id_length_to_max_length():
+    """With both set, as on a Mistral deployment behind Azure's Responses API, IDs get the exact length.
+
+    A unit test because the order the two are applied in is the remapper's, whichever model sets them.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart('a', {}, tool_call_id='call_abc123def456ghi789jkl012')]),
+        ModelRequest(parts=[ToolReturnPart('a', 'A', tool_call_id='call_abc123def456ghi789jkl012')]),
+    ]
+
+    prepared = TestModel(profile=ModelProfile(tool_call_id_length=9, tool_call_id_max_length=64)).prepare_messages(
+        messages
+    )
+
+    assert _tool_call_ids(prepared) == snapshot(
+        [('ToolCallPart', '2pESUE4jw', None), ('ToolReturnPart', '2pESUE4jw', 'success')]
+    )
+
+
+def test_prepare_messages_rejects_tool_call_id_max_length_below_one():
+    """A maximum below 1 raises, naming the profile field that was set.
+
+    A unit test because no real profile sets such a maximum; it guards a user-supplied profile.
+    """
+    messages: list[ModelMessage] = [ModelResponse(parts=[ToolCallPart('a', {}, tool_call_id='call_1')])]
+
+    with pytest.raises(UserError, match=re.escape('`tool_call_id_max_length` must be at least 1, got 0.')):
+        TestModel(profile=ModelProfile(tool_call_id_max_length=0)).prepare_messages(messages)
+
+
 async def test_model_default_async_context_returns_model() -> None:
     model = TestModel()
     assert await AbstractModel.__aenter__(model) is model

@@ -787,6 +787,136 @@ async def test_openrouter_responses_reasoning_mode(allow_model_requests: None) -
     assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro', 'context': 'all_turns'}
 
 
+def _azure_responses_model(*, opted_out: bool) -> tuple['OpenAIResponsesModel', 'AsyncOpenAI']:
+    """An Azure Responses model over a mock client that answers `OK`, optionally without the tool call ID limit."""
+    client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg_1',
+                    content=cast(list[Content], [ResponseOutputText(text='OK', type='output_text', annotations=[])]),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, client)),
+        profile={'tool_call_id_max_length': None} if opted_out else None,
+    )
+    return model, client
+
+
+@pytest.mark.parametrize('opted_out', [False, True], ids=['default', 'opted-out'])
+async def test_azure_responses_shortens_long_tool_call_ids(allow_model_requests: None, opted_out: bool):
+    """A Bedrock Mantle history, whose tool call IDs are `response_id:call_id`, continues on Azure's Responses API.
+
+    Azure rejects a `call_id` longer than 64 characters (https://github.com/pydantic/pydantic-ai/issues/11786),
+    so the 95-character ID goes out as a hash of 64, the same on the call and on its result, and the
+    37-character ID goes out as stored. With `tool_call_id_max_length` set to `None`, both do.
+    """
+    model, client = _azure_responses_model(opted_out=opted_out)
+    assert model.profile.get('tool_call_id_max_length') == (None if opted_out else 64)
+    response_id = 'resp_' + 'r' * 52
+    short_id = 'call_' + 'c' * 32
+    long_id = f'{response_id}:call_' + 'd' * 32
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Call probe twice.')]),
+        ModelResponse(
+            parts=[ToolCallPart('probe', {}, tool_call_id=short_id), ToolCallPart('probe', {}, tool_call_id=long_id)],
+            provider_name='bedrock-mantle',
+            provider_response_id=response_id,
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('probe', 'OK', tool_call_id=short_id),
+                ToolReturnPart('probe', 'OK', tool_call_id=long_id),
+            ]
+        ),
+    ]
+
+    await Agent(model).run('Continue.', message_history=history)
+
+    long_id_sent = (
+        long_id if opted_out else snapshot('DEuoumIEh7SeVntIVhCY2XHEylrOwx7Z2IWymwSLNnT000000000000000000000')
+    )
+    sent = get_mock_responses_kwargs(client)[0]['input']
+    assert [(item['type'], item['call_id']) for item in sent if 'call_id' in item] == [
+        ('function_call', short_id),
+        ('function_call', long_id_sent),
+        ('function_call_output', short_id),
+        ('function_call_output', long_id_sent),
+    ]
+
+
+@pytest.mark.parametrize('opted_out', [False, True], ids=['default', 'opted-out'])
+async def test_azure_responses_keeps_legacy_combined_tool_call_ids(allow_model_requests: None, opted_out: bool):
+    """A history from before `ToolCallPart.id` holds `call_id|item_id` in `tool_call_id`, 83 characters here.
+
+    The 64-character limit is on the call ID that is sent, so the request is the same with the limit as without
+    it: the call ID and the item ID, each in its own field.
+
+    Not a VCR test: the claim is that the request is unchanged, which the request kwargs show.
+    """
+    model, client = _azure_responses_model(opted_out=opted_out)
+    combined_id = 'call_' + 'c' * 24 + '|fc_' + 'f' * 50
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Call probe.')]),
+        ModelResponse(parts=[ToolCallPart('probe', {}, tool_call_id=combined_id)], provider_name='azure'),
+        ModelRequest(parts=[ToolReturnPart('probe', 'OK', tool_call_id=combined_id)]),
+    ]
+
+    await Agent(model).run('Continue.', message_history=history)
+
+    sent = get_mock_responses_kwargs(client)[0]['input']
+    assert [item for item in sent if 'call_id' in item] == snapshot(
+        [
+            {
+                'name': 'probe',
+                'arguments': '{}',
+                'call_id': 'call_cccccccccccccccccccccccc',
+                'type': 'function_call',
+                'id': 'fc_ffffffffffffffffffffffffffffffffffffffffffffffffff',
+            },
+            {'type': 'function_call_output', 'call_id': 'call_cccccccccccccccccccccccc', 'output': 'OK'},
+        ]
+    )
+
+
+@pytest.mark.parametrize('legacy_first', [True, False], ids=['legacy-first', 'long-first'])
+async def test_azure_responses_keeps_tool_call_ids_distinct_when_a_hash_matches_a_legacy_call_id(
+    allow_model_requests: None, legacy_first: bool
+):
+    """A replacement that equals the call ID a legacy `call_id|item_id` is sent with is rehashed.
+
+    `'x' * 70` hashes to `hPotd7ym...`, the call ID of the legacy tool call here. Whichever comes first keeps
+    that value, the other gets a new hash, and each result still names its own call.
+
+    Not a VCR test: a real collision needs an ID built to equal another ID's hash.
+    """
+    model, client = _azure_responses_model(opted_out=False)
+    clashing_id = 'hPotd7ymAfURYIxruN2zlQtY1WalkM6LyoDWTYkfJDl000000000000000000000'
+    ids = [f'{clashing_id}|fc_1', 'x' * 70] if legacy_first else ['x' * 70, f'{clashing_id}|fc_1']
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Call probe twice.')])]
+    for tool_call_id in ids:
+        history.append(
+            ModelResponse(parts=[ToolCallPart('probe', {}, tool_call_id=tool_call_id)], provider_name='azure')
+        )
+        history.append(ModelRequest(parts=[ToolReturnPart('probe', 'OK', tool_call_id=tool_call_id)]))
+
+    await Agent(model).run('Continue.', message_history=history)
+
+    sent = get_mock_responses_kwargs(client)[0]['input']
+    calls = [item['call_id'] for item in sent if item.get('type') == 'function_call']
+    results = [item['call_id'] for item in sent if item.get('type') == 'function_call_output']
+    assert calls == results
+    assert calls[0] == clashing_id
+    assert calls[1] != clashing_id
+
+
 async def test_azure_responses_reasoning_mode(allow_model_requests: None) -> None:
     """Not a VCR test: exact request kwargs prove the Azure GPT-5.6 profile enables mode."""
     c = response_message(
