@@ -257,3 +257,20 @@ as the Temporal, DBOS and Prefect capabilities do. Each agent run in the same wo
 
 See [durable capability operations](../capabilities/custom.md#durable-capability-operations) for how
 capability authors contribute decorated methods that arrive through the same backend.
+
+## Replays and telemetry
+
+A replayed run executes the agent loop again, so its instrumentation runs again too. Tell it which
+work came from the journal, so replays emit no duplicate spans and no duplicate token or cost
+metrics: wrap each durable agent run in [`replay_scope()`][pydantic_ai.durable_exec.replay_scope].
+
+An engine that knows, per durable unit, whether its body ran reports each one with
+[`record_durable_unit(executed=...)`][pydantic_ai.durable_exec.record_durable_unit], in the context of
+the task that requested it, as AWS Lambda does. Every span instrumentation opens counts the units that
+completed under it, so concurrent tool calls are told apart: a span whose units were all replayed is
+not reported, and neither are a replayed model request's metrics. A span that is reported keeps the
+spans around it, so live work never loses its parent.
+
+An engine that knows instead whether it is replaying at a given moment passes
+`replay_scope(is_replaying=...)`, as Temporal does with `workflow.unsafe.is_replaying_history_events()`:
+a span or model request that ends while it returns `True` is not reported.

@@ -217,14 +217,14 @@ class SubAgentWorker(Generic[AgentDepsT]):
         context_token = otel_context.attach(propagate.extract(start.trace_context))
         try:
             await self._run_task(agent, start)
-        except Exception as e:
+        except Exception as exc:
             # One task's failure, from a misconfigured sub-agent or the transport, doesn't stop the worker,
             # which serves other tasks too. The delegating run is told if the transport still can.
-            if isinstance(e, UserError):
-                error = str(e)
+            if isinstance(exc, UserError):
+                error = str(exc)
             else:
                 _logger.exception('Sub-agent task %s failed on its worker.', start.task_id)
-                error = f'{type(e).__name__}: {e}'
+                error = f'{type(exc).__name__}: {exc}'
             try:
                 await self.transport.send(
                     TaskFailedEvent(task_id=start.task_id, agent_name=start.agent_name, error=error)
@@ -309,15 +309,15 @@ class SubAgentWorker(Generic[AgentDepsT]):
                     capabilities=[link, serving_model],
                     cancellation_token=link.token,
                 )
-            except RunCancelled as e:
-                self._keep(task_id, e.all_messages())
+            except RunCancelled as exc:
+                self._keep(task_id, exc.all_messages())
                 return TaskCancelledEvent(task_id=task_id, agent_name=agent_name, forced=link.forced, usage=usage)
             except UserError:
                 raise
-            except UsageLimitExceeded as e:
-                return TaskFailedEvent(task_id=task_id, agent_name=agent_name, error=str(e), usage=usage)
-            except Exception as e:
-                error = f'{type(e).__name__}: {e}'
+            except UsageLimitExceeded as exc:
+                return TaskFailedEvent(task_id=task_id, agent_name=agent_name, error=str(exc), usage=usage)
+            except Exception as exc:
+                error = f'{type(exc).__name__}: {exc}'
                 if attempt > self.retries:
                     return TaskFailedEvent(task_id=task_id, agent_name=agent_name, error=error, usage=usage)
                 await self.transport.send(

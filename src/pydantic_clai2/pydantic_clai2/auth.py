@@ -270,7 +270,7 @@ class CodexAuth:
                 return f'{who} sign-in cancelled.'
             await source.save_login(credentials)
             self._providers.pop(name, None)
-            return self._connected(name, profile)
+            return await anyio.to_thread.run_sync(self._connected, name, profile)
         self.console.print(
             f'Sign in to {who} in your browser. Waiting up to five minutes.', style=theme.color(theme.INFO)
         )
@@ -295,7 +295,7 @@ class CodexAuth:
         finally:
             browser.cancel()
             await asyncio.gather(browser, return_exceptions=True)
-        return self._connected(name, profile)
+        return await anyio.to_thread.run_sync(self._connected, name, profile)
 
     @staticmethod
     def _connected(name: str, profile: str | None) -> str:
