@@ -24,7 +24,7 @@ judge model. All are
 | Keep injected instructions, exfiltration commands, hidden text out of memory and skills | `Memory(scanner=ArtifactScanner())`, `Skills(..., scanner=ArtifactScanner())` |
 | Ask a second model whether each selected tool call should run | `ToolCallJudge(model, question=..., tools=...)` |
 | Let a second model approve low-risk calls that need approval, and ask a person about the rest | `ApprovalReviewer(model, question=..., tools=...)` |
-| Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with `ask_permissions` in a `HandleDeferredToolCalls` handler |
+| Ask a person before file writes and commands, by permission mode (full, auto, read-only) | `Permissions(mode)` with core `RequestInput(permission_ask(approver))` |
 | Cap USD or tokens per day/month/run, per tenant, across workers | `SpendLimits(budgets=[Budget(...)])` |
 | Cap tokens/cost for one run only | core `UsageLimits` (no harness capability needed) |
 | Let the model ask the user multiple-choice questions and wait | `AskUser(answerer=...)` |
@@ -403,14 +403,14 @@ Holds the `FileSystem` writes and `Shell` commands a permission mode asks about 
 
 ```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import HandleDeferredToolCalls, LocalWorkspace
+from pydantic_ai.capabilities import LocalWorkspace, RequestInput
 
 from pydantic_ai_harness import Coder
 from pydantic_ai_harness.permissions import (
     PermissionDecision,
     PermissionRequest,
     Permissions,
-    ask_permissions,
+    permission_ask,
 )
 
 
@@ -424,7 +424,7 @@ agent = Agent(
         LocalWorkspace('.'),
         Coder(),
         Permissions('auto'),
-        HandleDeferredToolCalls(handler=lambda ctx, requests: ask_permissions(requests, approve)),
+        RequestInput(permission_ask(approve)),
     ],
 )
 ```
@@ -432,6 +432,8 @@ agent = Agent(
 Gotchas:
 
 - Without a handler a held call ends the run as `DeferredToolRequests` output, like `requires_approval=True`.
+- `permission_ask` answers in place, inside `RequestInput`'s recorded durable unit on a durable engine, so there an
+  approver must answer quickly; to wait for a person durably, write an `ask` that hands the token on.
 - `mode` may be a function of the run context, read on every call. `PermissionDecision(remember=True)`
   skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
   `remembered` set; inside durable execution nothing is remembered.

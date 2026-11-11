@@ -1430,8 +1430,10 @@ to the clipboard without choosing an answer. Transcript text remains selectable 
 is loaded, it asks the questions instead, in the browser and this picker at once.
 
 The same picker asks about the calls [`/permissions`](docs/reference.md#permissions) holds: the plugin also binds
-`runtime/permissions.py`'s `approval_handler`, which puts each held call to the answerer as a question with
-`Approve`, `Approve for this session`, and `Deny`; a typed answer denies the call with it as the reason. The held
+`runtime/permissions.py`'s `approval_handler`, a core `RequestInput` whose `ask` is harness `permission_ask`, which
+puts each held call to the answerer as a question with `Approve`, `Approve for this session`, and `Deny`; a typed
+answer denies the call with it as the reason. The answerer answers in place, so the terminal and the browser race
+for the same question as before, and the first answer wins. The held
 command is printed in full above the picker first, since the picker cuts its question to the rows it has
 (`TerminalAnswerer.ask_approval`); a replacement approver should show it in full too. A
 replacement for this plugin that should answer approvals binds `approval_handler` with its own approver; without

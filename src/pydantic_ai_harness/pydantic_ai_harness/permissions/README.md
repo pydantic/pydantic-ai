@@ -21,17 +21,17 @@ A coding agent's [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/
 | `'auto'` | run | run, unless they match `ask_commands` |
 | `'read-only'` | ask | ask |
 
-A call that asks raises [`ApprovalRequired`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval), so it uses the same deferred approval flow as `requires_approval=True`. Without a handler the run ends with the call in its `DeferredToolRequests` output. To ask a person inline instead, add a [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/) handler that calls `ask_permissions` with an approver:
+A call that asks raises [`ApprovalRequired`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval), so it uses the same deferred approval flow as `requires_approval=True`. Without a handler the run ends with the call in its `DeferredToolRequests` output. To ask a person inside the run instead, add a [`RequestInput`](https://pydantic.dev/docs/ai/capabilities/request-input/) whose `ask` is `permission_ask` with an approver:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import HandleDeferredToolCalls, LocalWorkspace
+from pydantic_ai.capabilities import LocalWorkspace, RequestInput
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.permissions import (
     PermissionDecision,
     PermissionRequest,
     Permissions,
-    ask_permissions,
+    permission_ask,
 )
 from pydantic_ai_harness.shell import Shell
 
@@ -48,14 +48,16 @@ agent = Agent(
         FileSystem(),
         Shell(),
         Permissions('auto'),
-        HandleDeferredToolCalls(handler=lambda ctx, requests: ask_permissions(requests, approve)),
+        RequestInput(permission_ask(approve)),
     ],
 )
 ```
 
-`ask_permissions` asks about each held call in turn. A denied call does not run, and the model gets a tool result saying the user denied it, with the person's `reason` when they gave one. A `PermissionDecision` with `remember=True` also lets later calls of the same tool on the same command or path run without asking, for the rest of the conversation (by the run's `conversation_id`). That memory is the `remembered` set, which you can pass in to own: share it, clear it, or drop it with the conversation. It lives in this process, so inside a durable execution workflow it is neither read nor written, and every call asks.
+`permission_ask` asks the approver about each held call in turn, and returns its answers to `RequestInput` in place. A denied call does not run, and the model gets a tool result saying the user denied it, with the person's `reason` when they gave one. A `PermissionDecision` with `remember=True` also lets later calls of the same tool on the same command or path run without asking, for the rest of the conversation (by the run's `conversation_id`). That memory is the `remembered` set, which you can pass in to own: share it, clear it, or drop it with the conversation. It lives in this process, so inside a durable execution workflow it is neither read nor written, and every call asks.
 
 Approvals that other capabilities ask for, such as a tool registered with `requires_approval=True`, are left for the next handler.
+
+In a [durable](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) run, `RequestInput` calls `ask` in a durable unit that records its answer, so an approver that waits for a person would hold the run open. There, write an `ask` that hands the token on, as [Request Input](https://pydantic.dev/docs/ai/capabilities/request-input/#a-round-trip-in-one-process) shows, and use `permission_requests` to find the held calls in the requests it gets. `ask_permissions(requests, approver)` is what `permission_ask` calls, for a [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/) handler of your own.
 
 ## Which calls are checked
 

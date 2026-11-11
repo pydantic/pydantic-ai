@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, Tool
-from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace, RequestInput
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolResults, RunContext, ToolApproved
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.permissions import (
     DEFAULT_ASK_COMMANDS,
@@ -30,6 +31,7 @@ from pydantic_ai_harness.permissions import (
     Permissions,
     RememberedApproval,
     ask_permissions,
+    permission_ask,
     permission_requests,
 )
 from pydantic_ai_harness.shell import Shell
@@ -70,11 +72,7 @@ def _agent(
     mode: PermissionMode | Callable[[RunContext[None]], PermissionMode],
     person: _Person | None = None,
 ) -> Agent[None, str | DeferredToolRequests]:
-    handler = (
-        []
-        if person is None
-        else [HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person))]
-    )
+    handler = [] if person is None else [RequestInput[None](permission_ask(person))]
     return Agent[None, 'str | DeferredToolRequests'](
         model,
         deps_type=type(None),
@@ -214,6 +212,21 @@ class TestPermissions:
 
         assert await ask_permissions(requests, _Person()) is None
         assert permission_requests(requests) == []
+
+    async def test_request_input_leaves_other_approvals_pending(self, tmp_path: Path) -> None:
+        """`permission_ask` answers an empty result rather than `None`, so `RequestInput` does not wait on its token."""
+
+        def other() -> str:
+            return 'ran'
+
+        person = _Person()
+        agent = _agent(tmp_path, _calls(('other', {})), 'read-only', person)
+
+        result = await agent.run('go', toolsets=[FunctionToolset([Tool(other, requires_approval=True)])])
+
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [call.tool_name for call in result.output.approvals] == ['other']
+        assert person.asked == []
 
     async def test_approved_by_another_gate_runs_without_asking(self, tmp_path: Path) -> None:
         async def approve_all(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:

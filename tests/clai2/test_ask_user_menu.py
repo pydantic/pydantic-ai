@@ -18,7 +18,7 @@ from termflow.ansi import make_clipboard_copy
 from termflow.live.buffer import REVERSE
 
 from pydantic_ai import Agent, FunctionToolCallEvent
-from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
+from pydantic_ai.capabilities import AbstractCapability, RequestInput
 from pydantic_ai.messages import ModelMessage, ModelResponse, PartStartEvent, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.ask_user import (
@@ -343,7 +343,7 @@ async def test_plugin_declares_capability_and_renderer() -> None:
     loaded = load_plugin(AskUserPlugin, host)
     capability, approvals = loaded.capabilities
     assert isinstance(capability, AskUser)
-    assert isinstance(approvals, HandleDeferredToolCalls)
+    assert isinstance(approvals, RequestInput)
     assert loaded.plugin.has_render
     assert (
         loaded.plugin.render(AskUserAnsweredEvent(request_id='r', response=AskUserResponse(cancelled=True))) is not None

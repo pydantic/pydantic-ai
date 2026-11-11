@@ -11,6 +11,7 @@ from pydantic_ai_harness.permissions._capability import (
     RememberedApproval,
     ask_permissions,
     denial_message,
+    permission_ask,
     permission_requests,
 )
 
@@ -25,5 +26,6 @@ __all__ = (
     'RememberedApproval',
     'ask_permissions',
     'denial_message',
+    'permission_ask',
     'permission_requests',
 )

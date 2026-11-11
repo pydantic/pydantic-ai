@@ -127,10 +127,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
     """Ask before tool calls that write files or run shell commands, according to a permission mode.
 
     A call the mode asks about raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired], so it
-    joins the run's deferred approval flow: a
-    [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler that calls
-    `ask_permissions` puts it to a person inline, and without one the run ends with it in its
-    [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output.
+    joins the run's deferred approval flow: a [`RequestInput`][pydantic_ai.capabilities.RequestInput] whose
+    `ask` is `permission_ask(approver)` puts it to a person inside the run, and without a handler the run
+    ends with it in its [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output.
 
     File writes are the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`, recognized by
     their tool kind whatever they are named. Commands are the tools whose metadata declares
@@ -259,7 +258,8 @@ async def ask_permissions(requests: DeferredToolRequests, approver: Approver) ->
     """Put each call `Permissions` holds in `requests` to `approver`, one at a time; `None` when it holds none.
 
     Call it from the handler of a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]
-    capability. Approvals other capabilities asked for are left for the next handler.
+    capability, or use `permission_ask` with [`RequestInput`][pydantic_ai.capabilities.RequestInput]. Approvals
+    other capabilities asked for are left for the next handler.
     """
     asked = permission_requests(requests)
     if not asked:
@@ -276,6 +276,24 @@ async def ask_permissions(requests: DeferredToolRequests, approver: Approver) ->
         if decision.remember:
             metadata[call_id] = _AnsweredMetadata(permissions=_Answered(remember=True)).model_dump()
     return DeferredToolResults(approvals=approvals, metadata=metadata)
+
+
+def permission_ask(
+    approver: Approver,
+) -> Callable[[RunContext[AgentDepsT], DeferredToolRequests, str], Awaitable[DeferredToolResults]]:
+    """The `ask` of a [`RequestInput`][pydantic_ai.capabilities.RequestInput] that asks `approver` about held calls.
+
+    `approver` answers each call `Permissions` holds in place, as `ask_permissions` asks it. Approvals other capabilities asked for, and
+    external calls, are left pending for the next handler, or for the run's `DeferredToolRequests` output.
+    In a durable run, `ask` runs in a durable unit that records the answer, so an approver there must
+    answer quickly; to wait for a person, hand the token on with an `ask` of your own.
+    """
+
+    async def ask(ctx: RunContext[AgentDepsT], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+        # Empty results, not `None`, which would make `RequestInput` wait for a token no one will resolve.
+        return await ask_permissions(requests, approver) or DeferredToolResults()
+
+    return ask
 
 
 def denial_message(request: PermissionRequest, *, reason: str | None = None) -> str:
