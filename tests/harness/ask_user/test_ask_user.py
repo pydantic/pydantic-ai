@@ -20,7 +20,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import TypeAdapter, ValidationError
 
-from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 from pydantic_ai.capabilities import (
     AbstractCapability,
     HandleDeferredToolCalls,
@@ -29,6 +29,7 @@ from pydantic_ai.capabilities import (
     RequestInput,
     on_event,
 )
+from pydantic_ai.capabilities.abstract import ValidatedToolArgs
 from pydantic_ai.durable_exec import (
     JSON_CODEC,
     BaseDurabilityCapability,
@@ -810,6 +811,38 @@ class TestComposition:
         assert looked_up == 'placeholder'
         assert [request.id for request in answerer.requests] == ['c1']
         assert seen == [['l1']], 'the handler only sees what AskUser left pending'
+
+    async def test_the_answerer_gets_the_questions_as_the_tool_received_them(self) -> None:
+        """A hook such as an argument guard that rewrites the questions before the tool runs is respected."""
+
+        class RedactQuestions(AbstractCapability[None]):
+            async def before_tool_execute(
+                self,
+                ctx: RunContext[None],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: ValidatedToolArgs,
+            ) -> ValidatedToolArgs:
+                assert isinstance(args, dict)
+                questions = [
+                    question.model_copy(update={'question': '[redacted]'})
+                    if isinstance(question, Question)
+                    else {**question, 'question': '[redacted]'}
+                    for question in args['questions']
+                ]
+                return {**args, 'questions': questions}
+
+        answerer = ScriptedAnswerer()
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[RedactQuestions(), AskUser(answerer=answerer)],
+        )
+        await agent.run('go')
+
+        (request,) = answerer.requests
+        assert {question.question for question in request.questions} == {'[redacted]'}
 
     async def test_calls_that_are_not_its_questions_are_left_to_later_handlers(self) -> None:
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

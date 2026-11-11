@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pydantic_core import to_jsonable_python
+
 from pydantic_ai.exceptions import CallDeferred
 from pydantic_ai.framing import close_tag, neutralize_tags, open_tag, register_tag
 from pydantic_ai.messages import TextContent, ToolReturn, UserContent
@@ -73,6 +75,9 @@ def _note_item_content(item: UserContent) -> UserContent:
 OWNER_METADATA_KEY = 'ask_user'
 """Metadata key naming the `AskUser` capability whose tool deferred a question, so only that one answers it."""
 
+QUESTIONS_METADATA_KEY = 'questions'
+"""Metadata key holding the questions as the tool received them, after any hook rewrote the call's arguments."""
+
 
 class AskUserToolset(FunctionToolset[AgentDepsT]):
     """Registers `ask_user_question`, which defers every call as a question for `AskUser` or the host to answer."""
@@ -99,4 +104,9 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
         # Keyed by the call (always set inside a tool) so `AskUserRequest.from_tool_call` rebuilds the same request.
         request = AskUserRequest(questions=tuple(questions), id=ctx.tool_call_id or '')
         await ctx.emit(AskUserRequestedEvent(request=request))
-        raise CallDeferred(metadata={OWNER_METADATA_KEY: self._capability_id}, kind='question')
+        # The questions as the tool received them, so `AskUser` asks those even when a hook such as an
+        # argument guard rewrote the call's arguments.
+        raise CallDeferred(
+            metadata={OWNER_METADATA_KEY: self._capability_id, QUESTIONS_METADATA_KEY: to_jsonable_python(questions)},
+            kind='question',
+        )

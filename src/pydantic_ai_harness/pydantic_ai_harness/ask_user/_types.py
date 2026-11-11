@@ -163,9 +163,13 @@ class AskUserRequest:
         return rebuild_request(call)
 
 
-def rebuild_request(call: ToolCallPart) -> AskUserRequest:
-    """The request behind an `ask_user_question` call, whatever name a toolset wrapper such as `PrefixTools` gave it."""
-    arguments = _TOOL_ARGUMENTS.validate_python(call.args_as_dict())
+def rebuild_request(call: ToolCallPart, *, questions: object = None) -> AskUserRequest:
+    """The request behind an `ask_user_question` call, whatever name a toolset wrapper such as `PrefixTools` gave it.
+
+    `questions`, when given, are the ones the tool received, after hooks such as `before_tool_execute`
+    rewrote the call's arguments; otherwise the call's own arguments are used.
+    """
+    arguments = _TOOL_ARGUMENTS.validate_python(call.args_as_dict() if questions is None else {'questions': questions})
     return AskUserRequest(questions=tuple(arguments['questions']), id=call.tool_call_id)
 
 

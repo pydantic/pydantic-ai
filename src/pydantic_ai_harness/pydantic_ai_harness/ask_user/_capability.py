@@ -22,7 +22,13 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._callable import takes_context
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness.ask_user._events import AskUserAnsweredEvent
-from pydantic_ai_harness.ask_user._toolset import OWNER_METADATA_KEY, TIMED_OUT, AskUserToolset, ask_user_result
+from pydantic_ai_harness.ask_user._toolset import (
+    OWNER_METADATA_KEY,
+    QUESTIONS_METADATA_KEY,
+    TIMED_OUT,
+    AskUserToolset,
+    ask_user_result,
+)
 from pydantic_ai_harness.ask_user._types import (
     TOOL_NAME,
     Answerer,
@@ -190,7 +196,15 @@ class AskUser(AbstractCapability[AgentDepsT]):
         if not questions:
             return None
         return requests.build_results(
-            calls={call.tool_call_id: await self._answer(answerer, ctx, call) for call in questions}
+            calls={
+                call.tool_call_id: await self._answer(
+                    answerer,
+                    ctx,
+                    call,
+                    rebuild_request(call, questions=requests.metadata[call.tool_call_id].get(QUESTIONS_METADATA_KEY)),
+                )
+                for call in questions
+            }
         )
 
     def _owns(self, requests: DeferredToolRequests, tool_call_id: str) -> bool:
@@ -203,9 +217,12 @@ class AskUser(AbstractCapability[AgentDepsT]):
         )
 
     async def _answer(
-        self, answerer: AnyAnswerer[AgentDepsT], run_ctx: RunContext[AgentDepsT], call: ToolCallPart
+        self,
+        answerer: AnyAnswerer[AgentDepsT],
+        run_ctx: RunContext[AgentDepsT],
+        call: ToolCallPart,
+        request: AskUserRequest,
     ) -> AskUserResult | ModelRetry:
-        request = rebuild_request(call)
         # The context the tool call had, so the answerer and the events see which call asked.
         ctx = replace(run_ctx, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
         try:
