@@ -7,12 +7,14 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import TypeAdapter
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import douwebot_opencode_run
 import gh_aw_opencode_detect
 
 CLEAN: dict[str, object] = {'prompt_injection': False, 'secret_leak': False, 'malicious_patch': False, 'reasons': []}
@@ -41,12 +43,18 @@ def detection_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def answer(
-    monkeypatch: pytest.MonkeyPatch, text: str, *, incomplete_runs: int = 0, refused_runs: int = 0
+    monkeypatch: pytest.MonkeyPatch,
+    text: str,
+    *,
+    incomplete_runs: int = 0,
+    refused_runs: int = 0,
+    clock: list[float] | None = None,
 ) -> list[dict[str, object]]:
     """Make OpenCode stop normally with `text` as its final message, recording each launch.
 
-    The first `refused_runs` launches fail as OpenCode Go's usage limit refusing the first request does. The next
-    `incomplete_runs` exit without writing a stream, as an interrupted run does.
+    The first `refused_runs` launches fail as OpenCode Go's usage limit refusing the first request does, each
+    advancing `clock` by a minute. The next `incomplete_runs` exit without writing a stream, as an interrupted run
+    does.
     """
     invoked: list[dict[str, object]] = []
 
@@ -57,6 +65,8 @@ def answer(
         if len(invoked) <= refused_runs:
             error = {'type': 'provider.go-limit', 'message': 'OpenCode Go weekly usage limit reached.', 'status': 429}
             stdout.write(json.dumps({'type': 'step_start', 'part': {}}) + '\n' + json.dumps({'type': 'error', 'error': error}) + '\n')
+            if clock is not None:
+                clock[0] += 60
             raise subprocess.CalledProcessError(1, args)
         if len(invoked) <= refused_runs + incomplete_runs:
             return subprocess.CompletedProcess(args, 0)
@@ -178,7 +188,10 @@ def test_retry_recovers_from_an_incomplete_stream(detection_dir: Path, monkeypat
 def test_go_refusal_runs_detection_on_deepinfra(detection_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Detection that Go refused before its first step runs on DeepInfra within the same attempt and deadline."""
     monkeypatch.setenv('DEEPINFRA_API_KEY', 'deepinfra-key')
-    invoked = answer(monkeypatch, 'THREAT_DETECTION_RESULT:' + json.dumps(CLEAN), refused_runs=1)
+    # Go takes a minute to refuse, on the clock the launcher reads.
+    clock = [1000.0]
+    invoked = answer(monkeypatch, 'THREAT_DETECTION_RESULT:' + json.dumps(CLEAN), refused_runs=1, clock=clock)
+    monkeypatch.setattr(douwebot_opencode_run, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
 
     gh_aw_opencode_detect.main()
 
@@ -192,7 +205,7 @@ def test_go_refusal_runs_detection_on_deepinfra(detection_dir: Path, monkeypatch
     assert env['DEEPINFRA_API_KEY'] == 'deepinfra-key'
     assert 'OPENCODE_API_KEY' not in env
     assert isinstance(go['timeout'], float) and isinstance(deepinfra['timeout'], float)
-    assert deepinfra['timeout'] < go['timeout']
+    assert deepinfra['timeout'] == pytest.approx(go['timeout'] - 60)
     streams = (detection_dir.parent / 'runner-temp').glob('gh-aw-opencode-detector-*.ndjson')
     assert [stream.name for stream in streams] == ['gh-aw-opencode-detector-1.ndjson']
     assert json.loads((detection_dir / 'detection_result.json').read_text()) == CLEAN
