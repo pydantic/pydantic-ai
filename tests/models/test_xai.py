@@ -1914,6 +1914,18 @@ async def test_xai_reasoning_model_drops_stop_sequences(allow_model_requests: No
     assert result.output == snapshot('ok')
 
 
+async def test_xai_reasoning_model_does_not_pass_stop_sequences_to_the_sdk(allow_model_requests: None) -> None:
+    """A mock, since the xAI cassette replay doesn't compare the `chat.create` arguments this checks."""
+    mock_client = MockXai.create_mock([create_response(content='ok')])
+    m = XaiModel('grok-4.3', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(stop_sequences=['zzz']))
+
+    with pytest.warns(UnsupportedSettingWarning, match='`stop_sequences`'):
+        await agent.run('Hello')
+
+    assert 'stop' not in get_mock_chat_create_kwargs(mock_client)[0]
+
+
 async def test_xai_non_reasoning_model_sends_stop_sequences(allow_model_requests: None) -> None:
     """The Grok 4.20 non-reasoning models take `stop_sequences`, so they're sent.
 
