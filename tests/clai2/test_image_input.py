@@ -337,27 +337,6 @@ def test_missing_backend_without_distro_command(monkeypatch: pytest.MonkeyPatch,
     assert 'xclip' in str(raised.value)
 
 
-def test_existing_backend_does_not_get_install_advice(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(image_input.sys, 'platform', 'linux')
-    monkeypatch.setenv('DISPLAY', ':test')
-    monkeypatch.delenv('WAYLAND_DISPLAY', raising=False)
-
-    def which(name: str) -> str:
-        return '/bin/xclip'
-
-    monkeypatch.setattr(image_input.shutil, 'which', which)
-
-    def grab() -> None:
-        raise NotImplementedError('backend unavailable')
-
-    monkeypatch.setattr(image_input.ImageGrab, 'grabclipboard', grab)
-    with pytest.raises(NotImplementedError) as raised:
-        clipboard_images()
-    assert 'backend unavailable' in str(raised.value)
-    assert 'remote clipboard bridge' in str(raised.value)
-    assert 'Install' not in str(raised.value)
-
-
 def test_decode_images(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Bytes from elsewhere, such as the browser's clipboard, are checked and normalized as a file is."""
     data = base64.b64encode(image_path.read_bytes()).decode()

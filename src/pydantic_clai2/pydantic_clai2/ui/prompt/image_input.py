@@ -101,12 +101,10 @@ def clipboard_guidance(exc: NotImplementedError | ChildProcessError) -> str:
     if isinstance(exc, ChildProcessError):
         return remote
     if os.environ.get('WAYLAND_DISPLAY'):
-        binary, package = 'wl-paste', 'wl-clipboard'
+        package = 'wl-clipboard'
     elif os.environ.get('DISPLAY'):
-        binary, package = 'xclip', 'xclip'
+        package = 'xclip'
     else:
-        return remote
-    if shutil.which(binary):
         return remote
     try:
         release = platform.freedesktop_os_release()
