@@ -4186,6 +4186,7 @@ async def test_the_catalog_reaches_models_in_the_request_parameters_and_the_wire
     Not a VCR test: the promise is about every request body being identical, which is checked by rendering each
     request as `AnthropicModel` would send it, without a provider round trip.
     """
+    pytest.importorskip('anthropic')  # the slim test jobs don't install it, and it renders the request bodies
     refunds = Capability[object](id='refunds', description='Refund things.', defer_loading=True)
 
     @refunds.tool_plain
