@@ -1181,7 +1181,7 @@ async def test_image_output_and_deferred_tool_requests_cannot_be_submitted(outpu
             raise _StopRun
 
     agent = Agent(
-        FunctionModel(lambda m, i: ModelResponse(parts=[])),  # pragma: no cover
+        FunctionModel(lambda m, i: ModelResponse(parts=[])),
         output_type=output_type,
         capabilities=[SubmitDeferredToolRequests()],
         deps_type=type(None),
