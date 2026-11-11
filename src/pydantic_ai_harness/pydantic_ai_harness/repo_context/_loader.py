@@ -5,11 +5,12 @@ from __future__ import annotations
 import hashlib
 import html
 import re
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic_ai._framing import neutralize_tags
+from pydantic_ai.messages import Authority
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness._workspace import stat_or_none
 
@@ -104,6 +105,7 @@ async def discover_instruction_files(
     filenames: Sequence[str],
     *,
     autoload_symlink_roots: Sequence[Path] = (),
+    authority_of: Callable[[Path], Awaitable[Authority]] | None = None,
 ) -> list[ContextFile]:
     """Collect one instruction file per directory from `home_dir` down to `workspace_dir`.
 
@@ -114,23 +116,27 @@ async def discover_instruction_files(
     Files are deduped by resolved target and content hash, so an ancestor file with the same content as an
     earlier one loads once. Same-directory links use the target's name. External targets must be beneath a
     resolved `autoload_symlink_roots` path and keep the scanned entry's name.
+
+    With `authority_of`, files are only deduped against files at the same level, so a copy at a lower
+    [authority][pydantic_ai.workspaces.Workspace.authority_of] can't drop a higher one from the result.
     """
-    seen_paths: set[Path] = set()
-    seen_hashes: set[str] = set()
+    seen_paths: set[tuple[Authority, Path]] = set()
+    seen_hashes: set[tuple[Authority, str]] = set()
     found: list[ContextFile] = []
     for directory in directories_up_to(workspace_dir, home_dir):
         candidate = await _dir_context_file(workspace, directory, filenames, autoload_symlink_roots)
         if candidate is None:
             continue
         target, label = candidate
-        if target in seen_paths:
+        level: Authority = 'operator' if authority_of is None else await authority_of(label)
+        if (level, target) in seen_paths:
             continue
         content = (await workspace.read_bytes(str(target))).decode('utf-8', errors='replace')
         digest = hashlib.sha256(content.encode('utf-8')).hexdigest()
-        if digest in seen_hashes:
+        if (level, digest) in seen_hashes:
             continue
-        seen_paths.add(target)
-        seen_hashes.add(digest)
+        seen_paths.add((level, target))
+        seen_hashes.add((level, digest))
         found.append(ContextFile(directory=directory, path=label, content=content))
     return found
 
