@@ -524,9 +524,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
-    settle_seconds: float = 0.5
-    """Pause after acting before the next zoom or the closing screenshot, so animations and page loads can finish. A
-    `wait` the model asks for comes on top of it."""
+    settle_seconds: float = 0
+    """Pause after acting before the next zoom or the closing screenshot. Off by default: set it when screenshots show
+    pages still loading or animating. A `wait` the model asks for comes on top of it."""
 
     native: bool = True
     """Send the tool as the model's own computer use tool where it has one, such as Claude's or OpenAI's.
