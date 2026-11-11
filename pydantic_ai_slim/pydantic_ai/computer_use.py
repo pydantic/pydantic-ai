@@ -542,6 +542,17 @@ _SAFETY_CHECKS_TA = pydantic.TypeAdapter(list[SafetyCheck])
 _COORDINATE_GRID = 'coordinate_grid'
 """The `provider_details` key under which the agent records the grid a call's positions are on."""
 
+_SCREENSHOT_MAX_SIDE = 'screenshot_max_side'
+"""The `provider_details` key under which the agent records the longest screenshot side the call's model takes."""
+
+_SCREENSHOT_MAX_PIXELS = 'screenshot_max_pixels'
+"""The `provider_details` key under which the agent records the most screenshot pixels the call's model takes."""
+
+
+def _positive(value: object, minimum: int = 1) -> int | None:
+    """`value` when it's an `int` (not a `bool`) of at least `minimum`, otherwise `None`."""
+    return value if type(value) is int and value >= minimum else None
+
 
 COMPUTER_KIND = ToolKind(
     'computer_use', 'computer', args=ComputerArgs, content=ComputerContent, metadata=ComputerResult
@@ -573,8 +584,25 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         profile sets `computer_use_coordinate_grid`; a history that lost the call's `provider_details`, such as one a
         UI rebuilt, reads `None`.
         """
-        grid = (self.provider_details or {}).get(_COORDINATE_GRID)
-        return grid if type(grid) is int and grid > 1 else None
+        return _positive((self.provider_details or {}).get(_COORDINATE_GRID), minimum=2)
+
+    @property
+    def screenshot_max_side(self) -> int | None:
+        """The longest side, in pixels, of a screenshot the model that made the call takes, or `None` for no limit.
+
+        The agent records it from the profile's `computer_use_screenshot_max_side`, so the screenshot the call returns
+        can be taken at a size that model can see; a call without it, such as in a history a UI rebuilt, reads `None`.
+        """
+        return _positive((self.provider_details or {}).get(_SCREENSHOT_MAX_SIDE))
+
+    @property
+    def screenshot_max_pixels(self) -> int | None:
+        """The most pixels in a screenshot the model that made the call takes, or `None` for no limit.
+
+        Recorded from the profile's `computer_use_screenshot_max_pixels`; see
+        [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side].
+        """
+        return _positive((self.provider_details or {}).get(_SCREENSHOT_MAX_PIXELS))
 
 
 class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=COMPUTER_KIND):

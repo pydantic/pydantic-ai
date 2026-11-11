@@ -1,15 +1,22 @@
-"""The coordinate grid of a model whose profile sets `computer_use_coordinate_grid`, applied to the `computer` tool.
+"""What the `computer` tool's runner needs to know about the model that made a call, from that model's profile.
 
-The agent applies both per attempt, from the model serving it, so the tool's description and the grid recorded on the
-calls always agree, also when a capability like `ModelFallback` moves the request to another model.
+The agent applies it per attempt, from the model serving it, also when a capability like `ModelFallback` moves the
+request to another model: a model that points on a grid is told so in the tool's description, and its calls record the
+grid and the largest screenshot the model takes.
 """
 
 from __future__ import annotations as _annotations
 
 from dataclasses import replace
+from typing import Literal
 
 from . import messages as _messages
-from .computer_use import _COORDINATE_GRID, COMPUTER_KIND  # pyright: ignore[reportPrivateUsage]
+from .computer_use import (
+    _COORDINATE_GRID,  # pyright: ignore[reportPrivateUsage]
+    _SCREENSHOT_MAX_PIXELS,  # pyright: ignore[reportPrivateUsage]
+    _SCREENSHOT_MAX_SIDE,  # pyright: ignore[reportPrivateUsage]
+    COMPUTER_KIND,
+)
 from .models import Model, ModelRequestParameters
 from .models.fallback import FallbackModel
 from .models.wrapper import WrapperModel
@@ -41,6 +48,13 @@ def coordinate_grid(model: Model) -> int | None:
     return grids.pop() if len(grids) == 1 else None
 
 
+def _smallest(
+    models: list[Model], key: Literal['computer_use_screenshot_max_side', 'computer_use_screenshot_max_pixels']
+) -> int | None:
+    """The smallest of the models' screenshot limits under `key`, which every one of them can see."""
+    return min((limit for answering in models if (limit := answering.profile.get(key))), default=None)
+
+
 def describe_grid(model: Model, params: ModelRequestParameters) -> ModelRequestParameters:
     """Tell a model that points on a grid so in the `computer` tool's description."""
     name = params.tool_name_for_kind(COMPUTER_KIND)
@@ -56,12 +70,21 @@ def describe_grid(model: Model, params: ModelRequestParameters) -> ModelRequestP
     return replace(params, function_tools=tools)
 
 
-def record_grid(model: Model, params: ModelRequestParameters, response: _messages.ModelResponse) -> None:
-    """Record on the response's `computer` calls the grid `model` was told to point on."""
+def label_computer_calls(model: Model, params: ModelRequestParameters, response: _messages.ModelResponse) -> None:
+    """Record on the response's `computer` calls the grid `model` was told to point on and the screenshots it takes."""
     name = params.tool_name_for_kind(COMPUTER_KIND)
-    if name is None or (grid := coordinate_grid(model)) is None:
+    if name is None:
+        return
+    models = _answering_models(model)
+    labels = {
+        _COORDINATE_GRID: coordinate_grid(model),
+        _SCREENSHOT_MAX_SIDE: _smallest(models, 'computer_use_screenshot_max_side'),
+        _SCREENSHOT_MAX_PIXELS: _smallest(models, 'computer_use_screenshot_max_pixels'),
+    }
+    labels = {key: value for key, value in labels.items() if value is not None}
+    if not labels:
         return
     for part in response.parts:
         if isinstance(part, _messages.ToolCallPart) and part.tool_name == name:
             part.provider_name = part.provider_name or response.provider_name
-            part.provider_details = {**(part.provider_details or {}), _COORDINATE_GRID: grid}
+            part.provider_details = {**(part.provider_details or {}), **labels}
