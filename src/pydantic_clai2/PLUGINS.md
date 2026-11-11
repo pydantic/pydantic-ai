@@ -1544,7 +1544,7 @@ turn (`LiveSession.steer`), as at the terminal's prompt, and the input queued be
 above the composer from
 `LiveSession.queue`, which the terminal's own queue is: the page edits or removes an entry with
 `edit_queued` and `remove_queued`, and hears of every change through `host.live.subscribe`. Edit and Retry on a
-prompt rewind its conversation while it is not `LiveSession.busy`. A steered
+prompt rewind its conversation while it is not `LiveSession.busy`, which the `live` message tells the page. A steered
 message shows in the transcript once core delivers it (`EnqueuedMessagesEvent`). The process's working directory never changes: each session reads its own as
 `host.workspace`. `/resume ID` typed in a session still moves that session to the directory `ID`
 was saved in, and `/workspace DIRECTORY` (an existing absolute path) starts a new conversation

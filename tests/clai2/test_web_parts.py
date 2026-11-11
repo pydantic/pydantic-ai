@@ -1002,8 +1002,8 @@ def test_dump_names_the_session_of_a_per_session_message() -> None:
         'id': 'live1',
         'text': 'hi',
     }
-    live = LiveChanged(sessions=[LiveEntry(id='c1', state='queued', title=None, workspace='/w')])
+    live = LiveChanged(sessions=[LiveEntry(id='c1', state='queued', busy=True, title=None, workspace='/w')])
     assert json.loads(dump(live)) == {
         'type': 'live',
-        'sessions': [{'id': 'c1', 'state': 'queued', 'title': None, 'workspace': '/w'}],
+        'sessions': [{'id': 'c1', 'state': 'queued', 'busy': True, 'title': None, 'workspace': '/w'}],
     }
