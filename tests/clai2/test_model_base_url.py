@@ -145,15 +145,24 @@ def resolver(store: SettingsStore, providers: dict[str, ModelProvider] | None = 
     return ModelResolver(console=Console(file=io.StringIO()), plugins=lambda: providers or {}, store=store)
 
 
+@pytest.fixture(scope='module')
+def missing_extras() -> dict[str, str]:
+    """Import every provider's SDK once, outside the per-test budget, noting those this cell lacks."""
+    missing: dict[str, str] = {}
+    for provider in PROVIDERS:
+        try:
+            infer_provider_class(provider.removeprefix('gateway/'))
+        except ImportError as exc:  # pragma: lax no cover
+            missing[provider] = str(exc)
+    return missing
+
+
 @pytest.mark.usefixtures('environment')
 @pytest.mark.filterwarnings('ignore:`GitHubProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning')
 @pytest.mark.parametrize('provider', PROVIDERS)
-def test_every_provider_is_built_with_the_base_url(provider: str) -> None:
-    try:
-        infer_provider_class(provider.removeprefix('gateway/'))
-    # A cell without this provider's extra.
-    except ImportError as exc:  # pragma: lax no cover
-        pytest.skip(str(exc))
+def test_every_provider_is_built_with_the_base_url(provider: str, missing_extras: dict[str, str]) -> None:
+    if provider in missing_extras:  # pragma: lax no cover
+        pytest.skip(missing_extras[provider])
     for key in (None,) if provider in UNKEYED else (None, 'sk-profile'):
         built = key_profiles.build_provider(provider, key=key, base_url=URL)
         assert httpx.URL(built.base_url).host == 'gateway.example'
