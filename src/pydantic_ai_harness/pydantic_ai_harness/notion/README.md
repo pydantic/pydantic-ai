@@ -4,6 +4,8 @@ Let an agent search and change content in a Notion workspace. `Notion` gives the
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![Inside your agent, the Notion capability connects to Notion's hosted MCP server at mcp.notion.com/mcp with a Notion OAuth access token. The model sees the server's tool names unchanged, such as notion-search, because they already start with the service. Your auth function returns the token for each run; a Notion integration token is not accepted. read_only=True drops tools the server does not mark read-only.](https://pydantic.dev/docs/ai/img/harness/notion.svg)
+
 ## Install and connect
 
 uv:
@@ -102,7 +104,7 @@ Handle the approval requests with the [deferred tools workflow](https://pydantic
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `read_only` still applies. `include_instructions=False` stops the server's instructions from reaching the model.
+Pass `client` when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. `read_only` still applies. `include_instructions=False` stops the server's instructions from reaching the model.
 
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections, give each a distinct `id` and `tool_prefix`.
 

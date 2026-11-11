@@ -13,12 +13,12 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.messages import Authority, ModelResponse, TextPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
-    UntrustedWorkspace,
     WorkspaceReadOnlyError,
     WorkspaceRef,
 )
@@ -166,19 +166,19 @@ async def test_read_only_allows_reads_and_refuses_writes_and_commands(tmp_path: 
     assert (tmp_path / 'notes.txt').read_text() == 'read me'
 
 
-async def test_untrusted_marks_the_workspace_and_leaves_its_tools_working(tmp_path: Path) -> None:
-    agent = Agent(TestModel(call_tools=['probe']), capabilities=[LocalWorkspace(tmp_path, trusted=False)])
+async def test_authority_marks_the_workspace_and_leaves_its_tools_working(tmp_path: Path) -> None:
+    agent = Agent(TestModel(call_tools=['probe']), capabilities=[LocalWorkspace(tmp_path, authority='none')])
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
         await ctx.workspace.write_text('notes.txt', 'written')
         listed = await ctx.workspace.run(['cat', 'notes.txt'])
-        return f'trusted={ctx.workspace.trusted} {listed.stdout}'
+        return f'authority={ctx.workspace.authority} {listed.stdout}'
 
     result = await agent.run('go')
 
-    assert result.output == '{"probe":"trusted=False written"}'
-    assert workspace_layers(result.workspace) == [UntrustedWorkspace, LocalWorkspaceBackend]
+    assert result.output == '{"probe":"authority=none written"}'
+    assert workspace_layers(result.workspace) == [AuthorityWorkspace, LocalWorkspaceBackend]
 
 
 async def test_foreign_ref_without_another_capability_raises(tmp_path: Path) -> None:
@@ -262,14 +262,62 @@ async def test_agent_spec_builds_a_local_workspace(tmp_path: Path) -> None:
     assert await result.workspace.working_dir() == str(tmp_path.resolve())
 
 
-async def test_agent_spec_builds_an_untrusted_read_only_local_workspace(tmp_path: Path) -> None:
+async def test_agent_spec_builds_a_read_only_local_workspace_with_user_authority(tmp_path: Path) -> None:
     agent = Agent.from_spec(
         {
             'model': 'test',
-            'capabilities': [{'LocalWorkspace': {'working_dir': str(tmp_path), 'read_only': True, 'trusted': False}}],
+            'capabilities': [
+                {'LocalWorkspace': {'working_dir': str(tmp_path), 'read_only': True, 'authority': 'user'}}
+            ],
         }
     )
 
     result = await agent.run('go')
 
-    assert workspace_layers(result.workspace) == [UntrustedWorkspace, ReadOnlyWorkspace, LocalWorkspaceBackend]
+    assert workspace_layers(result.workspace) == [AuthorityWorkspace, ReadOnlyWorkspace, LocalWorkspaceBackend]
+    assert result.workspace.authority == 'user'
+    assert result.workspace.read_only
+
+
+async def test_local_workspace_path_authority(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / 'repo'
+    root.mkdir()
+    home = root.parent / 'home'
+    (home / '.config' / 'app').mkdir(parents=True)
+    monkeypatch.setenv('HOME', str(home))
+    capability = LocalWorkspace(
+        root, authority='none', path_authority={'~/.config/app': 'operator', 'vendor/ours': 'user'}
+    )
+    assert capability.path_authority == {str(home / '.config' / 'app'): 'operator', 'vendor/ours': 'user'}
+    # Two spellings of one path keep the lower level, whichever comes first.
+    assert LocalWorkspace(
+        root, path_authority={'~/vendor': 'none', str(home / 'vendor'): 'operator'}
+    ).path_authority == {str(home / 'vendor'): 'none'}
+    agent = Agent(TestModel(call_tools=['probe']), capabilities=[capability])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> list[Authority]:
+        return [
+            await ctx.workspace.authority_of(path)
+            for path in ('AGENTS.md', 'vendor/ours/AGENTS.md', str(home / '.config' / 'app' / 'AGENTS.md'))
+        ]
+
+    result = await agent.run('go')
+
+    assert result.output == '{"probe":["none","user","operator"]}'
+    assert workspace_layers(result.workspace) == [AuthorityWorkspace, LocalWorkspaceBackend]
+
+
+async def test_local_workspace_path_authority_alone_adds_the_wrapper(tmp_path: Path) -> None:
+    root = tmp_path / 'repo'
+    root.mkdir()
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(root, path_authority={'vendor': 'none'})])
+
+    result = await agent.run('go')
+
+    assert workspace_layers(result.workspace) == [AuthorityWorkspace, LocalWorkspaceBackend]
+    assert result.workspace.authority == 'operator'
+    assert await result.workspace.authority_of('vendor/AGENTS.md') == 'none'
+    assert workspace_layers((await Agent(TestModel(), capabilities=[LocalWorkspace(root)]).run('go')).workspace) == [
+        LocalWorkspaceBackend
+    ]

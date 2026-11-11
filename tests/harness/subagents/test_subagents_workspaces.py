@@ -18,9 +18,9 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
-    UntrustedWorkspace,
     Workspace,
     WorkspaceReadOnlyError,
 )
@@ -61,6 +61,31 @@ async def test_directory_schema_is_opt_in(tmp_path: Path, enabled: bool) -> None
     assert (await agent.run('inspect schema')).output == 'checked'
 
 
+async def test_selected_directory_keeps_the_parents_path_authority(tmp_path: Path) -> None:
+    # The parent's levels for paths inside the delegate's directory carry over; the resolver knows nothing of them.
+    parent_dir = tmp_path / 'parent'
+    (parent_dir / 'vendor').mkdir(parents=True)
+    workspace = AuthorityWorkspace(
+        Workspace(LocalWorkspaceBackend(parent_dir)), authority='operator', path_authority={'vendor/lib': 'none'}
+    )
+    child: Agent[object, str] = Agent(TestModel(call_tools=['inspect']), name='worker')
+    levels: list[tuple[str, str]] = []
+
+    @child.tool
+    async def inspect(ctx: RunContext[object]) -> str:
+        levels.append((await ctx.workspace.authority_of('own.md'), await ctx.workspace.authority_of('lib/x.md')))
+        return 'inspected'
+
+    async def resolve(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
+        return Workspace(LocalWorkspaceBackend(await ctx.workspace.resolve(request.directory)))
+
+    toolset = SubAgents[object](agents=[SubAgent(child)], workspace_resolver=resolve).get_toolset()
+    assert is_toolset(toolset)
+    ctx = RunContext(deps=object(), model=TestModel(), usage=RunUsage(), workspace=workspace, conversation_id='parent')
+    await toolset.delegate_task(ctx, 'worker', 'inspect', working_directory='vendor')
+    assert levels == [('operator', 'none')]
+
+
 @pytest.mark.parametrize('mode', ['plain', 'owned', 'controlled'])
 @pytest.mark.parametrize(
     'parent_read_only,child_read_only,parent_trusted',
@@ -82,7 +107,7 @@ async def test_selected_directory_keeps_the_parents_policy(
     if parent_read_only:
         workspace = ReadOnlyWorkspace(workspace)
     if not parent_trusted:
-        workspace = UntrustedWorkspace(workspace)
+        workspace = AuthorityWorkspace(workspace, authority='none')
     child: Agent[object, str] = Agent(TestModel(call_tools=['inspect']), name='worker')
 
     @child.tool
@@ -90,7 +115,7 @@ async def test_selected_directory_keeps_the_parents_policy(
         assert await ctx.workspace.working_dir() == str(child_dir)
         assert await ctx.workspace.read_text('marker') == 'policy'
         assert ctx.workspace.read_only is (parent_read_only or child_read_only)
-        assert ctx.workspace.trusted is parent_trusted
+        assert ctx.workspace.authority == ('operator' if parent_trusted else 'none')
         if ctx.workspace.read_only:
             with pytest.raises(WorkspaceReadOnlyError):
                 await ctx.workspace.write_text('marker', 'changed')

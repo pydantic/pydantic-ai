@@ -194,7 +194,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   renderers, and status segments are consulted in, so `coder`'s guidance leads
   the prompt.
 - **Integrations are deferred.** Only the coding loop and run plumbing are eager.
-  The customization guide (`clai_customization`) and every hosted integration
+  The agent docs capability (`clai_customization`) and every hosted integration
   plugin pass `defer_loading=True` on the capability they build (on the one a
   `for_run` function returns, never on the `DynamicCapability`), so each costs one
   catalog line until the model calls `load_capability`. A new integration does the same.
@@ -226,6 +226,26 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   a stored approval with the same id and factory that differs from the
   project's is stale and the project's, off, replaces it. A drop-in or a user's
   own plugin under that id is never replaced.
+  `/plugins enable` also records the SHA-256 of each repository file the
+  declaration runs (`ProcessPlugins.project_files`: a file plugin's own file,
+  and the programs inside the project a `hooks` table runs) in the store's
+  `approved_files` table, beside `plugins` so older builds never read it. An
+  `APPROVED_AS_WRITTEN` approval whose files differ is stale too, and
+  `import_module` refuses a project file whose bytes differ, executing the bytes
+  it checked. `HooksPlugin` compares each program at spawn with the approved
+  contents (read through `host.settings_database`), stopping a `before_tool`
+  call on a mismatch. `approve` refuses a file it cannot read, so an empty
+  digest never matches.
+- **Project settings beyond display wait for approval.** `.clai/settings.json`
+  keys in `SAFE_PROJECT_KEYS` (`display.*`) apply at once; every other key is
+  `pending` until `/project approve` stores that exact value for the project
+  root in the store's `approved_project_settings` table, so a changed value
+  waits again. A new `Settings` field waits too unless added there on purpose.
+  A `run.permissions` no wider than the user's own applies at once, since it
+  cannot widen anything. `update_channel` is user-only, rejected in a project file.
+  Approval is a `/command` only, never a `clai2` subcommand, because the agent
+  can run `clai2` from its shell. Unapproved `instructions` go to the model as
+  `ProjectInstructions` user-channel data, never as `Session.instructions`.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin
   approval. [Environment variables](docs/reference.md#environment-variables) documents the
@@ -481,6 +501,12 @@ and `PLUGINS.md` in the same PR. The README is the PyPI page, so its links and
 images are absolute URLs on `main`; `scripts/screenshots/capture.sh` regenerates
 the images in `docs/images/`. Plain
 language, short sentences, no jargon a first-time plugin author would not know.
+
+Agent-readable docs are indexed by `clai_docs._CLAI_DOCS`. Docs outside
+`pydantic_clai2/` ship through `pyproject.toml`'s wheel `force-include` and sdist
+`include`. The catalog and packaging guards in `tests/clai2/test_clai_docs.py`
+reject new docs missing from either surface. If a new feature falls outside the
+existing discovery triggers, update `clai_docs._DESCRIPTION` and `_HINT`.
 
 The resume browser is a focused exception to the single `MenuBuilder` convention:
 it needs independently focused projects/sessions and two-line cards. Keep its

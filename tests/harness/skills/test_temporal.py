@@ -57,7 +57,7 @@ _RESTRICTIONS = SandboxRestrictions.default.with_passthrough_modules('coverage',
 WORK = Path(__file__).parent / 'temporal_workspace'
 
 
-_STATEMENT = re.compile(r'<context id="capability:reviewer">\n(.*)\n</context>', re.DOTALL)
+_STATEMENT = re.compile(r'<pyai:context id="capability:reviewer">\n(.*)\n</pyai:context>', re.DOTALL)
 
 
 def _load_reviewer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -90,7 +90,7 @@ class SkillsWorkflow:
 
 
 def _list_then_load_reviewer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """List the untrusted workspace's skills, load `reviewer`, then answer with what both tools returned."""
+    """List the skills of a workspace the operator doesn't control, load `reviewer`, then answer with what both tools returned."""
     returns = [
         str(part.content)
         for message in messages
@@ -110,7 +110,7 @@ untrusted_skills_agent = Agent(
     name='untrusted_skills_agent',
     deps_type=type(None),
     capabilities=[
-        LocalWorkspace[None](WORK, trusted=False),
+        LocalWorkspace[None](WORK, authority='none'),
         Skills[None]('skills'),
         TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
     ],

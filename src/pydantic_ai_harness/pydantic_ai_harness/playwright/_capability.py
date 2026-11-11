@@ -102,15 +102,9 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     playwright install chromium
     ```
 
-    Egress: `allowed_domains=None` (the default) places no domain restriction on
-    the URLs the agent can reach; pass `allowed_domains=[...]` to bound navigation
-    and the request kinds that move data (`fetch`, XHR, EventSource, WebSocket,
-    `sendBeacon`) in any frame, leaving passive subresources and sub-frame
-    documents unbounded so a permitted page keeps its assets and its
-    identity-provider frames. Independently, `block_private_addresses=True` (the
-    default) refuses private, loopback, link-local and other reserved addresses
-    for every request kind in every frame, even under open egress, resolving a
-    hostname first so a name pointing at one of those addresses is refused too.
+    Egress: by default the agent can reach any public host; `allowed_domains`
+    bounds that, and `block_private_addresses` (on by default) refuses private,
+    loopback, link-local and other reserved addresses even under open egress.
     Neither is a general security boundary: an unanswered DNS lookup is refused
     but Chromium resolves the name again before it connects, so rebinding is not
     closed, and a proxy-based enforcement mode is tracked in
@@ -123,7 +117,8 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     `playwright install chromium` hint instead of ending the run, so an agent that
     can run a shell can install it and carry on, and the process gets a
     `BrowserUnavailableWarning` for the developer who is not reading tool results.
-    Set `auto_install_chromium=True` to fetch the binary automatically instead. Set `cdp_url` to attach to a Chromium that is already running
+    Set `auto_install_chromium=True` to fetch the binary automatically instead.
+    Set `cdp_url` to attach to a Chromium that is already running
     (managed-browser providers, benchmark harnesses) rather than launching one.
 
     Every browser operation runs inside an OpenTelemetry span, and what the page
@@ -362,6 +357,9 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
         auto_install_chromium: bool = False,
         chromium_sandbox: bool = True,
         cdp_url: str | None = None,
+        id: str | None = 'playwright_browser',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> PlaywrightBrowser[AgentDepsT]:
         """Construct the capability from serializable spec options (all fields are plain scalars/lists).
 
@@ -381,4 +379,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
             auto_install_chromium=auto_install_chromium,
             chromium_sandbox=chromium_sandbox,
             cdp_url=cdp_url,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

@@ -765,7 +765,7 @@ async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> N
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_complex_agent_run_in_workflow(
-    allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire
+    allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire, complex_agent_mcp: None
 ):
     async with Worker(
         client_with_logfire,
@@ -1219,7 +1219,8 @@ async def test_complex_agent_run_in_workflow(
     )
 
 
-async def test_complex_agent_run(allow_model_requests: None):
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+async def test_complex_agent_run(allow_model_requests: None, complex_agent_mcp: None):
     events: list[AgentStreamEvent] = []
 
     async def event_stream_handler(
@@ -1532,7 +1533,8 @@ async def test_complex_agent_run(allow_model_requests: None):
     )
 
 
-async def test_multiple_agents(allow_model_requests: None, client: Client):
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+async def test_multiple_agents(allow_model_requests: None, client: Client, complex_agent_mcp: None):
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -2392,6 +2394,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                         output_reasoning_tokens=0,
                     ),
                     model_name=IsStr(),
+                    model_id='openai:gpt-4o',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
@@ -2445,6 +2448,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
@@ -2533,6 +2537,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
@@ -2583,6 +2588,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
@@ -2625,6 +2631,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                         output_reasoning_tokens=0,
                     ),
                     model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
@@ -3545,6 +3552,7 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     assert sorted(field.name for field in fields(copied)) == snapshot(
         [
             '_anchored_evidence',
+            '_dispatched_tool_name',
             '_durable_operations',
             '_run_capabilities_by_id',
             '_run_held_toolsets',
@@ -3801,6 +3809,7 @@ async def test_ctx_agent_in_temporal_activity(allow_model_requests: None, client
                 parts=[ToolCallPart(tool_name='get_agent_name', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:_ctx_agent_model:',
+                model_id='function:function:_ctx_agent_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3822,6 +3831,7 @@ async def test_ctx_agent_in_temporal_activity(allow_model_requests: None, client
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=52, output_tokens=3),
                 model_name='function:_ctx_agent_model:',
+                model_id='function:function:_ctx_agent_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4031,6 +4041,12 @@ async def _enqueue_guard_handler(ctx: RunContext[object], stream: AsyncIterable[
     async for event in stream:
         with pytest.raises(UserError, match='enqueued messages would be dropped'):
             ctx.enqueue('later')
+        with pytest.raises(UserError, match=r'`ctx\.dequeue\(\)` is not supported inside a durable activity'):
+            ctx.dequeue('some-enqueue-id')
+        with pytest.raises(
+            UserError, match=r'`ctx\.set_enqueue_priority\(\)` is not supported inside a durable activity'
+        ):
+            ctx.set_enqueue_priority('some-enqueue-id', 'asap')
         boundary = 'model' if isinstance(event, (PartStartEvent, PartDeltaEvent)) else 'agent'
         _enqueue_handler_boundaries.add(boundary)
 

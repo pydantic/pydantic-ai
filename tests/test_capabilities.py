@@ -2556,10 +2556,10 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
     assert result.output == 'done'
     # The deferred capability is surfaced in the catalog under the wrapped capability's id.
     assert first_request_instructions == [
-        '<context id="capability:deferred_capabilities">\n'
+        '<pyai:context id="capability:deferred_capabilities">\n'
         "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:\n"
-        '- refunds: Refund policy tools.\n</context>\n'
-        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+        '- refunds: Refund policy tools.\n</pyai:context>\n'
+        'A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     ]
 
 
@@ -2901,6 +2901,7 @@ async def test_prefix_tools_tool_call_strips_prefix():
                 ],
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='function:respond:',
+                model_id='function:function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2922,6 +2923,7 @@ async def test_prefix_tools_tool_call_strips_prefix():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=54, output_tokens=6),
                 model_name='function:respond:',
+                model_id='function:function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),

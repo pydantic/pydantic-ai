@@ -2,6 +2,8 @@
 
 from pydantic_ai_harness.trajectory_judge._capability import (
     AllGood,
+    JudgeFeedbackPart,
+    JudgeSteeringPart,
     Steer,
     TrajectoryJudge,
     TrajectoryVerdict,
@@ -9,6 +11,8 @@ from pydantic_ai_harness.trajectory_judge._capability import (
 
 __all__ = [
     'AllGood',
+    'JudgeFeedbackPart',
+    'JudgeSteeringPart',
     'Steer',
     'TrajectoryJudge',
     'TrajectoryVerdict',

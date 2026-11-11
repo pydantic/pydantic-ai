@@ -3,10 +3,10 @@ from __future__ import annotations
 from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, Self, TypeAlias, get_args
 
 from pydantic import ValidationError
 from typing_extensions import deprecated
@@ -23,9 +23,11 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    Authority,
     CapabilityInstructionSource,
     ModelResponse,
     ToolCallPart,
+    _lower_authority,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -200,8 +202,36 @@ class CapabilityOrdering:
     """These types must be present in the chain (no ordering implied)."""
 
 
+_AUTHORITIES: Final[tuple[object, ...]] = get_args(Authority)
+
+
+class _CapabilityAuthority:
+    """Declares `authority` for [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
+
+    A plain class rather than a dataclass, so `authority` isn't a dataclass field of every capability: a capability
+    sets it as a class attribute, or declares it as a field of its own, such as `LocalWorkspace(authority=...)`.
+    """
+
+    authority: Authority = 'operator'
+    """The most [authority][pydantic_ai.messages.Authority] what this capability enqueues can carry.
+
+    A [capability part](../capabilities/custom.md#capability-parts) it enqueues whose source has more authority
+    than this is stored with a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] naming this capability
+    and this authority instead, so it reaches the model with no more than that. It only ever lowers a part's
+    authority: `'user'` puts what the capability says in the user's turn, labelled as attached on the user's behalf,
+    and `'none'` frames it as data with a note naming the capability. Set it on a capability whose content you don't
+    fully control, such as one built from a plugin or another team's code: as a class attribute of a subclass, or as a
+    field of the capability's own. To lower one instance, use
+    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority].
+
+    For a workspace capability, such as [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], it's also the
+    default authority of the workspace's files. A file another capability reads through a workspace carries the
+    workspace's authority for that file, capped again by the reader's own `authority`.
+    """
+
+
 @dataclass(init=False)
-class AbstractCapability(ABC, Generic[AgentDepsT]):
+class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     """Abstract base class for agent capabilities.
 
     A capability is a reusable, composable unit of agent behavior that can provide
@@ -224,6 +254,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     See the [capabilities documentation](../capabilities/overview.md) for built-in capabilities.
 
+    `authority` (default `'operator'`) is the most [authority][pydantic_ai.messages.Authority] what the capability
+    enqueues can carry: a [capability part](../capabilities/custom.md#capability-parts) whose source has more is
+    stored with a [`CapabilitySource`][pydantic_ai.messages.CapabilitySource] at this level instead. Set it as a class
+    attribute of a subclass or as a field of the capability's own, and lower one instance with
+    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority]. For a workspace capability, such as
+    [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], it's also the default authority of the workspace's
+    files.
+
     [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name]
     and [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] support
     YAML/JSON specs (via `Agent.from_spec`); they have
@@ -236,6 +274,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     Internal, in-tree only. The durability capabilities set it, since an agent runs under one durable
     engine. The agent checks it before binding anything, so a configuration it refuses has not yet
     registered durable operations.
+    """
+
+    _durable_operations_need_id: ClassVar[bool] = True
+    """Whether binding this capability's durable operations requires an `id`.
+
+    Internal, in-tree only. An id-less instance of a class that sets this to `False` binds no durable
+    operations, so the class must reject its own id-less runs inside a durable workflow or flow.
     """
 
     _safe_at_runtime: ClassVar[bool] = False
@@ -284,6 +329,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     description: str | None = None
     """Description of the capability."""
+
+    _authority_ceiling: Authority | None = field(default=None, init=False, repr=False)
+    """The authority [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority] lowered this instance to.
+
+    Not a constructor argument, so capabilities with their own `__init__` and their spec schemas are unaffected.
+    """
 
     defer_loading: bool = False
     """If True, model-facing tools and instructions are hidden until the model explicitly
@@ -520,6 +571,45 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     def _prepare_event_dispatch(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         """Prepare an emitted event synchronously before immediate listeners or stream delivery."""
+
+    def with_authority(self, authority: Authority) -> Self:
+        """Return a copy of this capability whose enqueued parts carry no more than `authority`.
+
+        Lowers this one instance, where the [`authority`][pydantic_ai.capabilities.AbstractCapability]
+        class attribute lowers every instance of a class: for example, one MCP server you don't control at `'none'`
+        while the others keep `'operator'`. It only ever lowers: asking for more authority than the capability
+        already has leaves it where it is.
+        """
+        return _utils.replace_no_init(self, _authority_ceiling=_lower_authority(self._effective_authority, authority))
+
+    @property
+    def _effective_authority(self) -> Authority:
+        """The class's `authority`, lowered by `with_authority` on this instance.
+
+        A capability may have an `authority` of its own that means something else, such as a login URL. That says
+        nothing about what it can say, so it carries no authority, rather than failing a capability that never
+        enqueues a capability part.
+        """
+        authority: Authority = self.authority if self.authority in _AUTHORITIES else 'none'
+        ceiling = self._authority_ceiling
+        return authority if ceiling is None else _lower_authority(authority, ceiling)
+
+    def _keep_authority(self, resolved: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        """Carry this instance's authority to what its `for_run` or `for_agent` returned.
+
+        Both the class's `authority` and a `with_authority` lowering: an override that builds a fresh instance, such as
+        through `dataclasses.replace`, or one of another class, would otherwise drop it and raise the authority back.
+        """
+        ceiling = self._effective_authority
+        if resolved is self or resolved._effective_authority == _lower_authority(
+            resolved._effective_authority, ceiling
+        ):
+            return resolved
+        return resolved.with_authority(ceiling)
+
+    async def _for_run_keeping_authority(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        """`for_run`, keeping the authority `with_authority` lowered this instance to."""
+        return self._keep_authority(await self.for_run(ctx))
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
@@ -1129,8 +1219,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request step regardless of how many models are tried — a history processor, an injected
         message — belongs in `before_model_request` instead.
 
-        Changes made here shape the request that goes on the wire but are not persisted to the
-        agent's message history, which is finalized by `before_model_request`.
+        Changes to `request_context` shape the request that goes on the wire for this attempt and are
+        not persisted to the agent's message history; the next attempt starts again from what
+        `before_model_request` produced. Changes made through
+        [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], the run's persistent history,
+        do persist, and are not rolled back for a further attempt. Use them for state that doesn't
+        depend on the attempt, such as a record an attempt makes that later requests and turns should
+        reuse.
         """
         return request_context
 
@@ -1217,6 +1312,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: RawToolArgs,
     ) -> RawToolArgs:
         """Modify raw args before validation.
+
+        The returned args feed validation and execution only: the tool call in the message history
+        keeps the model's arguments. `call` is that history part, so to record a rewrite there too,
+        assign it to `call.args` as well. Also clear `call.id`, since OpenAI Responses replays its own
+        stored copy of a call that keeps its item ID; keep the original in `call.provider_details`
+        if it should stay visible.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip validation and
         ask the model to redo the tool call.
@@ -1407,7 +1508,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Use [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]
         to intercept retries or failures.
         """
-        raise error
+        try:
+            raise error
+        finally:
+            # The raised error's traceback holds this frame; clear its error reference to release ctx.deps.
+            del error
 
     # --- Output validate lifecycle hooks ---
 

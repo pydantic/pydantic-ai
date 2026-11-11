@@ -9,6 +9,8 @@ capabilities written or selected by application code, see
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/capability_creation/)
 
+![In one run the model calls author_capability with a name and Python source. CapabilityCreation writes it to <directory>/<name>.py, imports it, checks that it holds exactly one AbstractCapability subclass that constructs with no arguments, calls its static getters, and records it in manifest.json. The capability is not live in that run. Your loop calls creation.store.load_active() and passes the result to the next agent.run as capabilities, so its tools, hooks and instructions take effect there. The authored code runs in the agent process, so a run requires a writable LocalWorkspace.](https://pydantic.dev/docs/ai/img/harness/capability-creation.svg)
+
 ## The problem
 
 A coding agent often discovers, mid-task, that it wants a behavior its host does not
@@ -48,7 +50,8 @@ agent = Agent('anthropic:claude-sonnet-5', capabilities=[LocalWorkspace('.'), cr
 ```
 
 `directory` is a path on the machine running the agent, relative to the process's current
-directory, not a workspace path.
+directory, not a workspace path, and it must have `'operator'` authority in the run's workspace
+(see [Trust boundary](#trust-boundary)).
 
 `CapabilityCreation` also contributes static, cache-stable system-prompt guidance
 explaining these tools. Leave `guidance=None` for the default text, or pass your own
@@ -57,21 +60,17 @@ string; set `guidance=''` to omit it entirely.
 ## Activation boundary
 
 Writing and validation happen in the current run; activation happens on the next run.
-A capability **cannot** be added to a live, already-executing run. pydantic-ai resolves
-the effective capability set once at the start of each run (the run's `root_capability`
-is fixed; there is no setter). So an authored capability is live on the **next**
-`agent.run(...)`, not the run that authored it. Authoring writes and validates the
-capability immediately, but its tools and hooks only exist once the next run's toolset and
-capability chain are assembled at run start.
+Pydantic AI resolves the effective capability set once at the start of each run (the run's
+`root_capability` is fixed; there is no setter), so an authored capability's tools and hooks only
+exist once the next run's toolset and capability chain are assembled.
 
 ### Integration contract
 
 The successful `author_capability` result tells the model the capability does not take effect
 in the current run. Writing and validating a capability does not schedule or inject it automatically.
 
-The orchestrator drives the loop, so it owns the one-line contract: thread the store's
-active capabilities into each run. With `agent.run(..., capabilities=...)`, the authored
-capability is live on the very next loop iteration -- no process restart:
+Pass `creation.store.load_active()` as `capabilities=` on each run; an authored capability is then
+active from the next run, without a process restart:
 
 ```python
 from pathlib import Path
@@ -150,13 +149,31 @@ machine. A run therefore refuses to start unless its
 sandbox the model's code would run outside the sandbox, and a read-only workspace promises the
 model that it changes nothing.
 
+`directory` must hold only code the operator wrote or this capability authored, not a cloned
+repository or a user's upload. A run therefore also refuses to start unless
+[`authority_of`](https://pydantic.dev/docs/ai/core-concepts/workspace/) gives `directory`
+`'operator'` authority:
+
+- A workspace with `authority='user'` or `authority='none'` is refused, unless `path_authority`
+  gives `directory` `'operator'`.
+- A lower directory inside an operator workspace, such as one under
+  `path_authority={'vendor': 'none'}`, is refused, including through a symlink.
+- A directory outside the workspace's working directory has `'none'` authority, so name it:
+  `LocalWorkspace('./project', path_authority={'/var/lib/my-app/authored': 'operator'})`.
+
+With `defer_loading=True`, a run starts before the capability loads, so these checks, and the
+writable `LocalWorkspace` one above, refuse each authoring tool call instead, failing the run.
+
+These checks can't cover a `store.load_active()` you call before the
+run, as in the example above: that call has no workspace to ask, and runs the code it finds. It also
+only looks at who controls the directory, not what the model has read: to keep text in a lower
+workspace from steering what gets authored, require approval as shown below.
+
 Authoring executes arbitrary Python in-process at import, construction, and run time. That
 is the same trust boundary an agent that already runs shell commands and edits files
-operates under, which is the deliberate choice here. Do not point it at a directory whose
+operates under. Do not point it at a directory whose
 contents you would not run yourself, and treat authored capabilities as code the agent is
-executing on your host. In particular, don't call `store.load_active()` on a `directory`
-inside an [untrusted workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/#untrusted-workspaces)
-(`trusted=False`): its files are code that workspace's authors could have written.
+executing on your host.
 
 Authored code first runs when the model calls `author_capability`, not on the next run:
 validation executes the module body, the constructor, and the static getters in the current

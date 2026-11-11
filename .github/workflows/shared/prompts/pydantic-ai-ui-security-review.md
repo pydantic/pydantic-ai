@@ -214,8 +214,9 @@ context nor each other.
 Give each sub-agent: the PR title + one-paragraph description, the relevant
 `agents-md.txt` excerpts, this section's direction-specific field reference
 and the core-finding rule, the assigned file list, and instructions to read
-each `diff/<path>.diff` plus the full file from the workspace, and to check
-`review-comments.txt` for existing threads. **Wait for both** before Step 4.
+each file's diff (third column of `changed-files.txt`) plus the full file
+from the workspace, and to check `review-comments.txt` for existing
+threads. **Wait for both** before Step 4.
 
 ### Step 4 — Verify each surviving finding
 
@@ -230,7 +231,8 @@ Before posting **any** inline comment:
    flag with a secure default, it is not a finding.
 4. **Check existing threads** for the same `path:line`.
 5. **Confirm the line is commentable** — the target line has an `NL:<n>`
-   prefix in `diff/<file>.diff`. If not, move the finding to the review body.
+   prefix in the file's diff (third column of `changed-files.txt`). If not,
+   move the finding to the review body.
 
 ### Step 5 — Comment and submit
 

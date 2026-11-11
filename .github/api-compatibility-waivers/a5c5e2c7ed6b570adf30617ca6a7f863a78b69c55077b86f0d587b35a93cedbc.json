@@ -1,0 +1,5 @@
+{
+  "against": "v2.61.0",
+  "reason": "Adds the new `supports_system_messages` flag to `DEFAULT_REALTIME_PROFILE`, defaulting to `False`; every existing key and value is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11379"
+}

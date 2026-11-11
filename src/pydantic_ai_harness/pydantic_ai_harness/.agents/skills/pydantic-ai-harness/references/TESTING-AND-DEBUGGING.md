@@ -11,7 +11,7 @@ Harness capabilities are real code (they write files, run commands, call answere
 model with a `FunctionModel` and let the capabilities execute against temp directories and in-memory
 stores. `Agent.override(model=..., workspace=...)` swaps both without touching the production agent;
 `workspace=` takes a backend such as `LocalWorkspaceBackend(tmp_dir)`. This also works on an agent
-with `ModalSandbox`/`E2BSandbox`/`SpritesSandbox`/`DaytonaSandbox`/`BoxdSandbox` attached: no sandbox is created, no factory needed.
+with `ModalSandbox`/`E2BSandbox`/`RenderSandbox`/`SpritesSandbox`/`DaytonaSandbox`/`BoxdSandbox`/`OpenSandbox` attached: no sandbox is created, no factory needed.
 
 - `FunctionModel`: return a `ToolCallPart` on the first request and a `TextPart` once results are in.
 - `TestModel(call_tools=[])`: smoke test that the agent builds and runs. Plain `TestModel()` calls every
@@ -161,13 +161,20 @@ print(asked[0].questions[0].header)
 - Schema violations (fewer than 2 options, duplicate headers, more than 10 questions, control characters) are retries to the model, and the answerer is never called.
 - An answerer response that does not fit its request (unknown header, label not offered, several picks on single-select) fails the whole run with `ValueError`, as `check_response` would; decline with `cancelled=True` instead.
 - `AskUserRequestedEvent`/`AskUserAnsweredEvent` let an observer capability (`@on_event`) assert on the exchange without being the answerer.
+- For `AskUserAnswer(note=...)`, assert that the answer dictionary stays in `ToolReturnPart.content`
+  and notes arrive in a separate `UserPromptPart`. Invalid notes raise `ValueError` through `check_response`.
+  See [Adding notes to an answer](https://pydantic.dev/docs/ai/harness/ask-user/#adding-notes-to-an-answer)
+  for supported content, framing and provenance.
+- Annotate `ask_user_result` values with `AskUserResult` from `pydantic_ai_harness.ask_user`.
+  Pass the result directly to `DeferredToolResults.calls` for deferred answers, including notes.
 
 ## Memory with an In-Memory Store
 
 `Memory()` defaults to `InMemoryStore`. Seed it with `InMemoryStore({'<scope>/<file>': text})`, where
 scope is `agent_name` (default `'main'`), prefixed by `namespace/` when one is set, and read `store.files`
-afterwards. The snapshot is a user-role `TextContent` starting with `<memory>`, kept in
-message history and added on a run's first request only when memory changed since the last one.
+afterwards. The snapshot is a `MemorySnapshotPart` kept in message history, which the model gets
+as data in a `<memory>` tag on the user channel. It's added on a run's first request only when
+memory changed since the last one.
 
 ```python
 from pydantic_ai import Agent
@@ -183,7 +190,8 @@ injected: list[str] = []
 
 def script(messages, info):
     if len(messages) == 1:
-        injected.append(messages[0].parts[-1].content[0].content)
+        # The model gets the snapshot framed: its last user part's text is the `<memory>` element.
+        injected.append(''.join(item.content for item in messages[0].parts[-1].content))
         return ModelResponse(parts=[ToolCallPart('write_memory', {'content': '- uses uv'})])
     return ModelResponse(parts=[TextPart('ok')])
 
@@ -325,14 +333,14 @@ the install command, e.g. `pydantic-monty is required for CodeMode. Install it w
 [Code Mode](./CODE-MODE.md#sandbox-restrictions) for the rules and how to grant host access.
 
 **Asserting a `SystemReminders` reminder.** A plain firing is a `ModelRequest` holding one
-`SystemPromptPart(scope='request')` in `result.all_messages()`, whose content is the reminder text
-(wrapped in `<tag>` only when `Reminder(tag=...)` is set); inside a `FunctionModel` script the model
-sees only the current one, as `<system>`-tagged user text at the end of the last request. A
-`Reminder(scope='conversation')` firing is a `SystemPromptPart` with the default `scope='conversation'`
-instead, which every later request sends again. An
-`LLMReminder` firing is instead a lasting record: a `SystemPromptPart` note (no `scope='request'`) and
-the generated text as user-channel `TextContent` in `<generated_reminder model="...">`, both re-sent on
-every later request. `interval` counts model requests from 1; `LLMReminder` fires only every
+`ReminderPart(scope='request')` (an `InstructionCapabilityPart` from `pydantic_ai_harness.system_reminders`; find
+it with `isinstance`) in `result.all_messages()`, whose `content` is the reminder text (wrapped in `<tag>` only
+when `Reminder(tag=...)` is set); inside a `FunctionModel` script the model sees only the current one, as
+`<system>`-tagged user text at the end of the last request. A `Reminder(scope='conversation')` firing is a
+`ReminderPart` with `scope='conversation'` instead, which every later request sends again. An
+`LLMReminder` firing is instead a lasting `GeneratedReminderPart` (a `DataCapabilityPart`): the generated
+text, rendered in `<generated_reminder model="...">` on the user channel with a note in the application's
+voice, re-sent on every later request. `interval` counts model requests from 1; `LLMReminder` fires only every
 `interval` requests (10 by default), so a short scripted run needs `LLMReminder(..., interval=1)`.
 
 **Looks like it never fires.** Context-window-driven capabilities (the compaction family) cannot

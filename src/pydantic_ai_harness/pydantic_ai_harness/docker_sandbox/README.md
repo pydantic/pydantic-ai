@@ -6,21 +6,23 @@ Run your agent's commands and file edits in a local [Docker](https://www.docker.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. DockerSandbox's get_workspace hook gives the run a Docker container on your machine as ctx.workspace, and each command and file operation runs in it through docker exec; output comes back to the tool. The first use creates the container with docker run and the ai.pydantic.workspace=true label, its WorkspaceRef holds the container name, a later run reattaches with it, and destroy(ref) removes it. A project directory mounted with docker_args is the only part of your files the commands can change. A container shares your kernel, a weaker boundary than a VM.](https://pydantic.dev/docs/ai/img/harness/docker-sandbox.svg)
+
 ## Install
 
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[anthropic]"
+uv add "pydantic-ai-harness[coder,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[anthropic]"
+pip install "pydantic-ai-harness[coder,anthropic]"
 ```
 
-No extra is needed for Docker itself: the capability runs the `docker` CLI already on your machine, so there is no SDK to install. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
+No extra is needed for Docker itself: the capability runs the `docker` CLI already on your machine, so there is no SDK to install. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -190,7 +192,7 @@ The container doesn't run the image's own entrypoint or command, so a service th
 
 A container that can't be created or started, or that stops mid-command, raises `WorkspaceUnavailableError`. The exit code is the command's own, even when it is one `docker` also uses for its own errors.
 
-On a timeout or cancellation, the command and the processes it started are stopped in the container; a command that detached into a session of its own, like a [Shell](https://pydantic.dev/docs/ai/harness/shell/) background job, keeps running.
+On a timeout or cancellation, the command and the processes it started are stopped in the container; a command that detached into a session of its own, like a [Shell](https://pydantic.dev/docs/ai/harness/shell/) background job, keeps running. With crun 1.14.1 (Podman 4.9.3 on Ubuntu 24.04), a process whose parent has already exited keeps running too.
 
 With Docker, a command that leaves a background process holding its output open, such as `server &` without redirecting the server's output, doesn't return until that process exits: redirect it, as in `server > server.log 2>&1 &`. With Podman, it returns when the command itself exits.
 

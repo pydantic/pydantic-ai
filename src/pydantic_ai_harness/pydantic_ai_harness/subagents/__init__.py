@@ -10,7 +10,7 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING
 
-from pydantic_ai_harness._task_report import is_task_report
+from pydantic_ai_harness._task_report import TaskOutputPart, TaskQuestionPart, is_task_report
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents._capability import SubAgents, ToolResolver
 from pydantic_ai_harness.subagents._control import (
@@ -58,6 +58,7 @@ from pydantic_ai_harness.subagents._tasks import (
     DelegationTasks,
 )
 from pydantic_ai_harness.subagents._toolset import (
+    SELF_AGENT_NAME,
     DelegationWorkspaceRequest,
     SubAgent,
     SubAgentToolset,
@@ -77,6 +78,7 @@ if TYPE_CHECKING:
 __all__ = [
     'MAX_EVENT_TEXT_CHARS',
     'MINIMUM_EFFORT_FLOOR',
+    'SELF_AGENT_NAME',
     'SUB_AGENTS_EVENTS',
     'AgentCreatedEvent',
     'AgentOverride',
@@ -115,8 +117,10 @@ __all__ = [
     'TaskFollowUpEvent',
     'TaskForceCancelEvent',
     'TaskMessageEvent',
+    'TaskOutputPart',
     'TaskProgressEvent',
     'TaskQuestionEvent',
+    'TaskQuestionPart',
     'TaskRequestEvent',
     'TaskRetryEvent',
     'TaskSettledEvent',

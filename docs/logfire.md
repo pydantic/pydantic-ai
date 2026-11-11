@@ -37,7 +37,15 @@ A trace is generated for the agent run, and spans are emitted for each model req
 
 ## Using Logfire
 
-To use Logfire, you'll need a Logfire [account](https://logfire.pydantic.dev). If a coding agent is doing the setup, point it at [pydantic.dev/ai-setup.md](https://pydantic.dev/ai-setup.md), which walks it through authentication, project selection, and instrumentation. The Logfire Python SDK is included with `pydantic-ai`:
+The quickest way to start is the Logfire wizard. Run it from your project:
+
+```bash
+uvx logfire-cli wizard --task pydantic-ai
+```
+
+It signs you in (or creates a free account), picks or creates a project, and hands the instrumentation to your coding agent, which then checks that the first trace arrived. If a coding agent is already doing the setup, it can run `uvx logfire-cli --no-input --output json wizard --task pydantic-ai --print-prompt` and follow the instructions it returns.
+
+To set it up by hand instead, you'll need a Logfire [account](https://logfire.pydantic.dev). The Logfire Python SDK is included with `pydantic-ai`:
 
 ```bash
 pip/uv-add pydantic-ai
@@ -52,16 +60,14 @@ pip/uv-add "pydantic-ai-slim[logfire]"
 Then authenticate your local environment with Logfire:
 
 ```bash
-py-cli logfire auth
+uvx logfire-cli auth
 ```
 
-And configure a project to send data to:
+And connect this directory to a project to send data to, new or existing:
 
 ```bash
-py-cli logfire projects new
+uvx logfire-cli init
 ```
-
-(Or use an existing project with `logfire projects use`)
 
 This will write to a `.logfire` directory in the current working directory, which the Logfire SDK will use for configuration at run time.
 
@@ -112,7 +118,7 @@ logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 ```
 
-On your machine, `logfire.configure()` reads the token from the `.logfire` directory that `logfire projects new` wrote, which is gitignored. A deployment without that directory or a `LOGFIRE_TOKEN` sends nothing to Logfire (`.gitignore` does not keep it out of a Docker build context, so exclude it there too), and the Logfire SDK still exports to the backend set in the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable, as shown [below](#otel). If your application sets up its own OpenTelemetry SDK in production instead, call `logfire.configure()` and `logfire.instrument_pydantic_ai()` only when developing locally, and use [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] in production: it uses the global OpenTelemetry providers your SDK set up.
+On your machine, `logfire.configure()` reads the token from the `.logfire` directory that `logfire-cli init` wrote, which is gitignored. A deployment without that directory or a `LOGFIRE_TOKEN` sends nothing to Logfire (`.gitignore` does not keep it out of a Docker build context, so exclude it there too), and the Logfire SDK still exports to the backend set in the standard `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable, as shown [below](#otel). If your application sets up its own OpenTelemetry SDK in production instead, call `logfire.configure()` and `logfire.instrument_pydantic_ai()` only when developing locally, and use [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all] in production: it uses the global OpenTelemetry providers your SDK set up.
 
 ### Debugging
 
@@ -270,6 +276,8 @@ Instrumented agent runs report prompt-cache health without additional configurat
 | `pydantic_ai.cache.missed_tokens` | Previously established tokens that were not read after a collapse. |
 | `pydantic_ai.cache.collapse_reason` | Collapse classification: `unexpected`, `ttl_expired`, `compacted`, `unknown`, or `unreported`. More values may be added. |
 | `pydantic_ai.cache.not_enabled` | `true` when the request was long enough to cache on a model that needs caching configured, but none was configured (see below). |
+| `pydantic_ai.cache.requested_breakpoints` | The cache breakpoints an Anthropic request asked for, as paths into the request: `system[i]`, `tools[i]` and `messages[i].content[j]`, plus `automatic` for the breakpoint [automatic caching](capabilities/caching.md#anthropic) places itself (see below). The indices are into the request as sent to Anthropic, after consecutive request parts are merged into one message, not into the message history: a [`CachePoint`][pydantic_ai.messages.CachePoint] is marked on the block before it rather than being an entry of its own. |
+| `pydantic_ai.cache.applied_breakpoints` | The breakpoints that request was sent with, after dropping the ones over Anthropic's limit. |
 
 These attributes are on model-request spans only. The agent-run span carries no cache ratio, since one aggregated across requests to different models isn't interpretable (the OpenTelemetry GenAI conventions dropped cache attributes from `invoke_agent` spans for the same reason); compute a run-level figure from its `gen_ai.aggregated_usage.*` token counts if you need one.
 
@@ -288,6 +296,8 @@ A sustained collapse, such as a prefix that moves on every request so the provid
 A response reporting neither cache reads nor writes is ambiguous: on providers that report cache writes (Anthropic, Bedrock) it means the cache wasn't engaged for that request — caching disabled, or a prompt below the provider's minimum cacheable size — while on providers that only report reads (OpenAI's implicit caching) it is what a full cache miss looks like. The established prefix was re-sent uncached either way, so the collapse and its missed tokens are recorded as `unreported`, but the cause can't be determined from usage alone, so no event is emitted. Before anything has been cached, such responses are ignored entirely.
 
 Models such as Anthropic's, Bedrock's Claude and Nova, and OpenRouter's Anthropic routes only cache what the request asks them to. When a request of at least 4,096 input tokens (above every supported model's minimum cacheable prompt) goes to such a model with no caching configured (neither the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting nor a provider-specific one), no [`CachePoint`][pydantic_ai.messages.CachePoint] in its history, and no cache usage reported, its span gets `pydantic_ai.cache.not_enabled` and a `pydantic_ai.cache.not_enabled` event carrying `input_tokens` and the `provider_name` and `model_name` that served it, once per conversation and model. Enable caching with `cache=True` or the [`Caching`][pydantic_ai.capabilities.Caching] capability; setting `cache=False` says it was left off on purpose, which isn't reported.
+
+Anthropic allows at most four cache breakpoints per request, and the breakpoint automatic caching places takes one of them, so explicit [`CachePoint`][pydantic_ai.messages.CachePoint]s that don't fit are dropped, in the order [Caching](capabilities/caching.md#provider-translation) describes. That's the best the request can do rather than a mistake, so it isn't a warning: instead, an [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] request with any breakpoint records `pydantic_ai.cache.requested_breakpoints` and `pydantic_ai.cache.applied_breakpoints` on its span, and a path in the first list that's missing from the second is a breakpoint that was dropped. Only the request records them, not the token count that [`count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request] makes before it.
 
 A request that the provider paused and resumed, such as an Anthropic `pause_turn` continuation, is one model request whose usage sums every segment's, so it is judged by its final segment, whose prompt carries the whole prefix. A response whose cache reads may be summed over a native tool's internal model calls, such as web search, is still judged, but doesn't raise the established prefix or re-arm the event, since its total isn't a prefix the next request can read back.
 
@@ -531,6 +541,6 @@ See the [usage and metadata example in the agents guide](agent.md#run-metadata) 
 
 ### The first-run banner
 
-Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the run and pointing here. It's shown only where someone is there to read it: when `stderr` is a terminal, or when a coding agent is running the process and reads back what it writes. It's never shown when instrumentation is configured, under `pytest`, or when `CI` is set to any value. To turn it off entirely, set `PYDANTIC_AI_NO_BANNER` to any value in the environment, or set `pydantic_ai.BANNER_ENABLED = False` before the first agent run.
+Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the run and pointing here. It's shown only where someone is there to read it: when `stderr` is a terminal, or when a coding agent is running the process and reads back what it writes. It's never shown when instrumentation is configured, under `pytest`, or when `CI` is set to any value. It's also not shown for a run that an installed package (code in `site-packages`) starts by calling the agent itself, so a library or platform built on Pydantic AI doesn't show it to its own users. The next run your own code starts still gets it, as does a run that a [UI adapter](ui/overview.md) streams to your web app. To turn it off entirely, set `PYDANTIC_AI_NO_BANNER` to any value in the environment, or set `pydantic_ai.BANNER_ENABLED = False` before the first agent run.
 
 Coding agents are recognized by the environment variables they set for the purpose. That list is best-effort and will always be behind, so a harness it doesn't recognize — including one built on Pydantic AI — can set `AI_AGENT` (or `AGENT`) to be treated the same way, naming itself in the value.

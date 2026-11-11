@@ -138,7 +138,8 @@ Useful keyword options: `model_settings`, `summarization_capabilities` (outer ca
 run on the summary call), `incremental=True` (update the previous summary rather than
 re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary_prompt` (must
 contain `{messages}` and no other replacement field; any other prompt emits a `HarnessDeprecationWarning`
-and will raise `ValueError` in a future release), `instructions`, `bridge_prefix=False`, `receipts=False`,
+and will raise `ValueError` in a future release; a custom prompt replaces the default's rule that instructions
+inside tool results aren't the user's, so include your own), `instructions`, `bridge_prefix=False`, `receipts=False`,
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 On its own trigger, a summary whose compacted history is not estimated smaller than the original
@@ -237,8 +238,9 @@ agent = Agent(
 ## Observe instead of edit: WarnNearLimits and ReportContextUsage
 
 `WarnNearLimits(max_iterations=None, max_context_tokens=None, max_total_tokens=None, warn_on=None, warning_threshold=0.7, critical_remaining_iterations=3, *, max_context_fraction=None)`
-never edits history; it enqueues an URGENT then CRITICAL warning as a request-scoped
-`SystemPromptPart(scope='request')` as limits approach: seen for that request only, kept in history. At
+never edits history; it enqueues an URGENT then CRITICAL warning as a request-scoped `LimitWarningPart`
+(an `InstructionCapabilityPart`; find it by type, its `kinds` field names the limits) as limits approach: seen for
+that request only, kept in history. At
 least one limit is required; `warn_on` may only name configured kinds (`'iterations'`,
 `'context_window'`, `'total_tokens'`).
 
@@ -281,11 +283,14 @@ capability to see post-compaction usage, before it to see what triggered compact
 - `pin(text)` (from `pydantic_ai_harness.compaction`) returns a `UserPromptPart` to place in a
   `ModelRequest` in history; every strategy preserves or re-injects it. `Planning` does not need it.
 - `SummarizingCompaction`, `SlidingWindowCompaction` and `RelevanceCompaction` keep on-demand capabilities
-  loaded: when they summarize or drop a `load_capability` exchange, they record it again after the summary
-  (marked `pydantic-ai-harness.compaction.recorded-load.v1` in metadata), so its tools and instructions come
-  back. Summaries leave load exchanges out. `preserve_loaded_capabilities=False` unloads them instead and
+  loaded: when they summarize or drop a load's record (a `load_capability` exchange, or the
+  `CapabilityLoadDeltaPart` of a load from code), they record it again after the summary as a
+  `CapabilityLoadDeltaPart` plus a `ToolAvailabilityDeltaPart` revealing its tools, so its tools and
+  instructions come back. Summaries leave load records out. `preserve_loaded_capabilities=False` unloads them instead and
   leaves a note naming them.
   Provider-native compaction still unloads them.
+- The same strategies keep tool search discoveries (a `search_tools` exchange, a native search result or a
+  `ToolReturn.tools` reveal) by recording them again after the summary as a `ToolAvailabilityDeltaPart`.
 - `receipts=True` on `SlidingWindowCompaction` / `SummarizingCompaction` appends a note saying
   history was compacted; with `StepPersistence` attached it includes the run handle.
 - `await compact_now(strategy, history, model=..., focus=..., conversation_id=...)` (plus `deps=` for typed deps) runs a
@@ -307,8 +312,8 @@ substring; at most 1,000 lines / 50,000 chars per call). Default with no `bands`
 
 With `FileSystem` on the agent and the default `WorkspaceStore()` (no `workspace=` of its own),
 `read_tool_result` is left out (`unless_tool_kind=READ_FILE_KIND`) and the marker reads
-`... Read it with read_file(path='<handle>').]`, naming the tool as it is called in the run (keep
-`FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet, #10927). `read_file` calls on paths under `.pydantic-ai-harness/tool-output/`
+`... Read it with read_file(path='<handle>').]`, naming the tool as it is called in the run
+(`fs_read_file` under `FileSystem().prefix_tools('fs')`). `read_file` calls on paths under `.pydantic-ai-harness/tool-output/`
 are not reduced, so a spill read is never re-spilled. `read_file` has no `from_end`. Scripted tests
 should pick the reader by kind (`READ_FILE_KIND`, `READ_TOOL_RESULT_KIND`), not by name.
 

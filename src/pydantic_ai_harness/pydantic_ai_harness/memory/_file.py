@@ -17,7 +17,8 @@ from typing import Literal
 import anyio
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceError, WorkspaceUnavailableError
+from pydantic_ai.messages import WorkspaceSource
+from pydantic_ai.workspaces import FileEntry, Workspace, WorkspaceBackend, WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import secondary_workspace, supports_commands, workspace_path
 from pydantic_ai_harness.memory._store import (
@@ -373,6 +374,20 @@ class FileStore:
         if start != root and await workspace.realpath(start) != start:
             return []
         paths: list[str] = []
+        for entry in await self._files_below(workspace, start, nested=nested):
+            relative = posixpath.relpath(entry.path, root)
+            if (
+                relative.startswith(prefix)
+                and (nested or is_direct_child(prefix, relative))
+                and not entry.name.startswith(_HIDDEN_PREFIXES)
+            ):
+                paths.append(relative)
+        return heapq.nsmallest(limit, paths)
+
+    @staticmethod
+    async def _files_below(workspace: Workspace, start: str, *, nested: bool) -> list[FileEntry]:
+        """The files in `start`, and with `nested`, in the real directories below it, in walk order."""
+        files: list[FileEntry] = []
         pending = [start]
         while pending:
             directory = pending.pop()
@@ -381,20 +396,13 @@ class FileStore:
             except (FileNotFoundError, NotADirectoryError):
                 continue
             for entry in entries:
-                if entry.is_dir:
-                    # Walking from the real root, a directory whose real path differs is a symlink:
-                    # following it could list another scope's files or leave the store.
-                    if nested and await workspace.realpath(entry.path) == entry.path:
-                        pending.append(entry.path)
-                    continue
-                relative = posixpath.relpath(entry.path, root)
-                if (
-                    relative.startswith(prefix)
-                    and (nested or is_direct_child(prefix, relative))
-                    and not entry.name.startswith(_HIDDEN_PREFIXES)
-                ):
-                    paths.append(relative)
-        return heapq.nsmallest(limit, paths)
+                if not entry.is_dir:
+                    files.append(entry)
+                # Walking from the real root, a directory whose real path differs is a symlink:
+                # following it could list another scope's files or leave the store.
+                elif nested and await workspace.realpath(entry.path) == entry.path:
+                    pending.append(entry.path)
+        return files
 
     async def search(
         self,
@@ -435,3 +443,9 @@ class FileStore:
             scanned=result.scanned,
             truncated=result.truncated or content_truncated or len(paths) > max_files,
         )
+
+
+async def file_source(store: FileStore, path: str) -> WorkspaceSource:
+    """The source of text read from the store file at `path`, with that file's authority in the store's workspace."""
+    workspace = store._workspace()  # pyright: ignore[reportPrivateUsage]
+    return await WorkspaceSource.from_workspace(workspace, posixpath.join(store.directory, path))

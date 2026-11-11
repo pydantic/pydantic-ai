@@ -883,9 +883,9 @@ async def test_plain_retry_prompt_does_not_answer_tool_call():
             UserPromptPart(
                 content="""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Response was not valid, try again.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                 timestamp=TS,
             ),
@@ -1301,6 +1301,7 @@ async def test_cancelled_stream_with_incomplete_tool_call_round_trips():
                 ],
                 usage=RequestUsage(input_tokens=50, output_tokens=6),
                 model_name='function:model_function:stream_function',
+                model_id='function:function:model_function:stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),

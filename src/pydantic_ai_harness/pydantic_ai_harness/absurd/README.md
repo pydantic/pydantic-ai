@@ -10,6 +10,8 @@ a task the capability is transparent.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![An agent named analyst runs inside an Absurd task handler. On the first attempt its model request and its tool call each finish and are saved to Postgres as Absurd steps, named analyst__model.request and analyst__function_toolset__{id}.call_tool:{tool}; then the worker crashes during the next model request, which is not saved. Absurd retries the task: the handler runs from the top, the two saved steps return their stored results without calling the model or the tool, and only the unfinished model request runs live.](https://pydantic.dev/docs/ai/img/harness/absurd.svg)
+
 ## Installation
 
 uv:

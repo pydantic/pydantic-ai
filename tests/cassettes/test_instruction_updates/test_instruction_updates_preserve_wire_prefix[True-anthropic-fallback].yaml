@@ -36,10 +36,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -122,9 +122,9 @@ interactions:
           - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
             type: text
           - text: |-
-              <system><context id="capability:memory:state">
+              <system><pyai:context id="capability:memory:state">
               Send parcels to warehouse B.
-              </context></system>
+              </pyai:context></system>
             type: text
         model: claude-sonnet-5
         stream: true
@@ -135,10 +135,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -221,9 +221,9 @@ interactions:
           - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
             type: text
           - text: |-
-              <system><context id="capability:memory:state">
+              <system><pyai:context id="capability:memory:state">
               Send parcels to warehouse B.
-              </context></system>
+              </pyai:context></system>
             type: text
         - role: assistant
           content:
@@ -242,10 +242,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -340,9 +340,9 @@ interactions:
           - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
             type: text
           - text: |-
-              <system><context id="capability:memory:state">
+              <system><pyai:context id="capability:memory:state">
               Send parcels to warehouse B.
-              </context></system>
+              </pyai:context></system>
             type: text
         - role: assistant
           content:
@@ -365,9 +365,9 @@ interactions:
           - text: An envelope with signed contracts. Routing?
             type: text
           - text: |-
-              <system><context id="capability:memory:state">
+              <system><pyai:context id="capability:memory:state">
               Send parcels to warehouse A.
-              </context></system>
+              </pyai:context></system>
             type: text
         model: claude-sonnet-5
         stream: true
@@ -378,10 +378,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -464,9 +464,9 @@ interactions:
           - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
             type: text
           - text: |-
-              <system><context id="capability:memory:state">
+              <system><pyai:context id="capability:memory:state">
               Send parcels to warehouse B.
-              </context></system>
+              </pyai:context></system>
             type: text
         - role: assistant
           content:
@@ -489,9 +489,9 @@ interactions:
           - text: An envelope with signed contracts. Routing?
             type: text
           - text: |-
-              <system><context id="capability:memory:state">
+              <system><pyai:context id="capability:memory:state">
               Send parcels to warehouse A.
-              </context></system>
+              </pyai:context></system>
             type: text
         - role: assistant
           content:
@@ -502,9 +502,9 @@ interactions:
           - text: A pallet of bottled water arrived at the dock. Where to?
             type: text
           - text: |-
-              <system><context id="capability:memory:state">
+              <system><pyai:context id="capability:memory:state">
               This context has been withdrawn, and the withdrawal stays in effect until replaced again.
-              </context></system>
+              </pyai:context></system>
             type: text
         model: claude-sonnet-5
         stream: true
@@ -515,10 +515,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
@@ -601,9 +601,9 @@ interactions:
           - text: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
             type: text
           - text: |-
-              <system><context id="capability:memory:state">
+              <system><pyai:context id="capability:memory:state">
               Send parcels to warehouse B.
-              </context></system>
+              </pyai:context></system>
             type: text
         - role: assistant
           content:
@@ -626,9 +626,9 @@ interactions:
           - text: An envelope with signed contracts. Routing?
             type: text
           - text: |-
-              <system><context id="capability:memory:state">
+              <system><pyai:context id="capability:memory:state">
               Send parcels to warehouse A.
-              </context></system>
+              </pyai:context></system>
             type: text
         - role: assistant
           content:
@@ -639,9 +639,9 @@ interactions:
           - text: A pallet of bottled water arrived at the dock. Where to?
             type: text
           - text: |-
-              <system><context id="capability:memory:state">
+              <system><pyai:context id="capability:memory:state">
               This context has been withdrawn, and the withdrawal stays in effect until replaced again.
-              </context></system>
+              </pyai:context></system>
             type: text
         - role: assistant
           content:
@@ -652,9 +652,9 @@ interactions:
           - text: Finally, a small parcel of replacement laptop batteries. Which warehouse?
             type: text
           - text: |-
-              <system><context id="capability:memory:state">
+              <system><pyai:context id="capability:memory:state">
               Send parcels to warehouse C.
-              </context></system>
+              </pyai:context></system>
             type: text
         model: claude-sonnet-5
         stream: true
@@ -665,10 +665,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
   response:
     status: 200
     headers:
