@@ -1,5 +1,5 @@
 ---
-description: "Use Google Gemini models with Pydantic AI through the Gemini API or Vertex AI, with video and file input, image generation, thinking and safety settings."
+description: "Use Google Gemini models with Pydantic AI through the Gemini API or Vertex AI, with video and file input, image generation, thinking, safety settings and the Decisions API."
 ---
 
 # Google
@@ -596,7 +596,7 @@ multi-regions, not in single regions such as the default `us-central1`: pass one
 
 ## Decisions API {#decisions-api}
 
-The Gemini API's decisions endpoint runs a Gemini decision model as a [decision model](decision.md): it answers typed questions about text or images, each with a probability or a distribution over the options, rather than writing text. [`GoogleDecisionsModel`][pydantic_ai.models.google_decisions.GoogleDecisionsModel] is the Pydantic AI model class for it, so an agent's output type and tools become the questions as described on the [Decision models](decision.md) page. The `'google-decisions:'` prefix picks it:
+The Gemini API's [Decisions API](https://aistudio.google.com/docs/decisions-api) runs Gemini Decision as a [decision model](decision.md): it answers typed questions about text or images, each with a probability or a distribution over the options, rather than writing text. [`GoogleDecisionsModel`][pydantic_ai.models.google_decisions.GoogleDecisionsModel] is the Pydantic AI model class for it, so an agent's output type and tools become the questions as described on the [Decision models](decision.md) page. The `'google-decisions:'` prefix picks it:
 
 ```python {gateway_toggle="skip"}
 from pydantic_ai import Agent

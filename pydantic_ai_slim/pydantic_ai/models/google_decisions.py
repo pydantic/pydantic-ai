@@ -178,9 +178,9 @@ class GoogleDecisionsModel(DecisionModel[Client]):
             'questions': {key: _question(request.questions[name]) for key, name in names.items()},
         }
         try:
-            # google-genai has no method for this endpoint, so the request goes through the client's own API client,
-            # with the provider's credentials, URL, API version, headers and retries. Use the SDK's method once it
-            # has one.
+            # google-genai's method for this endpoint needs 3.2, above the `google` extra's `<3` cap
+            # (https://github.com/pydantic/pydantic-ai/issues/12732), so the request goes through the client's own API
+            # client, with the provider's credentials, URL, API version, headers and retries.
             response = await self.client._api_client.async_request(  # pyright: ignore[reportPrivateUsage]
                 'post', 'decisions', body, http_options
             )
