@@ -699,11 +699,10 @@ class TestResumeToken:
             with anyio.fail_after(5):
                 while len(pending) < 2:
                     await anyio.sleep(0.01)
-            first_id, second_id = pending
-            resolve_external_event(pending[first_id], answer('Patch'))
-            resolve_external_event(pending[second_id], answer('Refactor'))
+            for picked, token in zip(('Patch', 'Refactor'), pending.values()):
+                resolve_external_event(token, answer(picked))
 
-        assert first_id != second_id and 'c1' not in pending
+        assert len(pending) == 2 and 'c1' not in pending, 'two distinct request IDs, neither the shared call ID'
         assert sorted(json.loads(output)['Approach'][0] for output in outputs.values()) == ['Patch', 'Refactor']
 
     async def test_the_answer_arrives_through_the_token(self) -> None:
