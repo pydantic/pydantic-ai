@@ -312,9 +312,10 @@ job log names that run's model and the `type` and `status` of its stream's last 
 only when the type is shaped like OpenCode's own, such as `provider.auth`. It never prints the error message or
 response body, which can repeat the provider's response. When `PR Review Checks` or threat detection rejects a
 run's stream or answer, the job log names the reason: a fixed message from `final_text` in
-`.github/scripts/douwebot_opencode_result.py`, or the sorted validation error types. It never prints model text,
-because the answer can hold a private report. A DeepInfra run sends DeepInfra the same content a Go run
-sends Go, fork pull request content included. Start any new CI OpenCode run through `run_with_fallback`.
+`.github/scripts/douwebot_opencode_result.py`, the sorted validation error types, or the exception's class name. It
+never prints model text, because the answer can hold a private report. A DeepInfra run sends DeepInfra the same
+content a Go run sends Go, fork pull request content included. Start any new CI OpenCode run through
+`run_with_fallback`.
 
 # A copy of the repository picks the `CI` Linux runner
 

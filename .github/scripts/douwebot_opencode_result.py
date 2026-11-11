@@ -16,7 +16,7 @@ _EVENT = TypeAdapter(dict[str, object])
 def final_text(path: Path) -> str:
     """Return the final assistant text only after a normal completed stream.
 
-    Each rejection is a `ValueError` with a fixed message, which `rejection_reason` prints to public job logs.
+    The `ValueError`s it raises itself carry fixed messages, which `rejection_reason` prints to public job logs.
     """
     # Only LF ends an event: `JSON.stringify` leaves U+2028 and U+2029 raw, and `splitlines` would split at them.
     events = [_EVENT.validate_json(line) for line in path.read_text(encoding='utf-8').split('\n') if line]
