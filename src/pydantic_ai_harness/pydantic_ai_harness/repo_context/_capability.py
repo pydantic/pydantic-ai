@@ -337,14 +337,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             top = await find_root(workspace, working_dir, self.root_markers)
         elif self.walk_up == 'all':
             top = Path(working_dir.anchor)
+        symlink_roots = await self._autoload_symlink_roots(workspace)
         discovered = await discover_instruction_files(
-            workspace,
-            working_dir,
-            top,
-            self.filenames,
-            autoload_symlink_roots=await self._autoload_symlink_roots(workspace),
+            workspace, working_dir, top, self.filenames, autoload_symlink_roots=symlink_roots
         )
-        walk_up = _walk_up_view(workspace, working_dir, top)
+        walk_up = _walk_up_view(workspace, working_dir, top, symlink_roots)
         self._context_files = []
         for context_file in discovered:
             path = context_file.path.as_posix()
@@ -606,18 +603,23 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         return 'RepoContext'
 
 
-def _walk_up_view(workspace: Workspace, working_dir: Path, top: Path | None) -> Workspace:
-    """`workspace` as the walk-up reads it: the directories above the working directory count as part of it.
+def _walk_up_view(
+    workspace: Workspace, working_dir: Path, top: Path | None, symlink_roots: Sequence[Path]
+) -> Workspace:
+    """`workspace` as the walk-up reads it, with the ancestors it scans and its authorized link roots inside it.
 
     `authority_of` puts a path outside the working directory at `'none'` unless a `path_authority` entry covers it.
-    The walk-up reads an ancestor's file at the level of the entry covering it, if any, and otherwise at the
-    workspace's own level, so a plain workspace loads its ancestors' files as before, and one lowered with
-    `authority='none'` lowers them too. Naming the top of the walk-up at `'operator'` in a wrapper does that: the
+    The walk-up reads an ancestor's file, or a link's target in an authorized root, at the level of the entry covering
+    it, if any, and otherwise at the workspace's own level, so a plain workspace loads them as before, and one lowered
+    with `authority='none'` lowers them too. Naming those directories at `'operator'` in a wrapper does that: the
     wrapper never raises a level, so every path keeps the lowest level any of the workspace's own layers gives it.
     """
-    if top is None or top == working_dir or not working_dir.is_relative_to(top):
+    paths = [root.as_posix() for root in symlink_roots]
+    if top is not None and top != working_dir and working_dir.is_relative_to(top):
+        paths.append(top.as_posix())
+    if not paths:
         return workspace
-    return AuthorityWorkspace(workspace, authority='operator', path_authority={top.as_posix(): 'operator'})
+    return AuthorityWorkspace(workspace, authority='operator', path_authority=dict.fromkeys(paths, 'operator'))
 
 
 def _context_files_in_window(messages: Sequence[ModelMessage]) -> set[tuple[str, str]]:
