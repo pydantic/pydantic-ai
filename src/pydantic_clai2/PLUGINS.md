@@ -421,8 +421,9 @@ file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
 `~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
 CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--resume`,
 `--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
-(`SessionStart.conversation_chosen`). A conversation saved in another
-directory, such as after AoE moved a worktree, is not resumed; use `/resume`. AoE's
+(`SessionStart.conversation_chosen`). It is resumed also when it was saved in another
+directory, such as after AoE renamed or moved a worktree, and continues in the pane's
+directory. When it cannot be resumed, CLAI2 says why and starts a new conversation. AoE's
 own resume, `--fork-from`, and smart rename apply to its built-in agents only.
 
 **Title.** Off by default, so the AoE session keeps the title you gave it. To title it after
@@ -3515,7 +3516,10 @@ when either changes. `await resume(conversation_id)` switches to a saved convers
 `/resume ID` does, returning the notice to show: it only restores history, never runs the
 model or replays a tool. Call it between turns, for example from `on_session_start`; it raises
 `RuntimeError` during a run, `LookupError` for an unknown ID, and `ValueError` for a
-conversation saved in another directory or when persistence is not configured. A conversation
+conversation saved in another directory or when persistence is not configured.
+`resume(conversation_id, allow_other_workspace=True)` continues a conversation saved in another
+directory in this one instead, as confirming it in the `/resume` browser does: tools then run
+in this directory, and the saved conversation keeps its original one. A conversation
 still running in another process is not taken over: the newest unarchived copy CLAI made to
 continue it that no other process runs is resumed, else a new copy, and the notice says which.
 When the conversation or its title changed, every loaded plugin, the caller included, then
