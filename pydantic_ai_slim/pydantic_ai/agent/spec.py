@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import inspect
 import os
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from contextvars import ContextVar
@@ -738,8 +739,10 @@ def _build_provider_schema_types(custom_provider_types: Sequence[type[Provider[A
     for provider_name, class_key in _PROVIDER_CLASS_KEYS.items():
         if class_key in builtin_classes:
             continue
-        # Providers whose optional dependencies aren't installed are left out.
-        with suppress(ImportError):
+        # Providers whose optional dependencies aren't installed are left out. Their SDKs are only imported to read
+        # the providers' signatures, so their import-time warnings, such as deprecations, aren't for the schema to show.
+        with suppress(ImportError), warnings.catch_warnings():
+            warnings.simplefilter('ignore')
             builtin_classes[class_key] = _builtin_provider_class(provider_name)
 
     schema_types: list[Any] = []

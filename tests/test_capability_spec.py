@@ -103,6 +103,9 @@ pytestmark = []
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
+with try_import() as anthropic_imports_successful:
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
 with try_import() as groq_imports_successful:
     from pydantic_ai.providers.groq import GroqProvider
 
@@ -871,10 +874,6 @@ def test_agent_from_spec_model_with_custom_provider(monkeypatch: pytest.MonkeyPa
             "The arguments of provider 'OpenAICompatible' in a spec must be given by name, as an object.",
         ),
         (
-            _model_spec({'OpenAICompatible': _GATEWAY_PROVIDER}, 'anthropic:claude-sonnet-4-6'),
-            "Provider 'OpenAICompatible' (OpenAICompatibleProvider) cannot be used with model 'anthropic:claude-sonnet-4-6', which needs a provider like `AnthropicProvider`.",
-        ),
-        (
             _model_spec({'OpenAICompatible': _GATEWAY_PROVIDER}, 'qwen3'),
             "A model spec `name` must have the form `<provider>:<model>`, got 'qwen3'.",
         ),
@@ -899,6 +898,20 @@ def test_agent_from_spec_model_with_provider_errors(
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.skipif(
+    not openai_imports_successful() or not anthropic_imports_successful(), reason='openai or anthropic not installed'
+)
+def test_agent_from_spec_model_with_provider_for_another_model_class() -> None:
+    """The provider name only picks the provider, so a model class that can't use it raises an error naming both."""
+    with pytest.raises(UserError) as exc_info:
+        Agent.from_spec(_model_spec({'OpenAICompatible': _GATEWAY_PROVIDER}, 'anthropic:claude-sonnet-4-6'))
+
+    assert str(exc_info.value) == snapshot(
+        "Provider 'OpenAICompatible' (OpenAICompatibleProvider) cannot be used with model 'anthropic:claude-sonnet-4-6', which needs a provider like `AnthropicProvider`."
+    )
+    assert AnthropicProvider.__name__ in str(exc_info.value)
+
+
 def test_agent_from_spec_model_with_unknown_provider() -> None:
     with pytest.raises(UserError) as exc_info:
         Agent.from_spec(_model_spec('MyGateway'))
