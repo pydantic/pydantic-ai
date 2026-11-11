@@ -265,7 +265,10 @@ async def test_image_input(
     request_capture: RequestCapture,
     image_content: BinaryImage,
 ):
-    """An image goes inline after its `<image N>` label, with the `media_resolution` `GoogleModel` reads as its `resolution`."""
+    """An image goes inline after its `<image N>` label, with the `media_resolution` `GoogleModel` reads as its `resolution`.
+
+    The usage splits input tokens by modality under the `details` keys `GoogleModel` uses.
+    """
     agent = Agent(
         capture_model, output_type=Literal['kiwi', 'apple', 'banana'], instructions='Which fruit is in the photo?'
     )
@@ -297,7 +300,9 @@ Photo from the customer:
             },
         ]
     )
-    assert result.usage.input_tokens == snapshot(378)
+    assert (result.usage.input_tokens, result.usage.details) == snapshot(
+        (378, {'text_prompt_tokens': 106, 'image_prompt_tokens': 272})
+    )
 
 
 @pytest.mark.vcr

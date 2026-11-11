@@ -97,16 +97,28 @@ class GoogleDecisionsModel(DecisionModel[Client]):
     supports_image_input: ClassVar[bool] = True
 
     requires_instructions: ClassVar[bool] = True
-    """The API refuses a question without non-empty `instructions`, even one whose options say what it asks."""
+    """The API refuses a question without non-empty `instructions`, even one whose options say what it asks.
+
+    A question's `instructions` in https://aistudio.google.com/docs/decisions-api#request.
+    """
 
     max_questions: ClassVar[int | None] = 1000
-    """The API accepts at most 1000 questions per request; a 1001st returns HTTP 400."""
+    """The API accepts at most 1000 questions per request; a 1001st returns HTTP 400.
+
+    "Questions per request" in https://aistudio.google.com/docs/decisions-api#limits.
+    """
 
     max_choice_options: ClassVar[int | None] = 255
-    """The API takes at most this many options in one pick-one; a 256th is a 400."""
+    """The API takes at most this many options in one pick-one; a 256th is a 400.
+
+    "Options per choice question" in https://aistudio.google.com/docs/decisions-api#limits.
+    """
 
     max_score_levels: ClassVar[int | None] = 255
-    """The API takes at most this many levels in one rubric; a 256th is a 400."""
+    """The API takes at most this many levels in one rubric; a 256th is a 400.
+
+    "Levels per score question" in https://aistudio.google.com/docs/decisions-api#limits.
+    """
 
     _model_name: GoogleDecisionsModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
@@ -210,7 +222,13 @@ class GoogleDecisionsModel(DecisionModel[Client]):
             # The body names no model and carries no ID of its own.
             model_name=self._model_name,
             usage=RequestUsage(
-                input_tokens=parsed.usage.total_input_tokens, output_tokens=parsed.usage.total_output_tokens
+                input_tokens=parsed.usage.total_input_tokens,
+                output_tokens=parsed.usage.total_output_tokens,
+                # Keyed as `GoogleModel` keys its per-modality prompt tokens.
+                details={
+                    f'{entry.modality.lower()}_prompt_tokens': entry.tokens
+                    for entry in parsed.usage.input_tokens_by_modality
+                },
             ),
         )
 
@@ -312,9 +330,16 @@ def _description(meaning: JsonValue) -> str | None:
 
 
 @dataclass(kw_only=True)
+class _ModalityTokens:
+    modality: str
+    tokens: Annotated[int, Field(ge=0)]
+
+
+@dataclass(kw_only=True)
 class _Usage:
     total_input_tokens: Annotated[int, Field(ge=0)] = 0
     total_output_tokens: Annotated[int, Field(ge=0)] = 0
+    input_tokens_by_modality: list[_ModalityTokens] = field(default_factory=list[_ModalityTokens])
 
 
 @dataclass(kw_only=True)
