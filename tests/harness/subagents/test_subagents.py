@@ -12,7 +12,13 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, PendingModelResponse
-from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, HandleDeferredToolCalls, LocalWorkspace
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    BatchModelRequests,
+    HandleDeferredToolCalls,
+    LocalWorkspace,
+    WrapperCapability,
+)
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -494,6 +500,20 @@ class TestDelegation:
         parent: Agent[object, str] = Agent(
             _delegate_then_finish('child'),
             capabilities=[DenyUnanswered(), SubAgents(agents=[SubAgent(asking_agent(observed))])],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        assert observed == [DEFAULT_QUESTION_MESSAGE]
+
+    async def test_parent_deny_unanswered_inside_a_wrapper_reaches_the_child(self) -> None:
+        """A `DenyUnanswered` wrapped in a `WrapperCapability` is found and passed on to the child unwrapped."""
+        observed: list[str] = []
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('child'),
+            capabilities=[
+                WrapperCapability(wrapped=DenyUnanswered()),
+                SubAgents(agents=[SubAgent(asking_agent(observed))]),
+            ],
         )
         result = await parent.run('go')
         assert result.output == 'all done'

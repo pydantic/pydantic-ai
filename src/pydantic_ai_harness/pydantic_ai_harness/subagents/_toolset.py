@@ -1398,7 +1398,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         capabilities: list[AgentCapability[AgentDepsT]] = [
             *self._shared_capabilities,
             # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
-            *([deny] if (deny := find_deny_unanswered(ctx)) else []),
+            *([deny] if (deny := find_deny_unanswered(ctx)) is not None else []),
         ]
         if owner is not None and record is not None:
             capabilities.append(DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id))

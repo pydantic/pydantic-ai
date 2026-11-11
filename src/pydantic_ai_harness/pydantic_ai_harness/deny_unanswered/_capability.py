@@ -70,7 +70,7 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
 
 
 def find_deny_unanswered(ctx: RunContext[AgentDepsT]) -> DenyUnanswered[AgentDepsT] | None:
-    """Return the run's `DenyUnanswered`, unwrapping `WrapperCapability` chains."""
+    """Return the run's `DenyUnanswered`, unwrapped from any `WrapperCapability` chain so a child gets the inner one."""
     try:
         capabilities = ctx.capabilities
     except UserError:

@@ -749,7 +749,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 usage=ctx.usage if self.forward_usage else None,
                 usage_limits=usage_limits,
                 # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
-                capabilities=[serving_model, *([d] if (d := find_deny_unanswered(ctx)) else [])],
+                capabilities=[serving_model, *([d] if (d := find_deny_unanswered(ctx)) is not None else [])],
             )
             reason = resumable_output_reason(result.output)
             if reason is None:
