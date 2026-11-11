@@ -7,6 +7,38 @@ from pydantic_ai import Agent, DeferredToolRequests, PendingModelResponse
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai_harness.ask_user import AskUser
+
+QUESTION = [{'header': 'Check', 'question': 'Proceed?', 'options': [{'label': 'Yes'}, {'label': 'No'}]}]
+"""`ask_user_question` arguments for one valid question."""
+
+
+def call_then_echo(
+    tool_name: str, args: dict[str, object], call_id: str, final: str, observed: list[str] | None = None
+) -> FunctionModel:
+    """A model that makes one scripted tool call, then finishes with `final`, appending the tool result to `observed`."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for part in messages[-1].parts:
+            if isinstance(part, ToolReturnPart):
+                if observed is not None:
+                    observed.append(str(part.content))
+                return ModelResponse(parts=[TextPart(final)])
+        return ModelResponse(parts=[ToolCallPart(tool_name, args, tool_call_id=call_id)])
+
+    return FunctionModel(model_fn)
+
+
+def asking_agent(observed: list[str], name: str = 'child') -> Agent[object, str]:
+    """A sub-agent that asks one question through an `AskUser` with no answerer, recording the answer in `observed`.
+
+    Without a capability that answers the question, its run ends with the question deferred.
+    """
+    return Agent(
+        call_then_echo('ask_user_question', {'questions': QUESTION}, 'q1', 'child done', observed),
+        name=name,
+        capabilities=[AskUser(answerer=None)],
+    )
 
 
 def deferring_agent(

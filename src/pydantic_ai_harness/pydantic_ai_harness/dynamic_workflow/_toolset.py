@@ -30,7 +30,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness.deny_unanswered import find_deny_unanswered
+from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
 
 try:
     from pydantic_monty import (

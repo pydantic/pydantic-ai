@@ -37,11 +37,12 @@ from pydantic_ai.workspaces import (
     WorkspaceReadOnlyError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness import DenyUnanswered, HarnessDeprecationWarning
+from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE
 from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, SubAgentToolset
 
 from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
-from .._deferred_tools import deferring_agent, pending_agent
+from .._deferred_tools import asking_agent, deferring_agent, pending_agent
 
 
 @dataclass
@@ -486,6 +487,17 @@ class TestDelegation:
         result = await parent.run('go')
         assert result.output == 'all done'
         assert cap.log == ['applied']  # the shared capability ran during the sub-agent run
+
+    async def test_parent_deny_unanswered_answers_the_childs_question(self) -> None:
+        """The parent run's `DenyUnanswered` is passed on, so the child's unanswered question is answered in-run."""
+        observed: list[str] = []
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('child'),
+            capabilities=[DenyUnanswered(), SubAgents(agents=[SubAgent(asking_agent(observed))])],
+        )
+        result = await parent.run('go')
+        assert result.output == 'all done'
+        assert observed == [DEFAULT_QUESTION_MESSAGE]
 
     async def test_event_stream_handler_forwarded_to_subagent(self) -> None:
         events: list[str] = []

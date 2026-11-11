@@ -46,8 +46,6 @@ This forwarding is specific to `DenyUnanswered` for now: a general way for capab
 
 A delegation that a durable engine runs as a tool activity, such as a named sub-agent under `TemporalDurability`, does not receive the parent run's capabilities, so nothing is forwarded there and the child keeps its own behavior. Give such a child its own `DenyUnanswered` when it should deny too.
 
-`find_deny_unanswered(ctx)` returns the run's `DenyUnanswered`, unwrapping `WrapperCapability` chains; `SubAgents` and `DynamicWorkflow` use it for the forwarding above.
-
 ## Telemetry
 
 Emits nothing into telemetry.

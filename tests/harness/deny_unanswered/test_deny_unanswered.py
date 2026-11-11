@@ -4,26 +4,13 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import CallDeferred
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai_harness import DenyUnanswered
 from pydantic_ai_harness.ask_user import AskUser
 from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE
 
-QUESTION = [{'header': 'Check', 'question': 'Proceed?', 'options': [{'label': 'Yes'}, {'label': 'No'}]}]
-
-
-def _call_then_echo(tool_name: str, args: dict[str, object], call_id: str, final: str):
-    """Model that makes one scripted tool call, then finishes with the tool result."""
-
-    async def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        for part in messages[-1].parts:
-            if isinstance(part, ToolReturnPart):
-                return ModelResponse(parts=[TextPart(content=final)])
-        return ModelResponse(parts=[ToolCallPart(tool_name=tool_name, args=args, tool_call_id=call_id)])
-
-    return model
+from .._deferred_tools import QUESTION, call_then_echo
 
 
 def _tool_returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
@@ -33,7 +20,7 @@ def _tool_returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
 def _approval_agent(ran: list[int], *, deny: bool) -> Agent[None, str | DeferredToolRequests]:
     """An agent whose model calls `danger`, which needs approval, recording each run of its body in `ran`."""
     agent = Agent(
-        FunctionModel(_call_then_echo('danger', {'x': 1}, 'c1', 'done')),
+        call_then_echo('danger', {'x': 1}, 'c1', 'done'),
         capabilities=[DenyUnanswered()] if deny else [],
         output_type=[str, DeferredToolRequests],
     )
@@ -67,7 +54,7 @@ async def test_deny_unanswered_answers_approval_required_tool_in_run():
 async def test_deny_unanswered_answers_ask_user_question_in_run(question_message: str | None, expected: str):
     """An unanswered `AskUser` question gets `question_message` as its tool result, and the run finishes."""
     agent = Agent(
-        FunctionModel(_call_then_echo('ask_user_question', {'questions': QUESTION}, 'q1', 'done')),
+        call_then_echo('ask_user_question', {'questions': QUESTION}, 'q1', 'done'),
         capabilities=[
             AskUser(answerer=None),
             DenyUnanswered() if question_message is None else DenyUnanswered(question_message=question_message),
@@ -85,7 +72,7 @@ async def test_deny_unanswered_answers_ask_user_question_in_run(question_message
 async def test_deny_unanswered_leaves_other_deferred_calls_deferred():
     """A deferred call that is neither an approval nor an `AskUser` question is left for its own handler."""
     agent = Agent(
-        FunctionModel(_call_then_echo('wait_for_job', {}, 'j1', 'unreached')),
+        call_then_echo('wait_for_job', {}, 'j1', 'unreached'),
         capabilities=[DenyUnanswered()],
         output_type=[str, DeferredToolRequests],
     )

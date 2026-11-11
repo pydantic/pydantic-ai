@@ -49,7 +49,7 @@ from pydantic_ai_harness._sub_agent_output import (
     resumable_output_reason,
     unresumable_output_message,
 )
-from pydantic_ai_harness.deny_unanswered import find_deny_unanswered
+from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
 from pydantic_ai_harness.subagents._control import (
     DynamicAgents,
     DynamicAgentSpec,

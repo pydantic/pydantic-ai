@@ -22,7 +22,7 @@ from pydantic_ai.tools import (
 
 from ..ask_user import TOOL_NAME
 
-__all__ = ['DEFAULT_MESSAGE', 'DEFAULT_QUESTION_MESSAGE', 'DenyUnanswered', 'find_deny_unanswered']
+__all__ = ['DEFAULT_MESSAGE', 'DEFAULT_QUESTION_MESSAGE', 'DenyUnanswered']
 
 DEFAULT_MESSAGE = 'No one was available to approve it, so it did not run.'
 DEFAULT_QUESTION_MESSAGE = 'No one is available to answer in this run; continue without the answer.'
@@ -34,8 +34,8 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
 
     For runs that may end with no one available to approve or answer: a held approval is denied
     with `message`, and a deferred `ask_user_question` call is answered with `question_message`,
-    so the run finishes instead of pausing on `DeferredToolRequests`. Any other deferred call stays deferred for its own handler. Without
-    this capability nothing changes.
+    so the run finishes instead of pausing on `DeferredToolRequests`. Any other deferred call
+    stays deferred for its own handler. Without this capability nothing changes.
 
     Emits nothing into telemetry.
     """

@@ -40,6 +40,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeMode
+from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE, DenyUnanswered
 from pydantic_ai_harness.dynamic_workflow import (
     DynamicWorkflow,
     DynamicWorkflowToolset,
@@ -47,7 +48,7 @@ from pydantic_ai_harness.dynamic_workflow import (
     WorkflowResourceLimits,
 )
 
-from .._deferred_tools import deferring_agent, pending_agent
+from .._deferred_tools import asking_agent, deferring_agent, pending_agent
 
 
 def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> Agent[object, str]:
@@ -1921,3 +1922,23 @@ async def test_run_workflow_orchestrates_alongside_code_mode_end_to_end() -> Non
         if isinstance(p, ToolReturnPart) and p.tool_name == 'run_workflow'
     ]
     assert returns[-1].content == 'LGTM'
+
+
+async def test_parent_deny_unanswered_answers_a_workflow_childs_question() -> None:
+    """The parent run's `DenyUnanswered` is passed on, so a workflow child's unanswered question is answered in-run."""
+    observed: list[str] = []
+
+    def parent_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[TextPart('workflow done')])
+        return ModelResponse(
+            parts=[ToolCallPart('run_workflow', {'code': 'r = await child(task="ask")'}, tool_call_id='w1')]
+        )
+
+    parent = Agent(
+        FunctionModel(parent_model),
+        capabilities=[DenyUnanswered(), DynamicWorkflow(agents=[asking_agent(observed)])],
+    )
+    result = await parent.run('run it')
+    assert result.output == 'workflow done'
+    assert observed == [DEFAULT_QUESTION_MESSAGE]

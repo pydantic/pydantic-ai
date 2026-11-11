@@ -272,7 +272,7 @@ def test_the_status_names_the_mode(saved: dict[str, object], shown: str | None) 
     assert WebPlugin.from_host(host).service.default().status().permissions == shown
 
 
-async def test_approval_handler_answers_held_calls_and_leaves_others(tmp_path: Path) -> None:
+async def test_approval_handler_answers_held_calls_and_backstop_denies_the_rest(tmp_path: Path) -> None:
     ran: list[str] = []
     asked: list[PermissionRequest] = []
 
