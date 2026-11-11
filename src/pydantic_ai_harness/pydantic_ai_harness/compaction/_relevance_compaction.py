@@ -34,7 +34,6 @@ from pydantic_ai.messages import (
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -688,9 +687,7 @@ def _user_text(message: ModelMessage) -> str:
     """The text of the user prompts the user wrote in *message*, or `''`."""
     if not isinstance(message, ModelRequest):
         return ''
-    return '\n'.join(
-        user_prompt_text(part) for part in message.parts if isinstance(part, UserPromptPart) and is_user_part(part)
-    )
+    return '\n'.join(user_prompt_text(part) for part in message.parts if is_user_part(part))
 
 
 def _summary_parts(messages: Sequence[ModelRequest]) -> list[ModelRequestPart]:

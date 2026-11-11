@@ -12,6 +12,8 @@ from dataclasses import dataclass, replace
 from json import dumps
 from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, TypeGuard, assert_never, runtime_checkable
 
+from typing_extensions import TypeIs
+
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
 from pydantic_ai._utils import is_str_dict
@@ -976,12 +978,12 @@ def _is_harness_marker_part(part: ModelRequestPart) -> bool:
     return is_pinned(part) or is_receipt_part(part) or is_harness_data(part)
 
 
-def is_user_part(part: ModelRequestPart) -> bool:
+def is_user_part(part: ModelRequestPart) -> TypeIs[UserPromptPart]:
     """Whether *part* is a user prompt the user wrote, not a pin, receipt or harness capability's content."""
     return isinstance(part, UserPromptPart) and not _is_harness_marker_part(part)
 
 
-def starts_user_turn(message: ModelMessage) -> bool:
+def starts_user_turn(message: ModelMessage) -> TypeIs[ModelRequest]:
     """Whether *message* is a `ModelRequest` carrying a user prompt, not only harness bookkeeping or data."""
     return isinstance(message, ModelRequest) and any(is_user_part(part) for part in message.parts)
 
@@ -994,7 +996,7 @@ def answers_tool_call(message: ModelMessage) -> bool:
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
     """Return the first `ModelRequest` that contains a `UserPromptPart`, or `None`."""
     for msg in messages:
-        if isinstance(msg, ModelRequest) and starts_user_turn(msg):
+        if starts_user_turn(msg):
             return msg
     return None
 
