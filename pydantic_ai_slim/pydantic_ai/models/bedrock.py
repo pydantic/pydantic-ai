@@ -2483,8 +2483,8 @@ class BedrockStreamedResponse(StreamedResponse):
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
                 # The gateway reports the stream's cost here. The `metadata` event's usage, which usually comes after,
                 # carries no cost, so adding it keeps this one.
-                usage_data = {'usage': message_stop.get('additionalModelResponseFields')}
-                if (cost := gateway_reported_cost(usage_data)) is not None:
+                response_fields = message_stop.get('additionalModelResponseFields')
+                if (cost := gateway_reported_cost({'usage': response_fields})) is not None:
                     self._usage.cost = cost
             case {'metadata': metadata}:
                 if 'usage' in metadata:  # pragma: no branch

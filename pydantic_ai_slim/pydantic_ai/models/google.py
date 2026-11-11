@@ -1837,6 +1837,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
     def _map_part(self, part: Part) -> Iterator[ModelResponseStreamEvent]:
         # The gateway reports a stream's cost on the final chunk's last part, which can be an empty text part it adds.
+        # `_map_chunk` adds the chunk's usage before mapping its parts, so that usage doesn't replace this cost.
         if part.part_metadata and (cost := gateway_reported_cost({'usage': part.part_metadata})) is not None:
             self._usage.cost = cost
         provider_details = _thought_signature_details(part)

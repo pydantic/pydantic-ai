@@ -2,8 +2,8 @@
 
 The recorded `test_gateway_provider_with_*` cases in `test_gateway.py` cover the cost names deployed gateways
 serve. These cases cover the newer names (`usage.logfire_ai_gateway` and the `logfire-ai-gateway-cost` header), the
-cost in Google and Bedrock streams, and response-cache hits, which no recorded gateway serves yet, by stubbing the HTTP layer underneath the real provider
-SDK: the SDK's own parsing decides whether the gateway's cost survives.
+cost in Google and Bedrock streams, and response-cache hits, which no recorded gateway serves yet, by stubbing the
+HTTP layer underneath the real provider SDK: the SDK's own parsing decides whether the gateway's cost survives.
 """
 
 from __future__ import annotations
@@ -194,7 +194,12 @@ async def test_gateway_header_cost_google(
     assert result.usage.cost == expected_cost
 
 
-@dataclass
+def _request_span_cost(capfire: CaptureLogfire) -> float:
+    [span] = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'].startswith('chat ')]
+    return span['attributes']['operation.cost']
+
+
+@dataclass(frozen=True)
 class GoogleStreamCase:
     id: str
     final_part: dict[str, Any]
@@ -256,8 +261,7 @@ async def test_gateway_reported_cost_google_stream(
         await result.get_output()
     assert result.usage.cost == case.expected_cost
     assert result.all_messages()[-1].parts == case.expected_parts
-    [request_span] = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'].startswith('chat ')]
-    assert request_span['attributes']['operation.cost'] == float(case.expected_cost)
+    assert _request_span_cost(capfire) == float(case.expected_cost)
 
 
 @pytest.mark.parametrize(
@@ -352,8 +356,7 @@ async def test_gateway_reported_cost_bedrock_stream(
     async with agent.run_stream('hello') as result:
         assert await result.get_output() == 'hi'
     assert result.usage.cost == expected_cost
-    [request_span] = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'].startswith('chat ')]
-    assert request_span['attributes']['operation.cost'] == float(expected_cost)
+    assert _request_span_cost(capfire) == float(expected_cost)
 
 
 def test_gateway_reported_cost_parsing():
