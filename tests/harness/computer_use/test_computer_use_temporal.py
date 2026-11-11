@@ -51,7 +51,7 @@ _agent = Agent(
     name='computer_use_temporal',
     capabilities=[
         _provider.capability(),
-        ComputerUse(settle_seconds=0),
+        ComputerUse(),
         # The setting the docs give for a run whose calls must not repeat.
         TemporalDurability(
             activity_config=ActivityConfig(
