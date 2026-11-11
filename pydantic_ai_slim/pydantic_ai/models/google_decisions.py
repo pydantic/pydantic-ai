@@ -15,6 +15,7 @@ from ..providers import Provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from .decision import (
+    _FLOAT_TOLERANCE,  # pyright: ignore[reportPrivateUsage]
     ChoiceQuestion,
     DecisionAnswer,
     DecisionModel,
@@ -44,9 +45,6 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `google-genai` package to use the Google Decisions model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
-
-# Unrounded float64 probabilities sum to one within about 1e-15, even over 255 options.
-_FLOAT_TOLERANCE = 1e-6
 
 __all__ = (
     'GoogleDecisionsModel',
@@ -239,7 +237,7 @@ def _sums_to_one(answer: DecisionAnswer) -> bool:
     The API sends its probabilities unrounded, so the allowance `_answer_fits` makes for a backend that rounds each
     one would let through a distribution that sums to far less than one.
     """
-    return isinstance(answer, NoulAnswer) or abs(sum(answer.probabilities.values()) - 1) <= _FLOAT_TOLERANCE
+    return isinstance(answer, NoulAnswer) or abs(sum(answer.probabilities.values()) - 1) <= float(_FLOAT_TOLERANCE)
 
 
 class _TextBlock(TypedDict):
