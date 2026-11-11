@@ -577,6 +577,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         _utils.raise_if_cancelling()
         pre_hook_result = result
         result = await cap.after_node_run(run_context, node=node, result=result)
+        result = await self.ctx.deps.in_flight._after_step(run_context, result)  # pyright: ignore[reportPrivateUsage]
         result = drain_pending_messages_at_end(run_context, result)
 
         # If a capability hook or the pending-message drain changed the result, sync the graph
@@ -641,7 +642,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             else:
                 result = await lifecycle(node)
             # After every capability hook, `wrap_node_run` included, so a message a hook enqueued while
-            # the run was ending still gets its turn instead of being lost.
+            # the run was ending still gets its turn instead of being lost. In-flight work the run waits for
+            # before it ends queues its results first.
+            result = await self.ctx.deps.in_flight._after_step(run_context, result)  # pyright: ignore[reportPrivateUsage]
             result = drain_pending_messages_at_end(run_context, result)
             if not self._graph_reflects(result):
                 self._sync_graph_state(result)

@@ -344,7 +344,8 @@ class EnqueueGuard(list[PendingMessage]):
     A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
     across the activity boundary (Temporal) without re-running the code, so messages enqueued
     inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
-    `RunContext.dequeue` and `RunContext.set_enqueue_priority` raise `change_error` for the same reason.
+    `RunContext.dequeue` and `RunContext.set_enqueue_priority` raise `change_error` for the same reason,
+    and `RunContext.in_flight` raises `in_flight_error`.
     """
 
     def __init__(self, unit_noun: str, container_noun: str):
@@ -354,15 +355,23 @@ class EnqueueGuard(list[PendingMessage]):
         self._container_noun = container_noun
 
     def append(self, pending: PendingMessage) -> None:
-        raise self._error('enqueue', 'the enqueued messages would be dropped', 'Enqueue messages')
+        raise self._error('`ctx.enqueue()`', 'the enqueued messages would be dropped', 'Enqueue messages')
 
     def change_error(self, method: QueueChangeMethod) -> UserError:
         """The error for `ctx.<method>()`, a change to a queued message, inside the durable unit."""
-        return self._error(method, 'the change to the queued message would be lost', 'Change queued messages')
+        return self._error(
+            f'`ctx.{method}()`', 'the change to the queued message would be lost', 'Change queued messages'
+        )
 
-    def _error(self, method: str, consequence: str, advice: str) -> UserError:
+    def in_flight_error(self) -> UserError:
+        """The error for `ctx.in_flight` inside the durable unit."""
+        return self._error(
+            '`ctx.in_flight`', 'work it started or registered would be lost', 'Start or register in-flight work'
+        )
+
+    def _error(self, usage: str, consequence: str, advice: str) -> UserError:
         return UserError(
-            f'`ctx.{method}()` is not supported inside a durable {self._unit_noun}: the durable runtime replays '
+            f'{usage} is not supported inside a durable {self._unit_noun}: the durable runtime replays '
             f"the {self._unit_noun}'s recorded result without re-running your code, so {consequence}. "
             f'{advice} from {self._container_noun}-level code instead.'
         )

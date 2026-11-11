@@ -1030,6 +1030,8 @@ A `priority` controls when the enqueued content is delivered:
 
 A run that pauses for [deferred tools](deferred-tools.md) is not redirected. Content still queued at the pause is added to the message history instead, so a resumed run sees it. This applies when the paused step's tool results end the history. If every call in that step was deferred, the history ends with those calls, so the queued content redirects the run as usual, and so does content that includes a [`ModelResponse`][pydantic_ai.messages.ModelResponse]. With [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], the streamed result's messages don't include it.
 
+Background work that enqueues its result when it finishes may still be running when the model ends the run. Track it with [`ctx.in_flight`][pydantic_ai.tools.RunContext.in_flight], so the run waits for its result before ending or pausing. See [Work that outlives a step](capabilities/custom.md#in-flight-work).
+
 `enqueue` is variadic — each positional argument is one item, and can be:
 
 - a piece of [`UserContent`][pydantic_ai.messages.UserContent] — a `str` or multi-modal content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]. Adjacent user content is gathered into a single [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], so `enqueue('caption', image)` forms one user turn. To pass an existing list, spread it: `enqueue(*items)`;

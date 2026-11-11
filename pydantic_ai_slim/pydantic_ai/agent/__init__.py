@@ -109,6 +109,7 @@ from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.wrapper import WrapperCapability
 from ..conversation import Conversation
+from ..in_flight import InFlightRegistry
 from ..models import _SettingsLayer  # pyright: ignore[reportPrivateUsage]
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
@@ -2305,6 +2306,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
             cancellation=cancellation,
+            in_flight=InFlightRegistry(state.event_stream_buffer),
             deadline=deadline,
         )
 
@@ -5008,6 +5010,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             # Nothing drains the queue once the graph stops, so reject later enqueues instead of
             # stranding them. A normal finish already closed it inside `drain_at_end`.
             stack.callback(pending_message_queue.close)
+            # However the run ends, cancel the in-flight work that doesn't outlive it. A normal run already did, below,
+            # before its toolset exited; this covers a run that fails before entering its toolset.
+            stack.push_async_callback(graph_deps.in_flight._aclose)  # pyright: ignore[reportPrivateUsage]
             if self.cancellation_token is not None:
                 graph_deps.cancellation.attach_token(self.cancellation_token)
             if (deadline := graph_deps.deadline) is not None:
@@ -5132,6 +5137,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # Enter toolset AFTER context vars are propagated so that toolset
                 # __aenter__/__aexit__ run inside the run span context.
                 await stack.enter_async_context(self.toolset)
+                # Exits before the toolset, which in-flight work may still be calling.
+                stack.push_async_callback(graph_deps.in_flight._aclose)  # pyright: ignore[reportPrivateUsage]
                 try:
                     yield agent_run
                 finally:

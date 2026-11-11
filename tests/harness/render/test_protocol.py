@@ -520,6 +520,7 @@ async def test_run_context_serialization_is_exhaustive() -> None:
         '_capability',  # live capability instance used only while dispatching workflow-side hooks
         'realtime_session',  # live session object; realtime sessions don't run inside child tasks
         '_cancellation',  # live controller holding an asyncio task reference
+        '_in_flight',  # live registry holding the run's in-flight tasks
         '_durable_operations',  # workflow-side callables; worker dispatch is pre-registered
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker's agent
         'workspace',  # live facade; only its ref crosses, as `workspace_ref`

@@ -165,6 +165,7 @@ from .toolsets._instruction_collection import collect_toolset_instructions
 
 if TYPE_CHECKING:
     from .agent import Agent
+    from .in_flight import InFlightRegistry
     from .models.instrumented import InstrumentationSettings
     from .workspaces import Workspace, WorkspaceRef
 
@@ -963,6 +964,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
+
+    in_flight: InFlightRegistry = dataclasses.field(repr=False)
+    """The run's in-flight work registry, exposed as `RunContext.in_flight`. Runtime-only: holds live tasks."""
 
     deadline: datetime | None = None
     """The run's deadline, from `timeout=` or inherited from an enclosing run; exposed as `RunContext.deadline`."""
@@ -4437,6 +4441,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
         _cancellation=ctx.deps.cancellation,
+        _in_flight=ctx.deps.in_flight,
         _durable_operations=ctx.deps.durable_operations,
         _run_capabilities_by_id=ctx.deps.run_capabilities_by_id,
         _event_stream_buffer=ctx.state.event_stream_buffer,
@@ -4448,11 +4453,11 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
-    # `discovered_tool_names`, `pending_messages`, `_cancellation`, `_event_stream_buffer`,
+    # `discovered_tool_names`, `pending_messages`, `_cancellation`, `_in_flight`, `_event_stream_buffer`,
     # `_mcp_tool_defs_cache`, `_durable_operations`, `_run_capabilities_by_id` (see the invariant on
     # `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking
     # the object would silently break in-step capability loads / tool reveals / message enqueues /
-    # cancellation / event delivery / tool-defs caching / durable operation dispatch.
+    # cancellation / in-flight work tracking / event delivery / tool-defs caching / durable operation dispatch.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
 

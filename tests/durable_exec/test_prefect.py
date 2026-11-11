@@ -2775,6 +2775,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         '_capability',  # live capability instance used only while dispatching workflow-side hooks
         'realtime_session',  # live RealtimeSession, not hashable run state; sessions don't run inside Prefect tasks
         '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key
+        '_in_flight',  # runtime-only in-flight work registry; carries no run inputs and must not fork the cache key
         '_durable_operations',  # runtime callables are derived from the static agent and do not vary cache identity
         '_run_capabilities_by_id',  # live instances are represented by their projected capability state instead
         # Toolsets the run holds entered, built from `deps`, which is projected: they carry no

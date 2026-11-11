@@ -1137,6 +1137,62 @@ Multiple capabilities can each handle a subset: dispatch accumulates results acr
 
 For application code that just needs to plug in a handler, use the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability — see [Resolving deferred calls with a handler](../deferred-tools.md#resolving-deferred-calls-with-a-handler).
 
+## Work that outlives a step {#in-flight-work}
+
+A tool or hook can start work that finishes after the step that started it, like a slow tool running in the background, and deliver its result later with [`ctx.enqueue()`](../message-history.md#injecting-messages-mid-run). Track that work with [`ctx.in_flight`][pydantic_ai.tools.RunContext.in_flight], so the run doesn't end without it:
+
+```python {title="in_flight_work.py"}
+import asyncio
+from typing import Any
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import AgentToolset, FunctionToolset
+
+research_toolset = FunctionToolset()
+
+
+async def research(topic: str) -> str:
+    await asyncio.sleep(1)  # stands in for slow work
+    return f'Findings on {topic}: ...'
+
+
+@research_toolset.tool
+async def start_research(ctx: RunContext, topic: str) -> str:
+    """Start researching a topic in the background."""
+
+    async def run() -> None:
+        ctx.enqueue(await research(topic))
+
+    ctx.in_flight.start(run, kind='research', name=f'research {topic}', id=f'research:{topic}')
+    return 'Research started. The findings will arrive in a later message.'
+
+
+class BackgroundResearch(AbstractCapability[Any]):
+    def get_toolset(self) -> AgentToolset[Any] | None:
+        return research_toolset
+
+
+agent = Agent(TestModel(), capabilities=[BackgroundResearch()])
+```
+
+[`start()`][pydantic_ai.in_flight.InFlightRegistry.start] runs the coroutine as a task the run owns. Work that something else runs, like a process, goes in with [`register()`][pydantic_ai.in_flight.InFlightRegistry.register] instead, and you call [`settle()`][pydantic_ai.in_flight.InFlightRegistry.settle] when it has finished. Either way, give the work an `id` that is unique among the run's live work and the same each time the run is replayed, such as the ID of the tool call that started it.
+
+Its `on_end` decides what happens when the run ends:
+
+- `'drain'` (the default): the run waits for the work. When the model ends the run with output, the run waits until some draining work has finished, and then the model gets another turn on what that work queued. When the run pauses with [`DeferredToolRequests`](../deferred-tools.md) or a [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits), it waits for all draining work, and its queued results are recorded after the paused step, so a resumed run sees them. The pause still stands.
+- `'cancel'`: the run cancels the work when it ends.
+- `'detach'`: the run lists the work while it lives, but never waits for it or cancels it. Only registered work can be detached, since the run owns the work it starts.
+
+[`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] hands its final output to the caller as it streams it, so it doesn't wait for draining work at that point: the work is cancelled when the run ends.
+
+A run that ends with an error, is [cancelled](../agent.md#cancelling-a-run), [times out](../timeouts.md#bounding-a-whole-run) or hits a [usage limit](../agent.md#usage-limits) cancels all work except `'detach'` work. Nothing else bounds how long the run waits: bound slow work with its own timeout, and the whole wait with the run's `timeout=`. An error raised by work you started ends the run at the next step, as a failing tool would, so catch the errors the model should hear about and enqueue them instead.
+
+[`live()`][pydantic_ai.in_flight.InFlightRegistry.live] lists the work that is still running, and [`wait_idle()`][pydantic_ai.in_flight.InFlightRegistry.wait_idle] waits for it, for example in a [deferred tool call handler](#deferred-tool-calls). Each [`InFlightWork`][pydantic_ai.in_flight.InFlightWork] handle also has `wait()`, `result()` and `cancel()`. The run emits an [`InFlightWorkEvent`][pydantic_ai.in_flight.InFlightWorkEvent] when work starts or settles, and when it starts and stops waiting for it, with the number of live pieces, so a UI can show that the agent is still working. Each wait is also an `in_flight drain` span.
+
+Each run has its own registry, which a run started from inside it doesn't share. `ctx.in_flight` raises a `UserError` inside a durable execution engine's activity, step or task, where work it started would be lost on replay.
+
 ## Durable capability operations {#durable-capability-operations}
 
 A capability can move I/O or other non-deterministic work from workflow code into a durable activity, step, or task with [`durable_operation`][pydantic_ai.capabilities.durable_operation]. Give the capability a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id], because engines use the capability ID and operation name to recover and replay persisted work.
