@@ -158,7 +158,9 @@ with the model's writes.
   `max_lines=200` additionally limits `MEMORY.md`; `max_memory_size=65_536` bounds per-file read,
   search, and write. Overflow is omitted with a pointer to `read_memory` (or `read_file` when it replaces it) / `search_memory`.
 - `inject_memory=False` keeps memory out of the conversation; the tools remain. Also use it when
-  less-trusted actors can write to the store (memory is untrusted, model-written content).
+  less-trusted actors can write to the store (memory is untrusted, model-written content). A `FileStore`
+  whose `MEMORY.md` is below `'operator'` authority (an untrusted repo) has its snapshot attributed to the
+  file's author, not the agent; keep reliable memory in an operator workspace via `FileStore(workspace=...)`.
 - `injection_errors='ignore'` (default) skips injection on a store failure; `'raise'` fails the run.
 - `search_memory` is literal, bounded text search: `max_search_results=10`,
   `max_search_result_chars=4_000`, `max_search_files=1_000`. Queries are capped at 1,000 characters

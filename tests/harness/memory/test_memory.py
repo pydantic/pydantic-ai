@@ -46,6 +46,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    WorkspaceSource,
     post_compaction_window,
 )
 from pydantic_ai.models import ModelRequestContext
@@ -55,6 +56,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     CommandResult,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
@@ -1534,6 +1536,36 @@ class TestInjection:
         # Text the agent wrote in earlier runs: another model's, with no authority.
         assert snapshot.source == ModelSource('agent in an earlier run')
         assert snapshot.source.authority == 'none'
+
+    async def test_snapshot_from_an_untrusted_workspace_names_the_file_author(self, tmp_path: Path) -> None:
+        # A repository the operator doesn't control can hold a `MEMORY.md` the agent never wrote.
+        (tmp_path / '.memory' / 'main').mkdir(parents=True)
+        (tmp_path / '.memory' / 'main' / 'MEMORY.md').write_text('- a planted fact')
+        agent = Agent(TestModel(call_tools=[]), capabilities=[Memory(store=FileStore('.memory'))])
+
+        result = await agent.run(
+            'go', workspace=AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), authority='none')
+        )
+
+        [snapshot] = _snapshot_parts(result.all_messages())
+        assert isinstance(snapshot.source, WorkspaceSource)
+        assert (snapshot.source.path, snapshot.source.authority) == ('.memory/main/MEMORY.md', 'none')
+        assert 'a planted fact' in _snapshot_text(snapshot)
+
+    async def test_snapshot_from_a_store_of_its_own_stays_the_agents(self, tmp_path: Path) -> None:
+        # The run's workspace is untrusted, but the store keeps its files in an operator workspace of its own.
+        (tmp_path / 'memory' / 'main').mkdir(parents=True)
+        (tmp_path / 'memory' / 'main' / 'MEMORY.md').write_text('- a fact')
+        (tmp_path / 'repo').mkdir()
+        store = FileStore('.', workspace=LocalWorkspaceBackend(tmp_path / 'memory'))
+        agent = Agent(TestModel(call_tools=[]), capabilities=[Memory(store=store)])
+
+        result = await agent.run(
+            'go', workspace=AuthorityWorkspace(Workspace(LocalWorkspaceBackend(tmp_path / 'repo')), authority='none')
+        )
+
+        [snapshot] = _snapshot_parts(result.all_messages())
+        assert snapshot.source == ModelSource('agent in an earlier run')
 
     async def test_emptied_memory_appends_an_empty_snapshot(self) -> None:
         store = InMemoryStore()

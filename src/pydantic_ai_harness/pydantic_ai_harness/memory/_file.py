@@ -17,6 +17,7 @@ from typing import Literal
 import anyio
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import WorkspaceSource
 from pydantic_ai.workspaces import FileEntry, Workspace, WorkspaceBackend, WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import secondary_workspace, supports_commands, workspace_path
@@ -442,3 +443,9 @@ class FileStore:
             scanned=result.scanned,
             truncated=result.truncated or content_truncated or len(paths) > max_files,
         )
+
+
+async def file_source(store: FileStore, path: str) -> WorkspaceSource:
+    """The source of text read from the store file at `path`, with that file's authority in the store's workspace."""
+    workspace = store._workspace()  # pyright: ignore[reportPrivateUsage]
+    return await WorkspaceSource.from_workspace(workspace, posixpath.join(store.directory, path))

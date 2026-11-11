@@ -36,7 +36,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Workspace
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import SummarizingCompaction
 from pydantic_ai_harness.filesystem import FileSystem
@@ -1648,6 +1648,105 @@ class TestNestedTraversal:
         assert _repo_notes(result.all_messages()) == snapshot(
             ['<context_file path="../AGENTS.md">PARENT BODY</context_file>']
         )
+
+
+class TestWalkUpAuthority:
+    """Walk-up files below `'operator'` authority reach the model as something other than instructions."""
+
+    @staticmethod
+    def _repo(tmp_path: Path) -> Path:
+        _write(tmp_path / 'AGENTS.md', 'repo rules')
+        working_dir = tmp_path / 'packages' / 'foo'
+        _write(working_dir / 'AGENTS.md', 'package rules')
+        return working_dir
+
+    @staticmethod
+    async def _run(
+        tmp_path: Path, workspace: Workspace, message_history: list[ModelMessage] | None = None
+    ) -> tuple[str, list[ContextFilePart], AgentRunResult[str]]:
+        """The instructions the model was sent, the `ContextFilePart`s the run recorded, and the run's result."""
+        instructions: list[str | None] = []
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            del info
+            request = messages[-1]
+            assert isinstance(request, ModelRequest)
+            instructions.append(request.instructions)
+            yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[RepoContext(home_dir=str(tmp_path), nested_traversal=False)],
+        ).run('go', workspace=workspace, message_history=message_history)
+        parts = [
+            part
+            for message in result.new_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ContextFilePart)
+        ]
+        assert instructions[0] is not None
+        return instructions[0], parts, result
+
+    async def test_operator_workspace_loads_every_file_as_instructions(self, tmp_path: Path) -> None:
+        working_dir = self._repo(tmp_path)
+        instructions, parts, _ = await self._run(tmp_path, Workspace(LocalWorkspaceBackend(working_dir)))
+        assert 'repo rules' in instructions
+        assert 'package rules' in instructions
+        assert parts == []
+
+    async def test_untrusted_workspace_names_its_file_and_sends_ancestors_as_data(self, tmp_path: Path) -> None:
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(working_dir)), authority='none')
+        instructions, parts, result = await self._run(tmp_path, workspace)
+        assert instructions == snapshot("""\
+<pyai:context id="capability:repo_context">
+This directory has an instruction file that is not loaded here, because the operator does not control this workspace's files: `AGENTS.md`. Read it with your file tools if it is relevant to your task.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
+        assert [(part.path, part.content, part.source.authority) for part in parts] == snapshot(
+            [('../../AGENTS.md', 'repo rules', 'none')]
+        )
+        assert all(isinstance(part.source, WorkspaceSource) for part in parts)
+        assert _repo_notes(result.new_messages()) == snapshot(
+            ['<context_file path="../../AGENTS.md">repo rules</context_file>']
+        )
+
+    async def test_an_ancestor_covered_by_path_authority_keeps_its_level(self, tmp_path: Path) -> None:
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(working_dir)),
+            authority='none',
+            path_authority={str(tmp_path / 'AGENTS.md'): 'operator'},
+        )
+        instructions, parts, _ = await self._run(tmp_path, workspace)
+        assert 'repo rules' in instructions
+        assert 'package rules' not in instructions
+        assert 'Read it with your file tools' in instructions
+        assert parts == []
+
+    async def test_an_untrusted_ancestor_lowers_only_itself(self, tmp_path: Path) -> None:
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(working_dir)),
+            authority='operator',
+            path_authority={str(tmp_path / 'AGENTS.md'): 'none'},
+        )
+        instructions, parts, _ = await self._run(tmp_path, workspace)
+        assert 'package rules' in instructions
+        assert 'repo rules' not in instructions
+        assert [part.content for part in parts] == ['repo rules']
+
+    async def test_an_ancestor_is_sent_again_only_when_it_changed(self, tmp_path: Path) -> None:
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(working_dir)), authority='none')
+        _, _, first = await self._run(tmp_path, workspace)
+        _, parts, second = await self._run(tmp_path, workspace, first.all_messages())
+        assert parts == []
+        _write(tmp_path / 'AGENTS.md', 'new repo rules')
+        _, parts, _ = await self._run(tmp_path, workspace, second.all_messages())
+        assert [part.content for part in parts] == ['new repo rules']
 
 
 class TestForRunAndMisc:

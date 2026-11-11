@@ -13,6 +13,7 @@ from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    CapabilityPartSource,
     DataCapabilityPart,
     ModelMessage,
     ModelRequest,
@@ -30,7 +31,7 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
 from pydantic_ai_harness.artifact_scanning import ArtifactScanner
-from pydantic_ai_harness.memory._file import FileStore
+from pydantic_ai_harness.memory._file import FileStore, file_source
 from pydantic_ai_harness.memory._in_memory import InMemoryStore
 from pydantic_ai_harness.memory._render import injection_listing_limit, list_subfiles, render_memory_prompt
 from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
@@ -74,9 +75,10 @@ class MemorySnapshotPart(DataCapabilityPart[str], namespace='memory', name='snap
     """A snapshot of stored memory, as `Memory` records it in the conversation at the start of a run.
 
     Memory is data the agent wrote in earlier runs, so it goes on the user channel in a `<memory>` frame, never in the
-    application's voice, with a note saying who wrote it. It goes in as stored: text in it that looks like a framework
-    frame, or opens or closes `<memory>`, gets a note saying it's the agent's, not the application's. Find snapshots in
-    history by this type.
+    application's voice, with a note saying who wrote it: the agent, or, for a `FileStore` whose `MEMORY.md` is below
+    `'operator'` [authority][pydantic_ai.workspaces.Workspace.authority_of], that file's author. It goes in as stored:
+    text in it that looks like a framework frame, or opens or closes `<memory>`, gets a note naming that author, not
+    the application. Find snapshots in history by this type.
     """
 
     scope_hash: str
@@ -178,6 +180,9 @@ class Memory(AbstractCapability[AgentDepsT]):
     _run_snapshot: str | None = field(default=None, init=False, repr=False, compare=False)
     """The snapshot the model reads as current during this run, kept so compaction can't take it away."""
 
+    _run_source: CapabilityPartSource | None = field(default=None, init=False, repr=False, compare=False)
+    """Who wrote the snapshot this run records, worked out on first use: see `_snapshot_source`."""
+
     _run_started: bool = field(default=False, init=False, repr=False, compare=False)
     """Whether this run's first `before_model_request` call ran, which an earlier hook's retry can postpone."""
 
@@ -206,6 +211,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         clone = copy(self)
         clone._resolved_scope = None
         clone._run_snapshot = None
+        clone._run_source = None
         clone._run_started = False
         clone._run_continues = False
         store, scope = clone._resolve_scope(ctx)
@@ -347,7 +353,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             if self._run_snapshot is not None and latest != self._run_snapshot:
                 # Compaction dropped it: what the provider is sent after the boundary is the request being sent,
                 # so it goes there, after any tool results, rather than anywhere the provider would trim.
-                ctx.enqueue(_snapshot_part(self._run_snapshot, metadata))
+                ctx.enqueue(_snapshot_part(self._run_snapshot, metadata, await self._snapshot_source(ctx)))
             return request_context
         self._run_snapshot = latest
         with ctx.tracer.start_as_current_span(
@@ -384,10 +390,25 @@ class Memory(AbstractCapability[AgentDepsT]):
             if appended is not None:
                 # When an earlier hook retried the first request, this lands after its retry feedback: still
                 # ahead of any response, so nothing the model has seen changes.
-                ctx.enqueue(_snapshot_part(appended, metadata))
+                ctx.enqueue(_snapshot_part(appended, metadata, await self._snapshot_source(ctx)))
                 self._run_snapshot = appended
             self._record_injection(span, main, subfiles, files_truncated, snapshot, appended, withheld)
         return request_context
+
+    async def _snapshot_source(self, ctx: RunContext[AgentDepsT]) -> CapabilityPartSource:
+        """Who wrote the run's snapshot: the agent in an earlier run, unless the store's files could be someone else's.
+
+        A `FileStore` whose `MEMORY.md` is below `'operator'` [authority][pydantic_ai.workspaces.Workspace.authority_of],
+        such as one in a repository the operator doesn't control, can hold text the agent never wrote, so the snapshot
+        is attributed to that file's author instead. Either way it's data with no authority.
+        """
+        if self._run_source is None:
+            store, scope = self.resolve_scope(ctx)
+            source = None
+            if isinstance(store, FileStore):
+                source = await file_source(store, f'{scope}/{MAIN_FILENAME}')
+            self._run_source = _MEMORY_SOURCE if source is None or source.authority == 'operator' else source
+        return self._run_source
 
     def _record_injection(
         self,
@@ -548,15 +569,15 @@ class Memory(AbstractCapability[AgentDepsT]):
 
 
 _MEMORY_SOURCE: Final = ModelSource('agent in an earlier run')
-"""Who wrote a memory snapshot: the agent, through its memory tools. Stores don't record which entries a user edited."""
+"""Who wrote a memory snapshot: the agent, through its memory tools, in earlier runs: another model's text, with no
+authority. Stores don't record which entries a user edited."""
 
 
-def _snapshot_part(content: str, metadata: dict[str, str]) -> MemorySnapshotPart:
+def _snapshot_part(content: str, metadata: dict[str, str], source: CapabilityPartSource) -> MemorySnapshotPart:
     """A snapshot as `Memory` records it: `content` is the frame's body, its line breaks included."""
     return MemorySnapshotPart(
         content=content,
-        # The agent writes memory with its memory tools, in earlier runs: another model's text, with no authority.
-        source=_MEMORY_SOURCE,
+        source=source,
         scope_hash=metadata['scope'],
         memory_id=metadata['id'],
     )
