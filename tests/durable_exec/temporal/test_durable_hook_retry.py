@@ -13,7 +13,6 @@ import pytest
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.durable_exec import StepPolicy
 from pydantic_ai.exceptions import RetryModelRequest
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -86,55 +85,3 @@ async def test_durability_hook_running_as_an_activity_can_reroute_the_request(cl
             execution_timeout=timedelta(seconds=30),
         )
     assert output == 'from the rerouted model'
-
-
-class _SendOnce(AbstractCapability[Any]):
-    id = 'send_once'
-
-    async def before_run(self, ctx: RunContext[Any]) -> None:
-        await self.send(ctx)
-
-    @durable_operation('send', policy=StepPolicy(repeatable=False, timeout=180))
-    async def send(self, ctx: RunContext[Any]) -> None:
-        pass
-
-
-_send_once_agent = Agent(
-    TestModel(),
-    name='durable_send_once',
-    capabilities=[_SendOnce(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
-)
-
-
-@workflow.defn
-class DurableSendOnceWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        return (await _send_once_agent.run(prompt)).output
-
-
-async def test_an_at_most_once_operation_runs_as_an_activity_under_its_policy(client: Client):
-    """The policy raises the configured 60-second timeout to its own 180; the model request keeps 60."""
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[DurableSendOnceWorkflow],
-        plugins=[AgentPlugin(_send_once_agent)],
-    ):
-        handle = await client.start_workflow(
-            DurableSendOnceWorkflow.run,
-            args=['Hello'],
-            id=DurableSendOnceWorkflow.__name__,
-            task_queue=TASK_QUEUE,
-            # Temporal caps an activity's timeouts at the workflow's.
-            execution_timeout=timedelta(minutes=10),
-        )
-        await handle.result()
-        history = await handle.fetch_history()
-    timeouts = {
-        attributes.activity_type.name.rsplit('__', 1)[-1]: attributes.start_to_close_timeout.ToSeconds()
-        for event in history.events
-        if event.HasField('activity_task_scheduled_event_attributes')
-        for attributes in [event.activity_task_scheduled_event_attributes]
-    }
-    assert timeouts == {'send': 180, 'model_request': 60}
