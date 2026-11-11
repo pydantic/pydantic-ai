@@ -16,6 +16,7 @@ import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from pydantic import ValidationError
 
+from pydantic_ai._telemetry import current_span, open_span
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentNode,
@@ -120,6 +121,41 @@ _SignalledError = (
     ApprovalRequired | CallDeferred | ToolRetryError | ToolFailedError | ModelRetry | ToolFailed | ValidationError
 )
 """Errors a background task reports to the model as a failed result instead of ending the run."""
+
+
+_BackgroundOutcome = Literal['success', 'retried', 'failed', 'cancelled', 'error']
+"""How a background call ended, recorded as `background_tools.outcome`."""
+
+
+def _outcome_of_error(error: BaseException) -> _BackgroundOutcome:
+    """Classify an error the way `_run` handles it, with the names `ToolReturnPart.outcome` uses."""
+    if isinstance(error, ToolRetryError | ModelRetry | ValidationError):
+        return 'retried'
+    if isinstance(error, ApprovalRequired | CallDeferred | ToolFailedError | ToolFailed):
+        return 'failed'
+    if isinstance(error, anyio.get_cancelled_exc_class()):
+        return 'cancelled'
+    return 'error'
+
+
+async def _execute_traced(
+    ctx: RunContext[Any], call: ToolCallPart, handler: WrapToolExecuteHandler, args: dict[str, Any]
+) -> Any:
+    """Run a background call under its own span, since its `execute_tool` span ended with the placeholder reply.
+
+    The task starts inside that `execute_tool` span, so this span is its child and outlives it. Any error
+    but cancellation marks the span as failed, as it does core's `execute_tool` span: in the background,
+    `ApprovalRequired` and `CallDeferred` cannot defer the call, so they fail it too.
+    """
+    attributes = {'gen_ai.tool.name': call.tool_name, 'gen_ai.tool.call.id': call.tool_call_id}
+    with open_span(ctx, f'background_tools execute {call.tool_name}', attributes=attributes) as span:
+        try:
+            result = await handler(args)
+        except BaseException as error:
+            span.set_attribute('background_tools.outcome', _outcome_of_error(error))
+            raise
+        span.set_attribute('background_tools.outcome', 'success')
+        return result
 
 
 def _format_background_failure(tool_name: str, task_id: str, error: _SignalledError) -> TextContent:
@@ -364,7 +400,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 # Set inside the task, so only this call's own handler chain sees it.
                 _backgrounded_call.set(call)
                 try:
-                    result = await handler(args)
+                    result = await _execute_traced(ctx, call, handler, args)
                 except ToolRetryError as e:
                     # Core charged the tool body's `ModelRetry` to the issuing step, whose count the next step may
                     # already have carried over. `_settle` charges it on delivery instead, so it counts exactly once.
@@ -399,6 +435,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 # Core counts a successful call when the tool body returns, replacing this reservation.
                 ctx.usage.tool_calls -= 1
 
+        current_span(ctx).set_attribute('background_tools.backgrounded', True)
         ctx.usage.tool_calls += 1
         self._live += 1
         self._receipts.add(tool_name)
