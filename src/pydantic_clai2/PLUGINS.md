@@ -3447,7 +3447,8 @@ close** row; a list you build yourself ends with `save_and_close_item()` and tre
 a result as closed when `picked(result)` is `None`. For a row that opens something
 other than a plain value, pass `submenus` to `run_flow`, or await
 `field_menu.run_flow_async` when the submenu is itself async, such as
-`api_keys.prompt_api_key`.
+`api_keys.prompt_api_key`. These are internal UI helpers, not a stable third-party
+UI API.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
 secret in them: keep it in `/keys` with `prompt_api_key` and `save_key`, save only
