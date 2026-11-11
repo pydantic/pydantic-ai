@@ -5196,9 +5196,15 @@ def _without_submitted_values(content: _messages.ToolReturnContent) -> _messages
     The field locations and messages are what the model needs to correct its call; the submitted values could
     hold data the tool didn't otherwise return to the model.
     """
-    if not isinstance(content, list) or not all(isinstance(item, dict) for item in content):
+    if not isinstance(content, list):
         return content
-    return [{key: value for key, value in item.items() if key != 'input'} for item in content]
+    # Validation errors are dicts of JSON data, whatever else a tool return's list could hold.
+    details = cast(list[Any], content)
+    return [_without_input(cast(dict[str, Any], detail)) if isinstance(detail, dict) else detail for detail in details]
+
+
+def _without_input(detail: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in detail.items() if key != 'input'}
 
 
 @dataclasses.dataclass

@@ -1313,7 +1313,8 @@ class ToolManager(Generic[AgentDepsT]):
             _usage_attribution.record_tool_call(usage)
             tool_result = e.result
             # Only a call that ran can make the output it submitted the final result.
-            if (submitter := validated.ctx._live_output_submitter) is not None:  # pyright: ignore[reportPrivateUsage]
+            # Only a `RunContext` built outside an agent run has no submitter.
+            if (submitter := validated.ctx._live_output_submitter) is not None:  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
                 submitter.discard_submission(validated.call.tool_call_id)
 
         # Only record success when wrapping is requested, mirroring the `failed_tools` gating:

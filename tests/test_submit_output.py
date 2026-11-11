@@ -1184,6 +1184,7 @@ async def test_image_output_and_deferred_tool_requests_cannot_be_submitted(outpu
         FunctionModel(lambda m, i: ModelResponse(parts=[])),  # pragma: no cover
         output_type=output_type,
         capabilities=[SubmitDeferredToolRequests()],
+        deps_type=type(None),
     )
 
     with pytest.raises(_StopRun):
