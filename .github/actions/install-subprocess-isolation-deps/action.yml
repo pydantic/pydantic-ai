@@ -13,11 +13,15 @@ runs:
     #   bubblewrap: http://archive.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_0.9.0-1ubuntu0.3.dsc
     #   socat: http://archive.ubuntu.com/ubuntu/pool/main/s/socat/socat_1.8.0.0-4ubuntu0.1.dsc
     #
-    # The pins do not receive Ubuntu security updates. To refresh them, download the current .debs
-    # from the same pool directories. Check each sha256 against its `SHA256:` line in
-    # dists/noble-updates/main/binary-amd64/Packages.gz, and that file's sha256 against
-    # dists/noble-updates/InRelease after `gpgv --keyring /usr/share/keyrings/ubuntu-archive-keyring.gpg`
-    # accepts InRelease. Then replace the files, the hashes and the source URLs here.
+    # The pins do not receive Ubuntu security updates. To refresh them, run in an empty directory:
+    #   base=http://archive.ubuntu.com/ubuntu/dists/noble-updates
+    #   curl -fsSLO $base/InRelease
+    #   gpgv --keyring /usr/share/keyrings/ubuntu-archive-keyring.gpg InRelease
+    #   curl -fsSLO $base/main/binary-amd64/Packages.gz
+    #   grep "$(sha256sum Packages.gz | cut -d' ' -f1)" InRelease
+    #   zcat Packages.gz | awk -v RS= '/^Package: (bubblewrap|socat)\n/' | grep -E '^(Filename|SHA256):'
+    # Download each Filename from http://archive.ubuntu.com/ubuntu/, then replace the files, the
+    # hashes and the source URLs here.
     - name: Install bubblewrap and socat
       shell: bash
       working-directory: ${{ github.action_path }}
