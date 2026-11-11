@@ -477,13 +477,13 @@ are already spanned.
 | Attribute | Value |
 |---|---|
 | `dynamic_workflow.budget_exhausted` | whether this call hit `max_agent_calls`, set on every call. A script that hits it ends with the terminal budget result even if it catches the error |
-| `dynamic_workflow.error_kind` | set when the script failed: `type` (the type check, which also reports syntax errors), `runtime` (an uncaught exception, including a failed sub-agent), `resource_limit`, `crashed` (the sandbox worker died), or `panic` (Monty aborted inside the sandbox) |
-| `dynamic_workflow.limit` | with `resource_limit`, the limit that stopped the script: `max_duration_secs`, `max_memory`, or `max_suspensions` (Monty's own cap on host interactions) |
+| `dynamic_workflow.error_kind` | set when the script failed, naming what ended it: `type_check` (a diagnostic from the type check every script gets, including a syntax error), `runtime` (an uncaught exception, including a failed sub-agent or the budget refusal), `resource_limit`, `crashed` (the sandbox worker died), or `panic` (Monty aborted inside the sandbox). `syntax` is a backstop for a parse error the type check let through |
+| `dynamic_workflow.limit` | with `resource_limit`, the Monty sandbox limit that stopped the script: `max_duration_secs`, `max_memory`, or `max_suspensions` (Monty's own cap on host interactions). A worker the sandbox stopped for running too long is `max_duration_secs` |
 
 A script that fails after exhausting the budget records both its `error_kind` and
 `budget_exhausted=true`, so a query on the budget alone finds every call that ran out. The script,
 the error message and the traceback stay out of these attributes. The limit is read from Monty's
-error the same way [Code Mode](../code_mode/README.md#failure-attributes) reads it.
+error the same way [Code Mode](../code_mode/README.md#span-attributes) reads it.
 
 ## API
 

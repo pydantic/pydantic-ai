@@ -51,6 +51,8 @@ from pydantic_ai_harness._monty_exec import (
     MontyExecutor,
     MontyRunState,
     PrintCapture,
+    SandboxLimit,
+    crashed_worker_limit,
     exceeded_sandbox_limit,
     in_temporal_workflow,
     is_sandbox_panic,
@@ -409,13 +411,10 @@ def _completed_workflow_result(
     return _workflow_result(completed_output, printed)
 
 
-def _record_runtime_error(span: Span, error: MontyRuntimeError) -> None:
-    """Record a script that raised as a resource limit when one stopped it, else as a runtime error."""
-    limit = exceeded_sandbox_limit(error)
-    if limit is None:
-        span.set_attribute('dynamic_workflow.error_kind', 'runtime')
-    else:
-        span.set_attribute('dynamic_workflow.error_kind', 'resource_limit')
+def _record_failure(span: Span, kind: str, limit: SandboxLimit | None = None) -> None:
+    """Record what ended the script: `resource_limit` and the limit when a sandbox limit stopped it, else `kind`."""
+    span.set_attribute('dynamic_workflow.error_kind', kind if limit is None else 'resource_limit')
+    if limit is not None:
         span.set_attribute('dynamic_workflow.limit', limit)
 
 
@@ -801,7 +800,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         code = tool_args['code']
-        # The `execute_tool run_workflow` span; sub-agent spans have closed by the time a script fails.
+        # Taken before the script runs, so this is the `execute_tool run_workflow` span, not a sub-agent's.
         span = current_span(ctx)
         budget_exhausted = False
         completed_dispatches: list[_CompletedDispatch] = []
@@ -838,15 +837,15 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 max_sleep_secs=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))
         except MontyTypingError as e:
-            span.set_attribute('dynamic_workflow.error_kind', 'type')
+            _record_failure(span, 'type_check')
             raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(e.display())}') from e
         # Backstop: the type checker parses the code first. `lax` because the errors handled below
         # are still matched against this clause.
         except MontySyntaxError as e:  # pragma: lax no cover
-            span.set_attribute('dynamic_workflow.error_kind', 'syntax')
+            _record_failure(span, 'syntax')
             raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(e.display())}') from e
         except MontyRuntimeError as e:
-            _record_runtime_error(span, e)
+            _record_failure(span, 'runtime', exceeded_sandbox_limit(e))
             if budget_exhausted:
                 # The script may catch the budget error and fail later on something else, so
                 # the flag -- not the displayed error -- proves this script hit the budget;
@@ -865,7 +864,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             # The worker died mid-script (e.g. resource exhaustion or request timeout);
             # the pool replaces it transparently. Completed sub-agent results are listed
             # so the retry can reuse them as plain values.
-            span.set_attribute('dynamic_workflow.error_kind', 'crashed')
+            _record_failure(span, 'crashed', crashed_worker_limit(e))
             return _worker_crash_result(
                 crash=e,
                 budget_exhausted=budget_exhausted,
@@ -877,7 +876,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             # anything else (CancelledError, ...) re-raises unchanged.
             if not is_sandbox_panic(e):
                 raise
-            span.set_attribute('dynamic_workflow.error_kind', 'panic')
+            _record_failure(span, 'panic')
             if budget_exhausted:
                 return _budget_terminal_result(
                     max_agent_calls=self.max_agent_calls,

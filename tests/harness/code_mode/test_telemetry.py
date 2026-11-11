@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -84,124 +83,126 @@ class DisconnectError(Exception):
     cause: str | None
 
 
+def run_code_span(*, budget_exhausted: bool = False, **failure: Any) -> tuple[str, dict[str, Any]]:
+    """An `execute_tool run_code` span as `code_mode_attributes` lists it, with `failure` as `code_mode.*` keys."""
+    attributes = {f'code_mode.{key}': value for key, value in failure.items()}
+    return ('execute_tool run_code', {'code_mode.budget_exhausted': budget_exhausted, **attributes})
+
+
 class TestRunCodeFailureTelemetry:
-    async def test_a_successful_call_records_nothing(self):
-        assert await failure_attributes('await add(a=1, b=2)') == []
+    async def test_a_successful_call_records_only_the_budget(self):
+        assert await failure_attributes('await add(a=1, b=2)') == [run_code_span()]
 
     @pytest.mark.parametrize(
         ('snippets', 'capability', 'expected'),
         [
             pytest.param(
-                # The first snippet is type-checked, which reports a syntax error as a type error.
+                # Only the first snippet is type-checked, so a later one's syntax error comes from the parser.
                 ('x = 1', 'def broken(:\n    pass'),
                 None,
-                {'code_mode.error_kind': 'syntax', 'code_mode.session_reset': False},
+                [run_code_span(), run_code_span(error_kind='syntax', session_reset=False)],
                 id='syntax',
             ),
             pytest.param(
                 ("await add(a='one', b=2)",),
                 None,
-                {'code_mode.error_kind': 'type', 'code_mode.session_reset': True},
-                id='type',
+                # The reset drops only the type-check stubs: no code has run yet.
+                [run_code_span(error_kind='type_check', session_reset=False)],
+                id='type_check',
+            ),
+            pytest.param(
+                ('def broken(:\n    pass',),
+                None,
+                [run_code_span(error_kind='type_check', session_reset=False)],
+                id='syntax-in-a-type-checked-snippet',
             ),
             pytest.param(
                 ('1 / 0',),
                 None,
-                {'code_mode.error_kind': 'runtime', 'code_mode.session_reset': False},
+                [run_code_span(error_kind='runtime', session_reset=False)],
                 id='runtime',
             ),
             pytest.param(
                 ('x = [0] * 50_000_000',),
                 CodeMode[object](resource_limits={'max_memory': 8 * 1024 * 1024}),
-                {
-                    'code_mode.error_kind': 'resource_limit',
-                    'code_mode.session_reset': True,
-                    'code_mode.limit': 'max_memory',
-                },
+                [run_code_span(error_kind='resource_limit', session_reset=True, limit='max_memory')],
                 id='max_memory',
             ),
             pytest.param(
                 ('await add(a=1, b=2)',),
                 CodeMode[object](resource_limits={'max_suspensions': 1}),
-                {
-                    'code_mode.error_kind': 'resource_limit',
-                    'code_mode.session_reset': False,
-                    'code_mode.limit': 'max_suspensions',
-                },
+                [run_code_span(error_kind='resource_limit', session_reset=False, limit='max_suspensions')],
                 id='max_suspensions',
             ),
             pytest.param(
                 ('await add(a=1, b=2)\nawait add(a=3, b=4)',),
                 CodeMode[object](max_tool_calls=1),
-                {
-                    'code_mode.error_kind': 'resource_limit',
-                    'code_mode.session_reset': False,
-                    'code_mode.limit': 'max_tool_calls',
-                },
+                [run_code_span(budget_exhausted=True, error_kind='runtime', session_reset=False)],
                 id='max_tool_calls',
+            ),
+            pytest.param(
+                ('await add(a=1, b=2)\ntry:\n    await add(a=3, b=4)\nexcept RuntimeError:\n    pass',),
+                CodeMode[object](max_tool_calls=1),
+                [run_code_span(budget_exhausted=True)],
+                id='max_tool_calls-caught',
             ),
         ],
     )
     async def test_a_sandbox_failure_is_recorded_by_kind(
-        self, snippets: tuple[str, ...], capability: CodeMode[object] | None, expected: dict[str, Any]
+        self, snippets: tuple[str, ...], capability: CodeMode[object] | None, expected: list[tuple[str, dict[str, Any]]]
     ):
-        assert await failure_attributes(*snippets, capability=capability) == [('execute_tool run_code', expected)]
+        assert await failure_attributes(*snippets, capability=capability) == expected
 
     @pytest.mark.parametrize(
         ('error', 'expected'),
         [
-            pytest.param(
-                CrashedError(timed_out=False),
-                {'code_mode.error_kind': 'crashed', 'code_mode.session_reset': True},
-                id='crashed',
-            ),
+            pytest.param(CrashedError(timed_out=False), {'error_kind': 'crashed'}, id='crashed'),
             pytest.param(
                 CrashedError(timed_out=True),
-                {
-                    'code_mode.error_kind': 'resource_limit',
-                    'code_mode.session_reset': True,
-                    'code_mode.limit': 'max_duration_secs',
-                },
+                {'error_kind': 'resource_limit', 'limit': 'max_duration_secs'},
                 id='worker-timed-out',
             ),
             pytest.param(
                 DisconnectError(cause='turn_timeout'),
-                {
-                    'code_mode.error_kind': 'resource_limit',
-                    'code_mode.session_reset': True,
-                    'code_mode.limit': 'max_duration_secs',
-                },
+                {'error_kind': 'resource_limit', 'limit': 'max_duration_secs'},
                 id='turn-timeout',
             ),
-            pytest.param(
-                DisconnectError(cause=None),
-                {'code_mode.error_kind': 'disconnected', 'code_mode.session_reset': True},
-                id='disconnected',
-            ),
-            pytest.param(
-                RuntimeError('host binding failed'),
-                {'code_mode.error_kind': 'host', 'code_mode.session_reset': True},
-                id='host',
-            ),
-            pytest.param(
-                PanicException('sandbox aborted'),
-                {'code_mode.error_kind': 'panic', 'code_mode.session_reset': True},
-                id='panic',
-            ),
+            pytest.param(DisconnectError(cause=None), {'error_kind': 'disconnected'}, id='disconnected'),
+            pytest.param(RuntimeError('host binding failed'), {'error_kind': 'host'}, id='host'),
+            pytest.param(PanicException('sandbox aborted'), {'error_kind': 'panic'}, id='panic'),
         ],
     )
     async def test_a_failure_outside_the_snippet_is_recorded_by_kind(
         self, monkeypatch: pytest.MonkeyPatch, error: BaseException, expected: dict[str, Any]
     ):
+        """The second snippet fails, so the reset discards the state the first one left."""
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', CrashedError)
         monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyDisconnectError', DisconnectError)
+        original_run = MontyExecutor.run
+        feeds: list[None] = []
 
-        async def fail(self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]) -> MontyComplete:
+        async def fail_second_feed(
+            self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]
+        ) -> MontyComplete:
+            feeds.append(None)
+            if len(feeds) == 1:
+                return await original_run(self, feed_start)
             raise error
+
+        monkeypatch.setattr(MontyExecutor, 'run', fail_second_feed)
+
+        assert await failure_attributes('x = 1', '1 + 1') == [
+            run_code_span(),
+            run_code_span(session_reset=True, **expected),
+        ]
+
+    async def test_a_failure_before_any_code_ran_discards_no_executed_state(self, monkeypatch: pytest.MonkeyPatch):
+        async def fail(self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]) -> MontyComplete:
+            raise RuntimeError('host binding failed')
 
         monkeypatch.setattr(MontyExecutor, 'run', fail)
 
-        assert await failure_attributes('1 + 1') == [('execute_tool run_code', expected)]
+        assert await failure_attributes('1 + 1') == [run_code_span(error_kind='host', session_reset=False)]
 
     async def test_a_streamed_statement_that_failed_early_is_recorded_on_run_code(self):
         """Eager execution runs statements before `run_code`'s span opens; the failure still lands on that span."""
@@ -224,6 +225,4 @@ class TestRunCodeFailureTelemetry:
 
         await agent.run('go')
 
-        assert code_mode_attributes(exporter) == snapshot(
-            [('execute_tool run_code', {'code_mode.error_kind': 'runtime', 'code_mode.session_reset': False})]
-        )
+        assert code_mode_attributes(exporter) == [run_code_span(error_kind='runtime', session_reset=False)]

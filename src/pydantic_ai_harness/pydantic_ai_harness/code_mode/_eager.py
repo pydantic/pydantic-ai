@@ -24,7 +24,7 @@ from ._streaming import (
     closed_statements,
     decode_partial_args,
 )
-from ._toolset import CodeModeToolset, RunCodeExecution, record_failure
+from ._toolset import CodeModeToolset, RunCodeExecution
 
 
 @dataclass(kw_only=True)
@@ -363,6 +363,8 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             await run_state.reset()
             if call.execution.usage_limit_exceeded is not None:
                 raise call.execution.usage_limit_exceeded
+            # A statement fed early may have failed; the mismatch itself is not a sandbox failure.
+            call.execution.record(ctx)
             raise ModelRetry(
                 'The submitted code no longer matches the prefix eager execution already ran, '
                 'so the session was restarted. Send the snippet again.'
@@ -377,7 +379,7 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
                 result = await self._execute_code(tail, ctx, run_code_tool, call.execution)
         finally:
             # A statement fed while the call streamed failed outside this span, so record it here.
-            record_failure(ctx, call.execution.failure)
+            call.execution.record(ctx)
         return await self._complete(ctx, call.execution, result)
 
     async def feed_fragment(

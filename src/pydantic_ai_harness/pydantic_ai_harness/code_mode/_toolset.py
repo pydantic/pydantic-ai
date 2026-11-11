@@ -72,6 +72,7 @@ from pydantic_ai_harness._monty_exec import (
     MontyRunState,
     PrintCapture,
     SandboxLimit,
+    crashed_worker_limit,
     exceeded_sandbox_limit,
     in_temporal_workflow,
     is_sandbox_panic,
@@ -206,8 +207,8 @@ def in_durable_execution(ctx: RunContext[object]) -> bool:
     )
 
 
-def _exhausted_sandbox_limit(error: MontyRuntimeError) -> str | None:
-    """Which `CodeModeResourceLimits` limit this runtime error reports, or `None` for anything else.
+def _mentions_sandbox_limit(error: MontyRuntimeError) -> str | None:
+    """Which `CodeModeResourceLimits` limit this runtime error's wording names, or `None` for anything else.
 
     Derived from `_SANDBOX_LIMIT_MARKERS` rather than from a check per limit, so recognising a new
     limit is a table entry and forgetting one is a test failure.
@@ -223,6 +224,18 @@ def _exhausted_sandbox_limit(error: MontyRuntimeError) -> str | None:
         if marker in message:
             return limit
     return None
+
+
+# A runtime error at one of these limits resets the session: a timeout stops the snippet mid-step, and
+# Monty does not guarantee heap integrity after a memory limit fires.
+_SESSION_RESETTING_LIMITS: tuple[SandboxLimit, ...] = ('max_duration_secs', 'max_memory')
+
+
+async def _discard_session(run_state: MontyRunState) -> bool:
+    """Reset the session, and say whether that discarded state code had run in, not only type-check stubs."""
+    had_run_code = run_state.has_executed_feed
+    await run_state.reset()
+    return had_run_code
 
 
 def _elided(count: int, shown: int, unit: str) -> str:
@@ -662,8 +675,10 @@ class _RunCodeTool(ToolsetTool[AgentDepsT]):
     """The wrapped toolset's tools, keyed by original name."""
 
 
-RunCodeErrorKind = Literal['syntax', 'type', 'runtime', 'resource_limit', 'crashed', 'disconnected', 'panic', 'host']
-"""Why a `run_code` call failed, as recorded in `code_mode.error_kind`."""
+RunCodeErrorKind = Literal[
+    'syntax', 'type_check', 'runtime', 'resource_limit', 'crashed', 'disconnected', 'panic', 'host'
+]
+"""What ended a failed `run_code` call, as recorded in `code_mode.error_kind`."""
 
 
 @dataclass(frozen=True)
@@ -672,34 +687,17 @@ class RunCodeFailure:
 
     kind: RunCodeErrorKind
     session_reset: bool
-    """Whether the failure discarded the REPL session, and with it the snippet's variables and imports."""
-    limit: SandboxLimit | Literal['max_tool_calls'] | None = None
-    """The resource limit that stopped the code, when `kind` is `'resource_limit'`."""
+    """Whether the failure discarded a session code had run in, and with it the variables and imports it defined."""
+    limit: SandboxLimit | None = None
+    """The sandbox limit that stopped the code, when `kind` is `'resource_limit'`."""
 
 
-def record_failure(ctx: RunContext[Any], failure: RunCodeFailure | None) -> None:
-    """Put `failure` on the `run_code` call's `execute_tool` span, so traces tell failures apart."""
-    if failure is None:
-        return
-    span = current_span(ctx)
-    span.set_attribute('code_mode.error_kind', failure.kind)
-    span.set_attribute('code_mode.session_reset', failure.session_reset)
-    if failure.limit is not None:
-        span.set_attribute('code_mode.limit', failure.limit)
-
-
-def _worker_timed_out(error: MontyCrashedError | MontyDisconnectError) -> bool:
-    """Whether the sandbox stopped the code for running past its time limit, rather than crashing or dropping it."""
+def _worker_limit(error: MontyCrashedError | MontyDisconnectError) -> SandboxLimit | None:
+    """The limit the sandbox stopped the code at, rather than crashing or dropping it, or `None`."""
     if isinstance(error, MontyCrashedError):
-        return error.timed_out
-    return error.cause == 'turn_timeout'
-
-
-def _worker_failure(error: MontyCrashedError | MontyDisconnectError) -> RunCodeFailure:
-    """The failure of a call whose sandbox worker died or dropped, which always loses the session."""
-    if _worker_timed_out(error):
-        return RunCodeFailure('resource_limit', session_reset=True, limit='max_duration_secs')
-    return RunCodeFailure('crashed' if isinstance(error, MontyCrashedError) else 'disconnected', session_reset=True)
+        return crashed_worker_limit(error)
+    # A remote worker's turn deadline is `max_duration_secs` plus transport slack.
+    return 'max_duration_secs' if error.cause == 'turn_timeout' else None
 
 
 @dataclass
@@ -723,6 +721,17 @@ class RunCodeExecution:
     usage_limit_exceeded: UsageLimitExceeded | None = None
     # Set by the feed that failed; eager execution fails before `run_code`'s span opens, so it is recorded later.
     failure: RunCodeFailure | None = None
+
+    def record(self, ctx: RunContext[Any]) -> None:
+        """Put how this call went on its `execute_tool` span, so traces tell failures apart."""
+        span = current_span(ctx)
+        span.set_attribute('code_mode.budget_exhausted', self.budget_exhausted)
+        if self.failure is None:
+            return
+        span.set_attribute('code_mode.error_kind', self.failure.kind)
+        span.set_attribute('code_mode.session_reset', self.failure.session_reset)
+        if self.failure.limit is not None:
+            span.set_attribute('code_mode.limit', self.failure.limit)
 
     def next_tool_call_id(self, *, max_tool_calls: int) -> str:
         """Reserve nested-call budget and return the next stable child call ID."""
@@ -788,16 +797,6 @@ def _raise_usage_limit_exceeded(execution: RunCodeExecution) -> None:
         raise execution.usage_limit_exceeded
 
 
-def _runtime_failure(
-    sandbox_limit: SandboxLimit | None, execution: RunCodeExecution, *, session_reset: bool
-) -> RunCodeFailure:
-    """The failure of a snippet that raised: a resource limit when one stopped it, else a runtime error."""
-    # A snippet can catch the `max_tool_calls` refusal and fail later on something else; the budget
-    # still ran out, so it is the likelier reason the snippet could not finish.
-    limit = sandbox_limit or ('max_tool_calls' if execution.budget_exhausted else None)
-    return RunCodeFailure('runtime' if limit is None else 'resource_limit', session_reset=session_reset, limit=limit)
-
-
 def _runtime_failure_retry(
     error: MontyRuntimeError, execution: RunCodeExecution, *, limit: SandboxLimit | None, reset_advice: str
 ) -> ModelRetry:
@@ -806,7 +805,7 @@ def _runtime_failure_retry(
     # here if uncaught. Re-wrapping a `ModelRetry` is fine: the display keeps its message
     # and the model still gets a retry.
     message = f'Runtime error:\n{execution.capture.prepend_to(error.display())}'
-    if execution.budget_exhausted or _exhausted_sandbox_limit(error) is not None or reset_advice:
+    if execution.budget_exhausted or _mentions_sandbox_limit(error) is not None or reset_advice:
         # A retry is the only record the model gets of an uncaught failure, and these
         # calls already started. Without them the model reruns their side effects when
         # it retries. Asking which limit tripped, rather than testing one flag per limit,
@@ -1208,7 +1207,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         try:
             result = await self._execute_code(code, ctx, run_code_tool, execution)
         finally:
-            record_failure(ctx, execution.failure)
+            execution.record(ctx)
         return await self._complete(ctx, execution, result)
 
     async def _complete(self, ctx: RunContext[AgentDepsT], execution: RunCodeExecution, result: Any) -> ToolReturn[Any]:
@@ -1352,23 +1351,22 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     @staticmethod
     async def _reset_for_runtime_error(limit: SandboxLimit | None, run_state: MontyRunState) -> str:
-        # Monty does not guarantee heap integrity after a memory limit fires, so that resets too.
+        if limit not in _SESSION_RESETTING_LIMITS:
+            return ''
         if limit == 'max_duration_secs':
             advice = _TIME_LIMIT_MESSAGE
-        elif limit == 'max_memory':
+        else:
             advice = (
                 'The sandbox ran out of memory and the session was reset. '
                 'Re-run any imports, recreate any state you need, and use less memory: '
                 'process smaller batches, avoid large intermediate values, and print less output.'
             )
-        else:
-            return ''
         await run_state.reset()
         return f'\n\n{advice}'
 
     @staticmethod
     def _worker_failure_message(error: MontyCrashedError | MontyDisconnectError) -> str:
-        if _worker_timed_out(error):
+        if _worker_limit(error) is not None:
             return _TIME_LIMIT_MESSAGE
         if isinstance(error, MontyCrashedError):
             return 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'
@@ -1396,35 +1394,47 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     # No code ran, so discard the checkout-time type stubs. A later step may expose
                     # a different tool catalog (for example after Tool Search discovers a tool).
                     await run_state.reset()
-                execution.failure = RunCodeFailure('syntax', session_reset=fresh_repl)
+                # Only a session no code has run in is reset here, so nothing executed is lost.
+                execution.failure = RunCodeFailure('syntax', session_reset=False)
                 return ModelRetry(f'Syntax error in code:\n{capture.prepend_to(error.display())}')
             case MontyTypingError():
                 # Typing errors can only come from the fresh-feed check above.
-                await run_state.reset()
-                execution.failure = RunCodeFailure('type', session_reset=True)
+                session_reset = await _discard_session(run_state)
+                execution.failure = RunCodeFailure('type_check', session_reset=session_reset)
                 return ModelRetry(f'Type error in code:\n{capture.prepend_to(error.display())}')
             case MontyRuntimeError():
                 run_state.has_executed_feed = True
                 sandbox_limit = exceeded_sandbox_limit(error)
                 reset_advice = await self._reset_for_runtime_error(sandbox_limit, run_state)
+                # Raises a nested call's `UsageLimitExceeded` instead, which leaves this failure unrecorded.
                 retry = _runtime_failure_retry(error, execution, limit=sandbox_limit, reset_advice=reset_advice)
-                execution.failure = _runtime_failure(sandbox_limit, execution, session_reset=bool(reset_advice))
+                execution.failure = RunCodeFailure(
+                    'runtime' if sandbox_limit is None else 'resource_limit',
+                    # The snippet ran, so a reset always discards executed state.
+                    session_reset=sandbox_limit in _SESSION_RESETTING_LIMITS,
+                    limit=sandbox_limit,
+                )
                 return retry
             case MontyCrashedError() | MontyDisconnectError():
                 # The worker died mid-feed (e.g. the code exhausted its memory or hit the
                 # request timeout) and the REPL state died with it; the pool replaces the
                 # worker transparently. Reset so the retry starts from a fresh,
                 # type-checked session.
-                await run_state.reset()
+                session_reset = await _discard_session(run_state)
                 _raise_usage_limit_exceeded(execution)
-                execution.failure = _worker_failure(error)
+                limit = _worker_limit(error)
+                if limit is not None:
+                    kind = 'resource_limit'
+                else:
+                    kind = 'crashed' if isinstance(error, MontyCrashedError) else 'disconnected'
+                execution.failure = RunCodeFailure(kind, session_reset=session_reset, limit=limit)
                 return ModelRetry(f'{self._worker_failure_message(error)}{_started_calls_note(execution)}')
             case Exception():
                 # The session may have been invalidated by a host-side binding or protocol failure.
                 # Make the reset visible so the model can rebuild state on its next attempt.
-                await run_state.reset()
+                session_reset = await _discard_session(run_state)
                 _raise_usage_limit_exceeded(execution)
-                execution.failure = RunCodeFailure('host', session_reset=True)
+                execution.failure = RunCodeFailure('host', session_reset=session_reset)
                 error_text = (
                     type(error).__name__ if self.monty_sandbox is not None else f'{type(error).__name__}: {error}'
                 )
@@ -1437,11 +1447,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # interruptions re-raise unchanged after dropping the suspended session.
                 # A panic aborts the VM mid-execution, so the REPL's accumulated state cannot
                 # be trusted; drop it so the retry starts from a fresh, type-checked session.
-                await run_state.reset()
+                session_reset = await _discard_session(run_state)
                 if not is_sandbox_panic(error):
                     return None
                 _raise_usage_limit_exceeded(execution)
-                execution.failure = RunCodeFailure('panic', session_reset=True)
+                execution.failure = RunCodeFailure('panic', session_reset=session_reset)
                 return ModelRetry(
                     'The code aborted inside the sandbox and the session was reset. Revise the code and try again.'
                     f'{_started_calls_note(execution)}'

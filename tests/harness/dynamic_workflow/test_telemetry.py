@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -57,8 +58,11 @@ class PanicException(BaseException):
     """Named to match the pyo3 panic class `is_sandbox_panic` recognizes."""
 
 
+@dataclass
 class CrashedError(Exception):
     """Stands in for `MontyCrashedError`, which Python cannot construct."""
+
+    timed_out: bool
 
 
 class TestDynamicWorkflowTelemetry:
@@ -70,8 +74,11 @@ class TestDynamicWorkflowTelemetry:
     @pytest.mark.parametrize(
         ('code', 'workflow_options', 'expected'),
         [
-            # The type checker parses the script first, so a syntax error is reported as a type error too.
-            pytest.param('await sub(1)', {}, {'dynamic_workflow.error_kind': 'type'}, id='type'),
+            pytest.param('await sub(1)', {}, {'dynamic_workflow.error_kind': 'type_check'}, id='type_check'),
+            # Every script is type-checked, and the checker parses it first.
+            pytest.param(
+                'def broken(:\n    pass', {}, {'dynamic_workflow.error_kind': 'type_check'}, id='syntax-is-type_check'
+            ),
             pytest.param('1 / 0', {}, {'dynamic_workflow.error_kind': 'runtime'}, id='runtime'),
             pytest.param(
                 'x = [0] * 50_000_000',
@@ -89,14 +96,19 @@ class TestDynamicWorkflowTelemetry:
         ]
 
     @pytest.mark.parametrize(
-        ('error', 'kind'),
+        ('error', 'expected'),
         [
-            pytest.param(CrashedError(), 'crashed', id='crashed'),
-            pytest.param(PanicException('sandbox aborted'), 'panic', id='panic'),
+            pytest.param(CrashedError(timed_out=False), {'dynamic_workflow.error_kind': 'crashed'}, id='crashed'),
+            pytest.param(
+                CrashedError(timed_out=True),
+                {'dynamic_workflow.error_kind': 'resource_limit', 'dynamic_workflow.limit': 'max_duration_secs'},
+                id='worker-timed-out',
+            ),
+            pytest.param(PanicException('sandbox aborted'), {'dynamic_workflow.error_kind': 'panic'}, id='panic'),
         ],
     )
     async def test_a_sandbox_failure_is_recorded_by_kind(
-        self, monkeypatch: pytest.MonkeyPatch, error: BaseException, kind: str
+        self, monkeypatch: pytest.MonkeyPatch, error: BaseException, expected: dict[str, Any]
     ):
         monkeypatch.setattr('pydantic_ai_harness.dynamic_workflow._toolset.MontyCrashedError', CrashedError)
 
@@ -106,10 +118,7 @@ class TestDynamicWorkflowTelemetry:
         monkeypatch.setattr(MontyExecutor, 'run', fail)
 
         assert await workflow_attributes('1 + 1') == [
-            (
-                'execute_tool run_workflow',
-                {'dynamic_workflow.error_kind': kind, 'dynamic_workflow.budget_exhausted': False},
-            )
+            ('execute_tool run_workflow', {**expected, 'dynamic_workflow.budget_exhausted': False})
         ]
 
     async def test_a_script_that_fails_on_the_budget_records_both(self):

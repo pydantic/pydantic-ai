@@ -47,6 +47,7 @@ try:
         ExternalReturnValue,
         ExternalSettledResult,
         MontyComplete,
+        MontyCrashedError,
         MontyRefusedError,
         MontyRuntimeError,
         OsFunction,
@@ -252,13 +253,25 @@ def exceeded_sandbox_limit(error: MontyRuntimeError) -> SandboxLimit | None:
     """
     message = error.display(format='msg')
     exception = error.exception()
-    if not error.traceback() and 'time limit exceeded' in message:
+    # Monty's time-limit wording is read first, so a message naming both limits is never `max_memory` by wording.
+    mentions_time_limit = 'time limit exceeded' in message
+    if not error.traceback() and mentions_time_limit:
         return 'max_duration_secs'
-    if isinstance(exception, MemoryError) and (not error.traceback() or 'memory limit exceeded' in message):
+    mentions_memory_limit = 'memory limit exceeded' in message and not mentions_time_limit
+    if isinstance(exception, MemoryError) and (not error.traceback() or mentions_memory_limit):
         return 'max_memory'
     if isinstance(exception, RuntimeError) and re.fullmatch(r'suspension limit [0-9]+ exceeded', message):
         return 'max_suspensions'
     return None
+
+
+def crashed_worker_limit(error: MontyCrashedError) -> SandboxLimit | None:
+    """The limit a dead sandbox worker was stopped at, or `None` when it crashed on its own.
+
+    A worker the pool's watchdog killed for elapsed time reports `timed_out`; that watchdog backstops
+    `max_duration_secs`, so the code ran too long rather than crashing the worker.
+    """
+    return 'max_duration_secs' if error.timed_out else None
 
 
 def is_sandbox_panic(exc: BaseException) -> bool:
