@@ -201,11 +201,14 @@ def _ancestry_loops(record: DelegationTask, tasks: Mapping[str, DelegationTask])
 
 
 def _validation_reason(exc: ValidationError) -> str:
-    """Describe `exc` by error type and location only, since its message quotes the saved prompt and history."""
-    reasons: list[str] = []
+    """Describe `exc` by error type and saved-task field only.
+
+    Its message quotes the saved prompt and history, and a deeper location can hold a key from them.
+    """
+    reasons: dict[str, None] = {}
     for error in exc.errors(include_url=False, include_context=False, include_input=False):
-        location = '.'.join(str(part) for part in error['loc'])
-        reasons.append(f'{error["type"]} at {location}' if location else error['type'])
+        location = error['loc']
+        reasons[f'{error["type"]} at {location[0]}' if location else error['type']] = None
     return f'ValidationError: {"; ".join(reasons)}'
 
 

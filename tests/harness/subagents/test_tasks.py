@@ -680,6 +680,10 @@ async def test_discover_reports_damaged_tasks_without_hiding_siblings(
         'f' * 32: saved_task('f' * 32, parent_id='d' * 32),
         '1' * 32: '{"id": "',
         '3' * 32: json.dumps({'id': '3' * 32, 'agent_name': 7, 'prompt': 'private', 'conversation_id': 'root'}),
+        '4' * 32: json.dumps(
+            json.loads(saved_task('4' * 32))
+            | {'messages': [{'kind': 'response', 'parts': [], 'usage': {'details': {'private': 'x', 'key': 'y'}}}]}
+        ),
     }
     for identity, content in files.items():
         (tmp_path / f'{identity}.json').write_text(content)
@@ -692,11 +696,13 @@ async def test_discover_reports_damaged_tasks_without_hiding_siblings(
     assert saved.tasks['b' * 32].parent_id == '1' * 32
     problems = {problem.path.name: problem.reason for problem in saved.problems}
     assert list(problems) == [
-        f'{identity}.json' for identity in ('1' * 32, '2' * 32, '3' * 32, 'd' * 32, 'e' * 32, 'f' * 32)
+        f'{identity}.json' for identity in ('1' * 32, '2' * 32, '3' * 32, '4' * 32, 'd' * 32, 'e' * 32, 'f' * 32)
     ]
-    # A validation problem names the error and where it is, never the saved prompt or history.
+    # A validation problem names the error and the saved-task field, never the saved prompt or history,
+    # nor a key from them. Two errors in one field read as one.
     assert problems[f'{"1" * 32}.json'] == 'ValidationError: json_invalid'
     assert problems[f'{"3" * 32}.json'] == 'ValidationError: string_type at agent_name'
+    assert problems[f'{"4" * 32}.json'] == 'ValidationError: int_parsing at messages'
     assert problems[f'{"2" * 32}.json'].startswith(('IsADirectoryError: ', 'PermissionError: '))
     assert {problems[f'{identity}.json'] for identity in ('d' * 32, 'e' * 32, 'f' * 32)} == {
         'Cyclic saved task ancestry'
@@ -710,7 +716,7 @@ async def test_discover_reports_damaged_tasks_without_hiding_siblings(
     assert caplog.text.count('Skipping saved delegation task') == len(saved.problems)
     assert "json': 'ValidationError: json_invalid'" in caplog.text
     damaged = {identity: content for identity, content in files.items() if f'{identity}.json' in problems}
-    assert list(damaged) == ['d' * 32, 'e' * 32, 'f' * 32, '1' * 32, '3' * 32]
+    assert list(damaged) == ['d' * 32, 'e' * 32, 'f' * 32, '1' * 32, '3' * 32, '4' * 32]
     assert {identity: (tmp_path / f'{identity}.json').read_text() for identity in damaged} == damaged
 
 
