@@ -9,7 +9,7 @@ from pydantic_clai2.config.input_bindings import BINDABLE_KEYS, InputAction, Inp
 from pydantic_clai2.plugins.menus import CloseMenu, Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.ui.menus.set_menu import SettingsSource
 
-INPUT_SETTINGS = ('input.keyboard_labels', 'input.question_submit')
+INPUT_SETTINGS = ('input.keyboard_labels', 'input.question_submit', 'input.busy_delivery')
 _ACTIONS: tuple[InputAction, ...] = ('send', 'steer', 'newline')
 
 

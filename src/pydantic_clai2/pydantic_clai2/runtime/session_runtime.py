@@ -975,7 +975,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if args == ['reset']:
             return '\n'.join(
                 self.context.reset_setting(key)
-                for key in ('input.bindings', 'input.keyboard_labels', 'input.question_submit')
+                for key in ('input.bindings', 'input.keyboard_labels', 'input.question_submit', 'input.busy_delivery')
             )
         if args:
             raise ValueError('Usage: /input [test|reset]')

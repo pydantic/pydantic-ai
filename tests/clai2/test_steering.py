@@ -356,7 +356,8 @@ def queue(live: LivePrompt, *texts: str) -> None:
 
 
 def queue_rows(live: LivePrompt) -> list[str]:
-    return [Text.from_ansi(row).plain for row in live.frame()[: len(live.queued_messages)]]
+    rows = [Text.from_ansi(row).plain for row in live.frame()]
+    return [row for row in rows if row.startswith(('Follow-up (after turn):', 'Command (after turn):', 'Editing -'))]
 
 
 async def test_up_walks_queue_newest_first_then_history() -> None:
@@ -389,14 +390,25 @@ async def test_enter_rewrites_recalled_queued_prompt_in_place() -> None:
         queue(live, 'a', 'b', 'c')
         live.feed('up')
         live.feed('up')
-        assert queue_rows(live) == ['Follow-up: a', 'Follow-up (editing): b', 'Follow-up: c']
+        assert queue_rows(live) == [
+            "Editing - not queued; won't send until saved",
+            'Follow-up (after turn): a',
+            'Follow-up (after turn): c',
+        ]
+        assert live.queued_messages == ('a', 'c')
+        assert [entry.text for entry in live.queued_prompts()] == ['a', 'c']
+        assert Text.from_ansi(live.frame()[-1]).plain.endswith(' | queued: 2')
         live.feed('ctrl-u')
         live.buffer.insert('b2')
         live.feed('enter')
         assert live.queued_messages == ('a', 'b2', 'c')
         assert live.buffer.text == ''
         assert live.buffer.history[-1] == 'b2'
-        assert queue_rows(live) == ['Follow-up: a', 'Follow-up: b2', 'Follow-up: c']
+        assert queue_rows(live) == [
+            'Follow-up (after turn): a',
+            'Follow-up (after turn): b2',
+            'Follow-up (after turn): c',
+        ]
         live.feed('up')
         live.feed('enter')
         assert live.queued_messages == ('a', 'b2', 'c')
@@ -479,7 +491,7 @@ async def test_recalling_history_leaves_the_queued_prompt_alone() -> None:
         live.feed('up')
         live.feed('up')
         assert live.buffer.text == 'old'
-        assert queue_rows(live) == ['Follow-up: queued']
+        assert queue_rows(live) == ['Follow-up (after turn): queued']
         live.feed('enter')
         assert live.queued_messages == ('queued', 'old')
 
@@ -491,8 +503,11 @@ async def test_a_queued_prompt_being_edited_waits_while_the_queue_runs() -> None
         live.feed('up')
         # `b` is out of the queue while it is edited, so the run takes the others around it.
         assert await live.read() == 'a'
-        assert queue_rows(live) == ['Follow-up (editing): b', 'Follow-up: c']
+        assert queue_rows(live) == ["Editing - not queued; won't send until saved", 'Follow-up (after turn): c']
+        assert live.queued_messages == ('c',)
+        assert [entry.text for entry in live.queued_prompts()] == ['c']
         assert await live.read() == 'c'
+        assert live.queued_messages == () and live.queued_prompts() == []
         live.buffer.insert('2')
         live.feed('enter')
         assert await live.read() == 'b2'
@@ -506,7 +521,7 @@ async def test_walking_onto_a_prompt_the_run_took_edits_a_new_follow_up() -> Non
         live.feed('up')
         # The walk still shows `a`, but the run took it: `b` is back in the queue and `a` is a new follow-up.
         assert live.buffer.text == 'a'
-        assert queue_rows(live) == ['Follow-up: b']
+        assert queue_rows(live) == ['Follow-up (after turn): b']
         live.buffer.insert(' again')
         live.feed('enter')
         assert live.queued_messages == ('b', 'a again')
@@ -557,7 +572,7 @@ async def test_esc_stops_editing_a_queued_prompt_before_it_interrupts() -> None:
             # The edit is dropped, the queued prompt and the draft are as they were, and the turn runs on.
             assert live.interrupts.active
             assert (live.buffer.text, live.queued_messages) == ('draft', ('follow up',))
-            assert queue_rows(live) == ['Follow-up: follow up']
+            assert queue_rows(live) == ['Follow-up (after turn): follow up']
             live.feed('escape')
         assert completed == [False]
         # The interrupt returns the queued prompt to the input instead of running it next.

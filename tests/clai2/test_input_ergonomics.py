@@ -1,5 +1,6 @@
 """Input requirements exercised through the composer, decoder and shared settings store."""
 
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import anyio
@@ -10,22 +11,33 @@ from prompt_toolkit.keys import Keys
 from pydantic import ValidationError
 from rich.text import Text
 
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai import Agent
+from pydantic_ai.messages import (
+    BinaryContent,
+    ModelMessage,
+    ModelRequest,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse, Question, QuestionOption
 from pydantic_clai2 import config
 from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
-from pydantic_clai2.config.input_bindings import InputBindings, QuestionSubmit
+from pydantic_clai2.config.input_bindings import BusyDelivery, InputBindings, KeyboardLabels, QuestionSubmit
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins.menus import CloseMenu
 from pydantic_clai2.runtime.permissions import decision
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.ui.menus.input_menu import input_menu
 from pydantic_clai2.ui.prompt.input_setup import KeyTest
 from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
 from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs
 from tests.clai2.test_live_prompt import editor
 from tests.clai2.test_permissions import request as permission_request
+from tests.clai2.test_steering import running
+from tests.conftest import no_leaked_tasks
 
 
 def test_defaults_aliases_and_collisions() -> None:
@@ -45,9 +57,9 @@ def test_defaults_aliases_and_collisions() -> None:
     for key in ('ctrl-c', 'ctrl-j', 'paste', 'escape', 'ctrl-x ctrl-s', 'a'):
         with pytest.raises(ValidationError, match='Choose a decoded key'):
             InputBindings(send=key)
-    assert InputBindings().label('steer', keyboard='mac') == 'Option+Enter'
+    assert InputBindings().label('steer', keyboard='mac') == 'Option+Return'
     assert InputBindings().label('steer', keyboard='pc') == 'Alt+Enter'
-    assert InputBindings(steer='cmd-enter').label('steer', keyboard='mac') == 'Cmd+Enter'
+    assert InputBindings(steer='cmd-enter').label('steer', keyboard='mac') == 'Cmd+Return'
 
 
 async def test_remapped_composer_and_hints_use_effective_bindings() -> None:
@@ -102,7 +114,15 @@ async def test_setup_actions_save_reset_and_cancel(tmp_path: Path) -> None:
     tested: list[bool] = []
     menu = input_menu(context, start_test=lambda: tested.append(True))
     rows = {row.key: row for row in menu.source.rows()}
-    assert {'send', 'steer', 'newline', 'test', 'input.keyboard_labels', 'input.question_submit'} == rows.keys()
+    assert {
+        'send',
+        'steer',
+        'newline',
+        'test',
+        'input.keyboard_labels',
+        'input.question_submit',
+        'input.busy_delivery',
+    } == rows.keys()
     assert menu.source.current(rows['send']) == 'enter'
     assert await menu.actions['send'](ScriptedDialogs([Back()])) == ()
     await menu.actions['send'](ScriptedDialogs([Pick(value='ctrl-s')]))
@@ -128,12 +148,15 @@ def test_input_preferences_roundtrip_and_unknown_settings_survive(
     previous = store.overrides()
     assert previous == {'display.thinking': False}
     assert store.load().input_bindings == InputBindings()
+    assert store.load().busy_delivery == 'after-turn'
+    store.set('input.busy_delivery', 'next-checkpoint')
     store.set('input.keyboard_labels', 'mac')
     store.set('input.question_submit', 'answer')
     store.set('input.bindings', {'send': 'ctrl-s', 'steer': 'alt-enter', 'newline': 'shift-enter'})
     reopened = SettingsStore(store.path)
     assert reopened.load().keyboard_labels == 'mac'
     assert reopened.load().question_submit == 'answer'
+    assert reopened.load().busy_delivery == 'next-checkpoint'
     assert reopened.load().input_bindings.send == 'ctrl-s'
     saved = reopened.overrides()
     with pytest.raises(ValidationError, match='collide'):
@@ -334,10 +357,11 @@ async def test_visible_queue_edit_keeps_id_order_and_entire_earlier_draft() -> N
         assert 'e Edit | d Remove | s Steer' in '\n'.join(live.frame())
         live.feed('down')
         live.feed('e')
-        assert [entry.id for entry in live.queued_prompts()] == [first.id, second.id]
+        assert [entry.id for entry in live.queued_prompts()] == [first.id]
         assert await live.read() == 'first'
         live.buffer.replace('edited second')
         live.feed('enter')
+        assert live.queued_prompts()[0].id == second.id
         assert live.buffer is earlier and live.buffer.cursor == 3
         assert live.buffer.text == 'earlier draft'
         assert await live.read() == 'edited second'
@@ -463,3 +487,273 @@ async def test_calibration_preserves_paste_after_incomplete_escape_and_hides_uns
         assert 'Unsupported terminal key report' in live.key_test.report
         assert 'secret' not in live.key_test.report
         assert live.queued_messages == ()
+
+
+@pytest.mark.parametrize(
+    'keyboard, enter, alt', [('mac', 'Return', 'Option'), ('pc', 'Enter', 'Alt'), ('neutral', 'Enter', 'Alt')]
+)
+async def test_physical_enter_labels_follow_effective_bindings(keyboard: KeyboardLabels, enter: str, alt: str) -> None:
+    async with editor() as (live, _, _):
+        live.keyboard_labels = lambda: keyboard
+        assert live.bindings().label('send', keyboard=live.keyboard_labels()) == enter
+        assert live.bindings().label('newline', keyboard=live.keyboard_labels()) == f'Shift+{enter}'
+        assert f'{enter}: send' in live.input_hint()
+        live.key_test = KeyTest()
+        live.feed('enter')
+        assert f'{enter}/Ctrl+M/Ctrl+{enter}' in live.key_test.report
+        assert f'{alt}+{enter}' in live.key_test.report
+        live.end_calibration()
+        live.bindings = lambda: InputBindings(send='alt-shift-enter', steer='super-shift-enter', newline='enter')
+        assert live.bindings().label('send', keyboard=live.keyboard_labels()) == f'{alt}+Shift+{enter}'
+        assert f'{alt}+Shift+{enter}: send' in live.input_hint()
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(live.questions.ask, question_request())
+            await anyio.wait_all_tasks_blocked()
+            assert f'{alt}+Shift+{enter}' in live.questions.hint(
+                send_label=live.bindings().label('send', keyboard=live.keyboard_labels())
+            )
+            tasks.cancel_scope.cancel()
+
+
+async def test_editing_is_not_pending_and_cancel_preserves_reserved_id_and_images() -> None:
+    async with editor() as (live, _, _):
+        image = BinaryContent(data=b'original image', media_type='image/png')
+        marker = live.images.attach([image])
+        live.submit('first')
+        live.submit('second ' + marker)
+        live.submit('third')
+        first, second, third = live.queued_prompts()
+        live.buffer.insert('earlier draft')
+        earlier = live.buffer
+        live.edit_queue_entry(second)
+        live.buffer.replace('changed without image')
+        live.images.retain(live.drafts)
+        assert live.images.resolve(second.text)[1] == [image]
+        assert live.queued_prompts() == [first, third]
+        frame = Text.from_ansi('\n'.join(live.frame())).plain
+        assert "Editing - not queued; won't send until saved" in frame
+        assert 'queued: 2' in frame and 'queued: 3' not in frame
+        assert 'Save/requeue' in frame and 'Cancel editing' in frame
+        assert await live.read() == 'first'
+        live.feed('escape')
+        assert live.buffer is earlier
+        assert [entry.id for entry in live.queued_prompts()] == [second.id, third.id]
+        assert await live.read() == second.text
+        assert await live.read() == 'third'
+        assert live.queued_messages == ()
+
+
+async def test_delivery_mode_is_persistent_and_reachable_without_queued_messages(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'settings.db')
+    context = CommandContext(settings=Settings(model=None), store=store, apply_setting=lambda key, settings: None)
+    async with editor() as (live, _, _):
+        live.busy_delivery = lambda: context.settings.busy_delivery
+
+        def remember(mode: BusyDelivery) -> object:
+            return context.set_setting(['input.busy_delivery', mode])
+
+        live.remember_busy_delivery = remember
+        live.feed('f4')
+        await anyio.lowlevel.checkpoint()
+        assert 'New busy: after turn | m change' in '\n'.join(live.frame())
+        live.feed('m')
+        assert context.settings.busy_delivery == 'next-checkpoint'
+        assert SettingsStore(store.path).load().busy_delivery == 'next-checkpoint'
+        live.console.size = (40, 12)
+        assert 'New busy: next checkpoint | m change' in '\n'.join(live.frame())
+        live.feed('escape')
+        menu = input_menu(context, start_test=lambda: None)
+        row = next(row for row in menu.source.rows() if row.key == 'input.busy_delivery')
+        assert row.choices == ('after-turn', 'next-checkpoint')
+        menu.source.reset(row)
+        assert context.settings.busy_delivery == 'after-turn'
+        with pytest.raises(ValidationError):
+            store.set('input.busy_delivery', 'interrupt')
+        assert store.load().busy_delivery == 'after-turn'
+
+
+@pytest.mark.parametrize('mode', ['after-turn', 'next-checkpoint'])
+async def test_busy_delivery_waits_for_tools_and_reaches_next_feasible_model_request(mode: BusyDelivery) -> None:
+    started, release, completed = anyio.Event(), anyio.Event(), anyio.Event()
+    other_started, other_release, other_completed = anyio.Event(), anyio.Event(), anyio.Event()
+    seen: list[list[ModelMessage]] = []
+
+    async def model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        seen.append(list(messages))
+        if len(seen) == 1:
+            yield {0: DeltaToolCall(name='work', json_args='{}'), 1: DeltaToolCall(name='other_work', json_args='{}')}
+        else:
+            assert completed.is_set() and other_completed.is_set(), (
+                'a model request must wait for all current tool work'
+            )
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=model))
+
+    @agent.tool_plain
+    async def work() -> str:
+        started.set()
+        await release.wait()
+        completed.set()
+        return 'tool completed'
+
+    @agent.tool_plain
+    async def other_work() -> str:
+        other_started.set()
+        await other_release.wait()
+        other_completed.set()
+        return 'other tool completed'
+
+    session = Session(agent, deps=None)
+    async with editor() as (live, _, _):
+        live.busy_delivery = lambda: mode
+        live.steer = session.steer
+
+        async def run() -> None:
+            await session.prompt('start')
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(live.interrupts.run, run())
+            await started.wait()
+            await other_started.wait()
+            live.feed('paste', 'new direction')
+            live.feed('enter')
+            assert not completed.is_set() and len(seen) == 1
+            assert live.interrupts.active
+            assert live.queued_messages == (() if mode == 'next-checkpoint' else ('new direction',))
+            if mode == 'next-checkpoint':
+                assert 'Next checkpoint (sent to active run): new direction' in live.notice
+            release.set()
+            await completed.wait()
+            await anyio.wait_all_tasks_blocked()
+            assert len(seen) == 1 and not other_completed.is_set()
+            other_release.set()
+        assert completed.is_set() and other_completed.is_set() and not session.running
+        assert len(seen) == 2
+        prompts = [
+            part.content
+            for message in seen[1]
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ]
+        assert ('new direction' in prompts) is (mode == 'next-checkpoint')
+        assert any(
+            isinstance(part, ToolReturnPart) and part.content == 'tool completed'
+            for message in seen[1]
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if mode == 'after-turn':
+            assert await live.read() == 'new direction'
+        assert live.queued_messages == ()
+
+
+@pytest.mark.parametrize('text', ['/help', '!echo explicit', 'clear', '!!interactive'])
+async def test_checkpoint_mode_never_smuggles_commands_or_shell_lines(text: str) -> None:
+    async with editor() as (live, _, _):
+        live.busy_delivery = lambda: 'next-checkpoint'
+        steered: list[str] = []
+
+        def steer(text: str) -> bool:
+            return steered.append(text) or True
+
+        live.steer = steer
+        started, release = anyio.Event(), anyio.Event()
+
+        async def work() -> None:
+            started.set()
+            await release.wait()
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(live.interrupts.run, work())
+            await started.wait()
+            live.feed('paste', text)
+            live.feed('enter')
+            assert steered == []
+            assert len(live.queued_messages) == 1
+            release.set()
+        assert await live.read() == ('/clear' if text == 'clear' else text)
+
+
+async def test_checkpoint_mode_never_leapfrogs_queue_or_steers_a_saved_edit() -> None:
+    async with editor() as (live, _, _):
+        live.busy_delivery = lambda: 'next-checkpoint'
+        steered: list[str] = []
+
+        def steer(text: str) -> bool:
+            return steered.append(text) or True
+
+        live.steer = steer
+        started, release = anyio.Event(), anyio.Event()
+
+        async def work() -> None:
+            started.set()
+            await release.wait()
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(live.interrupts.run, work())
+            await started.wait()
+            live.submit('/help')
+            live.feed('paste', 'behind command')
+            live.feed('enter')
+            entry = live.queued_prompts()[1]
+            live.edit_queue_entry(entry)
+            live.buffer.replace('saved edit')
+            live.feed('enter')
+            assert steered == []
+            assert live.queued_prompts()[1].id == entry.id
+            assert live.queued_messages == ('/help', 'saved edit')
+            release.set()
+        assert await live.read() == '/help'
+        assert await live.read() == 'saved edit'
+
+
+async def test_checkpoint_fallback_queues_when_run_no_longer_accepts_input() -> None:
+    async with editor() as (live, _, _):
+        live.busy_delivery = lambda: 'next-checkpoint'
+
+        def unavailable(text: str) -> bool:
+            return False
+
+        live.steer = unavailable
+        async with running(live):
+            live.feed('paste', 'during teardown')
+            live.feed('enter')
+            assert live.queued_messages == ('during teardown',)
+            assert 'Follow-up (after turn): during teardown' in '\n'.join(live.frame())
+            live.feed('escape')
+        assert live.queued_messages == () and live.buffer.text == 'during teardown'
+
+
+async def test_checkpoint_delivery_and_remembered_answer_never_approve_waiting_tool() -> None:
+    with no_leaked_tasks():
+        async with editor() as (live, _, _):
+            live.busy_delivery = lambda: 'next-checkpoint'
+            live.questions.preference = lambda: 'answer'
+            steered: list[str] = []
+
+            def steer(text: str) -> bool:
+                return steered.append(text) or True
+
+            live.steer = steer
+            responses: list[AskUserResponse] = []
+
+            answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console)
+
+            async def ask() -> None:
+                responses.append(await answerer.ask_approval(permission_request()))
+
+            async with running(live):
+                async with anyio.create_task_group() as tasks:
+                    tasks.start_soon(ask)
+                    await anyio.wait_all_tasks_blocked()
+                    live.feed('paste', 'Approve')
+                    live.feed('enter')
+                    assert steered == ['Approve'] and not responses
+                    assert not live.questions.focused and live.queued_messages == ()
+                    live.feed('f2')
+                    await anyio.lowlevel.checkpoint()
+                    live.feed('ctrl-c')
+                assert not decision(responses[0]).approved
+                live.feed('escape')

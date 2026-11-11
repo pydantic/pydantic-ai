@@ -1439,7 +1439,8 @@ held Enter or pasted typeahead cannot silently answer it. Ctrl+J inserts a newli
 in custom answers; it never confirms a choice.
 
 `/input` also sets Mac/PC/neutral labels and composer bindings, without detecting
-the remote keyboard. `/input test` explicitly captures decoded keys without
+the remote keyboard. Mac hints say Return, Option, and Cmd for the effective
+bindings, independently of the server OS. `/input test` explicitly captures decoded keys without
 sending, steering, interrupting, or recording draft/paste contents. Ctrl+G closes
 it. See [Keyboard setup](docs/reference.md#keyboard-setup).
 Drag over the question, its header, or an option to select text; releasing copies it
@@ -3149,8 +3150,25 @@ A widget opened from inside a tool call, including the inline `ask_user` picker,
 has to wait for streamed text to finish and the editor and status row to
 get out of the way. `host.full_screen()` flushes pending output, suspends the
 editor's input reader, and restores the editor and its draft when the block exits.
-The editor remains active during agent turns. Enter queues a separate turn with
-its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter) sends the typed
+The editor remains active during agent turns. By default, Enter queues a separate
+turn with its own `turn_start` and `turn_end` hooks. Opt-in
+`input.busy_delivery=next-checkpoint` instead steers new busy composer prompts
+through the same native enqueue path described below. F4 shows the saved delivery
+mode; `m` changes it, including when no input is queued. Current tool work finishes
+before the next feasible model request receives that input. It never answers
+questions or grants approval. Saved edits, input behind queued entries, commands,
+shell lines, and input no active run accepts retain after-turn routing. Changing
+the mode does not promote existing entries. Accepted checkpoint input joins the
+active run and transcript, not the editable after-turn queue. Plugin `send_input`
+and browser submissions keep their existing queue behavior. See
+[Prompt area](docs/reference.md#prompt-area).
+
+A held queue edit shows **Editing - not queued; won't send until saved** and is
+excluded from pending counts and the live-session queue. Save/requeue restores
+its stable ID and reserved ordering slot. Cancel editing restores the unchanged
+entry, or removes it if cleared; explicit Steer/send is a different action.
+
+Alt+Enter (Option+Return with Mac labels) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
 through core's `RunContext.enqueue(priority='asap')`. Accepted steering messages
 appear immediately in the transcript and are enqueued for the next model request,

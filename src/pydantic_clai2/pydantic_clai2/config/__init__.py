@@ -6,7 +6,7 @@ from typing import Annotated, Literal, get_args
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from pydantic_clai2.config.input_bindings import InputBindings, KeyboardLabels, QuestionSubmit
+from pydantic_clai2.config.input_bindings import BusyDelivery, InputBindings, KeyboardLabels, QuestionSubmit
 from pydantic_clai2.config.theme_names import names
 
 _WORKTREE_COMMAND_PLACEHOLDER = re.compile(r'{[A-Za-z_]\w*}')
@@ -63,6 +63,13 @@ class Settings(BaseModel):
     keyboard_labels: KeyboardLabels = Field(
         default='unset',
         description='Keyboard labels only: unset offers /input setup; neutral, mac or pc. Does not detect SSH keys.',
+    )
+    busy_delivery: BusyDelivery = Field(
+        default='after-turn',
+        description=(
+            'Busy composer prompts: after-turn queues a separate turn; next-checkpoint uses native steering '
+            'after current tool work, before the next feasible model request. Commands and saved edits stay queued.'
+        ),
     )
     question_submit: QuestionSubmit = Field(
         default='ask', description='When a question waits: ask, answer it, or queue a follow-up. Never approves tools.'
@@ -241,6 +248,7 @@ SETTING_FIELDS = {
     'input.bindings': 'input_bindings',
     'input.keyboard_labels': 'keyboard_labels',
     'input.question_submit': 'question_submit',
+    'input.busy_delivery': 'busy_delivery',
 }
 
 SETTING_KEYS = {name: key for key, name in SETTING_FIELDS.items()}
@@ -251,6 +259,7 @@ USER_ONLY_SETTINGS = frozenset(
         'input_bindings',
         'keyboard_labels',
         'question_submit',
+        'busy_delivery',
         'repo_context_walk_up_roots',
         'repo_context_autoload_symlink_roots',
         'worktree_remove_commands',
@@ -265,6 +274,7 @@ STRING_SETTINGS = frozenset(
         'run.instructions',
         'input.keyboard_labels',
         'input.question_submit',
+        'input.busy_delivery',
         'run.permissions',
         'display.theme',
         'display.spinner',

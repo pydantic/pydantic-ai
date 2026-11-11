@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 InputAction = Literal['send', 'steer', 'newline']
 KeyboardLabels = Literal['unset', 'neutral', 'mac', 'pc']
 QuestionSubmit = Literal['ask', 'answer', 'follow-up']
+BusyDelivery = Literal['after-turn', 'next-checkpoint']
 
 # These reports are already indistinguishable after the terminal decoder. Changing
 # their action separately would promise a distinction the editor cannot observe.
@@ -72,5 +73,9 @@ class InputBindings(BaseModel):
         """Label keys for the user's keyboard, independent of the remote machine's OS."""
         key = self.send if action == 'send' else self.steer if action == 'steer' else self.newline
         parts = canonical_key(key).split('-')
-        labels = {'alt': 'Option' if keyboard == 'mac' else 'Alt', 'super': 'Cmd' if keyboard == 'mac' else 'Super'}
+        labels = {
+            'alt': 'Option' if keyboard == 'mac' else 'Alt',
+            'super': 'Cmd' if keyboard == 'mac' else 'Super',
+            'enter': 'Return' if keyboard == 'mac' else 'Enter',
+        }
         return '+'.join(labels.get(part, part.capitalize()) for part in parts)

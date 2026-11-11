@@ -84,7 +84,7 @@ A few keys to know:
 | <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
 | <kbd>Ctrl</kbd>+<kbd>J</kbd> | Insert a newline, including when Shift+Enter arrives as plain Enter. |
 | <kbd>F2</kbd> | Review a pending question or approval without losing your draft. |
-| <kbd>F4</kbd> | Queue actions: Edit, Remove, Steer. |
+| <kbd>F4</kbd> | Queue actions: Edit, Remove, Steer, and persistent busy delivery mode. |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste an image from the clipboard. |
 | <kbd>@</kbd> then <kbd>Tab</kbd> | Complete a file path. |
 | <kbd>Ctrl</kbd>+<kbd>D</kbd> or `/exit` | Quit. |
@@ -92,7 +92,14 @@ A few keys to know:
 Run `/input` to configure send, steer, and newline keys and choose Mac, PC, or neutral
 labels. `/input test` safely shows the keys your connection actually reports; Ctrl+G
 closes the test. Labels cannot recover modifiers lost over SSH. The defaults above
-stay unchanged unless you remap them.
+stay unchanged unless you remap them. Mac hints use Return and Option.
+
+F4 then `m` switches new busy prompts between **after turn** (the default) and
+**next checkpoint**, after current tool work and before the next feasible model
+request. Commands and saved queue edits retain after-turn routing. Held edits say
+**Editing - not queued**, do not count as pending, and cannot run until saved.
+See [Prompt area](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#prompt-area)
+for queue ordering, Save/requeue, and Cancel editing.
 
 Type `/` to see every command, or `/help` for the full list.
 

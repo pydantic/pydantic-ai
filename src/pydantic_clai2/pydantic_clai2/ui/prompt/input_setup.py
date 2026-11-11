@@ -16,7 +16,8 @@ class KeyTest:
         identity = key if len(key) > 1 else 'text key'
         self.report = f'Decoded: {identity}; action: {action}.'
         if key == 'enter':
-            self.report += ' Enter/Ctrl+M/Ctrl+Enter share this action; a lost modifier cannot be recovered.'
+            enter = 'Return' if keyboard == 'mac' else 'Enter'
+            self.report += f' {enter}/Ctrl+M/Ctrl+{enter} share this action; a lost modifier cannot be recovered.'
         if key == 'paste':
             self.report = 'Decoded: bracketed paste (contents hidden); action: insert text, never submit.'
         self.report += f' Newline fallback: Ctrl+J. Steer: {bindings.label("steer", keyboard=keyboard)}. Ctrl+G closes.'

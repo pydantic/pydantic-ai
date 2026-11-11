@@ -298,8 +298,8 @@ async def test_queue_labels_and_small_terminal() -> None:
             live.buffer.replace(text)
             live.accept()
         frame = '\n'.join(Text.from_ansi(row).plain for row in live.frame())
-        assert 'Follow-up: /tmp/shot.png' in frame
-        assert 'Command: /help' in frame
+        assert 'Follow-up (after turn): /tmp/shot.png' in frame
+        assert 'Command (after turn): /help' in frame
         assert await live.read() == '/tmp/shot.png'
         assert await live.read() == '/help'
         live.console.size = (3, 3)
