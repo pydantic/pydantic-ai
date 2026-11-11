@@ -166,7 +166,7 @@ print(result.output)
     [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message)
     for details.
 
-## Nebius Token Factory
+## Nebius Token Factory {#nebius-ai-studio}
 
 Go to [Nebius Token Factory](https://tokenfactory.nebius.com/) and create an API key.
 
