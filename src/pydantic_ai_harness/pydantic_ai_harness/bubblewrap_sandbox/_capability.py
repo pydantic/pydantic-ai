@@ -13,6 +13,13 @@ from pydantic_ai_harness.bubblewrap_sandbox._workspace import BubblewrapWorkspac
 class BubblewrappedWorkspace(WrapperCapability[AgentDepsT]):
     """Runs the commands of the wrapped capability's workspace in a bubblewrap wrapper, on that workspace's host.
 
+    !!! warning "Best effort, not a security boundary"
+        This wrapper is a best-effort convenience that keeps a trusted agent from accidentally changing files outside
+        its working directory. It is **not a security boundary** and **not a sandbox for untrusted code or untrusted
+        agents**: commands share the host kernel and run as the host user. Do **not** set the working directory to your
+        home directory (or a directory containing it): files there such as shell startup files, or configuration under
+        a non-default `$XDG_CONFIG_HOME`, can be changed by the agent and run later outside the wrapper.
+
     See [`BubblewrapWorkspace`][pydantic_ai_harness.bubblewrap_sandbox.BubblewrapWorkspace] for what the wrapper allows.
 
     ```python

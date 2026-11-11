@@ -1,4 +1,4 @@
-"""Tests for `BubblewrapWorkspace` and the `BubblewrapSandbox` capability.
+"""Tests for `BubblewrapWorkspace` and the `BubblewrappedWorkspace` capability.
 
 Most use a fake `bwrap` that records its arguments, so they run anywhere; the last class needs a working `bwrap`.
 """
