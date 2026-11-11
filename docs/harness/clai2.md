@@ -135,13 +135,17 @@ created, without forcing deletion. If cleanup or the ignore edit fails, the erro
 names the retained branch or checkout for recovery.
 
 On interactive exit, CLAI removes an unchanged worktree this launch created and
-tries to delete its newly created branch with `git branch -d`. Other unchanged
-worktrees are kept. If the checkout changed, CLAI asks whether to remove it.
+tries to delete its newly created branch with `git branch -d`. It also removes
+a `--worktree` checkout with no uncommitted or untracked files and no unpushed commits,
+keeping the branch, unless a saved **No, don't ask again for this worktree**
+choice keeps it. Ignored files are deleted with the checkout; lock it with
+`git worktree lock PATH` to keep it. Other unchanged worktrees are kept. If the
+checkout changed, CLAI asks whether to remove it.
 Default Git removal keeps the branch and refuses dirty or locked checkouts.
 
 You can register a user-only `worktrees.remove_commands` entry for a repository.
 After confirmation, that command runs instead of Git and may delete the branch
-and uncommitted files. Automatic removal of unchanged worktrees and
+and uncommitted files. Automatic removal and
 `/workspaces destroy` continue to use Git. See
 [the removal-command reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
 for configuration and shell-function examples.
@@ -266,13 +270,24 @@ Pass secret references or use plugin-owned credential storage instead of embeddi
 
 `/set` on its own opens a full-screen menu, the same kind Code Puppy uses: the
 settings on the left, details for the highlighted one on the right (current
-value, default, what it does). Type to filter. Enter edits: booleans and the
-model get a picker (the model list is searchable, with "Type a value..." for
-anything not listed), everything else a typed input that validates as you go.
+value, default, what it does). Press `/` to search. While searching, printable
+characters, including Space and `R`, are query text, not actions. Enter ends the
+search and keeps the matches; `/` resumes it. Esc clears the search or retained
+filter first; with no filter, Esc closes.
+
+Outside search, Space cycles the highlighted setting through its declared
+choices in order, wrapping from the last to the first, and saves immediately
+without moving the selection or scroll position. If the current value is unset
+or not listed, Space selects the first choice. This includes booleans, model,
+theme, spinner, and other settings with multiple choices; Space does nothing on
+free-text or single-choice rows. Enter still opens a picker for fields with
+choices (the model list is searchable, with "Type a value..." for anything not
+listed), or a typed input that validates as you go for other fields.
 The input opens holding the current value unless it is the default or not
 set: Enter without changes saves nothing, and an empty input resets.
-`R` resets the highlighted setting. Esc closes. Every
-edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
+`R` resets the highlighted setting outside search. Every edit saves and applies
+immediately, the same as `/set KEY VALUE`; **Save & close** only leaves the menu
+with those edits already saved. `/settings` is
 an alias of `/set` and accepts the same arguments.
 
 While a turn is running, `/set`, `/settings`, `/system_prompt`, `/model`, `/model add`, `/model settings`,

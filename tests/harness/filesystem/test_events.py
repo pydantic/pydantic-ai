@@ -381,7 +381,7 @@ class TestFileSystemEvents:
                 path='sub',
                 root_dir=_root(tmp_path),
                 pattern='x' if search == 'grep' else '*.py',
-                search=search,
+                search_kind=search,
                 match_count=2,
                 truncated=False,
                 capability_id='file_system',

@@ -539,7 +539,10 @@ boundary), `SpeculativeCallLaunchedEvent` (with the launching statement's line s
 `phase` of `streaming` or `execution`), `SpeculativeCallSettledEvent` (only while the stream
 is still flowing; a call that finishes later reports its state on its claimed or evicted
 event instead), and, once the snippet runs, `SpeculativeCallClaimedEvent`,
-`SpeculativeCallMissedEvent`, and `SpeculativeCallEvictedEvent`.
+`SpeculativeCallMissedEvent`, and `SpeculativeCallEvictedEvent`. `closed_statements` and
+`sandbox_function` are the deprecated names of the `closed_statement_count` and
+`sandbox_function_name` fields. They still read, with a warning, and a payload saved under them
+still loads.
 
 ### Why isn't a call speculating?
 

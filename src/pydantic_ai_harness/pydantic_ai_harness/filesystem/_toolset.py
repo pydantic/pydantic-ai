@@ -1600,7 +1600,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         return FilesSearchedEvent(
             **self._event_location(scope, resolved),
             pattern=pattern,
-            search=search,
+            search_kind=search,
             match_count=match_count,
             truncated=truncated,
         )

@@ -81,27 +81,53 @@ class ModelResolver:
     async def resolve(self, name: str) -> Model | str:
         """Build `PROVIDER[@PROFILE]:NAME` or `chain:NAME`; a core model without a profile stays a string.
 
+        A name that runs on several models, as `expand` lists them, is a `FallbackModel` that also falls
+        back on a refusal, for running outside a session, whose runs use the `ModelFallback` capability.
+        """
+        from pydantic_ai.exceptions import ContentFilterError, ModelAPIError
+        from pydantic_ai.models.fallback import FallbackModel
+
+        first, *rest = [await self._one_account(model) for model in await self.expand(name)]
+        return FallbackModel(first, *rest, fallback_on=(ModelAPIError, ContentFilterError)) if rest else first
+
+    async def expand(self, name: str) -> list[str]:
+        """The models `name` runs on in order, each on one account: a chain's, or every pooled account's.
+
         While `accounts.pool` is on, a name without a profile runs on every signed-in account, as `@*`
         does, once its provider has two or more; `@default` runs the default account alone.
         """
         from pydantic_clai2.models.chains import chain_name
 
         if (chain := chain_name(name)) is not None:
-            return await self._chain(chain)
+            return [member for model in self._chain(chain) for member in await self.expand(model)]
         ref = _parse(name)
+        members = await self._accounts(ref)
+        return [member.pinned(ref.name) for member in members] if members else [name]
+
+    def _chain(self, chain: str) -> list[str]:
+        """The models of a saved chain, in order."""
+        models = self.store.chains().get(chain) if self.store is not None else None
+        if not models:
+            raise UserError(f'No chain named {chain}. Create one with /model chains.')
+        return models
+
+    async def _accounts(self, ref: ModelRef) -> 'list[Account]':
+        """The accounts `@*`, or a pooled name without a profile, runs on; none for a name on one account."""
         if ref.profile == ALL:
-            return await self._all_accounts(ref.provider, ref.name)
-        if ref.profile == DEFAULT:
-            return await self._one_account(base_model(name))
+            if not (members := await self._pool(ref.provider)):
+                raise UserError(f'No {ref.provider} account is signed in. Add one with /accounts.')
+            return members
         if ref.profile is None and ref.provider and self.pool_accounts():
             members = await self._pool(ref.provider)
-            if len(members) > 1:
-                return await self._fall_back(members, ref.name)
-        return await self._one_account(name)
+            return members if len(members) > 1 else []
+        return []
 
     async def _one_account(self, name: str) -> Model | str:
-        """Build a model on the one account it names, the default one when it names none."""
+        """Build a model on the one account it names, the default one when it names none or `@default`."""
         ref = _parse(name)
+        if ref.profile == DEFAULT:
+            name = base_model(name)
+            ref = _parse(name)
         if ref.provider in ('openrouter', 'vllm', 'github-copilot'):
             from pydantic_clai2.models import github_copilot, openrouter, vllm
 
@@ -128,36 +154,12 @@ class ModelResolver:
             return await to_thread.run_sync(key_profiles.model, name, abandon_on_cancel=True)
         return name
 
-    async def _chain(self, chain: str) -> Model:
-        """Resolve every model of a saved chain and fall back through them in order."""
-        from pydantic_ai.models.fallback import FallbackModel
-
-        models = self.store.chains().get(chain) if self.store is not None else None
-        if not models:
-            raise UserError(f'No chain named {chain}. Create one with /model chains.')
-        first, *rest = [await self.resolve(model) for model in models]
-        return FallbackModel(first, *rest)
-
-    async def _all_accounts(self, provider: str, name: str) -> Model | str:
-        """`PROVIDER@*:NAME`: the model on every signed-in account, in `/accounts` order, falling back in turn."""
-        members = await self._pool(provider)
-        if not members:
-            raise UserError(f'No {provider} account is signed in. Add one with /accounts.')
-        return await self._fall_back(members, name)
-
     async def _pool(self, provider: str) -> 'list[Account]':
         """The provider's signed-in accounts, in `/accounts` order; none without a settings store."""
         from pydantic_clai2.models.accounts import pool
 
         store = self.store
         return await to_thread.run_sync(lambda: pool(store, provider), abandon_on_cancel=True) if store else []
-
-    async def _fall_back(self, members: 'list[Account]', name: str) -> Model | str:
-        """NAME on each account in turn, the next one taking over when a request fails."""
-        from pydantic_ai.models.fallback import FallbackModel
-
-        first, *rest = [await self._one_account(member.model(name)) for member in members]
-        return FallbackModel(first, *rest) if rest else first
 
     async def accounts(self, args: list[str]) -> str:
         """`/accounts`: list, add, rename, reorder, and sign out of accounts."""
