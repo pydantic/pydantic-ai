@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from opentelemetry.trace import NoOpTracer
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, FunctionToolset
@@ -96,6 +97,8 @@ def _make_ctx(
         model: Any = dataclasses.field(default_factory=_FakeModel)
         deps: None = None
         conversation_id: str | None = None
+        tracer: NoOpTracer = dataclasses.field(default_factory=NoOpTracer)
+        trace_include_content: bool = False
 
         def tool_name_for_kind(self, kind: object) -> str | None:
             return None
@@ -1143,7 +1146,14 @@ class TestInternals:
         assert 'omitted' in _head_tail_preview('a' * 100, 10)
 
     def test_build_spill_preview_tokens_unit(self):
-        unit = _Unit(binary=False, text='x' * 100, data=b'x' * 100, value='x' * 100, suffix='')
+        unit = _Unit(
+            binary=False,
+            text='x' * 100,
+            data=b'x' * 100,
+            value='x' * 100,
+            suffix='',
+            attribute_prefix='tool_output_limits',
+        )
         assert 'tokens' in _build_spill_preview('h/1.0', unit, 20, over_tokens=True, read_hint='')
 
 
