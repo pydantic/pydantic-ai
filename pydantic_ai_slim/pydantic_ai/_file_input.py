@@ -25,7 +25,7 @@ FileInputKind = Literal['image', 'document', 'audio', 'video']
 """The kinds of file the profile's file-input flags cover."""
 
 KNOWN_IMAGE_MEDIA_TYPES: frozenset[str] = frozenset(get_args(ImageMediaType))
-"""Every `ImageMediaType`: JPEG, PNG, GIF and WebP, which every provider that reads images reads."""
+"""Every `ImageMediaType`: JPEG, PNG, GIF and WebP, the baseline that Claude and OpenAI read. Other models read more or fewer."""
 
 KNOWN_AUDIO_MEDIA_TYPES: frozenset[str] = frozenset(get_args(AudioMediaType))
 """Every `AudioMediaType`."""

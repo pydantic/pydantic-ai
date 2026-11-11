@@ -553,7 +553,8 @@ DEFAULT_PROFILE: ModelProfile = {
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
 }
-"""Fully populated default `ModelProfile`. Used as the base layer when resolving a model's effective profile."""
+"""Default `ModelProfile`, with a value for every key except the image, audio and video media-type sets, which are
+unset unless a profile knows them. Used as the base layer when resolving a model's effective profile."""
 
 
 ModelProfileSpec: TypeAlias = ModelProfile | Callable[['ModelProfile'], 'ModelProfile']

@@ -77,6 +77,7 @@ with try_import() as bedrock_available:
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 
 MEMO = BinaryContent(b'RIFF', media_type='audio/wav', identifier='memo')
@@ -263,16 +264,29 @@ async def test_image_of_listed_media_type_is_sent():
 
 
 @pytest.mark.parametrize(
-    'file',
+    ('file', 'profile'),
     [
-        pytest.param(BinaryContent(b'jpg', media_type='image/jpg'), id='image'),
-        pytest.param(BinaryContent(b'mp3', media_type='audio/mp3'), id='audio'),
+        pytest.param(
+            BinaryContent(b'jpg', media_type='image/jpg'),
+            ModelProfile(supported_image_media_types=frozenset({'image/jpeg'})),
+            id='image/jpg',
+        ),
+        pytest.param(
+            BinaryContent(b'mp3', media_type='audio/mp3'),
+            ModelProfile(supported_audio_media_types=frozenset({'audio/mpeg'})),
+            id='audio/mp3',
+        ),
+        pytest.param(
+            BinaryContent(b'wav', media_type='audio/x-wav'),
+            ModelProfile(supported_audio_media_types=frozenset({'audio/wav'})),
+            id='audio/x-wav',
+        ),
     ],
 )
-async def test_file_of_a_common_alias_is_judged_as_its_media_type(file: BinaryContent):
+async def test_file_of_a_common_alias_is_judged_as_its_media_type(file: BinaryContent, profile: ModelProfile):
     """OpenAI, Gemini, xAI and Mistral read `image/jpg` as JPEG, so it isn't turned into a note."""
     sent: list[list[ModelMessage]] = []
-    agent = agent_with_tool_file(FunctionModel(calls_get_file_then(sent)), file)
+    agent = agent_with_tool_file(FunctionModel(calls_get_file_then(sent), profile=profile), file)
 
     await agent.run('Get the file.')
 
@@ -790,3 +804,12 @@ def test_adapter_narrowing_applies_over_the_user_profile():
             'File song (audio/mpeg) was not sent: this model cannot read audio files.',
         ]
     )
+
+
+@pytest.mark.skipif(not google_available(), reason='google not installed')
+def test_vertex_reads_tiff_where_the_gemini_api_does_not():
+    gemini_api = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test'))
+    vertex = GoogleModel('gemini-3-flash-preview', provider=GoogleCloudProvider(project='test', location='us-central1'))
+
+    assert 'image/tiff' not in gemini_api.profile.get('supported_image_media_types', ())
+    assert 'image/tiff' in vertex.profile.get('supported_image_media_types', ())

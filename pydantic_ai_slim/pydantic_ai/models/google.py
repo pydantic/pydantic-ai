@@ -74,6 +74,7 @@ from ..profiles.google import (
     GOOGLE_THINKING_LEVELS,
     GoogleModelProfile,
     GoogleThinkingLevel,
+    with_google_cloud_media_types,
 )
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
@@ -709,11 +710,12 @@ class GoogleModel(Model[Client]):
         return frozenset({self.system})
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Set `google_supports_batch_api` by the client's transport, before the user's `profile=` applies.
+        """Set `google_supports_batch_api` and the image media types by the client's transport, before the user's `profile=` applies.
 
         Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
         """
-        return merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
+        profile = merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
+        return with_google_cloud_media_types(profile) if self._is_google_cloud else profile
 
     @cached_property
     def profile(self) -> GoogleModelProfile:

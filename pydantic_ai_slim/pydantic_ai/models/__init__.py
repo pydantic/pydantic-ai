@@ -2234,7 +2234,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """The model profile.
 
         Resolution order (later layers override earlier ones):
-          1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
+          1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile` but the image, audio and video media-type sets.
           2. The provider's `model_profile(model_name)` result — provider-specific defaults
              for this model — or what `_provider_model_profile()` returns in its place.
           3. A best-effort `context_window` value from
