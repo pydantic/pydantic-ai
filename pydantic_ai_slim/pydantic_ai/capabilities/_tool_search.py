@@ -102,13 +102,6 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     ```
     """
 
-    tools: ToolSelector[AgentDepsT] | None = None
-    """Select regular tools to defer using any existing selector form.
-
-    `None` adds no deferral and preserves per-tool and toolset deferral. Output and
-    framework tools are not selected for deferral.
-    """
-
     strategy: ToolSearchStrategy[AgentDepsT] | None = None
     """The search strategy to use.
 
@@ -142,6 +135,13 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
 
     parameter_description: str | None = None
     """Custom description for the `queries` parameter when search runs on our side."""
+
+    tools: ToolSelector[AgentDepsT] | None = None
+    """Select regular tools to defer using any existing selector form.
+
+    `None` adds no deferral and preserves per-tool and toolset deferral. Output and
+    framework tools are not selected for deferral.
+    """
 
     _: KW_ONLY
 

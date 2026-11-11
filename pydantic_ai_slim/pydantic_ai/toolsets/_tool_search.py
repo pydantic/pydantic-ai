@@ -309,9 +309,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     ordered by relevance. Both sync and async implementations are accepted.
     """
 
-    tools: ToolSelector[AgentDepsT] | None = None
-    """Selector determining which regular tools to defer."""
-
     max_results: int = _MAX_SEARCH_RESULTS
     """Maximum number of matches returned from the default algorithm."""
 
@@ -320,6 +317,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
 
     parameter_description: str | None = None
     """Custom description for the `queries` parameter shown to the model."""
+
+    tools: ToolSelector[AgentDepsT] | None = None
+    """Selector determining which regular tools to defer."""
 
     enable_fallback: bool = True
     """When False, the local `search_tools` function tool is not emitted — used when the

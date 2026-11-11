@@ -2376,6 +2376,15 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Strategy',
                         },
                         'max_results': {'title': 'Max Results', 'type': 'integer'},
+                        'tools': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Tools',
+                        },
                         'tool_description': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'title': 'Tool Description',
