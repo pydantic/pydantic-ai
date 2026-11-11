@@ -343,7 +343,7 @@ def _probabilities_fit(answer: ChoiceAnswer | ScoreAnswer) -> bool:
         isfinite(answer.confidence)
         and 0 <= answer.confidence <= 1
         and all(isfinite(p) and 0 <= p <= 1 for p in probabilities)
-        and abs(sum(probabilities) - 1) <= 1e-6 + len(answer.probabilities) * 0.005
+        and abs(sum(probabilities) - 1) <= float(_FLOAT_TOLERANCE) + len(answer.probabilities) * 0.005
     )
 
 
