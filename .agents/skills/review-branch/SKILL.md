@@ -186,6 +186,11 @@ Then verify that local HEAD matches the PR head. A mismatch means local is ahead
 behind with uncommitted changes. Finish and push intended local commits before reviewing a PR.
 Never discard local commits or uncommitted changes to make the heads match.
 
+This suite runs the scripts and lane prompts of the checkout it reviews. When
+`gh pr view --json isCrossRepository` is true and `gh pr diff "$PR_NUMBER" --name-only` lists a
+path under `.agents/`, `.claude/` or `.opencode/`, stop before Step 1 and ask the user to read
+those changes first.
+
 ### 1. Prepare the committed snapshot and blame map
 
 Resolve the PR's actual base branch. Use `main` only for a confirmed local branch targeting
