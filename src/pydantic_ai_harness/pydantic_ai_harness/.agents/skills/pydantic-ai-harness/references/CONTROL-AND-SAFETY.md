@@ -432,8 +432,9 @@ agent = Agent(
 Gotchas:
 
 - Without a handler a held call ends the run as `DeferredToolRequests` output, like `requires_approval=True`.
-- `permission_ask` answers in place, inside `RequestInput`'s recorded durable unit on a durable engine, so there an
-  approver must answer quickly; to wait for a person durably, write an `ask` that hands the token on.
+- `RequestInput` refuses to wait in durable runs on engines other than AWS Lambda (`AWSLambdaDurability`); there,
+  call `ask_permissions(requests, approve)` from a `HandleDeferredToolCalls` handler instead. On Lambda,
+  `permission_ask` answers in place in a recorded step: keep the approver quick and set `RequestInput(timeout=...)`.
 - `mode` may be a function of the run context, read on every call. `PermissionDecision(remember=True)`
   skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
   `remembered` set; inside durable execution nothing is remembered.

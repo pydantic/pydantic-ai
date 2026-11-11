@@ -61,7 +61,7 @@ agent = Agent(
 
 Approvals that other capabilities ask for, such as a tool registered with `requires_approval=True`, are left for the next handler.
 
-In a [durable](../durable_execution/overview.md) run, `RequestInput` calls `ask` in a durable unit that records its answer, so an approver that waits for a person would hold the run open. There, write an `ask` that hands the token on, as [Request Input](../capabilities/request-input.md#a-round-trip-in-one-process) shows, and use `permission_requests` to find the held calls in the requests it gets. `ask_permissions(requests, approver)` is what `permission_ask` calls, for a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler of your own.
+In a [durable](../durable_execution/overview.md) run, `RequestInput` waits through the engine. Only AWS Lambda durable functions with [`AWSLambdaDurability`](aws-lambda.md#approvals) support that so far; other engines refuse the wait with a `UserError` (see [Request Input](../capabilities/request-input.md#engines)), so there call `ask_permissions` from a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler instead: `HandleDeferredToolCalls(handler=lambda ctx, requests: ask_permissions(requests, approve))`. On Lambda, `permission_ask` runs in the step that records its answer, so its approver must answer quickly, and the callback created for the wait stays open: set `RequestInput(timeout=...)` so it expires. To wait for a person there, write an `ask` that hands the token on, and use `permission_requests` to find the held calls in the requests it gets.
 
 ## Which calls are checked
 

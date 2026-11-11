@@ -285,8 +285,9 @@ def permission_ask(
 
     `approver` answers each call `Permissions` holds in place, as `ask_permissions` asks it. Approvals other capabilities asked for, and
     external calls, are left pending for the next handler, or for the run's `DeferredToolRequests` output.
-    In a durable run, `ask` runs in a durable unit that records the answer, so an approver there must
-    answer quickly; to wait for a person, hand the token on with an `ask` of your own.
+    `RequestInput` refuses to wait in the durable runs of engines without external event support, which
+    is every engine but AWS Lambda so far; call `ask_permissions` from a `HandleDeferredToolCalls` handler
+    there. On Lambda, `ask` runs in a step that records the answer, so the approver must answer quickly.
     """
 
     async def ask(ctx: RunContext[AgentDepsT], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
