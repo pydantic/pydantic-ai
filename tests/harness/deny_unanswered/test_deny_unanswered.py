@@ -17,11 +17,16 @@ def _tool_returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
     return [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
 
 
-def _approval_agent(ran: list[int], *, deny: bool) -> Agent[None, str | DeferredToolRequests]:
-    """An agent whose model calls `danger`, which needs approval, recording each run of its body in `ran`."""
+def _approval_agent(
+    ran: list[int], *, deny: bool, message: str | None = None
+) -> Agent[None, str | DeferredToolRequests]:
+    """An agent whose model calls `danger`, which needs approval, recording each run of its body in `ran`.
+
+    With `deny`, it has a `DenyUnanswered`, with `message` when one is given.
+    """
     agent = Agent(
         call_then_echo('danger', {'x': 1}, 'c1', 'done'),
-        capabilities=[DenyUnanswered()] if deny else [],
+        capabilities=[DenyUnanswered() if message is None else DenyUnanswered(message=message)] if deny else [],
         output_type=[str, DeferredToolRequests],
     )
 
@@ -33,15 +38,20 @@ def _approval_agent(ran: list[int], *, deny: bool) -> Agent[None, str | Deferred
     return agent
 
 
-async def test_deny_unanswered_answers_approval_required_tool_in_run():
-    """A held approval is denied in-run with the capability's message; the tool body never runs."""
+@pytest.mark.parametrize(
+    ('message', 'expected'),
+    [
+        pytest.param(None, DEFAULT_MESSAGE, id='default'),
+        pytest.param('Nobody is on duty to approve.', 'Nobody is on duty to approve.', id='custom'),
+    ],
+)
+async def test_deny_unanswered_answers_approval_required_tool_in_run(message: str | None, expected: str):
+    """A held approval is denied in-run with `message`; the tool body never runs."""
     ran: list[int] = []
-    result = await _approval_agent(ran, deny=True).run('do it')
+    result = await _approval_agent(ran, deny=True, message=message).run('do it')
     assert result.output == 'done'
     assert ran == []
-    assert [(part.tool_name, part.content) for part in _tool_returns(result.all_messages())] == [
-        ('danger', DEFAULT_MESSAGE)
-    ]
+    assert [(part.tool_name, part.content) for part in _tool_returns(result.all_messages())] == [('danger', expected)]
 
 
 @pytest.mark.parametrize(

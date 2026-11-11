@@ -32,7 +32,7 @@ def call_then_echo(
 def asking_agent(observed: list[str], name: str = 'child') -> Agent[object, str]:
     """A sub-agent that asks one question through an `AskUser` with no answerer, recording the answer in `observed`.
 
-    Without a capability that answers the question, its run ends with the question deferred.
+    It needs a capability that answers the question, such as `DenyUnanswered`: its output type allows no deferral.
     """
     return Agent(
         call_then_echo('ask_user_question', {'questions': QUESTION}, 'q1', 'child done', observed),
