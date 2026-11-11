@@ -594,6 +594,16 @@ def test_infer_model(env: TestEnv):
     assert model.profile.get('supports_image_input') is True
 
 
+@pytest.mark.parametrize('provider', ['google', 'google-decisions'])
+def test_provider_by_name(env: TestEnv, provider: Literal['google', 'google-decisions']):
+    """A provider name creates a `GoogleProvider` for the Gemini API, which reads `GOOGLE_API_KEY`."""
+    env.set('GOOGLE_API_KEY', 'test-key')
+
+    model = GoogleDecisionsModel(MODEL_NAME, provider=provider)
+
+    assert model.base_url == 'https://generativelanguage.googleapis.com/'
+
+
 class OtherProvider(Provider[httpx2.AsyncClient]):
     @property
     def name(self) -> str:
