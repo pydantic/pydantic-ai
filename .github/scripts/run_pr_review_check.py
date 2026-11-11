@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Literal, TextIO
 from urllib.parse import quote
 
-from douwebot_opencode_result import final_text
+from douwebot_opencode_result import final_text, rejection_reason
 from douwebot_opencode_run import check_symlinks, run_with_fallback
 from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
@@ -229,10 +229,10 @@ def check_result(
     else:
         try:
             result = ModelResult.model_validate_json(final_text(stream))
-        except (ValueError, ValidationError):
+        except (ValueError, ValidationError) as error:
             if not at_step_budget:
                 # The error would repeat the answer, private report included, into the public job log.
-                raise ValueError('The review answer does not match its schema') from None
+                raise ValueError(f'The review answer was rejected: {rejection_reason(error)}') from None
             coverage = f'Review stopped at its step budget of {check.max_steps}.'
         else:
             # The result artifact is public, and a finding on a line the pull request did not change can describe a

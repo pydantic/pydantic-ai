@@ -170,13 +170,18 @@ def test_engine_failure_concludes_as_agent_failure(detection_dir: Path, monkeypa
     assert status(detection_dir) == 'THREAT_DETECTION_STATUS: reason=engine_error exit=2'
 
 
-def test_retry_recovers_from_an_incomplete_stream(detection_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A run that stops without a final message is retried; an invalid verdict is not."""
+def test_retry_recovers_from_an_incomplete_stream(
+    detection_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A run that stops without a final message is retried, and the job log says why; an invalid verdict is not."""
     invoked = answer(monkeypatch, 'THREAT_DETECTION_RESULT:' + json.dumps(CLEAN), incomplete_runs=1)
 
     gh_aw_opencode_detect.main()
 
     assert len(invoked) == 2
+    assert 'OpenCode threat detection attempt 1 failed: OpenCode review did not complete' in (
+        capsys.readouterr().out.splitlines()
+    )
     streams = (detection_dir.parent / 'runner-temp').glob('gh-aw-opencode-detector-*.ndjson')
     assert sorted(stream.name for stream in streams) == [
         'gh-aw-opencode-detector-1.ndjson',
@@ -232,8 +237,9 @@ def test_deepinfra_failure_names_its_error_type(
     with pytest.raises(SystemExit):
         gh_aw_opencode_detect.main()
 
-    assert capsys.readouterr().out.splitlines()[-2:] == [
+    assert capsys.readouterr().out.splitlines()[-3:] == [
         'OpenCode run on deepinfra/deepseek-ai/DeepSeek-V4.1-Flash failed with error type provider.auth, status 401.',
+        'OpenCode threat detection attempt 1 failed: CalledProcessError',
         'THREAT_DETECTION_STATUS: reason=engine_error exit=2',
     ]
 

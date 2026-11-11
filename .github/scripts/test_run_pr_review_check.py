@@ -38,11 +38,11 @@ WORKSPACE = Path(__file__).parents[2]
 CHANGED = {'a.py': frozenset({('RIGHT', 3)})}
 
 
-def _stream(tmp_path: Path, text: str) -> Path:
+def _stream(tmp_path: Path, text: str, *, finish: str = 'stop') -> Path:
     stream = tmp_path / 'review.ndjson'
     events = [
         {'type': 'text', 'part': {'messageID': 'msg_final', 'text': text}},
-        {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop'}},
+        {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': finish}},
     ]
     stream.write_text('\n'.join(json.dumps(event) for event in events), encoding='utf-8')
     return stream
@@ -336,10 +336,30 @@ def test_unparseable_answer_at_the_step_budget_is_incomplete(tmp_path: Path) -> 
     assert (result.outcome, result.findings) == ('INCOMPLETE', [])
 
 
-def test_invalid_answer_under_the_budget_fails(tmp_path: Path) -> None:
-    """A malformed answer is a reviewer error."""
-    with pytest.raises(ValueError):
-        check_result(CHECK, ['a.py'], _stream(tmp_path, 'Still reading.'), Usage(steps=1), changed=CHANGED)
+@pytest.mark.parametrize(
+    ('text', 'finish', 'reason'),
+    [
+        pytest.param('Still reading.', 'stop', 'validation failed: json_invalid', id='not-json'),
+        pytest.param('{"outcome": "COMPLETE"}', 'stop', 'validation failed: missing', id='not-the-schema'),
+        pytest.param(_result('a.py'), 'tool-calls', 'OpenCode review did not stop normally', id='not-stopped'),
+    ],
+)
+def test_rejected_answer_under_the_budget_fails_with_its_reason(
+    tmp_path: Path, text: str, finish: str, reason: str
+) -> None:
+    """A rejected answer is a reviewer error, and the error says why without repeating the answer."""
+    with pytest.raises(ValueError) as error:
+        check_result(CHECK, ['a.py'], _stream(tmp_path, text, finish=finish), Usage(steps=1), changed=CHANGED)
+    assert str(error.value) == f'The review answer was rejected: {reason}'
+
+
+def test_undecodable_stream_names_only_its_error_type(tmp_path: Path) -> None:
+    """A decoding error describes the bytes it read, so only its type reaches the job log."""
+    stream = tmp_path / 'review.ndjson'
+    stream.write_bytes(b'\xff pre-existing issue\n')
+    with pytest.raises(ValueError) as error:
+        check_result(CHECK, ['a.py'], stream, Usage(steps=1), changed=CHANGED)
+    assert str(error.value) == 'The review answer was rejected: UnicodeDecodeError'
 
 
 def test_malformed_answer_stays_out_of_the_job_log(tmp_path: Path) -> None:
