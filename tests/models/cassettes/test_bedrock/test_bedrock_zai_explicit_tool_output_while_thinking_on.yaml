@@ -1,0 +1,80 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/zai.glm-5/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 7f959984-6af7-4e04-8ced-4330d50e49fe
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "502"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: What is the capital of France?
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: final_result
+              inputSchema:
+                json:
+                  properties:
+                    city:
+                      type: string
+                    country:
+                      type: string
+                  required:
+                  - city
+                  - country
+                  type: object
+              description: The final response which ends this conversation
+          toolChoice:
+            auto: {}
+        additionalModelRequestFields:
+          reasoning_effort: high
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "959"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1831
+        output:
+          message:
+            content:
+            - reasoningContent:
+                reasoningText:
+                  text: |-
+                    The user is asking about the capital of France. This is a straightforward factual question - the capital of France is Paris. However, I notice that I have a function called "final_result" that takes a city and country as parameters.
+
+                    Looking at the function, it seems like it's designed to provide a final response that ends the conversation, with parameters for "city" and "country". Since the user is asking for the capital of France, I should use this function to provide the answer. The city would be "Paris" and the country would be "France
+            - toolUse:
+                input:
+                  city: Paris
+                  country: France
+                name: final_result
+                toolUseId: tooluse_bGtnNadbNmt4nTpHwGDgGy
+            role: assistant
+        stopReason: tool_use
+        usage:
+          inputTokens: 182
+          outputTokens: 133
+          serverToolUsage: {}
+          totalTokens: 315
+  recorded_at: 2026-11-11T11:21:39.080474+00:00
