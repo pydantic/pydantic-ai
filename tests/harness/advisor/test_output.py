@@ -68,7 +68,7 @@ class TestAdvisorOutput:
 
         await Agent(
             FunctionModel(executor),
-            capabilities=[Advisor(FunctionModel(advisor_model), output_type=bool, mode='local')],
+            capabilities=[Advisor(FunctionModel(advisor_model), output_type=bool, native=False)],
         ).run('Review the plan.')
 
     async def test_custom_output_bypasses_compatible_native_provider(self) -> None:
@@ -91,6 +91,6 @@ class TestAdvisorOutput:
         assert parameters.native_tools == []
         assert [tool.name for tool in parameters.function_tools] == ['advisor']
 
-    def test_native_mode_rejects_custom_output(self) -> None:
-        with pytest.raises(ValueError, match=r"Advisor.output_type is not supported in mode='native'"):
-            Advisor('anthropic:claude-opus-4-8', mode='native', output_type=Decision)
+    def test_native_only_advisor_rejects_custom_output(self) -> None:
+        with pytest.raises(ValueError, match=r'Advisor.output_type is not supported with `local=False`'):
+            Advisor('anthropic:claude-opus-4-8', local=False, output_type=Decision)

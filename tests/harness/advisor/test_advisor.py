@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import AdvisorTool, Agent, RunContext
+from pydantic_ai import AdvisorTool, Agent, RunContext, Tool
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, ModelFallback, PrefixTools
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded, UserError
@@ -83,7 +84,7 @@ class TestAdvisor:
             capabilities=[
                 Advisor(
                     'anthropic:claude-opus-4-8',
-                    mode='native',
+                    local=False,
                     max_uses=3,
                     max_tokens=2048,
                     caching='5m',
@@ -102,9 +103,9 @@ class TestAdvisor:
         )
 
     @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
-    @pytest.mark.parametrize('mode', ['auto', 'native'])
+    @pytest.mark.parametrize('local', [None, False])
     async def test_uses_native_advisor_for_a_renamed_provider_of_the_same_service(
-        self, mode: Literal['auto', 'native']
+        self, local: Literal[False] | None
     ) -> None:
         """An `AnthropicProvider` subclass named `claude-code` still reaches the Anthropic service and its model IDs."""
 
@@ -115,7 +116,7 @@ class TestAdvisor:
 
         model = AnthropicModel('claude-sonnet-4-5', provider=ClaudeCodeProvider(api_key='x'))
         assert model.system == 'claude-code'
-        [factory] = Advisor('anthropic:claude-opus-4-8', mode=mode).get_native_tools()
+        [factory] = Advisor('anthropic:claude-opus-4-8', local=local).get_native_tools()
         assert callable(factory)
         assert factory(RunContext(deps=None, model=model, usage=RunUsage())) == AdvisorTool(model='claude-opus-4-8')
 
@@ -182,7 +183,7 @@ class TestAdvisor:
 
         agent = Agent(
             FunctionModel(executor),
-            capabilities=[Advisor(FunctionModel(advisor_model), mode='local', forward_history=False)],
+            capabilities=[Advisor(FunctionModel(advisor_model), native=False, forward_history=False)],
         )
 
         await agent.run('Review this plan.', conversation_id='conversation-1')
@@ -253,12 +254,12 @@ class TestAdvisor:
         assert seen[0].native_tools == []
         assert [tool.name for tool in seen[0].function_tools] == ['advisor']
 
-    async def test_unsupported_native_profile_rejects_native_mode(self) -> None:
+    async def test_unsupported_native_profile_rejects_native_only_advisor(self) -> None:
         model = _ProviderFunctionModel(
             'anthropic',
             lambda _messages, _info: ModelResponse(parts=[TextPart('done')]),
         )
-        agent = Agent(model, capabilities=[Advisor('anthropic:claude-opus-4-8', mode='native')])
+        agent = Agent(model, capabilities=[Advisor('anthropic:claude-opus-4-8', local=False)])
 
         with pytest.raises(UserError, match=r'Native tool\(s\).*not supported'):
             await agent.run('Review this plan.')
@@ -514,7 +515,7 @@ class TestAdvisor:
             lambda _messages, _info: ModelResponse(parts=[TextPart('done')]),
             supports_advisor=True,
         )
-        agent = Agent(executor, capabilities=[Advisor(advisor_model, mode='native')])
+        agent = Agent(executor, capabilities=[Advisor(advisor_model, local=False)])
 
         with pytest.raises(UserError, match=f'requires a {required_provider} executor'):
             await agent.run('Review this.')
@@ -616,7 +617,7 @@ class TestAdvisor:
                 _ProviderFunctionModel('openrouter', executor, supports_advisor=True),
                 capabilities=[
                     Advisor('openrouter:anthropic/claude-opus-4.8', max_uses=2),
-                    Advisor('openrouter:anthropic/claude-opus-4.8', mode='native'),
+                    Advisor('openrouter:anthropic/claude-opus-4.8', local=False),
                 ],
             )
 
@@ -635,7 +636,7 @@ class TestAdvisor:
                 'Review this plan.',
                 capabilities=[
                     Advisor('openrouter:anthropic/claude-opus-4.8', max_uses=2),
-                    Advisor('openrouter:anthropic/claude-opus-4.8', mode='native'),
+                    Advisor('openrouter:anthropic/claude-opus-4.8', local=False),
                 ],
             )
         # The run can record an unrelated warning first, such as one the garbage collector raises mid-run.
@@ -646,7 +647,7 @@ class TestAdvisor:
             Advisor[None].combine(
                 [
                     Advisor('openrouter:anthropic/claude-opus-4.8', max_uses=2),
-                    Advisor('openrouter:anthropic/claude-opus-4.8', mode='native'),
+                    Advisor('openrouter:anthropic/claude-opus-4.8', local=False),
                 ]
             )
         assert warned[0].filename == __file__
@@ -672,28 +673,28 @@ class TestAdvisor:
 
     def test_rejects_invalid_options(self) -> None:
         model = FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart('done')]))
-        with pytest.raises(ValueError, match=r'Advisor.mode'):
-            Advisor(model, mode='invalid')  # pyright: ignore[reportArgumentType]
         with pytest.raises(ValueError, match=r'Advisor.max_uses must be at least 1'):
             Advisor(model, max_uses=0)
         with pytest.raises(ValueError, match=r'Advisor.max_tokens must be at least 1024'):
             Advisor(model, max_tokens=1023)
-        with pytest.raises(ValueError, match=r"mode='native'.*model name"):
-            Advisor(model, mode='native')
-        with pytest.raises(ValueError, match=r"mode='native'.*model name"):
-            Advisor('test', mode='native')
-        with pytest.raises(ValueError, match=r"mode='native'.*model name"):
-            Advisor('openai:gpt-5.4', mode='native')
-        with pytest.raises(ValueError, match=r"mode='native'.*model name"):
-            Advisor('anthropic:', mode='native')
+        with pytest.raises(ValueError, match=r'local=False.*model name'):
+            Advisor(model, local=False)
+        with pytest.raises(ValueError, match=r'local=False.*model name'):
+            Advisor('test', local=False)
+        with pytest.raises(ValueError, match=r'local=False.*model name'):
+            Advisor('openai:gpt-5.4', local=False)
+        with pytest.raises(ValueError, match=r'local=False.*model name'):
+            Advisor('anthropic:', local=False)
         with pytest.raises(ValueError, match='not supported by OpenRouter'):
-            Advisor('openrouter:anthropic/claude-opus-4.8', mode='native', max_uses=1)
+            Advisor('openrouter:anthropic/claude-opus-4.8', local=False, max_uses=1)
 
     def test_agent_spec_schema_publishes_its_fields(self) -> None:
         definitions = AgentSpec.model_json_schema_with_capabilities([Advisor])['$defs']
 
         assert set(definitions['spec_params_Advisor']['properties']) == {
             'model',
+            'native',
+            'local',
             'mode',
             'max_uses',
             'max_tokens',
@@ -704,7 +705,7 @@ class TestAdvisor:
 
     def test_agent_spec_passes_output_type_through(self) -> None:
         agent = Agent.from_spec(
-            {'model': 'test', 'capabilities': [{'Advisor': {'model': 'test', 'mode': 'local', 'output_type': int}}]},
+            {'model': 'test', 'capabilities': [{'Advisor': {'model': 'test', 'native': False, 'output_type': int}}]},
             custom_capability_types=[Advisor],
         )
 
@@ -719,7 +720,7 @@ class TestAdvisor:
                     {
                         'Advisor': {
                             'model': 'test',
-                            'mode': 'local',
+                            'native': False,
                         }
                     }
                 ],
@@ -730,3 +731,116 @@ class TestAdvisor:
         result = await agent.run('Consult the advisor.')
 
         assert result.usage.requests == 3
+
+
+_MODE_EQUIVALENTS: dict[Literal['auto', 'native', 'local'], Callable[[], Advisor[None]]] = {
+    'auto': lambda: Advisor('anthropic:claude-opus-4-8'),
+    'native': lambda: Advisor('anthropic:claude-opus-4-8', local=False),
+    'local': lambda: Advisor('anthropic:claude-opus-4-8', native=False),
+}
+"""The `native`/`local` spelling of each deprecated `mode`."""
+
+
+class TestAdvisorNativeOrLocal:
+    """`native` and `local` follow the `NativeOrLocalTool` contract, and the deprecated `mode` maps onto them.
+
+    Unit tests: they pin which halves a configuration builds, which no provider recording shows.
+    """
+
+    @pytest.mark.parametrize(
+        ('mode', 'replacement', 'halves'),
+        [
+            ('auto', 'omit `mode`', (True, True)),
+            ('native', 'pass `local=False`', (True, False)),
+            ('local', 'pass `native=False`', (False, True)),
+        ],
+    )
+    def test_deprecated_mode_builds_what_native_and_local_build(
+        self, mode: Literal['auto', 'native', 'local'], replacement: str, halves: tuple[bool, bool]
+    ) -> None:
+        with pytest.warns(
+            HarnessDeprecationWarning, match=rf'`Advisor\(mode={mode!r}\)` is deprecated: {re.escape(replacement)}'
+        ) as warned:
+            deprecated = Advisor[None]('anthropic:claude-opus-4-8', mode=mode)
+        assert warned[0].filename == __file__
+        current = _MODE_EQUIVALENTS[mode]()
+
+        for advisor in (deprecated, current):
+            assert (bool(advisor.get_native_tools()), advisor.get_toolset() is not None) == halves
+            with pytest.warns(HarnessDeprecationWarning, match=r'`Advisor.mode` is deprecated'):
+                assert advisor.mode == mode
+
+    def test_deprecated_mode_rejects_an_unknown_value_or_native_and_local(self) -> None:
+        with pytest.raises(ValueError, match=r"Advisor.mode must be 'auto', 'native', or 'local'"):
+            Advisor('test', mode='invalid')  # pyright: ignore[reportArgumentType]
+        with pytest.raises(UserError, match=r'either the deprecated `mode` or `native`/`local`'):
+            Advisor('anthropic:claude-opus-4-8', mode='native', local=False)
+
+    @pytest.mark.parametrize(('earlier', 'later'), [('native', 'auto'), ('auto', 'native'), ('local', 'native')])
+    def test_merging_deprecated_modes_keeps_the_later_one(
+        self, earlier: Literal['auto', 'native', 'local'], later: Literal['auto', 'native', 'local']
+    ) -> None:
+        """Each `mode` states both halves, so the later one wins outright, as merging the `mode` field did."""
+        with pytest.warns(HarnessDeprecationWarning):
+            capabilities = [Advisor[None]('anthropic:claude-opus-4-8', mode=m) for m in (earlier, later)]
+
+        merged = Advisor[None].combine(capabilities)
+
+        assert isinstance(merged, Advisor)
+        with pytest.warns(HarnessDeprecationWarning):
+            assert merged.mode == later
+
+    def test_merge_keeps_an_explicit_half_the_later_instance_leaves_unset(self) -> None:
+        merged = Advisor[None].combine(
+            [Advisor('anthropic:claude-opus-4-8', local=False), Advisor('anthropic:claude-opus-4-8')]
+        )
+
+        assert isinstance(merged, Advisor)
+        assert merged.get_toolset() is None
+
+    def test_agent_spec_accepts_the_deprecated_mode(self) -> None:
+        with pytest.warns(HarnessDeprecationWarning, match=r"`Advisor\(mode='local'\)` is deprecated"):
+            agent = Agent.from_spec(
+                {'model': 'test', 'capabilities': [{'Advisor': {'model': 'test', 'mode': 'local'}}]},
+                custom_capability_types=[Advisor],
+            )
+
+        [advisor] = [c for c in agent.root_capability.capabilities if isinstance(c, Advisor)]
+        assert advisor.get_native_tools() == []
+
+    def test_local_true_builds_the_advisor_tool(self) -> None:
+        for advisor in (Advisor[None]('test', local=True), Advisor[None]('test')):
+            assert isinstance(advisor.local, Tool)
+            assert advisor.local.name == 'advisor'  # pyright: ignore[reportUnknownMemberType]
+
+    async def test_a_custom_local_tool_replaces_the_advisor_tool(self) -> None:
+        def ask_the_team(prompt: str) -> str:
+            return f'Team says: {prompt}'
+
+        def executor(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if not _has_tool_return(messages):
+                return ModelResponse(parts=[ToolCallPart('ask_the_team', {'prompt': 'ship it?'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(executor), capabilities=[Advisor('anthropic:claude-opus-4-8', local=Tool(ask_the_team))]
+        )
+        result = await agent.run('Plan the deployment.')
+
+        returns = [part.content for m in result.all_messages() for part in m.parts if isinstance(part, ToolReturnPart)]
+        assert returns == ['Team says: ship it?']
+
+    def test_rejects_unsupported_native_and_local_combinations(self) -> None:
+        with pytest.raises(UserError, match=r'both `native` and `local` cannot be False'):
+            Advisor('test', native=False, local=False)
+        with pytest.raises(UserError, match=r'`local=.duckduckgo.` is not supported'):
+            Advisor('test', local='duckduckgo')  # pyright: ignore[reportArgumentType]
+        with pytest.raises(UserError, match=r'native advisor tool, which returns text'):
+            Advisor('test', native=AdvisorTool(model='claude-opus-4-8'), output_type=bool)
+
+    def test_custom_output_consults_locally_on_a_matching_executor(self) -> None:
+        model = _ProviderFunctionModel('anthropic', lambda _m, _i: ModelResponse(parts=[]), supports_advisor=True)
+        [factory] = Advisor('anthropic:claude-opus-4-8', output_type=bool).get_native_tools()
+
+        assert callable(factory)
+        assert factory(RunContext(deps=None, model=model, usage=RunUsage())) is None
