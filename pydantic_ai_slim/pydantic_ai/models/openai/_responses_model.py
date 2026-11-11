@@ -2866,6 +2866,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             type='function_call',
         )
         if self.profile.get('openai_responses_requires_function_call_status_none', False):
+            # The SDK types `status` as a non-null literal, but vLLM before vllm-project/vllm#26706 requires `None`.
             param['status'] = None  # pyright: ignore[reportGeneralTypeIssues]
         if id and should_send_item_id:  # pragma: no branch
             param['id'] = id
