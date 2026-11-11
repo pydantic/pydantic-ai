@@ -549,6 +549,11 @@ _SCREENSHOT_MAX_PIXELS = 'screenshot_max_pixels'
 """The `provider_details` key under which the agent records the most screenshot pixels the call's model takes."""
 
 
+_CALL_LABELS = frozenset({_COORDINATE_GRID, _SCREENSHOT_MAX_SIDE, _SCREENSHOT_MAX_PIXELS})
+"""The `provider_details` keys the agent adds to a `computer` call after the model returned it, which the provider
+never saw."""
+
+
 def _positive(value: object, minimum: int = 1) -> int | None:
     """`value` when it's an `int` (not a `bool`) of at least `minimum`, otherwise `None`."""
     return value if type(value) is int and value >= minimum else None
