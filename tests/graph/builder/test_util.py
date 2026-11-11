@@ -69,7 +69,7 @@ def test_get_callable_name_does_not_stringify_when_name_is_available():
             calls.append('repr')
             raise RuntimeError('__repr__ should not be called')
 
-    # Exercise the guards once so a no-op ``get_callable_name`` could not make
+    # Exercise the guards once so a no-op `get_callable_name` could not make
     # the assertion below pass vacuously.
     guard = NamedCallable()
     with pytest.raises(RuntimeError, match='__str__ should not be called'):
