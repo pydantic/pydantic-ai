@@ -25,7 +25,7 @@ def helper_replies(
     """Answer the helper's runs with this output, put the sandbox in `/home/user`, and echo every other command."""
 
     def respond(command: str, timeout: float | None) -> tuple[str, str, int]:
-        if command.startswith('python3 -c '):
+        if command.startswith('python3 -I -c '):
             return stdout, stderr, exit_code
         if command == 'pwd -P':
             return '/home/user\n', '', 0
@@ -46,7 +46,7 @@ async def test_a_run_mounts_as_root_with_the_keys_only_on_stdin(fake_e2b: FakeE2
     assert result.output == '{"probe":"echo contained\\n"}'
     (sandbox,) = fake_e2b.sandboxes
     (root_call,) = [call for call in sandbox.commands.calls if call.user == 'root']
-    assert root_call.command.startswith('python3 -c ')
+    assert root_call.command.startswith('python3 -I -c ')
     assert (root_call.cwd, root_call.stdin, root_call.background) == ('/', True, True)
     root_handle = sandbox.commands.handles[sandbox.commands.calls.index(root_call)]
     assert [pid for pid, _ in sandbox.commands.stdin_sent] == [root_handle.pid]

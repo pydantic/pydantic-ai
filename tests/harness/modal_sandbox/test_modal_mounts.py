@@ -23,7 +23,7 @@ def helper_replies(fake_modal: FakeModal, stdout: str = '{"recovered": []}\n', e
     """Answer the helper's runs with this output, put the sandbox in `/root`, and echo every other command."""
 
     def respond(argv: list[str], timeout: int | None) -> tuple[bytes, bytes, int]:
-        if argv[4:6] == ['python3', '-c']:
+        if argv[4:7] == ['python3', '-I', '-c']:
             return stdout.encode(), b'', exit_code
         if argv == ['pwd', '-P']:
             return b'/root\n', b'', 0
@@ -37,7 +37,7 @@ def root_runs(sandbox: FakeSandbox) -> list[tuple[list[str], str | None, int | N
     return [
         (call.argv, call.workdir, call.timeout, parse_request(process.stdin.data))
         for call, process in zip(sandbox.exec_calls, sandbox.processes)
-        if call.argv[4:6] == ['python3', '-c']
+        if call.argv[4:7] == ['python3', '-I', '-c']
     ]
 
 

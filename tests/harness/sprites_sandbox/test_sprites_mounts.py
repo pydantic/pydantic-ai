@@ -67,7 +67,7 @@ async def test_a_run_mounts_through_sudo_with_the_keys_only_on_stdin(
 
     assert result.output == '{"probe":"contained\\n"}'
     assert sudo.argv[:4] == ['-n', '--', 'sh', '-c'] and '/dev/fuse' in sudo.argv[4]
-    assert sudo.argv[5:8] == ['sh', 'python3', '-c']
+    assert sudo.argv[5:9] == ['sh', 'python3', '-I', '-c']
     assert sudo.request['working_dir'] == str(transport.root.resolve())
     assert sudo.request['mounts'][0]['keys']['secret_access_key'] == 'the-secret-key'
     (root_exec,) = [socket for socket in transport.execs if 'sudo' in socket.query['cmd']]
