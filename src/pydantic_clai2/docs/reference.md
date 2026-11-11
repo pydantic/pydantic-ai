@@ -2711,9 +2711,11 @@ others run turns. Each live session has its own conversation, folder, plugins,
 queued prompts, and running turn, and keeps working while you look at another.
 It works in the folder it was saved in, with that folder's `AGENTS.md`, skills,
 `.clai/settings.json`, and MCP project files. Under `clai2 --web`, **New session**
-asks which folder, offering every worktree of the repositories it has sessions in,
-and completing a typed path to any directory, with every worktree of each repository it finds.
-**New worktree…**, on a folder's row or below the list for the row the arrow keys
+asks which folder. It lists one row per project it has sessions in, which starts
+in the checkout you are in, else the main one; the row's chevron, or → and ←, shows
+and hides every worktree of its repository, to start in one of those instead. It also
+completes a typed path to any directory, listing each repository it finds with its
+worktrees shown. **New worktree…**, on a row or below the list for the row the arrow keys
 select, checks out a new branch of that folder's repository
 first, from the base you name (by default its `HEAD`), in `.worktrees/` as
 [`--worktree`](#git-worktrees) does, and starts the session there; without a branch
