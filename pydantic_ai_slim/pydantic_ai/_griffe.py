@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import re
 from collections.abc import Callable, Iterator
-from inspect import Signature, cleandoc, signature
+from inspect import cleandoc
 from itertools import takewhile
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -28,15 +28,17 @@ def doc_descriptions(
     func: Callable[..., Any],
     *,
     docstring_format: DocstringFormat,
+    has_return_annotation: bool,
 ) -> tuple[str | None, dict[str, str]]:
     """Extract the function description and parameter descriptions from a function's docstring.
 
     The function parses the docstring using the specified format (or infers it if 'auto')
     and extracts both the main description and parameter descriptions. Recognized admonition
     sections (e.g. `Warning:` and `Note:`) are included in the main description in source order,
-    while other sections (e.g. `Raises` and `Examples`) keep their current handling. For a function
-    with a Python return annotation, a Google-style returns section keeps its whole text as the
-    return description instead of splitting a type off at the first colon. If a returns section
+    while other sections (e.g. `Raises` and `Examples`) keep their current handling. When
+    `has_return_annotation` says the function has a Python return annotation, a Google-style returns
+    section keeps its whole text as the return description instead of splitting a type off at the
+    first colon. If a returns section
     is present in the docstring, the main description will be formatted as XML.
 
     Returns:
@@ -75,7 +77,7 @@ def doc_descriptions(
     main_desc = _main_description(sections, docstring_style, iter(warnings_headers))
 
     if return_ := next((p for p in sections if isinstance(p, DocstringSectionReturns)), None):
-        main_desc = _main_desc_with_returns(return_, docstring_style, func, doc, main_desc)
+        main_desc = _main_desc_with_returns(return_, docstring_style, has_return_annotation, doc, main_desc)
 
     return main_desc, params
 
@@ -117,7 +119,7 @@ def _admonition_header(section: DocstringSectionAdmonition, docstring_style: Doc
 def _main_desc_with_returns(
     return_: DocstringSectionReturns,
     docstring_style: DocstringStyle,
-    func: Callable[..., Any],
+    has_return_annotation: bool,
     doc: str,
     main_desc: str,
 ) -> str:
@@ -125,7 +127,7 @@ def _main_desc_with_returns(
     return_statement = return_.value[0]
     return_desc = return_statement.description
     return_type = return_statement.annotation
-    if docstring_style == 'google' and signature(func).return_annotation is not Signature.empty:
+    if docstring_style == 'google' and has_return_annotation:
         # The Python return annotation is authoritative: keep the whole docstring text as the return
         # description instead of griffe splitting a type off at the first colon. Griffe's description is the tail of
         # the written text, which picks out the right section; if none matches, join griffe's parts back up.
