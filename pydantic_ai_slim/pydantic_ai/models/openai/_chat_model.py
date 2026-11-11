@@ -1191,7 +1191,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             and profile.get('openai_chat_thinking_requires_field_on_tool_calls', False)
             and self._request_thinks(model_settings, model_request_parameters)
         )
-        openai_messages = await self._map_message_history(messages, backfill_field, backfill=backfill)
+        openai_messages = await self._map_each_message(messages, backfill_field, backfill=backfill)
         if send_back_thinking == 'auto':
             backfill_sent_thinking_field(openai_messages, profile.get('openai_chat_thinking_field', None))
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
@@ -1233,7 +1233,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         move_leading_cache_breakpoints(openai_messages, text_type='text')
         return openai_messages
 
-    async def _map_message_history(
+    async def _map_each_message(
         self, messages: Sequence[ModelMessage], backfill_field: str | None, *, backfill: bool
     ) -> list[chat.ChatCompletionMessageParam]:
         """Map each message in order.
@@ -1249,12 +1249,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                         openai_messages.append(item)
                 case ModelResponse():
                     backfill = backfill or any(isinstance(part, ThinkingPart) for part in message.parts)
-                    openai_messages.extend(self._map_response_messages(message, backfill_field if backfill else None))
+                    openai_messages.extend(
+                        self._map_response_with_carried_thinking(message, backfill_field if backfill else None)
+                    )
                 case _:
                     assert_never(message)
         return openai_messages
 
-    def _map_response_messages(
+    def _map_response_with_carried_thinking(
         self, message: ModelResponse, backfill_field: str | None
     ) -> list[chat.ChatCompletionMessageParam]:
         """Map a `ModelResponse` to its carried-thinking user message and its assistant message, each when present.
