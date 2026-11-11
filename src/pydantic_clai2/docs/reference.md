@@ -407,7 +407,7 @@ repository.
   "thinking": false,
   "request_limit": 50,
   "plugins": [
-    {"id": "exa", "factory": "pydantic_ai_harness.exa:ExaSearch", "settings": {"num_results": 8}},
+    {"id": "exa", "factory": "pydantic_ai_harness.exa:ExaSearch", "settings": {"max_results": 8}},
     {"id": "repo_context", "factory": "pydantic_clai2.builtin_plugins.repo_context", "settings": {"inventory_tool": true}}
   ]
 }
@@ -2869,7 +2869,7 @@ export EXA_API_KEY=...
 ```
 
 ```text
-/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"max_results": 8}'
 ```
 
 For anything beyond one capability, a plugin is a `Plugin` subclass. Like a
@@ -2889,7 +2889,7 @@ from pydantic_clai2.plugins import Plugin, TurnEnd
 
 class Search(Plugin):
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (ExaSearch(num_results=8),)
+        return (ExaSearch(max_results=8),)
 
     async def on_turn_end(self, event: TurnEnd) -> None:
         self.host.console.bell()

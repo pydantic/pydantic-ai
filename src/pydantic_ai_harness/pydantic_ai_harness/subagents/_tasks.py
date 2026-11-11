@@ -37,8 +37,8 @@ from pydantic_ai_harness.subagents._events import DelegationOutcome
 if TYPE_CHECKING:
     from pydantic_ai_harness.subagents._toolset import SubAgent
 
-_CURRENT: ContextVar[DelegationTasks | None] = ContextVar('delegation_tasks', default=None)
-_CHILD: ContextVar[str | None] = ContextVar('delegation_child', default=None)
+_CURRENT: ContextVar[DelegationTasks | None] = ContextVar('pydantic_ai_harness.subagents.current', default=None)
+_CHILD: ContextVar[str | None] = ContextVar('pydantic_ai_harness.subagents.child', default=None)
 
 NOT_BACKGROUNDABLE = 'This workspace is owned by the parent run and cannot run background children'
 """Why a delegation can't run in the background."""

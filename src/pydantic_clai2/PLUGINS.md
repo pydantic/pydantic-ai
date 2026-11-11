@@ -2612,7 +2612,7 @@ With `uv tool`, extra packages installed using `--with` must be added again afte
 `/update now`. See [Updating](docs/reference.md#updating) for how CLAI installs updates.
 
 ```text
-/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"max_results": 8}'
 ```
 
 The JSON is passed to the constructor, so any keyword `ExaSearch` accepts that
@@ -2635,7 +2635,7 @@ from pydantic_clai2.plugins import Plugin
 
 class Search(Plugin):
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (ExaSearch(num_results=8, text_summary=True),)
+        return (ExaSearch(max_results=8, text_summary=True),)
 ```
 
 A plugin is a subclass of `Plugin`, declared the way a Pydantic AI

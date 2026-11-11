@@ -201,14 +201,14 @@ When a nested tool returns a [`ToolReturn`](../tools-advanced.md#advanced-tool-r
 Printed output is limited to 10 MiB. Exceeding the limit makes `run_code` return a model retry.
 
 Sandbox execution is bounded by `resource_limits`, which defaults to 30 seconds of execution time
-and a 256 MiB heap. `max_duration_secs` applies to each `run_code` snippet: each snippet gets at most that much
+and a 256 MiB heap. `max_duration_seconds` applies to each `run_code` snippet: each snippet gets at most that much
 sandbox time, which is what stops a runaway loop. Time spent awaiting a nested tool is
 excluded. A snippet that hits the limit is stopped and its session is reset, so any variables,
 imports, and definitions have to be recreated. The retry `run_code` returns says so and reports the
 nested calls the snippet already made.
 
 Sleeping is not execution time, so it has its own allowance of the same length: a snippet may sleep
-for at most `max_duration_secs` in total. A sleep that would go past it raises `TimeoutError` in the
+for at most `max_duration_seconds` in total. A sleep that would go past it raises `TimeoutError` in the
 sandbox without waiting, and the session is kept. The allowance still applies inside a Temporal
 workflow, where the execution-time limit is off; only `resource_limits='unlimited'` removes it.
 
@@ -233,10 +233,11 @@ retry. The reported total stays exact whether or not the list was cut, which is 
 model some calls are missing from what it can see. Nothing stops the model from calling those
 tools again.
 
-Override them with `resource_limits={'max_duration_secs': 10, 'max_memory': 134_217_728, 'max_suspensions': 10_000}` and
+Override them with `resource_limits={'max_duration_seconds': 10, 'max_memory': 134_217_728, 'max_suspensions': 10_000}` and
 `max_tool_calls=25`. Pass `resource_limits='unlimited'` only when another execution boundary
 supplies equivalent limits. It removes the time and memory caps, but leaves Monty's default
 suspension budget in place; suspensions cannot be unlimited.
+`max_duration_secs` is the deprecated name of `max_duration_seconds` and still works, with a warning.
 
 Nested tool calls also count toward the run's [`tool_calls_limit`](../agent.md#usage-limits), together
 with the `run_code` call that makes them. Each nested call is checked before it runs, counting the calls
@@ -244,7 +245,7 @@ still pending, and one that would exceed the limit ends the run with
 [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], as a top-level tool call does. Catching
 the error inside the snippet does not prevent this.
 
-When `CodeMode` runs inside a Temporal workflow, it disables `max_duration_secs`, including an
+When `CodeMode` runs inside a Temporal workflow, it disables `max_duration_seconds`, including an
 explicit override. `run_code` is replayed in workflow code, so measuring elapsed time there could
 make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
 time-bounded work behind a Temporal activity instead.
@@ -341,7 +342,7 @@ and one combined result. Hooks on `fetch_item` and other tools called by the cod
 Hooks around `run_code` itself run only after the model has finished writing the call, so
 they cannot approve or change lines that eager mode has already run.
 
-Configured Monty resource limits still apply, but `max_duration_secs` and the sleep allowance
+Configured Monty resource limits still apply, but `max_duration_seconds` and the sleep allowance
 count per fragment: each eager fragment and the remaining code get their own, so an eager
 call can run longer in total than the same code without eager mode. Memory is shared by the
 session.
@@ -598,7 +599,7 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(monty_sandbox=san
 ```
 
 That pool's `request_timeout`, 10 seconds by default, adds a per-turn transport deadline.
-The configured `max_duration_secs` still applies outside Temporal. Inside a Temporal workflow,
+The configured `max_duration_seconds` still applies outside Temporal. Inside a Temporal workflow,
 Code Mode disables that execution timer for deterministic replay; the transport deadline still applies.
 
 Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's
