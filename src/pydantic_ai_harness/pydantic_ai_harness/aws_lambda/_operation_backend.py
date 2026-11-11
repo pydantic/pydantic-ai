@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import fields, replace
+from dataclasses import fields
 from typing import Any, Literal
 
 from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
@@ -13,7 +13,6 @@ from pydantic_ai.durable_exec import (
     DurableOperationId,
     JournalCallableOperationBackend,
     RoleBasedOperationConfig,
-    StepPolicy,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import ToolsetTool
@@ -84,16 +83,6 @@ class AWSLambdaOperationBackend(JournalCallableOperationBackend[StepConfig | Non
     ) -> None:
         super().__init__(agent_name=agent_name, default_model_id=default_model_id, config=config)
 
-    def apply_policy(self, config: StepConfig | None, policy: StepPolicy) -> StepConfig | None:
-        # A step has no timeout of its own here; the function's timeout bounds it, so only retries change.
-        if policy.repeatable:
-            return config
-        return replace(
-            config or StepConfig(),
-            retry_strategy=_never_retry,
-            step_semantics=StepSemantics.AT_MOST_ONCE_PER_RETRY,
-        )
-
     async def execute(
         self,
         *,
@@ -109,12 +98,6 @@ class AWSLambdaOperationBackend(JournalCallableOperationBackend[StepConfig | Non
         # Execution in a durable context guarantees a bridge.
         assert bridge is not None
         return await bridge.run_step(name, body, config)
-
-
-def _never_retry(error: Exception, attempt: int) -> RetryDecision:
-    """The retry strategy of a step that must not run twice."""
-    del error, attempt
-    return RetryDecision.no_retry()
 
 
 def _parse_step_config(config: Mapping[str, Any] | None) -> StepConfig | None:
