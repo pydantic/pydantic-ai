@@ -648,7 +648,7 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
 @pytest.mark.parametrize(
     'blocks,counts,content,metadata,results',
     [
-        # As `keep_screenshots` leaves it: the summary, then the note in place of the screenshot.
+        # As a capability that drops old screenshots leaves it: the summary, then the note in place of the screenshot.
         pytest.param(
             _CLICK_TYPE,
             [1, 1],
