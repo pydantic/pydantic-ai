@@ -91,6 +91,7 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
+from ._computer_grid import describe_grid, record_grid
 from ._context_size import context_input_tokens
 from ._conversation_marks import stored_boundary
 from ._deferred_capabilities import (
@@ -2146,6 +2147,7 @@ async def _after_streamed_model_request(
     response: _messages.ModelResponse,
 ) -> _messages.ModelResponse:
     """Run `after_model_request` on a streamed response, which can no longer be re-attempted."""
+    record_grid(request_context.model, request_context.model_request_parameters, response)
     try:
         with _after_model_request_load_window(run_context, response):
             return await root_capability.after_model_request(
@@ -2849,6 +2851,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             response = failed.log.attach(recovered)
         state.response = response
         capture_model_response_span_context(request_context, response)
+        record_grid(request_context.model, request_context.model_request_parameters, response)
         try:
             with _after_model_request_load_window(run_context, response):
                 return await ctx.deps.root_capability.after_model_request(
@@ -3298,6 +3301,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters = _keep_default_output_mode(
             ctx.state, model, model_settings, request_context.model_request_parameters
         )
+        # Per attempt too, since whether positions are on a grid depends on the model serving it.
+        model_request_parameters = describe_grid(model, model_request_parameters)
         request_context.model_request_parameters = model_request_parameters
 
         run_context.model_settings = model_settings
