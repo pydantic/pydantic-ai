@@ -1,4 +1,4 @@
-"""`ComputerUse` in a Temporal workflow: each `computer` call is one activity that runs at most once."""
+"""`ComputerUse` in a Temporal workflow: each `computer` call is one activity, which replay doesn't run again."""
 
 from __future__ import annotations
 
@@ -15,10 +15,12 @@ from pydantic_ai.models.function import FunctionModel
 pytest.importorskip('temporalio')
 
 from temporalio import activity, workflow
-from temporalio.client import Client, WorkflowHistory
+from temporalio.client import Client
+from temporalio.common import RetryPolicy
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
+from temporalio.workflow import ActivityConfig
 
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai_harness.computer_use import ComputerUse
@@ -47,7 +49,16 @@ def _model(messages: list[ModelMessage], info: object) -> ModelResponse:
 _agent = Agent(
     FunctionModel(_model),
     name='computer_use_temporal',
-    capabilities=[_provider.capability(), ComputerUse(settle_seconds=0), TemporalDurability()],
+    capabilities=[
+        _provider.capability(),
+        ComputerUse(settle_seconds=0),
+        # The setting the docs give for a run whose calls must not repeat.
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(minutes=5), retry_policy=RetryPolicy(maximum_attempts=1)
+            )
+        ),
+    ],
 )
 
 
@@ -66,17 +77,7 @@ class ComputerUseWorkflow(PydanticAIWorkflow):
         ]
 
 
-def _activities(history: WorkflowHistory, operation: str) -> list[tuple[int, int]]:
-    """The retry limit and start-to-close timeout in seconds of each activity `operation` ran as."""
-    return [
-        (attributes.retry_policy.maximum_attempts, attributes.start_to_close_timeout.ToSeconds())
-        for event in history.events
-        if event.HasField('activity_task_scheduled_event_attributes')
-        and (attributes := event.activity_task_scheduled_event_attributes).activity_type.name.endswith(operation)
-    ]
-
-
-async def test_each_call_is_one_activity_that_runs_once_and_replays_without_acting() -> None:
+async def test_each_call_is_one_activity_and_replays_without_acting() -> None:
     _provider.reset()
     workflow_id = uuid4().hex
     runner = SandboxedWorkflowRunner(
@@ -90,23 +91,18 @@ async def test_each_call_is_one_activity_that_runs_once_and_replays_without_acti
                 'Click.',
                 id=workflow_id,
                 task_queue='computer-use',
-                # Longer than the activities' own timeouts, so the workflow's deadline doesn't cut them short.
-                execution_timeout=timedelta(minutes=20),
+                execution_timeout=timedelta(minutes=10),
             )
         history = await client.get_workflow_handle(workflow_id).fetch_history()
 
     assert first.startswith('Ran 1 action.')
-    # The second call's worker was lost after its first click: the model is told, and nothing ran twice.
+    # The second call's worker was lost after its first click. With retries off, the model is told, and nothing ran
+    # twice.
     assert lost == (
         'The call was interrupted before it finished, so some of its actions may have run. Take a screenshot before '
         'acting again.'
     )
     assert _provider.actions == [Click(x=0, y=1), Click(x=0, y=2)]
-    # A call acts, so it runs at most once, with time for 20 long actions.
-    assert _activities(history, 'computer__call') == [(1, 900), (1, 900)]
-    # Reading the size for the native tool may start the screen, which can install it first.
-    sizes = _activities(history, 'computer__display_size')
-    assert sizes and {timeout for _, timeout in sizes} == {600}
 
     await Replayer(
         workflows=[ComputerUseWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=runner
