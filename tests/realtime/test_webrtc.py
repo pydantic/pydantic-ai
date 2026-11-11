@@ -13,6 +13,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -23,7 +24,7 @@ from cassetter import RawRequest, RawResponse
 
 from pydantic_ai import Agent
 from pydantic_ai.agent import WrapperAgent
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities import Hooks, ProcessHistory
 from pydantic_ai.exceptions import (
     ModelConnectionError,
     ModelHTTPError,
@@ -35,6 +36,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import (
     RealtimeClientSecret,
+    RealtimeConnectContext,
     RealtimeModel,
     RealtimeModelSettings,
     RealtimeProviderSession,
@@ -223,6 +225,17 @@ async def test_agent_realtime_offer_carries_the_processed_history() -> None:
     agent = Agent(capabilities=[ProcessHistory(redact)])
     await agent.realtime(model, message_history=history).answer_webrtc_offer(SAMPLE_SDP_OFFER)
     assert model.message_history == redacted
+
+    # History the hooks add to a call bound without any reaches the offer too.
+    model = _SignalingModel()
+    await agent.realtime(model).answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    assert model.message_history is None
+
+    def add(ctx: RunContext[None], connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
+        return replace(connect_context, messages=list[ModelMessage](history))
+
+    await Agent(capabilities=[Hooks(before_realtime_connect=add)]).realtime(model).answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    assert model.message_history == history
 
 
 async def test_agent_realtime_signaling_resolves_bound_run_identity() -> None:

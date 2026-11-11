@@ -587,8 +587,9 @@ class RealtimeConnectContext:
     """The realtime model the session connects to. Read-only."""
 
     messages: list[ModelMessage]
-    """The history the session is seeded with: the `message_history` it was opened with, with its dynamic system
-    prompts re-evaluated, or an empty list when the session starts a new conversation.
+    """The history the session is seeded with: the run's [`ctx.messages`][pydantic_ai.tools.RunContext.messages] once
+    the `for_run` and `before_run` hooks have run (the `message_history` the session was opened with, unless they
+    changed it), with its dynamic system prompts re-evaluated. Empty when the session starts a new conversation.
 
     Unlike [`ModelRequestContext.messages`][pydantic_ai.models.ModelRequestContext.messages], this isn't a view for
     one request: what the hooks leave here is what the provider is seeded with, what

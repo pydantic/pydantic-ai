@@ -4627,7 +4627,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     yielded = True
                 return
 
-            if message_history and not resolved.model_profile.get('supports_session_seeding', False):
+            if resolved.message_history and not resolved.model_profile.get('supports_session_seeding', False):
                 raise exceptions.UserError(
                     f'The {resolved.model.model_name!r} realtime model does not support seeding a session with '
                     '`message_history`.'

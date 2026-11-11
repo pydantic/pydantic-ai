@@ -738,6 +738,34 @@ async def test_before_realtime_connect_decorator_registration() -> None:
     assert calls == ['bare', 'with_timeout']
 
 
+class _NonSeedingModel(_RecordingModel):
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        profile = super().profile
+        profile['supports_session_seeding'] = False
+        return profile
+
+
+async def test_seeding_support_is_checked_against_the_processed_seed() -> None:
+    """A model that can't be seeded is refused the history the hooks leave, not the history the session got."""
+
+    def drop_all(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return []
+
+    model = _NonSeedingModel()
+    agent = Agent(capabilities=[ProcessHistory(drop_all)], deps_type=type(None))
+    await _drain(agent, model, message_history=_SECRET_HISTORY)
+    assert model.messages is not None
+    assert 'secret' not in str(model.messages)
+
+    def add_history(ctx: RunContext[None], connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
+        return replace(connect_context, messages=list(_SECRET_HISTORY))
+
+    agent = Agent(capabilities=[Hooks[None](before_realtime_connect=add_history)], deps_type=type(None))
+    with pytest.raises(UserError, match='does not support seeding a session'):
+        await _drain(agent, _NonSeedingModel())
+
+
 def _replace_model(connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
     return replace(connect_context, model=_RecordingModel())
 
