@@ -805,4 +805,4 @@ def test_image_jpg_is_sent_to_bedrock_and_anthropic_as_jpeg():
     assert BinaryContent(b'jpg', media_type='image/jpg').format == 'jpeg'
     if anthropic_available():
         block = AnthropicModel._map_binary_data(b'jpg', 'image/jpg')  # pyright: ignore[reportPrivateUsage]
-        assert block['source']['media_type'] == 'image/jpeg'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportGeneralTypeIssues]
+        assert block['source']['media_type'] == 'image/jpeg'  # pyright: ignore[reportGeneralTypeIssues]
