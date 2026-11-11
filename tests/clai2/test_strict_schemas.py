@@ -11,7 +11,6 @@ from rich.console import Console
 from pydantic_ai import Agent, NativeOutput, Tool
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.output import OutputSpec
 from pydantic_clai2 import open_stock_agent
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -83,16 +82,24 @@ async def test_session_runs_bind_non_strict_schemas(tmp_path: Path) -> None:
     assert NON_STRICT_SCHEMAS in shell.run_plugins()
 
 
-@pytest.mark.parametrize('output_type', [Answer, NativeOutput(Answer)], ids=['tool', 'native'])
-async def test_output_schemas_are_sent_non_strict(output_type: OutputSpec[Answer]) -> None:
+@pytest.mark.parametrize('provider', PROVIDERS)
+async def test_output_tools_are_sent_non_strict(provider: str) -> None:
     bodies: list[dict[str, Any]] = []
-    agent = Agent(capturing_model('openai', bodies), output_type=output_type, capabilities=[NON_STRICT_SCHEMAS])
+    agent = Agent(capturing_model(provider, bodies), output_type=Answer, capabilities=[NON_STRICT_SCHEMAS])
 
     with pytest.raises(ModelHTTPError):
         await agent.run('go')
 
-    (body,) = bodies
-    if 'response_format' in body:
-        assert body['response_format']['json_schema']['strict'] is False
-    else:
-        assert strict_tools('openai', body) == {'final_result': False}
+    assert strict_tools(provider, bodies[0]) == {'final_result': False}
+
+
+async def test_native_output_is_left_to_the_model() -> None:
+    """Anthropic only offers native structured output in strict mode, so forcing it off would fail the run."""
+    bodies: list[dict[str, Any]] = []
+    model = capturing_model('anthropic', bodies)
+    agent = Agent(model, output_type=NativeOutput(Answer), capabilities=[NON_STRICT_SCHEMAS])
+
+    with pytest.raises(ModelHTTPError):
+        await agent.run('go')
+
+    assert bodies[0]['output_config']['format']['type'] == 'json_schema'

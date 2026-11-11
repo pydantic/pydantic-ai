@@ -2886,8 +2886,9 @@ instructions, and a subdirectory's as the agent works there; `/plugins disable
 repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
 `coder` clears old tool results as the context fills.
-CLAI sends every tool, MCP tool, and output schema with strict mode off, whatever the
-provider, and relies on argument repair and retries instead. The built-in `compaction`
+CLAI sends every tool, MCP tool, and output tool with strict mode off, whatever the
+provider, and relies on argument repair and retries instead. A `NativeOutput` schema keeps
+the provider's mode, as Anthropic and Bedrock only offer native output in strict mode. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
 it summarises older messages before the context runs out and adds `/compact`.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
