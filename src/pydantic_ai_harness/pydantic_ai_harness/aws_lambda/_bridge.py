@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 
 import anyio
 
+from pydantic_ai.durable_exec import record_durable_unit, replay_scope
 from pydantic_ai.exceptions import UserError
 
 if TYPE_CHECKING:
@@ -310,18 +311,32 @@ class StepBridge:
                 if item.error is not None:
                     raise item.error
                 return item.result
+            executed = False
+
+            def body(step_context: Any, item: _StepRequest = item) -> Any:
+                nonlocal executed
+                executed = True
+                return item.body(step_context)
+
             try:
-                value = item.context.run(self._context.step, item.body, name=item.name, config=item.config)
+                value = item.context.run(self._context.step, body, name=item.name, config=item.config)
             except Exception as exc:
                 # An ordinary step failure, already past the SDK's retry policy. Hand it to the agent
                 # so the run can surface or handle it.
+                item.context.run(record_durable_unit, executed=executed)
                 item.reply(False, exc)
             except BaseException as exc:
                 # SDK control flow (suspension, interruption). Resolve the waiting step so the agent
-                # task is not left on a future, then let it out of the handler untouched.
+                # task is not left on a future, then let it out of the handler untouched. A body that
+                # ran before the suspension (a failed attempt awaiting its retry) was real work.
+                if executed:
+                    item.context.run(record_durable_unit, executed=True)
                 item.reply(False, exc)
                 raise
             else:
+                # In the requesting task's context, so it counts for the spans that step ran under, and
+                # before the reply, so they see it when they end.
+                item.context.run(record_durable_unit, executed=executed)
                 item.reply(True, value)
 
 
@@ -570,7 +585,9 @@ def _run_durable_on_agent_loop(
 
     async def run() -> None:
         try:
-            bridge.finish(result=await agent_run())
+            with replay_scope():
+                result = await agent_run()
+            bridge.finish(result=result)
         except BaseException as exc:
             bridge.finish(error=exc)
 
