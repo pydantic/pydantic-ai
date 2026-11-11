@@ -50,7 +50,7 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse, Question, QuestionOption
 from pydantic_ai_harness.filesystem import (
     EditFileCallPart,
-    FileChangeRequestEvent,
+    FileChangeRequestedEvent,
     FileEditedEvent,
     FileSystem,
     FileWrittenEvent,
@@ -160,7 +160,7 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
     assert translate(CommandOutputEvent(tool_call_id='c1', text='a.py\n')) == [ToolOutput(id='c1', text='a.py\n')]
     assert translate(CommandOutputEvent(tool_call_id=None, text='lost')) == []
     finished = CommandFinishedEvent(
-        tool_call_id='c1', pid=1, output_path='o', status_path='s', exit_code=0, truncated=False, total_lines=1
+        tool_call_id='c1', pid=1, output_path='o', status_path='s', exit_code=0, truncated=False, line_count=1
     )
     assert translate(finished) == [ShellDone(id='c1', exit_code=0)]
     assert translate(FunctionToolResultEvent(part=ToolReturnPart('shell', 'a.py', tool_call_id='c1'))) == [
@@ -181,8 +181,8 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
         == []
     )
 
-    def write(call_id: str, *, cancelled: bool = False) -> FileChangeRequestEvent:
-        return FileChangeRequestEvent(
+    def write(call_id: str, *, cancelled: bool = False) -> FileChangeRequestedEvent:
+        return FileChangeRequestedEvent(
             tool_call_id=call_id,
             path='n.py',
             root_dir='/w',
@@ -200,7 +200,7 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
     assert translate(FileWrittenEvent(tool_call_id='w2', path='n.py', root_dir='/w', content_hash='h')) == []
     assert translate(FileWrittenEvent(tool_call_id='w3', path='n.py', root_dir='/w', content_hash='h')) == []
     assert translate(FileWrittenEvent(tool_call_id=None, path='n.py', root_dir='/w', content_hash='h')) == []
-    edit_request = FileChangeRequestEvent(
+    edit_request = FileChangeRequestedEvent(
         tool_call_id='e2', path='a.py', root_dir='/w', operation='edit', diff='', truncated=False
     )
     assert translate(edit_request) == []
@@ -818,7 +818,7 @@ def test_web_flag_reads_a_private_token_file(
     elsewhere = tmp_path / 'checkout'
     elsewhere.mkdir()
 
-    def enter_worktree(*, name: str, headless: bool) -> Worktree:
+    def enter_worktree(*, name: str, headless: bool, store: object) -> Worktree:
         os.chdir(elsewhere)
         return Worktree(path=elsewhere, branch='clai-x', head='0', created=False)
 
