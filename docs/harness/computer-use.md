@@ -59,15 +59,68 @@ Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `requires_approval` | `False` | Ask before any call that does more than look, zoom or wait. Needs a [deferred tool handler](../deferred-tools.md#human-in-the-loop-tool-approval). |
 | `settle_seconds` | `0.5` | Wait this long after acting before the screenshot, so pages can load. |
 | `native` | `True` | Use the model's own computer use tool where it has one, by adding a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] that this tool runs. `False` gives every model this tool and all its actions; on GPT that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
 
-OpenAI can flag a call with safety checks. A flagged call always needs approval, so give the agent a deferred tool
-handler such as [`HandleDeferredToolCalls`](../deferred-tools.md); without one, the run ends with an error.
-
 `ComputerUse` turns on [prompt caching](../capabilities/caching.md), since every request resends the screenshots. Set
 `cache=False` in the model settings to turn it off.
+
+## Approving calls
+
+`ComputerUse` runs every call without asking, except one OpenAI flagged.
+
+OpenAI can attach safety checks to a call, such as `malicious_instructions` when the screen seems to carry instructions
+that could hijack the model. OpenAI's guidance is that a person confirms every flagged call before it runs, so a flagged
+call waits for approval like any [deferred tool](../deferred-tools.md) call. Its `ComputerCallPart` carries the checks in
+`safety_checks`, each a [`SafetyCheck`][pydantic_ai.computer_use.SafetyCheck] with OpenAI's `code` and `message`. Once the call is approved and has
+run, the OpenAI model tells OpenAI the checks were acknowledged. Give the agent a deferred tool handler, or add
+`DeferredToolRequests` to its output types to ask a person; without either, a flagged call ends the run with an error.
+
+To decide in code instead, resolve flagged calls with [`HandleDeferredToolCalls`](../deferred-tools.md#resolving-deferred-calls-with-a-handler):
+
+```python {title="computer_use_safety_checks.py" test="skip" lint="skip"}
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, ToolDenied
+from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai.computer_use import ComputerCallPart
+from pydantic_ai_harness import ComputerUse
+
+
+async def review(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+    approvals: dict[str, bool | ToolDenied] = {}
+    for call in requests.approvals:
+        if isinstance(call, ComputerCallPart) and call.safety_checks:
+            if all(check.code == 'irrelevant_domain' for check in call.safety_checks):
+                approvals[call.tool_call_id] = True
+            else:
+                approvals[call.tool_call_id] = ToolDenied('This page needs a person to check it first.')
+    return requests.build_results(approvals=approvals)
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    capabilities=[my_desktop_sandbox, ComputerUse(), HandleDeferredToolCalls(handler=review)],
+)
+```
+
+To ask before every call that does more than look, raise `ApprovalRequired` from a
+[`before_tool_execute` hook](../hooks.md):
+
+```python {title="computer_use_ask_before_acting.py" test="skip" lint="skip"}
+from pydantic_ai import ApprovalRequired
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.computer_use import ComputerCallPart
+
+hooks = Hooks()
+
+
+@hooks.on.before_tool_execute
+async def ask_before_acting(ctx, *, call, tool_def, args):
+    looking = {'screenshot', 'zoom', 'wait', 'cursor_position'}
+    if isinstance(call, ComputerCallPart) and not ctx.tool_call_approved:
+        if any(action.type not in looking for action in call.actions or []):
+            raise ApprovalRequired
+    return args
+```
 
 ## Screen size
 
@@ -99,8 +152,8 @@ the `computer_use` namespace, read with `@agent.on_event` or `run_stream_events(
 | `ActionsPerformedEvent` | `result`, the call's `ComputerResult`, and `tool_call_id` |
 
 They are emitted once per call, also under durable execution. The same facts stay in the history: the `computer`
-tool's results are `ComputerReturnPart`s, whose `result` is the call's `ComputerResult`, and a call a provider
-flagged is a `ComputerCallPart` whose `safety_checks` say what the person approving it should check. The events add
+tool's results are `ComputerReturnPart`s, whose `result` is the call's `ComputerResult`, and a call OpenAI flagged
+is a `ComputerCallPart` whose `safety_checks` say what the person approving it should check. The events add
 no telemetry spans; core already traces the tool call.
 
 ## Limitations

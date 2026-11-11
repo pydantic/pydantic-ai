@@ -36,7 +36,7 @@ from pydantic_ai.computer_use import (
     Wait,
     Zoom,
 )
-from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
+from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelMessage,
@@ -50,7 +50,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool, ToolDefinition
+from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness._png import png_size
@@ -94,7 +94,7 @@ _GRID = (
 )
 
 _OBSERVING_ACTIONS = frozenset({'wait', 'screenshot', 'zoom', 'cursor_position'})
-"""Action types that change nothing on the screen, so `requires_approval` lets them through."""
+"""Action types that change nothing on the screen, so a read-only workspace allows them."""
 
 _DISPLAY_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakValueDictionary()
 """Locks per display object and per environment ref, and event loop: agents in one process sharing a screen, such as
@@ -524,10 +524,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
-    requires_approval: bool = False
-    """Ask for approval before any call that does more than look, zoom or wait, so the run needs a deferred tool
-    handler."""
-
     settle_seconds: float = 0.5
     """Pause after acting before the next zoom or the closing screenshot, so animations and page loads can finish. A
     `wait` the model asks for comes on top of it."""
@@ -577,8 +573,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise ToolFailed(_READ_ONLY)
         if refused := _unbalanced(actions):
             raise ToolFailed(refused)
-        if self.requires_approval and acts and not ctx.tool_call_approved:
-            raise ApprovalRequired
         made = _the_call(ctx)
         # Scaled the way the model meant it, even when another model runs the call, such as after an approval.
         record = _recorded_space(made[1]) if made else None
@@ -698,14 +692,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         content = [' '.join(summary), *outputs, BinaryImage(data=png, media_type='image/png')]
         return ToolReturn(content, metadata=result)
 
-    @classmethod
-    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
-        """One display: the later configuration wins, but approval is required if any of them requires it."""
-        combined = [c for c in capabilities if isinstance(c, ComputerUse)]
-        # Core only groups instances of the same capability class under one id.
-        assert len(combined) == len(capabilities)
-        return replace(combined[-1], requires_approval=any(c.requires_approval for c in combined))
-
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT]:
         """Turn on prompt caching, unless the run's settings already say whether to cache."""
 
@@ -765,14 +751,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         """
         if not ctx.in_durable_context and _display(ctx) is None:
             raise UserError(_NO_DISPLAY)
-
-    async def before_tool_execute(
-        self, ctx: RunContext[AgentDepsT], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Defer a `computer` call its provider flagged with safety checks until a person approves it."""
-        if isinstance(call, ComputerCallPart) and call.safety_checks and not ctx.tool_call_approved:
-            raise ApprovalRequired
-        return args
 
     async def prepare_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
