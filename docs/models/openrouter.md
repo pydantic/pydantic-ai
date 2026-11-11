@@ -83,6 +83,10 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+### Turning thinking off
+
+On routes that can't turn reasoning off, the unified `thinking=False` setting sends the lowest effort the route accepts instead of `effort='none'`: see [Thinking](../capabilities/thinking.md#openrouter) for which routes get `minimal` and which get `low`.
+
 ### Eager Input Streaming
 
 For Anthropic models via OpenRouter, you can enable eager input streaming to reduce latency for tool calls with large inputs.
@@ -114,7 +118,7 @@ A [mid-conversation system prompt](../message-history.md#mid-conversation-system
 - `openai/` models, except the open-weight `gpt-oss` models, which other hosts serve.
 - `anthropic/` models that [take the message natively](anthropic.md#mid-conversation-system-messages) on Anthropic's own API: Claude Fable 5 and 5.1, Mythos 5, Opus 4.8, Opus 5 and 5.5, Sonnet 5.5 and Haiku 5.5. OpenRouter keeps the message native only right before the model's turn, so Pydantic AI moves it past the user messages and tool results that follow it, as it does on the [Anthropic API](anthropic.md#mid-conversation-system-messages).
 
-Other routes get a `<system>`-tagged user message instead. On Gemini and older Claude models, OpenRouter moves a mid-conversation system message into the top-level system prompt, which invalidates the cached prefix after it.
+Other routes get a `<system>`-tagged user message instead. This keeps prompt caching effective: on Gemini and older Claude models, a native mid-conversation `system` message doesn't stay where it was sent, which would invalidate the cached prefix after it.
 
 ## Prompt Caching
 

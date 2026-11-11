@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast, overloa
 
 import anyio
 
+from pydantic_ai.durable_exec import record_durable_unit, replay_scope
 from pydantic_ai.exceptions import UserError
 
 if TYPE_CHECKING:
@@ -279,7 +280,7 @@ class StepBridge:
         """Checkpoint `operation` as a durable step. Runs on the agent loop."""
         loop = asyncio.get_running_loop()
         body = functools.partial(_run_step_body, loop, name, operation)
-        return await self._request(functools.partial(self._context.step, body, name=name, config=config))
+        return await self._request(functools.partial(_checkpoint, self._context, body, name, config))
 
     async def run_parallel(
         self, name: str, operations: Sequence[Callable[[], Awaitable[T]]], config: ParallelConfig | None = None
@@ -359,6 +360,33 @@ class StepBridge:
                 item.reply(True, value)
 
 
+def _checkpoint(context: DurableStepContext, body: Callable[[Any], Any], name: str, config: StepConfig | None) -> Any:
+    """Run `body` as a step on the consuming thread, reporting whether it ran or was replayed.
+
+    It runs in the requesting task's context, so the report counts for the spans the step ran under,
+    and before the reply, so they see it when they end.
+    """
+    executed = False
+
+    def tracked(step_context: Any) -> Any:
+        nonlocal executed
+        executed = True
+        return body(step_context)
+
+    try:
+        value = context.step(tracked, name=name, config=config)
+    except Exception:
+        record_durable_unit(executed=executed)
+        raise
+    except BaseException:
+        # SDK control flow. A body that ran before it (a failed attempt awaiting its retry) was real work.
+        if executed:
+            record_durable_unit(executed=True)
+        raise
+    record_durable_unit(executed=executed)
+    return value
+
+
 def _run_branch(
     loop: asyncio.AbstractEventLoop,
     context: contextvars.Context,
@@ -373,6 +401,11 @@ def _run_branch(
 
     _schedule(loop, 'a parallel branch', lambda: loop.create_task(_finish(bridge, operation), context=context))
     return bridge.consume()
+
+
+async def _replay_scoped(agent_run: Callable[[], Awaitable[T]]) -> T:
+    with replay_scope():
+        return await agent_run()
 
 
 async def _finish(bridge: StepBridge, operation: Callable[[], Awaitable[Any]]) -> None:
@@ -637,7 +670,9 @@ def _run_durable_on_agent_loop(
 
     def schedule_run() -> None:
         try:
-            tasks.append(run_context.run(lambda: loop.create_task(_finish(bridge, agent_run))))
+            tasks.append(
+                run_context.run(lambda: loop.create_task(_finish(bridge, functools.partial(_replay_scoped, agent_run))))
+            )
         except BaseException as exc:  # pragma: no cover - task creation failing is not reproducible
             # Nothing else will ever call `bridge.finish()` if the run never started, so
             # `consume()` below would block until Lambda timed the function out. Resolve it here.
