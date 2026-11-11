@@ -376,11 +376,12 @@ async def test_compaction_failure_reaches_on_model_request_error():
 async def test_a_response_recovered_from_a_failed_compaction_is_stamped_with_its_model():
     """The serving model is this attempt's before it compacts, so a recovered response names the right model."""
 
+    seen: list[str] = []
+
     async def recover(ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception) -> ModelResponse:
         # `ModelFallback` hands on the attempts it gave up on as a group.
-        if 'compaction rate limited' in repr(getattr(error, 'exceptions', error)):
-            return ModelResponse(parts=[TextPart('recovered')])
-        raise error
+        seen.append(repr(getattr(error, 'exceptions', error)))
+        return ModelResponse(parts=[TextPart('recovered')])
 
     agent = Agent(
         FunctionModel(failure, model_name='primary'),
@@ -394,6 +395,7 @@ async def test_a_response_recovered_from_a_failed_compaction_is_stamped_with_its
     result = await agent.run('hi')
     assert result.output == 'recovered'
     assert result.response.model_id == 'function:fallback'
+    assert len(seen) == 1 and 'compaction rate limited' in seen[0]
 
 
 async def test_compaction_failure_without_fallback_fails_the_run():
