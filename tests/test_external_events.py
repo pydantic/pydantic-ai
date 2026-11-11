@@ -353,10 +353,12 @@ class TestInProcess:
 
     async def test_a_timeout_denies_the_call_and_forgets_the_token(self) -> None:
         tokens: list[str] = []
-        agent = approval_agent(
-            RequestInput[None](lambda ctx, requests, token: tokens.append(token), timeout=timedelta(milliseconds=1)),
-            [],
-        )
+
+        # Async, so it runs before the 1ms timeout can elapse; a sync `ask` runs in a worker thread.
+        async def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+            tokens.append(token)
+
+        agent = approval_agent(RequestInput[None](ask, timeout=timedelta(milliseconds=1)), [])
 
         result = await agent.run('clean up')
 
@@ -400,7 +402,8 @@ class TestInProcess:
         def closed_loop() -> None:
             raise RuntimeError('Event loop is closed')
 
-        def ask(token: str) -> None:
+        # Async, so it runs on the loop before the timeout can elapse; a sync `ask` runs in a worker thread.
+        async def ask(token: str) -> None:
             _pending_events[token].wake = closed_loop
             resolve_external_event(token, 'late')
             with pytest.raises(UserError, match='No wait in this process has this token'):

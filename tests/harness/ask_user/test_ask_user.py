@@ -10,7 +10,7 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import replace
 from functools import partial
-from typing import Literal
+from typing import Any, Literal
 
 import anyio
 import pytest
@@ -671,12 +671,47 @@ class TestResumeToken:
             capabilities=[AskUser(answerer=answerer), *capabilities],
         )
 
+    async def test_runs_repeating_a_tool_call_id_ask_under_different_request_ids(self) -> None:
+        """An answerer serving several runs can hold questions from all of them, so a repeated call ID must not collide."""
+        pending: dict[str, str] = {}
+
+        async def hand_on(ctx: RunContext[None], request: AskUserRequest, token: str) -> AskUserResponse | None:
+            pending[request.id] = token
+            return None
+
+        def answer(picked: str) -> dict[str, Any]:
+            response = AskUserResponse(
+                answers=(
+                    AskUserAnswer(header='Approach', selected=(picked,)),
+                    AskUserAnswer(header='Targets', selected=('db.py',)),
+                )
+            )
+            return TypeAdapter(AskUserResponse).dump_python(response, mode='json')
+
+        outputs: dict[str, str] = {}
+
+        async def run(name: str) -> None:
+            outputs[name] = (await self.agent(hand_on).run('go')).output
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(run, 'first')
+            tg.start_soon(run, 'second')
+            with anyio.fail_after(5):
+                while len(pending) < 2:
+                    await anyio.sleep(0.01)
+            first_id, second_id = pending
+            resolve_external_event(pending[first_id], answer('Patch'))
+            resolve_external_event(pending[second_id], answer('Refactor'))
+
+        assert first_id != second_id and 'c1' not in pending
+        assert sorted(json.loads(output)['Approach'][0] for output in outputs.values()) == ['Patch', 'Refactor']
+
     async def test_the_answer_arrives_through_the_token(self) -> None:
         tokens: list[str] = []
         handed_on = anyio.Event()
 
         async def hand_on(ctx: RunContext[None], request: AskUserRequest, token: str) -> AskUserResponse | None:
-            assert ctx.tool_call_id == request.id == 'c1'
+            assert ctx.tool_call_id == 'c1' and request.id != 'c1'
             tokens.append(token)
             handed_on.set()
             return None
@@ -702,14 +737,15 @@ class TestResumeToken:
         assert json.loads(results[0]) == {'Approach': ['Patch'], 'Targets': ['db.py']}
         (answered,) = observer.answered
         assert answered.response == response
-        assert answered.request_id == 'c1' and not answered.timed_out and not answered.failed
+        assert answered.request_id == observer.requested[0].request.id
+        assert not answered.timed_out and not answered.failed
 
     async def test_an_answer_that_is_not_a_response_fails_the_run_but_still_releases_observers(self) -> None:
         async def hand_on(ctx: RunContext[None], request: AskUserRequest, token: str) -> None:
             resolve_external_event(token, {'answers': 'Patch'})
 
         observer = Observer()
-        with pytest.raises(UserError, match="The answer sent for question 'c1' is not an `AskUserResponse`"):
+        with pytest.raises(UserError, match=r"The answer sent for question '\w+' is not an `AskUserResponse`"):
             await self.agent(hand_on, observer).run('go')
         (answered,) = observer.answered
         assert answered.failed
@@ -748,7 +784,7 @@ class TestRunStream:
             output = await result.get_output()
 
         assert json.loads(output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
-        assert [request.id for request in answerer.requests] == ['c1']
+        assert len(answerer.requests) == 1
 
 
 class TestComposition:
@@ -809,7 +845,7 @@ class TestComposition:
         answer, looked_up = result.output.split(' | ')
         assert json.loads(answer) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
         assert looked_up == 'placeholder'
-        assert [request.id for request in answerer.requests] == ['c1']
+        assert len(answerer.requests) == 1
         assert seen == [['l1']], 'the handler only sees what AskUser left pending'
 
     async def test_the_answerer_gets_the_questions_as_the_tool_received_them(self) -> None:
@@ -901,8 +937,8 @@ class TestComposition:
             raise CallDeferred(kind='question')
 
         assert (await agent.run('go')).output == 'done'
-        assert [request.id for request in first.requests] == ['first']
-        assert [request.id for request in second.requests] == ['second']
+        assert (len(first.requests), len(second.requests)) == (1, 1)
+        assert first.requests[0].id != second.requests[0].id
         assert asked == [['foreign']]
 
     async def test_without_an_answerer_request_input_gets_the_question(self) -> None:
