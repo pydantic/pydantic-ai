@@ -26,6 +26,8 @@ A fourth property covers apps that keep the history on the server instead:
 
 `test_conversation_store_round_trip` covers apps that give the adapter a `conversation_store`: the client hands
 the app the saved entries' ids without adding them to its messages, and its retry replaces the right stored turn.
+`test_conversation_store_regenerate_after_reload` retries from a client hydrated with `dump_messages()`, as after a
+page reload, and checks that the retry still replaces the stored turn.
 
 Properties 1 and 2 compare histories after the adapter's `sanitize_messages()`, so parts the server owns and
 never trusts from a client (its system prompt, by default) count as kept. The projection drops only part fields

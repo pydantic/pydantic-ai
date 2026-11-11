@@ -1238,7 +1238,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           no trusted message-level carrier for framework or provider state; general client-controlled
           metadata must not be restored as server-side state. The one thing `load_messages` keeps in
           the reserved `__pydantic_ai__` namespace is the AG-UI message id, which comes back on the
-          last chat message dumped from each `ModelMessage`, never on an activity message dumped after it,
+          last chat message dumped from each `ModelMessage`, never on an activity message dumped beside one,
           or on the last activity message when the message dumps to nothing else.
         - A response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] comes back,
           with its `provider_name`, only from a part that carries the response's `provider_name`: a
