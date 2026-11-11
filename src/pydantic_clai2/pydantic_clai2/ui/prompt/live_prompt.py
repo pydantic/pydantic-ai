@@ -458,6 +458,7 @@ class LivePrompt:
         """Use the prerequisite's held-entry lifecycle, retaining the entire earlier composer."""
         if self._editing is not None:
             self.stop_editing()
+        self.questions.focused = self.questions.routing = False
         self._action_draft = self.buffer
         self._shelved_draft = self.buffer.text
         self._edit(entry)
@@ -1014,11 +1015,11 @@ class LivePrompt:
         controls = self.input_control_frame(width=width, height=height)
         if controls is not None:
             return controls
-        if width < 6 or height < 7:
+        if width < 6 or height < 6 + (self._editing is not None):
             self._panel_shown = False
             return tuple(self.buffer.rows(width=width, limit=1))
         # `paint` keeps `height - 2` rows; the title, one draft row, the rule, and the footer need four.
-        room = height - 7
+        room = height - 6
         limit = max(1, height // 6)
         question_rows = list(
             self.questions.rows(
@@ -1029,7 +1030,12 @@ class LivePrompt:
         if question_rows:
             panel = [*question_rows, *panel]
         self._panel_shown = bool(panel)
-        rows = _capped(panel, limit=max(limit, len(question_rows)), room=room, more=muted + '+{} more' + reset)
+        rows = _capped(
+            panel,
+            limit=max(limit, len(question_rows)),
+            room=room - (self._editing is not None),
+            more=muted + '+{} more' + reset,
+        )
         queued = [
             muted
             + truncate(
@@ -1058,7 +1064,7 @@ class LivePrompt:
         # The pinned row only takes a spare row: `paint` keeps `height - 2` rows, and the title,
         # one draft row, the rule, and the footer come first.
         pinned = self.pinned() if height - len(rows) - 5 >= 1 else ''
-        inner = max(1, height - len(rows) - 5 - bool(pinned))
+        inner = max(1, height - len(rows) - 4 - bool(pinned))
         popup_want = min(6, len(self._completions))
         draft = self.buffer.rows(width=width, limit=max(1, min(height // 3, inner - popup_want)))
         rows.extend(draft)
@@ -1072,8 +1078,10 @@ class LivePrompt:
         rows.append(muted + '─' * width + reset)
         if pinned:
             rows.append(truncate(pinned, width) + reset)
-        rows.append(muted + truncate(self.input_hint(), width) + reset)
         rows.append(muted + truncate(self._footer(muted=muted), width) + reset)
+        # Hints use spare space, without displacing the draft, pinned status, or pending work.
+        if len(rows) < height - 2:
+            rows.insert(-1 - bool(pinned), muted + truncate(self.input_hint(), width) + reset)
         return tuple(rows)
 
     def working_hint(self) -> str:

@@ -1015,6 +1015,58 @@ async def test_image_answer_notice_clears_for_new_routing_or_question(boundary: 
             tasks.cancel_scope.cancel()
 
 
+async def test_queue_edit_save_cannot_confirm_a_previously_focused_approval() -> None:
+    async with editor() as (live, _, _):
+        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console)
+        responses: list[AskUserResponse] = []
+
+        async def ask() -> None:
+            responses.append(await answerer.ask_approval(permission_request()))
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await anyio.wait_all_tasks_blocked()
+            live.submit('queued')
+            live.feed('f2')
+            await anyio.lowlevel.checkpoint()
+            live.feed('f4')
+            await anyio.lowlevel.checkpoint()
+            live.feed('e')
+            assert not live.questions.focused and not live.questions.routing
+            live.buffer.replace('edited')
+            live.feed('enter')
+            await anyio.wait_all_tasks_blocked()
+            assert responses == [] and live.queued_messages == ('edited',)
+            tasks.cancel_scope.cancel()
+
+
+@pytest.mark.parametrize('height', [6, 7, 8, 12, 24])
+@pytest.mark.parametrize('editing', [False, True])
+async def test_input_hints_fit_without_displacing_pinned_status_or_pending_work(height: int, editing: bool) -> None:
+    async with editor() as (live, _, _):
+        live.console.size = (100, height)
+        live.pinned = lambda: 'PINNED ROW'
+
+        def panel(glyph: str) -> list[str]:
+            return ['pending work'] * 5
+
+        live.panel = panel
+        if editing:
+            live.submit('held prompt')
+            live.recall(backwards=True)
+        frame = [Text.from_ansi(row).plain for row in live.frame()]
+        assert len(frame) <= height - 2
+        if height >= 7:
+            assert any(row.startswith('─') for row in frame)
+            if editing:
+                assert "Editing - not queued; won't send until saved" in frame
+        if height >= 12:
+            assert frame[-2] == 'PINNED ROW'
+            assert live.input_hint() in frame
+        else:
+            assert live.input_hint() not in frame
+
+
 async def test_mixed_checkpoint_choice_remains_explicit_between_turns() -> None:
     async with editor() as (live, _, _):
         live.busy_delivery = lambda: 'next-checkpoint'
