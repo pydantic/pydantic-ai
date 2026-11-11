@@ -1,0 +1,24 @@
+name: Install subprocess isolation dependencies
+description: Install the pinned Ubuntu 24.04 bubblewrap and socat packages committed beside this file.
+runs:
+  using: composite
+  steps:
+    # claude-code-action isolates subprocesses with bwrap when `allowed_non_write_users` is set, and
+    # its own best-effort step runs `apt-get install bubblewrap socat`, retrying 3 times on failure.
+    # Installing both here keeps an Ubuntu mirror outage from leaving bwrap missing or spending the
+    # job's timeout on those retries.
+    #
+    # These are noble builds: run every job that uses this action on `ubuntu-24.04`.
+    # Each hash matches the signed noble-updates Packages index. Source packages:
+    #   bubblewrap: http://archive.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_0.9.0-1ubuntu0.3.dsc
+    #   socat: http://archive.ubuntu.com/ubuntu/pool/main/s/socat/socat_1.8.0.0-4ubuntu0.1.dsc
+    - name: Install bubblewrap and socat
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        sha256sum --check --strict <<'EOF'
+        2461f1beee9cb04c8942739fe1a2b37e7b7c2a3d518f0779dc75f9245baa3094  bubblewrap_0.9.0-1ubuntu0.3_amd64.deb
+        46e854289b6b1c97e28be5d9293bea61e8633d00d6a65d9513f019c7232696fe  socat_1.8.0.0-4ubuntu0.1_amd64.deb
+        EOF
+        sudo dpkg -i bubblewrap_0.9.0-1ubuntu0.3_amd64.deb socat_1.8.0.0-4ubuntu0.1_amd64.deb

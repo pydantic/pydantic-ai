@@ -128,7 +128,7 @@ jobs:
   category-classify:
     name: Category Classify
     if: github.event.action == 'opened' || github.event.action == 'synchronize'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -161,9 +161,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install bubblewrap
+      - name: Install bubblewrap and socat
         if: steps.check-label.outputs.has_label == 'false'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        uses: ./.github/actions/install-subprocess-isolation-deps
 
       - name: Classify PR with Claude Code
         if: steps.check-label.outputs.has_label == 'false'
@@ -296,7 +296,7 @@ jobs:
     if: >-
       !cancelled() && needs.prior-findings.outputs.review_url == ''
       && github.event.action == 'labeled' && (github.event.label.name == 'douwebot' || github.event.label.name == 'douwebot:review-agent-config')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -335,8 +335,8 @@ jobs:
       #     Actions secrets from subprocess envs and run them under bubblewrap
       #     PID-namespace isolation, so a read of `/proc/<pid>/environ` -- say via
       #     a fork-committed absolute symlink, which does survive checkout -- does
-      #     not recover them. The action installs bubblewrap itself; the step below
-      #     only front-runs it, since the action's own install is best-effort.
+      #     not recover them. The action's own install is best-effort; the step
+      #     below installs bubblewrap first from pinned packages.
       # See https://gh.io/securely-using-pull_request_target.
       - name: Checkout base ref (trusted; owns the workspace root)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -430,8 +430,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_DIR: pr-head
 
-      - name: Install bubblewrap
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Install bubblewrap and socat
+        uses: ./.github/actions/install-subprocess-isolation-deps
 
       - &douwebot-approval-guard
         name: Validate one-head maintainer request
