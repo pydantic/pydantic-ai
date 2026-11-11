@@ -4244,6 +4244,10 @@ def _without_unsupported_files(part: ToolReturnPart, profile: ModelProfile) -> T
     return replace(part, content=new_items if isinstance(part.content, list) else new_items[0])
 
 
+def _narrowed_media_types(listed: frozenset[str] | None, adapter_media_types: frozenset[str]) -> frozenset[str]:
+    return adapter_media_types if listed is None else listed & adapter_media_types
+
+
 def _narrowed_file_input(
     profile: ModelProfile,
     unsupported: frozenset[FileInputKind],
@@ -4257,26 +4261,20 @@ def _narrowed_file_input(
         supports_video_input=profile.get('supports_video_input', True) and 'video' not in unsupported,
     )
     if (image_media_types := adapter_media_types.get('image')) is not None:
-        narrowed['supported_image_media_types'] = (
-            image_media_types
-            if (listed := profile.get('supported_image_media_types')) is None
-            else listed & image_media_types
+        narrowed['supported_image_media_types'] = _narrowed_media_types(
+            profile.get('supported_image_media_types'), image_media_types
         )
     if (document_media_types := adapter_media_types.get('document')) is not None:
         narrowed['supported_document_media_types'] = (
             profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES) & document_media_types
         )
     if (audio_media_types := adapter_media_types.get('audio')) is not None:
-        narrowed['supported_audio_media_types'] = (
-            audio_media_types
-            if (listed := profile.get('supported_audio_media_types')) is None
-            else listed & audio_media_types
+        narrowed['supported_audio_media_types'] = _narrowed_media_types(
+            profile.get('supported_audio_media_types'), audio_media_types
         )
     if (video_media_types := adapter_media_types.get('video')) is not None:
-        narrowed['supported_video_media_types'] = (
-            video_media_types
-            if (listed := profile.get('supported_video_media_types')) is None
-            else listed & video_media_types
+        narrowed['supported_video_media_types'] = _narrowed_media_types(
+            profile.get('supported_video_media_types'), video_media_types
         )
     return narrowed
 

@@ -1557,9 +1557,12 @@ _audio_format_lookup: dict[str, AudioFormat] = {
     'audio/ogg': 'oga',
     'audio/aiff': 'aiff',
     'audio/aac': 'aac',
+    'audio/mp3': 'mp3',
+    'audio/x-wav': 'wav',
 }
 _image_format_lookup: dict[str, ImageFormat] = {
     'image/jpeg': 'jpeg',
+    'image/jpg': 'jpeg',
     'image/png': 'png',
     'image/gif': 'gif',
     'image/webp': 'webp',

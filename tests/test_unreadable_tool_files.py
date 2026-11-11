@@ -284,7 +284,7 @@ async def test_image_of_listed_media_type_is_sent():
     ],
 )
 async def test_file_of_a_common_alias_is_judged_as_its_media_type(file: BinaryContent, profile: ModelProfile):
-    """OpenAI, Gemini, xAI and Mistral read `image/jpg` as JPEG, so it isn't turned into a note."""
+    """`image/jpg` is judged as JPEG: OpenAI, Gemini, xAI and Mistral read it, and Anthropic and Bedrock are sent `image/jpeg`."""
     sent: list[list[ModelMessage]] = []
     agent = agent_with_tool_file(FunctionModel(calls_get_file_then(sent), profile=profile), file)
 
@@ -528,26 +528,6 @@ GEMINI_IMAGES = [
     'image/png',
     'image/webp',
 ]
-GEMINI_AUDIO = [
-    'audio/aac',
-    'audio/aiff',
-    'audio/flac',
-    'audio/mp4',
-    'audio/mpeg',
-    'audio/ogg',
-    'audio/opus',
-    'audio/wav',
-]
-MISTRAL_IMAGES = [
-    'image/avif',
-    'image/bmp',
-    'image/gif',
-    'image/heic',
-    'image/jpeg',
-    'image/png',
-    'image/tiff',
-    'image/webp',
-]
 
 
 @pytest.mark.parametrize(
@@ -662,7 +642,6 @@ MISTRAL_IMAGES = [
                     'document_media_types': ['application/pdf', 'text/csv', 'text/html', 'text/markdown', 'text/plain'],
                     'audio': False,
                     'video': False,
-                    'image_media_types': MISTRAL_IMAGES,
                 }
             ),
             marks=pytest.mark.skipif(not mistral_available(), reason='mistral not installed'),
@@ -744,7 +723,6 @@ MISTRAL_IMAGES = [
                     'document_media_types': DOCUMENTS_BUT_OFFICE,
                     'audio': True,
                     'video': True,
-                    'audio_media_types': GEMINI_AUDIO,
                     'image_media_types': GEMINI_IMAGES,
                 }
             ),
@@ -820,3 +798,11 @@ def test_vertex_leaves_a_model_without_an_image_set_judged_by_kind():
     gemma = GoogleModel('gemma-3-27b-it', provider=GoogleCloudProvider(project='test', location='us-central1'))
 
     assert 'supported_image_media_types' not in gemma.profile
+
+
+def test_image_jpg_is_sent_to_bedrock_and_anthropic_as_jpeg():
+    """Bedrock names a format and Anthropic validates the media type, so both get the registered spelling."""
+    assert BinaryContent(b'jpg', media_type='image/jpg').format == 'jpeg'
+    if anthropic_available():
+        block = AnthropicModel._map_binary_data(b'jpg', 'image/jpg')  # pyright: ignore[reportPrivateUsage]
+        assert block['source']['media_type'] == 'image/jpeg'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportGeneralTypeIssues]

@@ -4,7 +4,7 @@ import re
 from itertools import chain
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
-from .._file_input import KNOWN_AUDIO_MEDIA_TYPES, KNOWN_DOCUMENT_MEDIA_TYPES, KNOWN_IMAGE_MEDIA_TYPES
+from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, KNOWN_IMAGE_MEDIA_TYPES
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
 from ..native_tools import WebSearchTool
@@ -246,11 +246,8 @@ _GEMINI_IMAGE_MEDIA_TYPES = KNOWN_IMAGE_MEDIA_TYPES | {'image/heic', 'image/heif
 """Images Gemini reads, as checked live on the Gemini API and Vertex AI (2026-11-04).
 
 HEIF is documented at https://ai.google.dev/gemini-api/docs/image-understanding. TIFF is left out because the Gemini
-API rejects it; `with_google_cloud_media_types` adds it back for Vertex AI, which reads it.
+API rejects it; `_with_google_cloud_media_types` adds it back for Vertex AI, which reads it.
 """
-
-_GEMINI_AUDIO_MEDIA_TYPES = KNOWN_AUDIO_MEDIA_TYPES | {'audio/mp4', 'audio/opus'}
-"""Audio Gemini reads, as checked live on the Gemini API and Vertex AI (2026-11-04)."""
 
 _OFFICE_DOCUMENT_MEDIA_TYPES = frozenset(
     {
@@ -329,7 +326,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     return profile
 
 
-def with_google_cloud_media_types(profile: ModelProfile) -> ModelProfile:
+def _with_google_cloud_media_types(profile: ModelProfile) -> ModelProfile:
     """`profile` with the image media types Vertex AI reads beyond the Gemini API: TIFF (checked live, 2026-11-04)."""
     if (image_media_types := profile.get('supported_image_media_types')) is None:
         return profile
@@ -339,13 +336,12 @@ def with_google_cloud_media_types(profile: ModelProfile) -> ModelProfile:
 def google_cloud_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model served by Vertex AI."""
     profile = google_model_profile(model_name)
-    return None if profile is None else with_google_cloud_media_types(profile)
+    return None if profile is None else _with_google_cloud_media_types(profile)
 
 
 def _set_gemini_file_input(profile: ModelProfile, *, is_gemma: bool, is_gemini_2_5: bool) -> None:
     if not is_gemma:
         profile['supported_image_media_types'] = _GEMINI_IMAGE_MEDIA_TYPES
-        profile['supported_audio_media_types'] = _GEMINI_AUDIO_MEDIA_TYPES
     if is_gemini_2_5:
         # Gemini 2.5 answers Word and Excel files with a 500 on the Gemini API and Vertex AI alike, where
         # Gemini 3 reads them (checked live 2026-11-04).

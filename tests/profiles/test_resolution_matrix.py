@@ -784,18 +784,6 @@ def test_google_gemini_3_pro():
                     'image/webp',
                 }
             ),
-            'supported_audio_media_types': frozenset(
-                {
-                    'audio/aac',
-                    'audio/aiff',
-                    'audio/flac',
-                    'audio/mp4',
-                    'audio/mpeg',
-                    'audio/ogg',
-                    'audio/opus',
-                    'audio/wav',
-                }
-            ),
         }
     )
 
@@ -824,18 +812,6 @@ def test_google_gemini_2_5_flash():
                     'image/jpeg',
                     'image/png',
                     'image/webp',
-                }
-            ),
-            'supported_audio_media_types': frozenset(
-                {
-                    'audio/aac',
-                    'audio/aiff',
-                    'audio/flac',
-                    'audio/mp4',
-                    'audio/mpeg',
-                    'audio/ogg',
-                    'audio/opus',
-                    'audio/wav',
                 }
             ),
             'supported_document_media_types': frozenset(
@@ -869,18 +845,6 @@ def test_google_gemini_2_5_flash_image():
                     'image/jpeg',
                     'image/png',
                     'image/webp',
-                }
-            ),
-            'supported_audio_media_types': frozenset(
-                {
-                    'audio/aac',
-                    'audio/aiff',
-                    'audio/flac',
-                    'audio/mp4',
-                    'audio/mpeg',
-                    'audio/ogg',
-                    'audio/opus',
-                    'audio/wav',
                 }
             ),
             'supported_document_media_types': frozenset(
@@ -940,18 +904,6 @@ def test_google_gemini_3_7_flash_thinking_levels():
                     'image/webp',
                 }
             ),
-            'supported_audio_media_types': frozenset(
-                {
-                    'audio/aac',
-                    'audio/aiff',
-                    'audio/flac',
-                    'audio/mp4',
-                    'audio/mpeg',
-                    'audio/ogg',
-                    'audio/opus',
-                    'audio/wav',
-                }
-            ),
         }
     )
 
@@ -991,18 +943,6 @@ def test_mistral_mistral_large():
     assert _normalize(profile) == snapshot(
         {
             'tool_call_id_length': 9,
-            'supported_image_media_types': frozenset(
-                {
-                    'image/avif',
-                    'image/bmp',
-                    'image/gif',
-                    'image/heic',
-                    'image/jpeg',
-                    'image/png',
-                    'image/tiff',
-                    'image/webp',
-                }
-            ),
             'supports_inline_system_prompts': True,
         }
     )
@@ -1015,18 +955,6 @@ def test_mistral_small_latest():
     assert _normalize(profile) == snapshot(
         {
             'tool_call_id_length': 9,
-            'supported_image_media_types': frozenset(
-                {
-                    'image/avif',
-                    'image/bmp',
-                    'image/gif',
-                    'image/heic',
-                    'image/jpeg',
-                    'image/png',
-                    'image/tiff',
-                    'image/webp',
-                }
-            ),
             'supports_thinking': True,
             'supports_inline_system_prompts': True,
         }
@@ -1207,18 +1135,6 @@ def test_mistral_zai_glm_5_3_flash_inline_defs():
     expected = snapshot(
         {
             'tool_call_id_length': 9,
-            'supported_image_media_types': frozenset(
-                {
-                    'image/avif',
-                    'image/bmp',
-                    'image/gif',
-                    'image/heic',
-                    'image/jpeg',
-                    'image/png',
-                    'image/tiff',
-                    'image/webp',
-                }
-            ),
             'supports_inline_system_prompts': True,
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
         }
@@ -1228,18 +1144,6 @@ def test_mistral_zai_glm_5_3_flash_inline_defs():
     assert _normalize(MistralProvider.model_profile('zai-glm-5-30')) == snapshot(
         {
             'tool_call_id_length': 9,
-            'supported_image_media_types': frozenset(
-                {
-                    'image/avif',
-                    'image/bmp',
-                    'image/gif',
-                    'image/heic',
-                    'image/jpeg',
-                    'image/png',
-                    'image/tiff',
-                    'image/webp',
-                }
-            ),
             'supports_inline_system_prompts': True,
         }
     )
@@ -1488,18 +1392,6 @@ def test_bedrock_mistral_large():
     assert _normalize(profile) == snapshot(
         {
             'tool_call_id_length': 9,
-            'supported_image_media_types': frozenset(
-                {
-                    'image/avif',
-                    'image/bmp',
-                    'image/gif',
-                    'image/heic',
-                    'image/jpeg',
-                    'image/png',
-                    'image/tiff',
-                    'image/webp',
-                }
-            ),
             'supported_native_tools': frozenset(),
             'bedrock_tool_result_format': 'json',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
@@ -1875,18 +1767,6 @@ def test_openrouter_google_gemini_3_pro():
                     'image/webp',
                 }
             ),
-            'supported_audio_media_types': frozenset(
-                {
-                    'audio/aac',
-                    'audio/aiff',
-                    'audio/flac',
-                    'audio/mp4',
-                    'audio/mpeg',
-                    'audio/ogg',
-                    'audio/opus',
-                    'audio/wav',
-                }
-            ),
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1948,18 +1828,6 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
                     'image/webp',
                 }
             ),
-            'supported_audio_media_types': frozenset(
-                {
-                    'audio/aac',
-                    'audio/aiff',
-                    'audio/flac',
-                    'audio/mp4',
-                    'audio/mpeg',
-                    'audio/ogg',
-                    'audio/opus',
-                    'audio/wav',
-                }
-            ),
             'openrouter_lowest_reasoning_effort': 'minimal',
             'openai_chat_thinking_field': 'reasoning',
             'openrouter_max_cache_points': None,
@@ -1988,18 +1856,6 @@ def test_openrouter_mistral_large():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
-            'supported_image_media_types': frozenset(
-                {
-                    'image/avif',
-                    'image/bmp',
-                    'image/gif',
-                    'image/heic',
-                    'image/jpeg',
-                    'image/png',
-                    'image/tiff',
-                    'image/webp',
-                }
-            ),
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -2173,18 +2029,6 @@ def test_github_copilot_google_gemini_3_pro():
                     'image/jpeg',
                     'image/png',
                     'image/webp',
-                }
-            ),
-            'supported_audio_media_types': frozenset(
-                {
-                    'audio/aac',
-                    'audio/aiff',
-                    'audio/flac',
-                    'audio/mp4',
-                    'audio/mpeg',
-                    'audio/ogg',
-                    'audio/opus',
-                    'audio/wav',
                 }
             ),
             'openai_chat_supports_max_completion_tokens': True,
@@ -2427,18 +2271,6 @@ def test_azure_mistral_prefix():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
-            'supported_image_media_types': frozenset(
-                {
-                    'image/avif',
-                    'image/bmp',
-                    'image/gif',
-                    'image/heic',
-                    'image/jpeg',
-                    'image/png',
-                    'image/tiff',
-                    'image/webp',
-                }
-            ),
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
             'may_tokenize_special_tokens_in_content': True,
@@ -2455,18 +2287,6 @@ def test_azure_mistral_small_latest():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
-            'supported_image_media_types': frozenset(
-                {
-                    'image/avif',
-                    'image/bmp',
-                    'image/gif',
-                    'image/heic',
-                    'image/jpeg',
-                    'image/png',
-                    'image/tiff',
-                    'image/webp',
-                }
-            ),
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
             'may_tokenize_special_tokens_in_content': True,
@@ -2483,18 +2303,6 @@ def test_azure_ministral_3b():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
-            'supported_image_media_types': frozenset(
-                {
-                    'image/avif',
-                    'image/bmp',
-                    'image/gif',
-                    'image/heic',
-                    'image/jpeg',
-                    'image/png',
-                    'image/tiff',
-                    'image/webp',
-                }
-            ),
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
             'may_tokenize_special_tokens_in_content': True,
@@ -2511,18 +2319,6 @@ def test_azure_magistral_small_latest():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
-            'supported_image_media_types': frozenset(
-                {
-                    'image/avif',
-                    'image/bmp',
-                    'image/gif',
-                    'image/heic',
-                    'image/jpeg',
-                    'image/png',
-                    'image/tiff',
-                    'image/webp',
-                }
-            ),
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_max_completion_tokens': False,
             'supports_thinking': True,
@@ -2913,18 +2709,6 @@ def test_litellm_magistral():
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'tool_call_id_length': 9,
-            'supported_image_media_types': frozenset(
-                {
-                    'image/avif',
-                    'image/bmp',
-                    'image/gif',
-                    'image/heic',
-                    'image/jpeg',
-                    'image/png',
-                    'image/tiff',
-                    'image/webp',
-                }
-            ),
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'may_tokenize_special_tokens_in_content': True,
@@ -2948,18 +2732,6 @@ def test_litellm_mistral_small_latest():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'tool_call_id_length': 9,
-            'supported_image_media_types': frozenset(
-                {
-                    'image/avif',
-                    'image/bmp',
-                    'image/gif',
-                    'image/heic',
-                    'image/jpeg',
-                    'image/png',
-                    'image/tiff',
-                    'image/webp',
-                }
-            ),
             'may_tokenize_special_tokens_in_content': True,
         }
     )
@@ -3558,18 +3330,6 @@ def test_vercel_vertex_gemini():
                     'image/png',
                     'image/tiff',
                     'image/webp',
-                }
-            ),
-            'supported_audio_media_types': frozenset(
-                {
-                    'audio/aac',
-                    'audio/aiff',
-                    'audio/flac',
-                    'audio/mp4',
-                    'audio/mpeg',
-                    'audio/ogg',
-                    'audio/opus',
-                    'audio/wav',
                 }
             ),
             'may_tokenize_special_tokens_in_content': False,

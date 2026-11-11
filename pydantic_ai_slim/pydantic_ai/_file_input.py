@@ -49,6 +49,11 @@ _MEDIA_TYPE_ALIASES = {'image/jpg': 'image/jpeg', 'audio/mp3': 'audio/mpeg', 'au
 """Spellings in common use that providers which read the registered media type also read."""
 
 
+def registered_media_type(media_type: str) -> str:
+    """`media_type` under its registered name when it's one of a few common aliases, such as `image/jpg`."""
+    return _MEDIA_TYPE_ALIASES.get(media_type, media_type)
+
+
 def unsupported_file_input(item: SendableFile, profile: ModelProfile) -> str | None:
     """What `item` is that the model cannot read, such as `'audio files'` or `'image/heic files'`, or `None`.
 
@@ -86,7 +91,7 @@ def unsupported_file_input(item: SendableFile, profile: ModelProfile) -> str | N
 
 
 def _unsupported_media_type(media_type: str, kind: FileInputKind, supported: frozenset[str]) -> str | None:
-    judged_as = _MEDIA_TYPE_ALIASES.get(media_type, media_type)
+    judged_as = registered_media_type(media_type)
     if kind == 'document':
         if judged_as not in KNOWN_DOCUMENT_MEDIA_TYPES:
             return None
