@@ -4964,15 +4964,18 @@ async def test_truncated_output_tool_call_raises_without_retry(mode: str):
     assert calls == 1
 
 
-@pytest.mark.parametrize('rejected_by', ['schema', 'output_validator'])
-def test_output_tool_args_that_parse_but_are_rejected_with_finish_reason_length_are_retried(rejected_by: str):
+@pytest.mark.parametrize(
+    'first',
+    ['{"name": "Paris"}', '["Paris", 2]', '{"name": "Paris", "population": 2}'],
+    ids=['schema', 'non_object', 'output_validator'],
+)
+def test_output_tool_args_that_parse_but_are_rejected_with_finish_reason_length_are_retried(first: str):
     """Only arguments cut off before they're complete are blamed on the token limit: arguments that parse are retried."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         tool_name = info.output_tools[0].name
         if len(messages) > 1:
             return ModelResponse(parts=[ToolCallPart(tool_name, '{"name": "Paris", "population": 3}')])
-        first = '{"name": "Paris"}' if rejected_by == 'schema' else '{"name": "Paris", "population": 2}'
         return ModelResponse(parts=[ToolCallPart(tool_name, first)], finish_reason='length')
 
     agent = Agent(FunctionModel(respond), output_type=ToolOutput(_City))
@@ -4984,6 +4987,32 @@ def test_output_tool_args_that_parse_but_are_rejected_with_finish_reason_length_
         return output
 
     assert agent.run_sync('Hello').output == _City(name='Paris', population=3)
+
+
+def test_truncated_output_tool_call_does_not_override_valid_output_in_same_response():
+    """With `'exhaustive'`, a valid output tool call still wins over a later one the token limit cut off."""
+    calls = 0
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        tool_name = info.output_tools[0].name
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name, '{"name": "Paris", "population": 2}', tool_call_id='valid'),
+                ToolCallPart(tool_name, '{"name": "Lyon", "popu', tool_call_id='cut_off'),
+            ],
+            finish_reason='length',
+        )
+
+    agent = Agent(FunctionModel(respond), output_type=ToolOutput(_City), end_strategy='exhaustive')
+    result = agent.run_sync('Hello')
+    assert result.output == _City(name='Paris', population=2)
+    assert calls == 1
+    tool_returns = [part for part in result.new_messages()[-1].parts if isinstance(part, ToolReturnPart)]
+    assert [(part.tool_call_id, part.content) for part in tool_returns] == snapshot(
+        [('valid', 'Final result processed.'), ('cut_off', 'Output tool not used - output failed validation.')]
+    )
 
 
 def test_truncated_text_output_is_returned():

@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, 
 from weakref import WeakValueDictionary
 
 import anyio
+import pydantic_core
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar
 
@@ -839,10 +840,13 @@ class GraphAgentState:
             and model_response.parts
             and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
             and (call is None or call.tool_call_id == tool_call.tool_call_id)
+            and isinstance(tool_call.args, str)
+            and tool_call.args
         ):
+            # Only JSON that doesn't parse was cut off: complete JSON the schema rejects is retried like any other.
             try:
-                tool_call.args_as_dict(raise_if_invalid=True)
-            except Exception:
+                pydantic_core.from_json(tool_call.args)
+            except ValueError:
                 raise exceptions.IncompleteToolCall(_output.incomplete_tool_call_message(self.last_max_tokens))
 
     def consume_output_retry(
