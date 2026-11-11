@@ -139,18 +139,24 @@ no telemetry spans; core already traces the tool call.
   cuts the resends to about a tenth.
 - Each call is one model request, so long tasks can hit the default [`request_limit`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) of 50.
   Pass higher [`UsageLimits`](https://pydantic.dev/docs/ai/api/pydantic-ai/usage/#pydantic_ai.usage.UsageLimits).
-- Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each call is one durable step that runs at most once,
-  for up to 15 minutes. If it's cut off, the model is told some actions may have run. Temporal and Render never
-  repeat a call; DBOS, and Prefect when a flow is rerun, can repeat one cut off by a crash; Absurd, pgtask and AWS
-  Lambda use their own retry settings. Use `TemporalDurability`, `PrefectDurability` or `DBOSDurability`; the
-  deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
+- Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each call's work on the screen is one durable step, so a finished call isn't
+  run again on replay or recovery. Like any tool with side effects, a call cut off before its step was recorded can
+  run again under the engine's retry settings for capability steps. On Temporal, those are `TemporalDurability`'s
+  `activity_config`, whose default 60-second timeout and unlimited retries apply to every call: raise
+  `start_to_close_timeout` above your longest call, and set `retry_policy=RetryPolicy(maximum_attempts=1)` so a call
+  isn't repeated. When the engine gives up, the model is told some actions may have run. Use `TemporalDurability`,
+  `PrefectDurability` or `DBOSDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
 - On Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure
   [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads).
 - If the display restarts, the model isn't told; its next screenshot shows the new screen.
 - [Instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-binary-content) records every screenshot. Pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
 - [`Advisor(forward_history=True)`](../advisor/) forwards every screenshot; Anthropic refuses one past 600 images.
-- In a [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), Gemini 3 gets its grid only if every model in it does.
+- With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/), a model that answers instead is told
+  its own coordinates, pixels or a grid, and screenshots are sized to fit it too. One that can't take images, or would
+  see the latest screenshot scaled down, ends the run with an error before its request. In a
+  [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), Gemini 3 gets its grid only if every
+  model in it does.
 
 ## API reference
 
