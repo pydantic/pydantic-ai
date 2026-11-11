@@ -1,8 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from collections.abc import Callable
-from typing import Any, cast
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -19,6 +18,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
@@ -80,9 +80,23 @@ with try_import() as imports_successful:
         ('gateway/anthropic', AnthropicProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/converse', BedrockProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
     ]
+    default_url_providers = [
+        CerebrasProvider,
+        CrusoeProvider,
+        DeepSeekProvider,
+        FireworksProvider,
+        GitHubProvider,  # pyright: ignore[reportDeprecated]
+        MetaProvider,
+        NebiusProvider,
+        OpenRouterProvider,
+        OVHcloudProvider,
+        TogetherProvider,
+        VercelProvider,
+    ]
 
 if not imports_successful():
     test_infer_provider_params = []  # pragma: lax no cover
+    default_url_providers = []  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='need to install all extra packages'),
@@ -130,29 +144,27 @@ def test_infer_provider_class(provider: str, provider_cls: type[Provider[Any]], 
 
 
 @pytest.mark.filterwarnings('ignore:`GitHubProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning')
-@pytest.mark.parametrize(
-    'provider',
-    [
-        'cerebras',
-        'crusoe',
-        'deepseek',
-        'fireworks',
-        'github',
-        'meta',
-        'nebius',
-        'openrouter',
-        'ovhcloud',
-        'together',
-        'vercel',
+@pytest.mark.parametrize('provider_cls', default_url_providers)
+def test_provider_base_url_replaces_the_default(
+    provider_cls: type[
+        CerebrasProvider
+        | CrusoeProvider
+        | DeepSeekProvider
+        | FireworksProvider
+        | GitHubProvider  # pyright: ignore[reportDeprecated]
+        | MetaProvider
+        | NebiusProvider
+        | OpenRouterProvider
+        | OVHcloudProvider
+        | TogetherProvider
+        | VercelProvider
     ],
-)
-def test_provider_base_url_replaces_the_default(provider: str):
-    provider_cls = cast(Callable[..., Provider[Any]], infer_provider_class(provider))
+):
     custom = provider_cls(api_key='api-key', base_url='https://gateway.example/v1')
     assert custom.base_url == 'https://gateway.example/v1' != provider_cls(api_key='api-key').base_url
     assert custom.client.base_url == 'https://gateway.example/v1/'
     with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `base_url`'):
-        provider_cls(openai_client=custom.client, base_url='https://gateway.example/v1')
+        provider_cls(openai_client=custom.client, base_url='https://gateway.example/v1')  # pyright: ignore[reportCallIssue,reportArgumentType]
 
 
 @pytest.mark.parametrize('removed_prefix', ['google-gla', 'google-vertex', 'vertexai'])

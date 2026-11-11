@@ -67,7 +67,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/menus/chain_menu.py` | The `/model` picker's chain editors: new chain, models and their order (`edit_chain`), and `rename_chain` |
 | `models/model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
 | `models/profiles.py` | auth profiles: parse `PROVIDER@PROFILE:NAME`, the profile's credential account; read providers through `provider_of`/`base_model`, never `partition(':')` |
-| `models/key_profiles.py` | `/login PROVIDER@PROFILE` for connection and API-key providers, and building a core model from a profile's key |
+| `models/key_profiles.py` | `/login PROVIDER@PROFILE` for connection and API-key providers, and building a core model from a profile's key or a saved per-model `base_url` |
 | `models/accounts.py` | accounts per provider for `/accounts` and `PROVIDER@*`: found from credential files or recorded at `/login`, ordered in the `accounts` table (no secrets) |
 | `ui/menus/accounts_menu.py` | `/accounts` (`AccountsMenu`, `open_accounts_menu`), the add-account flow, and `choose_account`, the account step in `/model add`; adding, renaming, and signing out ask through `Dialogs`, so `accounts_settings_menu`, the `Command.menu` of `/accounts` and `/login`, runs the same steps in the web UI |
 | `ui/menus/key_menu.py` | `/keys`: the terminal list, its add/replace/rename/delete steps asking through `Dialogs`, and `keys_menu`, the same steps as `/keys`' `Command.menu`; secrets never leave it, only names |

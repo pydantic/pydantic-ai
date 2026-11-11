@@ -56,6 +56,8 @@ class ModelSettingsSource:
         """Every form field with its description and any fixed choices."""
         rows: list[FieldRow] = []
         options = model_options(model=self._settings_as)
+        if self.model != self._settings_as:  # A chain or plugin model, whose own provider takes no endpoint.
+            options.pop('base_url', None)
         saved = self._store.model_settings(self.model)
         for key, info in ModelSettingsForm.model_fields.items():
             if key not in options and key not in saved:

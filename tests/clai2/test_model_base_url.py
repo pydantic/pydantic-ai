@@ -239,6 +239,16 @@ async def test_every_account_of_a_model_uses_its_base_url(tmp_path: Path, enviro
             await models.resolve(name)
 
 
+async def test_a_pooled_account_falls_back_to_its_own_base_url(tmp_path: Path, environment: None) -> None:
+    for account in ('openai@home', 'openai@work'):
+        save_codex_credentials(account=account, value=json.dumps({'token': f'sk-{account}'}))
+    store = SettingsStore(tmp_path / 'config.db')
+    store.save_model_settings('openai@work:gpt-5', {'base_url': URL})
+    pooled = await resolver(store).resolve('openai@*:gpt-5')
+    assert isinstance(pooled, FallbackModel)
+    assert [host(model) for model in pooled.models] == ['env.example', 'gateway.example']
+
+
 def test_base_url_is_a_model_setting_that_no_request_carries(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     source = ModelSettingsSource(store, 'openai:gpt-5')
@@ -247,3 +257,8 @@ def test_base_url_is_a_model_setting_that_no_request_carries(tmp_path: Path) -> 
     assert source.apply(row, URL) == 'Saved base_url for openai:gpt-5. Applies when this model is selected.'
     assert store.model_settings('openai:gpt-5') == {'base_url': URL}
     assert ModelSettingsForm(base_url=URL).to_model_settings() is None
+    assert source.problem(row, 'gateway.example/v1') == (
+        'Value error, must be an http:// or https:// URL, such as https://gateway.example/v1'
+    )
+    store.save_chain(name='both', models=['openai:gpt-5', 'openai:gpt-4.1'])
+    assert FieldMenu(ModelSettingsSource(store, 'chain:both', settings_as='openai:gpt-5')).row_for('base_url') is None

@@ -172,10 +172,14 @@ class ModelResolver:
         return await to_thread.run_sync(lambda: pool(store, provider), abandon_on_cancel=True) if store else []
 
     async def _fall_back(self, members: 'list[Account]', name: str, *, base_url: str | None) -> Model | str:
-        """NAME on each account in turn, the next one taking over when a request fails."""
+        """NAME on each account in turn, the next one taking over when a request fails.
+
+        Each account uses the `base_url` saved for NAME, or else the one saved for its own `PROVIDER@PROFILE:NAME`.
+        """
         from pydantic_ai.models.fallback import FallbackModel
 
-        first, *rest = [await self._one_account(member.model(name), base_url=base_url) for member in members]
+        names = [member.model(name) for member in members]
+        first, *rest = [await self._one_account(n, base_url=base_url or await self._base_url(n)) for n in names]
         return FallbackModel(first, *rest) if rest else first
 
     async def accounts(self, args: list[str]) -> str:

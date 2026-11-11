@@ -801,14 +801,16 @@ provider options not listed in the form. Reset `custom_params` to remove all
 pairs. Do not put credentials here: values are stored as plaintext in SQLite.
 
 Set `base_url` to send a model's requests to your own endpoint, such as a corporate
-proxy, an AI gateway, or a self-hosted server. It is saved per model, so two models of
-one provider can use different endpoints, and it wins over the provider's environment
-variable, such as `OPENAI_BASE_URL`. It sets the provider's own endpoint option:
-`azure_endpoint` for Azure, `api_base` for LiteLLM, and `api_host` for xAI, which
-takes the URL's host and port. Every
-account of the model uses it, and `openai-codex` sends its credentials to that host,
-which must be HTTPS. A chain uses each of its models' own `base_url`. A provider with
-no endpoint, such as `sentence-transformers` or a plugin's, fails the turn.
+proxy, an AI gateway, or a self-hosted server. It must be an `http://` or `https://`
+URL. It is saved per model, so two models of one provider can use different endpoints,
+and it wins over the provider's environment variable, such as `OPENAI_BASE_URL`. It
+sets the provider's own endpoint option: `azure_endpoint` for Azure, `api_base` for
+LiteLLM, and `api_host` for xAI, which takes the URL's host and port. Every account of
+the model uses it, unless a pooled account falls back to the one saved for its own
+`PROVIDER@PROFILE:MODEL`. `openai-codex` sends its credentials to that origin, which
+must be HTTPS. A chain uses each of its models' own `base_url`, so its settings and a
+plugin model's have no Base URL row; a provider with no endpoint, such as
+`sentence-transformers`, fails the turn.
 
 For `/set` and `/model add`, Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,
