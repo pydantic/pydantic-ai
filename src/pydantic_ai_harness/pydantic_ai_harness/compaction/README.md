@@ -607,9 +607,9 @@ a decision model like TypeSafe's Jev, needs `model=` set to a language model; wi
 compaction raises a `UserError` saying so. A summary that is empty or only whitespace is retried
 within the summary run's output retries. Exhausting those retries raises `UnexpectedModelBehavior`
 rather than replacing history with an empty summary. A response with `finish_reason='length'` is
-also rejected, even when it contains text. The summary run retries once with the output budget
-restated; if the retry also hits the limit, it raises `UnexpectedModelBehavior`. A truncated summary
-does not replace the history. Its nested summary run inherits the parent usage limits and reserves
+also rejected, even when it contains text, and retried within the same output retries (`retries`,
+one by default) with the output limit restated; exhausting them raises `UnexpectedModelBehavior`.
+A truncated summary does not replace the history. Its nested summary run inherits the parent usage limits and reserves
 one request from a finite request limit for the pending parent request. These limits also apply to
 retries: if the summary run exhausts its budget first, it raises `UsageLimitExceeded` instead. To
 fall back on either failure, set `FallbackCompaction`'s
