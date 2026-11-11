@@ -13,7 +13,7 @@ import secrets
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, TypeVar
+from typing import TypeVar
 
 import anyio
 import pytest
@@ -54,7 +54,7 @@ class LiveSandbox:
     ref: WorkspaceRef
     working_dir: str
     """Where relative mount paths land, as the sandbox's commands see it."""
-    capability: Callable[[Sequence[S3Mount]], AbstractCapability[Any]]
+    capability: Callable[[Sequence[S3Mount]], AbstractCapability[object]]
     """The provider's capability with these mounts, attaching to `ref`."""
     run_as_root: Callable[[str, bytes], Awaitable[CommandResult]]
     """Run a shell script as root with this stdin, outside any capability."""

@@ -8,16 +8,15 @@ Sprite: see `test_mounts_live.py`.
 from __future__ import annotations
 
 import inspect
-import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from pydantic_ai_harness import MountError
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
+from tests.harness.mounts._requests import Request, parse_request
 from tests.harness.mounts.sandbox_fixtures import bucket, probing
 
 from .fake_sprites import SpriteTransport
@@ -43,8 +42,8 @@ class FakeSudo:
         return Path(f'{self.path}.argv').read_text(encoding='utf-8').splitlines()
 
     @property
-    def request(self) -> dict[str, Any]:
-        return json.loads(Path(f'{self.path}.stdin').read_text(encoding='utf-8'))
+    def request(self) -> Request:
+        return parse_request(Path(f'{self.path}.stdin').read_text(encoding='utf-8'))
 
 
 @pytest.fixture

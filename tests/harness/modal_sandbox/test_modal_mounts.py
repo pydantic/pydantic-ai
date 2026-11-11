@@ -6,8 +6,6 @@ The helper itself runs only in a real sandbox: see `test_mounts_live.py`.
 from __future__ import annotations
 
 import inspect
-import json
-from typing import Any
 
 import pytest
 
@@ -15,6 +13,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness import MountError
 from pydantic_ai_harness.modal_sandbox import ModalSandbox
+from tests.harness.mounts._requests import Request, parse_request
 from tests.harness.mounts.sandbox_fixtures import bucket, probing
 
 from .fake_modal import FakeModal, FakeSandbox
@@ -33,10 +32,10 @@ def helper_replies(fake_modal: FakeModal, stdout: str = '{"recovered": []}\n', e
     fake_modal.responder = respond
 
 
-def root_runs(sandbox: FakeSandbox) -> list[tuple[list[str], str | None, int | None, dict[str, Any]]]:
+def root_runs(sandbox: FakeSandbox) -> list[tuple[list[str], str | None, int | None, Request]]:
     """Each helper run's argv, workdir and Modal timeout, with the request it read from stdin."""
     return [
-        (call.argv, call.workdir, call.timeout, json.loads(process.stdin.data))
+        (call.argv, call.workdir, call.timeout, parse_request(process.stdin.data))
         for call, process in zip(sandbox.exec_calls, sandbox.processes)
         if call.argv[4:6] == ['python3', '-c']
     ]

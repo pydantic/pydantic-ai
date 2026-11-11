@@ -6,8 +6,6 @@ The helper itself runs only in a real sandbox: see `test_mounts_live.py`.
 from __future__ import annotations
 
 import inspect
-import json
-from typing import Any
 
 import pytest
 from e2b.exceptions import NotFoundException, SandboxException
@@ -15,6 +13,7 @@ from e2b.exceptions import NotFoundException, SandboxException
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef
 from pydantic_ai_harness import MountError
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox
+from tests.harness.mounts._requests import Request, parse_request
 from tests.harness.mounts.sandbox_fixtures import bucket, probing
 
 from .fake_e2b import FakeE2B, FakeSandbox
@@ -35,8 +34,8 @@ def helper_replies(
     fake_e2b.responder = respond
 
 
-def root_requests(sandbox: FakeSandbox) -> list[dict[str, Any]]:
-    return [json.loads(data) for _, data in sandbox.commands.stdin_sent]
+def root_requests(sandbox: FakeSandbox) -> list[Request]:
+    return [parse_request(data) for _, data in sandbox.commands.stdin_sent]
 
 
 async def test_a_run_mounts_as_root_with_the_keys_only_on_stdin(fake_e2b: FakeE2B) -> None:
