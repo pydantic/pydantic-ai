@@ -1,21 +1,25 @@
 """The Pydantic AI Gateway's reported cost on `RequestUsage.cost`.
 
 The recorded `test_gateway_provider_with_*` cases in `test_gateway.py` cover the cost names deployed gateways
-serve. These cases cover the newer names (`usage.logfire_ai_gateway` and the `logfire-ai-gateway-cost` header) and
-response-cache hits, which no recorded gateway serves yet, by stubbing the HTTP layer underneath the real provider
+serve. These cases cover the newer names (`usage.logfire_ai_gateway` and the `logfire-ai-gateway-cost` header), the
+cost in Google and Bedrock streams, and response-cache hits, which no recorded gateway serves yet, by stubbing the HTTP layer underneath the real provider
 SDK: the SDK's own parsing decides whether the gateway's cost survives.
 """
 
 from __future__ import annotations
 
 import json
+import struct
+import zlib
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
 import httpx2
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, UsageLimitExceeded
+from pydantic_ai import Agent, ModelMessage, ModelResponse, ModelResponsePart, TextPart, UsageLimitExceeded
+from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
@@ -25,6 +29,7 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from botocore.awsrequest import AWSResponse
     from botocore.compat import HTTPHeaders
+    from logfire.testing import CaptureLogfire
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -44,17 +49,37 @@ def _mock_httpx_client(body: dict[str, Any], headers: dict[str, str] | None = No
     )
 
 
-def _mock_sse_client(events: list[dict[str, Any]], *, named: bool) -> httpx2.AsyncClient:
+def _mock_sse_client(events: list[dict[str, Any]], *, named: bool = False, done: bool = False) -> httpx2.AsyncClient:
     content = ''.join(
         (f'event: {event["type"]}\n' if named else '') + f'data: {json.dumps(event)}\n\n' for event in events
     )
-    if not named:
+    if done:
         content += 'data: [DONE]\n\n'
     return httpx2.AsyncClient(
         transport=httpx2.MockTransport(
             lambda _: httpx2.Response(200, content=content.encode(), headers={'content-type': 'text/event-stream'})
         )
     )
+
+
+def _mock_bedrock_provider(operation: str, content: bytes, headers: dict[str, str]) -> BedrockProvider:
+    class _Raw:
+        def stream(self, *_args: Any, **_kwargs: Any):
+            yield content
+
+        def close(self) -> None:
+            pass
+
+    def send(request: Any, **_kwargs: Any) -> AWSResponse:
+        response_headers = HTTPHeaders()
+        for name, value in headers.items():
+            response_headers[name] = value
+        return AWSResponse(request.url, 200, response_headers, _Raw())
+
+    provider = BedrockProvider(region_name='us-east-1', aws_access_key_id='x', aws_secret_access_key='x')
+    # botocore sends a response returned from `before-send` instead of the request; the stubs type handlers as `-> None`.
+    provider.client.meta.events.register(f'before-send.bedrock-runtime.{operation}', send)  # pyright: ignore[reportArgumentType]
+    return provider
 
 
 GATEWAY_COST_BLOCKS = {'logfire_ai_gateway': {'cost': '0.5'}, 'pydantic_ai_gateway': {'cost_estimate': '0.25'}}
@@ -101,7 +126,7 @@ async def test_gateway_reported_cost_openai_stream(allow_model_requests: None):
             'usage': {'prompt_tokens': 1000, 'completion_tokens': 1000, 'total_tokens': 2000, **GATEWAY_COST_BLOCKS},
         },
     ]
-    provider = OpenAIProvider(api_key='mock-api-key', http_client=_mock_sse_client(events, named=False))
+    provider = OpenAIProvider(api_key='mock-api-key', http_client=_mock_sse_client(events, done=True))
     async with Agent(OpenAIChatModel('gpt-4o', provider=provider)).run_stream('hello') as result:
         await result.get_output()
     assert result.usage.cost == snapshot(Decimal('0.5'))
@@ -169,6 +194,72 @@ async def test_gateway_header_cost_google(
     assert result.usage.cost == expected_cost
 
 
+@dataclass
+class GoogleStreamCase:
+    id: str
+    final_part: dict[str, Any]
+    expected_cost: Decimal
+    expected_parts: list[ModelResponsePart]
+
+
+GOOGLE_STREAM_CASES = [
+    # The gateway adds an empty text part to carry the cost, which doesn't become a part of its own.
+    GoogleStreamCase(
+        id='empty-part',
+        final_part={'text': '', 'partMetadata': GATEWAY_COST_BLOCKS},
+        expected_cost=Decimal('0.5'),
+        expected_parts=snapshot([TextPart(content='hi')]),
+    ),
+    # Or it puts the cost on the model's own last part, which can carry a thought signature.
+    GoogleStreamCase(
+        id='thought-signature',
+        final_part={'text': '!', 'thoughtSignature': 'c2lnbmF0dXJl', 'partMetadata': GATEWAY_COST_BLOCKS},
+        expected_cost=Decimal('0.5'),
+        expected_parts=snapshot(
+            [TextPart(content='hi!', provider_name='google', provider_details={'thought_signature': 'c2lnbmF0dXJl'})]
+        ),
+    ),
+    # A response-cache hit is free.
+    GoogleStreamCase(
+        id='cache-hit',
+        final_part={'text': '', 'partMetadata': {'logfire_ai_gateway': {'cost': '0'}}},
+        expected_cost=Decimal('0'),
+        expected_parts=snapshot([TextPart(content='hi')]),
+    ),
+    # Without a reported cost, the genai-prices estimate applies.
+    GoogleStreamCase(
+        id='no-cost',
+        final_part={'text': '!'},
+        expected_cost=Decimal('0.0028'),
+        expected_parts=snapshot([TextPart(content='hi!')]),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', GOOGLE_STREAM_CASES, ids=lambda case: case.id)
+async def test_gateway_reported_cost_google_stream(
+    allow_model_requests: None, capfire: CaptureLogfire, case: GoogleStreamCase
+):
+    """The gateway reports a stream's cost in the `part_metadata` of the final chunk's last part."""
+    chunk = {'modelVersion': 'gemini-2.5-flash', 'responseId': 'resp-1'}
+    events: list[dict[str, Any]] = [
+        {**chunk, 'candidates': [{'content': {'role': 'model', 'parts': [{'text': 'hi'}]}}]},
+        {
+            **chunk,
+            'candidates': [{'content': {'role': 'model', 'parts': [case.final_part]}, 'finishReason': 'STOP'}],
+            'usageMetadata': {'promptTokenCount': 1000, 'candidatesTokenCount': 1000, 'totalTokenCount': 2000},
+        },
+    ]
+    provider = GoogleProvider(api_key='mock-api-key', http_client=_mock_sse_client(events))
+    agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider), capabilities=[Instrumentation()])
+    async with agent.run_stream('hello') as result:
+        await result.get_output()
+    assert result.usage.cost == case.expected_cost
+    assert result.all_messages()[-1].parts == case.expected_parts
+    [request_span] = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'].startswith('chat ')]
+    assert request_span['attributes']['operation.cost'] == float(case.expected_cost)
+
+
 @pytest.mark.parametrize(
     'model_name, headers, expected_cost',
     [
@@ -195,23 +286,74 @@ async def test_gateway_header_cost_bedrock(
         'usage': {'inputTokens': 1000, 'outputTokens': 1000, 'totalTokens': 2000},
         'metrics': {'latencyMs': 10},
     }
-
-    class _Raw:
-        def stream(self, *_args: Any, **_kwargs: Any):
-            yield json.dumps(body).encode()
-
-    def send(request: Any, **_kwargs: Any) -> AWSResponse:
-        response_headers = HTTPHeaders()
-        for name, value in {'content-type': 'application/json', **headers}.items():
-            response_headers[name] = value
-        return AWSResponse(request.url, 200, response_headers, _Raw())
-
-    provider = BedrockProvider(region_name='us-east-1', aws_access_key_id='x', aws_secret_access_key='x')
-    # botocore sends a response returned from `before-send` instead of the request; the stubs type handlers as `-> None`.
-    provider.client.meta.events.register('before-send.bedrock-runtime.Converse', send)  # pyright: ignore[reportArgumentType]
+    provider = _mock_bedrock_provider(
+        'Converse', json.dumps(body).encode(), {'content-type': 'application/json', **headers}
+    )
     agent = Agent(BedrockConverseModel(model_name, provider=provider), model_settings={'max_tokens': 100})
     result = await agent.run('hello')
     assert result.usage.cost == expected_cost
+
+
+def _bedrock_stream_event(event_type: str, payload: dict[str, Any]) -> bytes:
+    """Encode one event in the AWS event stream format that `ConverseStream` answers with."""
+    headers = b''.join(
+        bytes([len(name)]) + name.encode() + b'\x07' + struct.pack('>H', len(value)) + value.encode()
+        for name, value in {
+            ':event-type': event_type,
+            ':content-type': 'application/json',
+            ':message-type': 'event',
+        }.items()
+    )
+    body = json.dumps(payload).encode()
+    prelude = struct.pack('>II', 16 + len(headers) + len(body), len(headers))
+    message = prelude + struct.pack('>I', zlib.crc32(prelude)) + headers + body
+    return message + struct.pack('>I', zlib.crc32(message))
+
+
+@pytest.mark.parametrize(
+    'message_stop, expected_cost',
+    [
+        pytest.param(
+            {'stopReason': 'end_turn', 'additionalModelResponseFields': GATEWAY_COST_BLOCKS}, Decimal('0.5'), id='cost'
+        ),
+        # A response-cache hit is free.
+        pytest.param(
+            {'stopReason': 'end_turn', 'additionalModelResponseFields': {'logfire_ai_gateway': {'cost': '0'}}},
+            Decimal('0'),
+            id='cache-hit',
+        ),
+        # Without a reported cost, the genai-prices estimate applies.
+        pytest.param({'stopReason': 'end_turn'}, Decimal('0.0198'), id='no-cost'),
+    ],
+)
+async def test_gateway_reported_cost_bedrock_stream(
+    allow_model_requests: None, capfire: CaptureLogfire, message_stop: dict[str, Any], expected_cost: Decimal
+):
+    """The gateway reports a stream's cost in `messageStop`, before the `metadata` event that carries the tokens."""
+    content = b''.join(
+        _bedrock_stream_event(event_type, payload)
+        for event_type, payload in [
+            ('messageStart', {'role': 'assistant'}),
+            ('contentBlockDelta', {'contentBlockIndex': 0, 'delta': {'text': 'hi'}}),
+            ('contentBlockStop', {'contentBlockIndex': 0}),
+            ('messageStop', message_stop),
+            (
+                'metadata',
+                {
+                    'usage': {'inputTokens': 1000, 'outputTokens': 1000, 'totalTokens': 2000},
+                    'metrics': {'latencyMs': 10},
+                },
+            ),
+        ]
+    )
+    provider = _mock_bedrock_provider('ConverseStream', content, {'content-type': 'application/vnd.amazon.eventstream'})
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=provider)
+    agent = Agent(model, capabilities=[Instrumentation()])
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == 'hi'
+    assert result.usage.cost == expected_cost
+    [request_span] = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'].startswith('chat ')]
+    assert request_span['attributes']['operation.cost'] == float(expected_cost)
 
 
 def test_gateway_reported_cost_parsing():
