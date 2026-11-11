@@ -333,7 +333,8 @@ def _enter_worktree(*, name: str, headless: bool) -> 'Worktree':
         print(worktree.notice, file=sys.stderr)
     else:
         # Exit cleanup needs a terminal; piped input keeps even an unchanged checkout.
-        worktree = replace(worktree, remove_if_unchanged=worktree.created and sys.stdin.isatty())
+        terminal = sys.stdin.isatty()
+        worktree = replace(worktree, remove_if_unchanged=worktree.created and terminal, remove_if_pushed=terminal)
     os.chdir(worktree.path)
     return worktree
 
@@ -345,16 +346,27 @@ def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':
     worktree = current_worktree()
     if worktree is None or relaunched is None:
         return worktree
-    head, _, new_branch = relaunched.partition(' ')
+    first, _, second = relaunched.partition(' ')
+    created, terminal = first != 'reopened', sys.stdin.isatty()
     return replace(
-        worktree, head=head, created=True, new_branch=new_branch == 'new-branch', remove_if_unchanged=sys.stdin.isatty()
+        worktree,
+        head=first if created else second,
+        created=created,
+        new_branch=second == 'new-branch',
+        remove_if_unchanged=created and terminal,
+        remove_if_pushed=terminal,
     )
 
 
 def _remember_worktree(worktree: 'Worktree | None') -> None:
-    """Hand a checkout exit would remove to the relaunched build, which starts without `--worktree`."""
-    if worktree is not None and worktree.remove_if_unchanged:
-        os.environ[_RELAUNCH_WORKTREE] = f'{worktree.head} new-branch' if worktree.new_branch else worktree.head
+    """Hand a checkout exit may remove to the relaunched build, which starts without `--worktree`."""
+    if worktree is None or not worktree.remove_if_pushed:
+        return
+    head = worktree.head
+    # An older build takes the first word as the commit of a checkout it created; `reopened` never matches, so it asks.
+    os.environ[_RELAUNCH_WORKTREE] = (
+        f'{head} new-branch' if worktree.new_branch else head if worktree.created else f'reopened {head}'
+    )
 
 
 def relaunch_argv(

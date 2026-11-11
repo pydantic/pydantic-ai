@@ -84,10 +84,7 @@ def test_launches_in_new_worktree(repository: Path, launch: Launcher, args: list
         if len(args) == 1 and args[0] in ('-w', '--worktree')
         else workspace.name == 'feature'
     )
-    notice = (
-        f'Worktree: {workspace} (branch: clai-{workspace.name}). '
-        'On interactive exit, removed if clean and pushed, otherwise kept unless removal is confirmed.'
-    )
+    notice = f'Worktree: {workspace} (branch: clai-{workspace.name}). Kept unless removal is confirmed on exit.'
     banner, _, after = result.stdout.partition(notice)
     assert after, result.stdout
     assert banner.strip(), 'the notice comes below the logo, not on the first line'
@@ -182,10 +179,7 @@ def test_headless_worktree_notice_stays_off_stdout(repository: Path, launch: Lau
     # The exit code is not asserted: `TestModel` calls every default tool, which the notice does not depend on.
     result = launch(repository, '-w', 'headless', '-p', 'hello', prompt='')
     workspace = repository / '.worktrees/headless'
-    notice = (
-        f'Worktree: {workspace} (branch: clai-headless). '
-        'On interactive exit, removed if clean and pushed, otherwise kept unless removal is confirmed.'
-    )
+    notice = f'Worktree: {workspace} (branch: clai-headless). Kept unless removal is confirmed on exit.'
     assert notice in result.stderr
     assert 'Worktree' not in result.stdout
 

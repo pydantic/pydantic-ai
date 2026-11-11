@@ -2618,17 +2618,20 @@ On normal interactive exit, CLAI checks the linked worktree for changes:
 uncommitted or untracked files, or a different commit checked out than at launch.
 Ignored files do not count. If nothing changed in a worktree this launch created,
 CLAI removes it without asking, and deletes its `clai-NAME` branch too when this
-launch created that branch and Git agrees it is merged (`git branch -d`). This
-still applies after `/update now` restarts CLAI in the worktree.
+launch created that branch and Git agrees it is merged (`git branch -d`).
 
-CLAI also removes, without asking, any linked worktree that has no uncommitted or
-untracked files and whose commits are all on a remote-tracking branch, even if a
-different commit is checked out than at launch. It keeps the branch and prints the
+CLAI also removes, without asking, a worktree opened with `--worktree`, created or
+reopened, that has no uncommitted or untracked files and whose commits are all on
+a remote-tracking branch, even if a different commit is checked out than at launch.
+It keeps the branch and prints the
 removed path. Pushed commits are judged from the local remote-tracking branches;
 CLAI does not fetch. Ignored files are deleted with the worktree. To keep a
 worktree anyway, lock it with `git worktree lock PATH`, which makes Git refuse the
-removal. An unchanged worktree with unpushed commits that CLAI
-reopened, or that you launched inside, is kept without asking.
+removal. Both rules still apply after `/update now` restarts CLAI in the worktree.
+
+A linked worktree you launched CLAI inside without `--worktree` is never removed
+without asking. If it is unchanged, CLAI keeps it without asking, as it does a
+reopened worktree that is unchanged and has unpushed commits.
 
 Otherwise, if the worktree changed, CLAI asks **Remove this worktree?** with an inline picker:
 **Yes**, **No** (selected by default), or **No, don't ask again for this worktree**.
@@ -3398,7 +3401,7 @@ including `pydantic_ai_harness`. `/reload` refreshes CLAI only, not Harness or c
 even when their source has changed in the same checkout. If new CLAI code imports
 a symbol the running dependency does not have, restart with the same launch options
 and `--resume` to continue the saved session. Keep the worktree if asked to remove it.
-Exit removes a clean worktree with no unpushed commits without asking;
+Exit removes a clean `--worktree` checkout with no unpushed commits without asking;
 run `git worktree lock .` in it first to keep it.
 `/reload` does not rerun the CLI or recursively reload third-party packages. Import-time side effects
 still cannot be undone. Use `/plugins reload NAME` when you only want to reload one
