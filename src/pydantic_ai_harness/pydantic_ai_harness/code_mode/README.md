@@ -760,6 +760,32 @@ for msg in result.all_messages():
             tool_returns = metadata['tool_returns']  # dict[str, ToolReturnPart]
 ```
 
+### Span attributes
+
+A failed `run_code` call ends in a retry, so on its own the trace shows only `retry.cause=model_retry`.
+When the run is instrumented, CodeMode also records what happened on the call's `execute_tool run_code`
+span. It opens no span of its own: the tool call is already spanned, and the work happens inside it.
+
+| Attribute | Value |
+|---|---|
+| `code_mode.budget_exhausted` | whether the snippet asked for more than `max_tool_calls` nested calls, set on every call. A snippet that catches the refusal and finishes still records `true` |
+| `code_mode.error_kind` | set when the call failed, naming what ended it: `type_check` (a diagnostic from the first snippet's type check, including a syntax error in that snippet), `syntax` (a parse error in a snippet that is not type-checked: a later snippet, or a first one when no tool is sandboxed or state was restored from the REPL store), `runtime` (an uncaught exception in the snippet, including a nested tool's error or the `max_tool_calls` refusal), `resource_limit`, `crashed` (the sandbox worker died), `disconnected` (a remote worker's stream ended), `panic` (Monty aborted inside the sandbox), or `host` (a failure in the host-side bindings) |
+| `code_mode.limit` | with `resource_limit`, the Monty sandbox limit that stopped the code: `max_duration_secs`, `max_memory`, or `max_suspensions`. A worker the sandbox stopped for running too long, including a remote worker's turn deadline, is `max_duration_secs` |
+| `code_mode.session_reset` | with `error_kind`, whether the failure discarded a session code had run in, so the next snippet starts without the variables and imports it defined. A reset that only drops the first snippet's type-check stubs records `false` |
+
+A call that ends the run on `UsageLimitExceeded` records no `error_kind`, since core's error on the
+span already says why. The code, the error message and the traceback stay out of these attributes.
+Eager execution can fail a statement before the `run_code` span opens; the failure is then recorded on
+that span when the call is dispatched. The retry eager execution sends when the final code no longer
+matches the statements it already ran has no `error_kind` of its own. It records the budget, and the
+`error_kind` of a statement that had already failed, with `session_reset` saying whether the failure or
+the restart discarded a session code had run in.
+
+Monty has no typed marker for a resource limit, so the limit is read from its error, backed by a
+structural signal where one exists (a duration stop has no traceback). A nested tool's error is
+recorded as a limit only when its `MemoryError` carries Monty's `memory limit exceeded` wording, or
+its `RuntimeError` reads exactly `suspension limit N exceeded`.
+
 ## Recognizing `run_code` calls
 
 The `run_code` tool declares the `'code_mode.run_code'` [tool kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts), so its call parts are promoted to `RunCodeCallPart` (from `pydantic_ai_harness.code_mode`). A hook or history processor can recognize them with `isinstance` instead of matching the tool's name, and read the submitted code from `code` (or all its arguments, validated as `RunCodeArgs`, from `typed_args`):

@@ -24,7 +24,7 @@ from ._streaming import (
     closed_statements,
     decode_partial_args,
 )
-from ._toolset import CodeModeToolset, RunCodeExecution
+from ._toolset import CodeModeToolset, RunCodeExecution, discard_session
 
 
 @dataclass(kw_only=True)
@@ -351,6 +351,9 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
         if tool_args.get('restart', False):
             await self.execution.discard(call)
             if call.execution.usage_limit_exceeded is not None:
+                # No failure is stored alongside a usage limit, so this records only the budget. Otherwise
+                # the restarted run records its own outcome, and a discarded statement's failure is moot.
+                call.execution.record(ctx)
                 raise call.execution.usage_limit_exceeded
             async with self.execution.feed_lock:
                 return await super().call_tool(name, tool_args, ctx, tool)
@@ -360,7 +363,12 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             await self.execution.discard(call)
             run_state = self._run_state
             assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
-            await run_state.reset()
+            session_reset = await discard_session(run_state)
+            # A statement fed early may have failed; the mismatch itself is not a sandbox failure.
+            # A failure that already discarded the session left nothing for this discard to find.
+            if (failure := call.execution.failure) is not None:
+                call.execution.failure = replace(failure, session_reset=failure.session_reset or session_reset)
+            call.execution.record(ctx)
             if call.execution.usage_limit_exceeded is not None:
                 raise call.execution.usage_limit_exceeded
             raise ModelRetry(
@@ -369,12 +377,15 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             )
 
         await self.execution.drain(call)
-        if call.error is not None:
-            raise call.error
-
-        tail = '\n'.join(lines[call.fed_line_count :])
-        async with self.execution.feed_lock:
-            result = await self._execute_code(tail, ctx, run_code_tool, call.execution)
+        try:
+            if call.error is not None:
+                raise call.error
+            tail = '\n'.join(lines[call.fed_line_count :])
+            async with self.execution.feed_lock:
+                result = await self._execute_code(tail, ctx, run_code_tool, call.execution)
+        finally:
+            # A statement fed while the call streamed failed outside this span, so record it here.
+            call.execution.record(ctx)
         return await self._complete(ctx, call.execution, result)
 
     async def feed_fragment(
