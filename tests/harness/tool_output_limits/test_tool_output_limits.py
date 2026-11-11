@@ -847,6 +847,15 @@ class TestFilesInReturnValue:
         assert out.metadata['k'] == 'v'
         assert await store.read(out.metadata['overflow_handle']) == ('A' * 300).encode('utf-8')
 
+    async def test_structured_item_beside_a_file_is_reduced_and_the_file_kept(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        out = await _run(cap, [{'rows': list(range(1_000))}, _IMAGE, b'raw bytes'])
+        assert isinstance(out, list)
+        text, image = out  # pyright: ignore[reportUnknownVariableType]
+        # The JSON of the rows and the bytes, measured together and truncated to fit.
+        assert isinstance(text, str) and 'omitted from the middle' in text and 'of 3,912 chars' in text
+        assert image is _IMAGE
+
     async def test_content_beside_a_file_is_still_reduced(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
         out = await _run(cap, ToolReturn(return_value=['image', _IMAGE], content='C' * 5_000))
@@ -1360,14 +1369,7 @@ class TestAgentIntegration:
             if isinstance(part, ToolReturnPart) and part.tool_name == 'read_image'
         )
         for tool_return in (result_return, followup_return):
-            value = tool_return.content
-            assert (isinstance(value, BinaryContent) and value.data == image_data) or (
-                isinstance(value, list)
-                and any(
-                    isinstance(item, BinaryContent) and item.data == image_data
-                    for item in value  # pyright: ignore[reportUnknownVariableType]
-                )
-            )
+            assert tool_return.content == BinaryContent(data=image_data, media_type='image/png')
 
     async def test_small_output_untouched(self, tmp_path: Path, anyio_backend: str):
         cap: ToolOutputLimits[object] = ToolOutputLimits(

@@ -36,10 +36,11 @@ separate, model-visible part which also persists in history. This capability mea
 reduces both with the same bands, and they spill to distinct handles.
 
 A return value that holds files, such as the `[header, BinaryContent]` that `read_file` returns
-for an image or PDF, reaches the model with its files as they are: only its text items are
-measured, as one piece, and when a band applies, the reduced text takes the place of the first
-of them. Text `content` is reduced the same way whatever the return value holds. Non-text
-`content` that overflows is left unreduced with a `warnings.warn`.
+for an image or PDF, reaches the model with its files as they are. Every other item in it, text
+or structured, is rendered as text and measured as one piece. When a band applies, the reduced
+text replaces those items, in the place of the first of them. Text `content` is reduced the same
+way whatever the return value holds. Non-text `content` that overflows is left unreduced with a
+`warnings.warn`.
 
 ### `ToolReturn.metadata` is preserved
 
@@ -373,6 +374,8 @@ replay.
 
 - Binary returns spill verbatim and are never stringify-truncated; `Truncate` / `Summarize`
   on binary fall through to `then`.
+- A return value holding files (`BinaryContent` or a file URL, alone or in a list) keeps every
+  file as it is; only the items beside them are measured and reduced.
 - Structured / nested returns spill (or summarize) by preference -- truncating JSON produces
   invalid JSON. `Spill` includes a one-line shape sketch of the top level.
 - `ModelRetry` and tool errors never reach this hook (they are raised, not returned), so the

@@ -198,14 +198,10 @@ async def test_coder_read_file_large_image_reaches_model_multimodal(tmp_path: Pa
         if isinstance(part, ToolReturnPart) and part.tool_name == 'read_file'
     )
     for tool_return in (result_return, followup_return):
-        value = tool_return.content
-        assert (isinstance(value, BinaryContent) and value.data == image_data) or (
-            isinstance(value, list)
-            and any(
-                isinstance(item, BinaryContent) and item.data == image_data
-                for item in value  # pyright: ignore[reportUnknownVariableType]
-            )
-        )
+        assert tool_return.content == [
+            '[large.png | image/png | 100000 bytes]\n',
+            BinaryContent(data=image_data, media_type='image/png'),
+        ]
 
 
 CONTROL_TOOLS = {'list_tasks', 'message_task', 'answer_task', 'cancel_task'}

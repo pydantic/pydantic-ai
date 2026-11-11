@@ -37,18 +37,6 @@ That tool is bounded: `offset >= 0`, `limit` clamped to a built-in line cap, the
 capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
 hang the host with catastrophic backtracking.
 
-## Return-value and content handling
-
-A `ToolReturn` carries a `return_value` and an optional `content` that core renders as a
-separate, model-visible part which also persists in history. This capability measures and
-reduces both with the same bands, and they spill to distinct handles.
-
-A return value that holds files, such as the `[header, BinaryContent]` that `read_file` returns
-for an image or PDF, reaches the model with its files as they are: only its text items are
-measured, as one piece, and when a band applies, the reduced text takes the place of the first
-of them. Text `content` is reduced the same way whatever the return value holds. Non-text
-`content` that overflows is left unreduced with a `warnings.warn`.
-
 ## Usage
 
 Construct an `Agent` with `ToolOutputLimits()` in its `capabilities`. With no arguments it
@@ -233,13 +221,18 @@ a native notice describes the stored result, not the shorter preview. A positive
 `Spill.preview_chars` value controls the preview's content budget; its header and omission
 marker add to that length.
 
-## Both `return_value` and `content` are reduced
+## Return-value and content handling
 
 A `ToolReturn` carries a `return_value` and an optional `content` that core renders as a
 separate, model-visible part which also persists in history. This capability measures and
-reduces both with the same band logic (they spill to distinct handles). Text `content` is
-reduced in place; non-text `content` (multimodal parts) that overflows is left unreduced with
-a `warnings.warn`, since it cannot be safely truncated.
+reduces both with the same bands, and they spill to distinct handles.
+
+A return value that holds files, such as the `[header, BinaryContent]` that `read_file` returns
+for an image or PDF, reaches the model with its files as they are. Every other item in it, text
+or structured, is rendered as text and measured as one piece. When a band applies, the reduced
+text replaces those items, in the place of the first of them. Text `content` is reduced the same
+way whatever the return value holds. Non-text `content` that overflows is left unreduced with a
+`warnings.warn`.
 
 ### `ToolReturn.metadata` is preserved
 
@@ -417,6 +410,8 @@ replay.
 
 - Binary returns spill verbatim and are never stringify-truncated; `Truncate` / `Summarize`
   on binary fall through to `then`.
+- A return value holding files (`BinaryContent` or a file URL, alone or in a list) keeps every
+  file as it is; only the items beside them are measured and reduced.
 - Structured / nested returns spill (or summarize) by preference -- truncating JSON produces
   invalid JSON. `Spill` includes a one-line shape sketch of the top level.
 - `ModelRetry` and tool errors never reach this hook (they are raised, not returned), so the

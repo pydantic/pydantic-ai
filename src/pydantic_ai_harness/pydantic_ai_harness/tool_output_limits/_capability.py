@@ -99,17 +99,6 @@ def _default_bands() -> list[Band]:
     return [Band(over=_DEFAULT_THRESHOLD, action=Spill(then=Truncate()))]
 
 
-def _contains_multi_modal_content(value: object) -> bool:
-    """Check a value and list contents without propagating TypeGuard narrowing to the caller."""
-    return is_multi_modal_content(value) or (
-        isinstance(value, list)
-        and any(
-            is_multi_modal_content(item)
-            for item in value  # pyright: ignore[reportUnknownVariableType]
-        )
-    )
-
-
 @dataclass
 class _Unit:
     """One reducible piece of a tool return: its `return_value` or its `content`.
@@ -360,12 +349,11 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return original
         bands = self._per_tool.get(call.tool_name, self._bands)
         new_value: object | None
-        multimodal_value: object = return_value
-        if _contains_multi_modal_content(multimodal_value):
-            # Files reach the model as files, so only the text beside them is reduced.
-            new_value, value_handle, value_bytes = await self._reduce_text_beside_files(
-                ctx, call, bands, multimodal_value
-            )
+        value: object = return_value  # so the list check below doesn't narrow `return_value` itself
+        items: list[object] = list(value) if isinstance(value, list) else [value]  # pyright: ignore[reportUnknownArgumentType]
+        if any(is_multi_modal_content(item) for item in items):
+            # Files reach the model as files, so only the items beside them are reduced.
+            new_value, value_handle, value_bytes = await self._reduce_items_beside_files(ctx, call, bands, items)
         else:
             value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
             new_value, value_handle = await self._reduce(ctx, call, bands, value_unit)
@@ -387,34 +375,41 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             content_handle=content_handle,
         )
 
-    async def _reduce_text_beside_files(
+    async def _reduce_items_beside_files(
         self,
         ctx: RunContext[AgentDepsT],
         call: ToolCallPart,
         bands: Sequence[Band],
-        value: object,
+        items: list[object],
     ) -> tuple[list[object] | None, str | None, int]:
-        """Reduce the text items of a return value that holds files, keeping every file as it is.
+        """Reduce the items of a return value that holds files, keeping every file as it is.
 
-        The text items are measured and reduced as one unit, which takes the place of the first of them.
-        Returns `(new_items, handle, text_bytes)`, with `new_items` None when nothing was reduced.
+        Every other item, text or structured, is rendered as text, and they are measured and reduced as one unit,
+        which takes the place of the first of them. Returns `(new_items, handle, rendered_bytes)`, with
+        `new_items` None when nothing was reduced.
         """
-        items: list[object] = list(value) if isinstance(value, list) else [value]  # pyright: ignore[reportUnknownArgumentType]
-        text_indexes = [index for index, item in enumerate(items) if isinstance(item, str)]
-        if not text_indexes:
+        other_indexes = [index for index, item in enumerate(items) if not is_multi_modal_content(item)]
+        if not other_indexes:
             return None, None, 0
-        text = '\n'.join(str(items[index]) for index in text_indexes)
-        unit = self._make_unit(text, tool_name=call.tool_name, suffix='')
+        rendered = [self._render(items[index], tool_name=call.tool_name) for index in other_indexes]
+        unit = self._make_unit('\n'.join(rendered), tool_name=call.tool_name, suffix='')
         reduced, handle = await self._reduce(ctx, call, bands, unit)
         if reduced is None:
             return None, None, 0
-        first = text_indexes[0]
+        first = other_indexes[0]
         new_items = [
             reduced if index == first else item
             for index, item in enumerate(items)
-            if index == first or not isinstance(item, str)
+            if index == first or is_multi_modal_content(item)
         ]
         return new_items, handle, len(unit.data)
+
+    def _render(self, item: object, *, tool_name: str) -> str:
+        """An item beside a file as the text it's measured as."""
+        if isinstance(item, str):
+            return item
+        unit = self._make_unit(item, tool_name=tool_name, suffix='')
+        return unit.text if unit.text is not None else to_text(item)
 
     def _assemble(
         self,
