@@ -156,9 +156,11 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                 apply to it, and a later default `Advisor` in a merge restores the built one.
             local: The local fallback: `True` (the default) or `None` builds the `advisor` tool from
                 the fields, `False` disables it, and a `Tool` or function replaces it. Like the built
-                tool, a replacement is left out of requests where the native advisor applies. It
-                ignores `output_type` and `forward_history`, while `max_uses`, `max_tokens` and
-                `caching` still shape the native advisor. `None` is stored as `True`, so that, as
+                tool, a replacement is left out of requests where the native advisor applies, and it
+                keeps its own tool name. `output_type` and `forward_history` apply only to the
+                built tool, so they are rejected with a replacement, as is `max_uses` on OpenRouter,
+                where it would leave only the unlimited replacement. Otherwise `max_uses`,
+                `max_tokens` and `caching` still shape the native advisor. `None` is stored as `True`, so that, as
                 with the earlier `mode='auto'`, a later default `Advisor` in a merge restores the
                 built local fallback, replacing an earlier `False` or replacement tool.
             output_type: Output specification for local consultations.
@@ -233,7 +235,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     @classmethod
     def _check_mode(cls, mode: str) -> None:
         if mode not in cls._MODE_DECLARATIONS:
-            raise ValueError("`Advisor.mode` must be 'auto', 'native', or 'local'")
+            raise ValueError("Advisor.mode must be 'auto', 'native', or 'local'")
 
     @classmethod
     def from_spec(
@@ -282,20 +284,43 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         combination no constructor accepts.
         """
         if self.max_uses is not None and self.max_uses < 1:
-            raise ValueError('`Advisor.max_uses` must be at least 1')
+            raise ValueError('Advisor.max_uses must be at least 1')
         if self.max_tokens is not None and self.max_tokens < 1024:
-            raise ValueError('`Advisor.max_tokens` must be at least 1024')
+            raise ValueError('Advisor.max_tokens must be at least 1024')
         if self.output_type is not str:
-            if self.local is False:
-                raise ValueError('`Advisor.output_type` is not supported with `local=False`')
-            if self.native is not True and self.native is not False:
-                raise UserError(
-                    '`Advisor.output_type` is not supported by a native advisor tool, which returns text: '
-                    'pass `native=False`, or drop `output_type`'
-                )
+            self._check_typed_output()
         if self.native is True and self.local is False:
             self._check_built_native_only()
+        elif self.local is not True and self.local is not False:
+            self._check_local_replacement()
         super().__post_init__()
+        if self.output_type is not str and self._declared_native is True:
+            # The native advisor returns text, so a typed advisor consults locally. Resolving it off
+            # rather than declaring it off keeps merges and `mode` reading the stated default.
+            self.native = False
+
+    def _check_typed_output(self) -> None:
+        """Reject a typed advisor that could only consult the native advisor, which returns text."""
+        if self.local is False:
+            raise ValueError('`Advisor.output_type` is not supported with `local=False`')
+        if self.native is not True and self.native is not False:
+            raise UserError(
+                '`Advisor.output_type` is not supported by a native advisor tool, which returns text: '
+                'pass `native=False`, or drop `output_type`'
+            )
+
+    def _check_local_replacement(self) -> None:
+        """Reject options that only the built `advisor` tool applies, which a `local=` replacement would drop."""
+        if self.output_type is not str or self.forward_history:
+            raise UserError(
+                '`Advisor.output_type` and `Advisor.forward_history` apply only to the built `advisor` tool, '
+                'not to a `local=` replacement'
+            )
+        if self.max_uses is not None and self._parse_native_model(self.model)[0] == 'openrouter':
+            raise UserError(
+                '`Advisor.max_uses` with a `local=` replacement is not supported on OpenRouter, whose native '
+                'advisor `max_uses` turns off, leaving only the replacement, which it does not limit'
+            )
 
     def _check_built_native_only(self) -> None:
         """Reject a `local=False` advisor whose built native advisor could never apply."""
@@ -409,7 +434,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         The `advisor` tool counts consultations on the capability it was built from, so the copy
         builds its own.
         """
-        if self.max_uses is None:
+        if self.max_uses is None or self._declared_local is not True:
             return self
         fresh = replace_no_init(self, native=self._declared_native, local=self._declared_local)
         fresh._local_uses = 0
@@ -435,7 +460,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         """Build a native tool only when an explicit advisor model name is lossless."""
         native_provider, native_model_name = self._parse_native_model(self.model)
         provider = self._executor_service(ctx.model)
-        if provider != native_provider or native_model_name is None or self.output_type is not str:
+        if provider != native_provider or native_model_name is None:
             return None
         # OpenRouter's native advisor ignores `max_uses`, so the local tool enforces it there. Core has
         # no `restricting_settings` for `AdvisorTool` yet, which is where this check belongs.
