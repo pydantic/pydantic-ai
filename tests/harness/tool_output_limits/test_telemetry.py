@@ -121,6 +121,23 @@ class TestToolOutputLimitsTelemetry:
             }
         )
 
+    async def test_a_failed_spill_is_recorded_even_when_its_fallback_cuts_nothing(self):
+        limits = ToolOutputLimits[object](
+            bands=[Band(over=100, action=Spill(then=Truncate(max_chars=1_000)))], store=FailingStore()
+        )
+        instrumentation, exporter = instrumented()
+        await agent_with_tool(limits, 'x' * 500, instrumentation).run('go')
+
+        assert limits_attributes(exporter) == snapshot(
+            {
+                'tool_output_limits.action': 'truncate',
+                'tool_output_limits.original_size': 500,
+                'tool_output_limits.reduced_size': 500,
+                'tool_output_limits.size_unit': 'chars',
+                'tool_output_limits.fallback_from': 'spill',
+            }
+        )
+
     async def test_binary_that_cannot_be_truncated_records_the_spill_it_fell_back_to(self, tmp_path: Path):
         limits = ToolOutputLimits[object](
             bands=[Band(over=100, action=Truncate(then=Spill()))], store=LocalFileStore(base_dir=tmp_path)
