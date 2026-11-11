@@ -73,6 +73,8 @@ class Fleet:
     root: Path
     portal: BlockingPortal
     agents: dict[str, Agent[None, str]]
+    builtin: tuple[PluginSettings, ...] = ()
+    """Built-in plugins beside `web`, which every session loads."""
     launch: SessionRuntime[None, str] = field(init=False)
     client: TestClient = field(init=False)
     runtimes: dict[str, SessionRuntime[None, str]] = field(default_factory=dict[str, SessionRuntime[None, str]])
@@ -119,7 +121,7 @@ class Fleet:
             console=Console(file=io.StringIO(), width=100),
             settings=None,
             store=SettingsStore(self.root / 'config.db') if joined is None else None,
-            builtin_plugins=[WEB] if joined is None else (),
+            builtin_plugins=[WEB, *self.builtin] if joined is None else (),
             project=ProjectSettings(),
             headless=True,
             workspace=directory,

@@ -41,6 +41,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/plugins [...]` | Manage plugins; no arguments opens the menu |
 | `/mcp [...]` | Manage MCP servers (from the built-in `mcp` plugin) |
 | `/compact [FOCUS]` | Summarise older messages now (from the built-in `compaction` plugin) |
+| `/refine [FOCUS]` | Have the model review and revise its last answer (from the built-in `refinement` plugin) |
 | `/usage` | Tokens and cost per turn |
 | `/cost` | The retained history's total cost and tokens |
 | `/resume [ID\|claude\|codex]` | Browse or restore a saved session, or import one from Claude Code or Codex |
@@ -542,7 +543,7 @@ repository symlinks can select any readable file beneath it. See
 for symlink loading, scope, and backend requirements.
 
 Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
-`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
+`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, `/compact` from the built-in `compaction` plugin, and `/refine` from the built-in `refinement` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. While
 you type a command name, the best match comes first and is highlighted without
@@ -901,8 +902,12 @@ an awaitable string.
 uv run clai2
 ```
 
-In CLAI, run `/login github-copilot`, then open `/model add` and choose
-`github-copilot`. The provider menu also starts login when no credentials exist.
+In CLAI, run `/login github-copilot`. Login adds every model your account's catalog
+lists to `/model` (`github-copilot@PROFILE:ID` for a profile) and, when you have not
+chosen a model, selects a recent strong one, such as Claude Opus 5.5 or Gemini 4 Argon.
+A model you chose stays selected. To switch, open `/model add` and choose `github-copilot`;
+the provider menu also starts login when no credentials exist. If listing the models
+fails, the login stays saved and CLAI reports why.
 You do not need to register an OAuth application or configure a client ID.
 CLAI supplies the same [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
 and requests `read:user` access to your GitHub profile. This identifies the existing
@@ -918,8 +923,8 @@ own CLAI session. CLAI does not launch a browser, so a text browser cannot block
 login or take over your SSH terminal. Ctrl-C stops polling; GitHub controls the
 code's expiry. No localhost callback or pasted token is needed.
 
-GitHub authorization alone does not establish Copilot access. The model menu
-queries your account's catalog and lists only picker-enabled models with
+GitHub authorization alone does not establish Copilot access. Login and the model
+menu query your account's catalog and keep only picker-enabled models with
 `/chat/completions` support. The shared model menu includes details and `Ctrl+S`
 settings. Your subscription and organization policy still control inference access.
 You can also select a known ID with `/model github-copilot:claude-haiku-4.5`.
@@ -2949,6 +2954,12 @@ On Windows, CLAI does not provide an agent workspace or repository context yet.
 `coder` clears old tool results as the context fills. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
 it summarises older messages before the context runs out and adds `/compact`.
+The built-in `refinement` plugin adds `/refine`: the model reviews its last answer and gives it
+again, revised, as a turn of its own. Add words to say what to look at, such as
+`/refine check the error handling`. To have every answer reviewed without asking, add harness
+[Refine Output](../../../docs/harness/refine-output.md):
+`/plugins add refine_output pydantic_ai_harness.refine_output:RefineOutput`. Each turn then shows
+the first answer followed by the revised one.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](../PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a

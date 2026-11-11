@@ -259,6 +259,7 @@ def create_shell(
     )
     session.project_instructions = lambda: ProjectInstructions[DepsT].pending(context.project)
     models.pool_accounts = lambda: context.settings.pool_accounts
+    models.select_default = partial(_select_default, context)
 
     def effort_menu() -> SettingsMenu:
         # Model settings load provider SDKs; keep them off the startup path.
@@ -1616,6 +1617,14 @@ async def _execute_command(commands: Commands, text: str, *, console: Console) -
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
     return ended
+
+
+def _select_default(context: CommandContext, model: str) -> bool:
+    """Select `model` unless a model was chosen for this session; whether it did."""
+    if 'model' in context.settings.model_fields_set:
+        return False
+    context.set_setting(['model', model])
+    return True
 
 
 def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:

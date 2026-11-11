@@ -203,6 +203,7 @@ class WebService:
                 LiveEntry(
                     id=channel.id,
                     state=self._state(channel),
+                    busy=channel.session.busy,
                     title=channel.session.conversation.title,
                     workspace=str(channel.session.workspace),
                 )
