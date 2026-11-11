@@ -23,6 +23,7 @@ from pydantic_ai import (
     RunCancelled,
     RunContext,
     RunUsage,
+    TextOutput,
     ToolCallPart,
     ToolReturnPart,
     UnexpectedModelBehavior,
@@ -307,6 +308,27 @@ async def test_cancelling_after_the_output_arrived_still_settles() -> None:
         await streamed.cancel()
 
         assert streamed.result.output == 'settled'
+
+
+@pytest.mark.parametrize('method', ['get_output', 'stream_output'])
+async def test_cancelling_after_none_output_arrived_still_settles(
+    method: Literal['get_output', 'stream_output'],
+) -> None:
+    """A validated `None` is a settled output, just like any other value."""
+
+    def to_none(text: str) -> None:
+        return None
+
+    agent = Agent(TestModel(custom_output_text='settled'), output_type=TextOutput(to_none))
+
+    async with agent.run_stream('Stream this') as streamed:
+        if method == 'get_output':
+            assert await streamed.get_output() is None
+        else:
+            assert [output async for output in streamed.stream_output(debounce_by=None)][-1] is None
+        await streamed.cancel()
+
+        assert streamed.result.output is None
 
 
 @pytest.mark.parametrize('method', ['stream_text', 'stream_text_delta', 'stream_response'])

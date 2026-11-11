@@ -74,7 +74,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
-    _cached_output: OutputDataT | None = field(default=None, init=False)
+    _cached_output: OutputDataT | _utils.Unset = field(default=_utils.UNSET, init=False)
 
     _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
@@ -99,7 +99,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
-        if self._cached_output is not None:
+        if _utils.is_set(self._cached_output):
             yield deepcopy(self._cached_output)
             return
 
@@ -260,7 +260,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate the output and return it."""
-        if self._cached_output is not None:
+        if _utils.is_set(self._cached_output):
             return deepcopy(self._cached_output)
 
         # Iterate through any stream events
@@ -278,7 +278,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         so by then `_cached_output` holds it. Cancelling does not: it marks the stream complete
         without a final response, and there is no output to settle on.
         """
-        if self._cached_output is None and self.cancelled:
+        if not _utils.is_set(self._cached_output) and self.cancelled:
             raise exceptions.UserError(
                 'The stream was cancelled before it produced an output, so this run has no settled '
                 'result. The messages recorded up to the interruption are still available from '
