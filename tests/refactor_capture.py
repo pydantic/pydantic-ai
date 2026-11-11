@@ -6,10 +6,10 @@ one or two test nodes that reach each changed line rather than whole test files:
 
     uv run python -m tests.refactor_capture "$(git merge-base HEAD upstream/main)" <test nodes>
 
-It extracts the base commit's copy of every workspace package with `git archive`, runs pytest over the nodes once with
-those sources ahead of the installed ones on `PYTHONPATH` and once without, each into its own new capture directory,
-then compares the two. The tests, this plugin and the environment come from the working tree both times, so the
-library code is the only difference.
+It extracts the base commit's copy of every workspace package with `git archive`, into a temporary directory it reaches
+through no symlink, runs pytest over the nodes once with those sources ahead of the installed ones on `PYTHONPATH` and
+once without, each into its own new capture directory, then compares the two. The tests, this plugin and the
+environment come from the working tree both times, so the library code is the only difference.
 
 Each stream is one JSON line of kind `stream`: the events its `__aiter__` hands the consumer, `PartEndEvent`s and
 `FinalResultEvent`s included, the error iteration raised if any, and the response `get()` builds once the test ends.
@@ -21,12 +21,17 @@ When a capture starts, it runs an agent over a streamed canary response and stop
 recorded, so a consumer that stops iterating through `__aiter__` fails loudly instead of recording nothing.
 
 Each request is one JSON line of kind `request`. A request an `httpx` or `httpx2` `AsyncClient` sends is recorded from
-`send`, once per attempt, and one a botocore client sends, like Bedrock's, from `Endpoint.make_request`, before it's
-signed and after a model's extra headers are added, once per call: botocore retries a call below `make_request`, so its
-retries aren't recorded. Either is recorded with its method and URL as the target, its headers and its body, parsed when
-it's JSON. Two kinds of header are left out: credentials (`authorization`, `proxy-authorization`, `x-api-key`,
-`api-key`, `x-goog-api-key`, `x-amz-security-token`, `cookie`), so a capture never writes a key to disk, and trace
-context (`traceparent`, `tracestate`, `baggage`), whose ids are random per run. A test that hands a model one of the SDK
+`send`, once per attempt except for Prefect's client, below, and one a botocore client sends, like Bedrock's, from
+`Endpoint.make_request`, before it's signed and after a model's extra headers are added, once per call: botocore
+retries a call below `make_request`, so its retries aren't recorded. Either is recorded with its method and URL as the
+target, its headers and its body, parsed when it's JSON. Two kinds of header are left out: credentials
+(`authorization`, `proxy-authorization`, `x-api-key`, `api-key`, `x-goog-api-key`, `x-amz-security-token`, `cookie`),
+so a capture never writes a key to disk, and trace context (`traceparent`, `tracestate`, `baggage`), whose ids are
+random per run. Prefect's client, which marks each request it sends with its API version, retries a request by sending
+it again when its test server is busy, so each request it sends is recorded once. Its checks of the server's version and
+fetches of a CSRF token carry nothing from the code under test and are sent wherever the load puts them, so they aren't
+recorded. Neither are the log batches its background worker sends during whichever test is running: no node can claim
+them, so the task run names and failure messages they hold go uncompared. A test that hands a model one of the SDK
 client mocks `SDK_MOCKS` lists sends no HTTP request, so each call the model makes on a listed method is recorded
 instead, with the method as the target and the arguments as passed, SDK sentinels for an omitted argument included. When
 a capture starts, it runs an agent over a Groq model on `httpx`, an Anthropic model on `httpx2` and a Bedrock model on
@@ -47,15 +52,18 @@ them fails loudly.
 Each test starts with `random` seeded from its node id, so a test that draws from it draws the same values on both
 sides, and both sides run with one `PYTHONHASHSEED`, so a set, like the tool names in model request parameters, is
 recorded in the same order. Lines, and the id of each test node run, are written per `pytest-xdist` worker when each
-test ends. Generated tool call ids, UUIDs (version 4 ones without dashes too), object addresses (the decimal one a
+test ends. Generated tool call ids, UUIDs (version 4 ones without dashes too), the trace and span ids of a W3C trace
+context, like the `traceparent` an MCP client or Prefect puts in a request body, object addresses (the decimal one a
 `unittest.mock` repr gives too), timestamps within a day of the capture (ones in the basic format of a SigV4
 `x-amz-date` header too), history digests (which hash those timestamps), attempt durations, local server ports,
 multipart boundaries, pytest's numbered temporary directories, the random suffix of the key a capability without an `id`
-gets, `PromptInjectionDefender`'s measured `latency_ms`, and `Planning`'s step ids where its plan and its reply to an
-added step render them are normalized, so two runs of the same code compare equal. A step id a model echoes back isn't,
-in a tool call's arguments or where `Planning` renders it from them, as a subtask's parent or a dependency. Cassette
-playback hands a response's headers back in a different order each run, so the `HTTPHeaders` botocore copies into an
-error response's `ResponseMetadata` are sorted where an error message renders them.
+gets, `PromptInjectionDefender`'s measured `latency_ms`, `Planning`'s step ids where its plan and its reply to an added
+step render them, the code hash a Prefect `task_key` ends in, which hashes the file the task function was compiled from,
+and the `custom_id` of each batch request `InMemoryBatchModel` encodes, which hashes a random token, are normalized, so
+two runs of the same code compare equal. A step id a model echoes back isn't, in a tool call's arguments or where
+`Planning` renders it from them, as a subtask's parent or a dependency. Cassette playback hands a response's headers
+back in a different order each run, so the `HTTPHeaders` botocore copies into an error response's `ResponseMetadata` are
+sorted where an error message renders them.
 
 The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there
 are any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load
@@ -78,6 +86,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import weakref
 from collections import Counter, defaultdict
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Iterable, Mapping
 from contextlib import suppress
@@ -127,6 +136,12 @@ UNRECORDED_HEADERS = frozenset(
     }
 )
 GENERATED_VALUES = [
+    # A W3C trace context, like the `traceparent` an MCP client or Prefect puts in a request body. It comes before the
+    # UUID patterns, which a trace ID can match.
+    (
+        re.compile(r'(?<![0-9a-f])([0-9a-f]{2})-[0-9a-f]{32}-[0-9a-f]{16}-([0-9a-f]{2})(?![0-9a-f])'),
+        r'\1-TRACE_ID-SPAN_ID-\2',
+    ),
     (re.compile(r' at 0x[0-9a-f]+'), ' at 0x?'),
     # A `unittest.mock` repr gives the mock's `id()` in decimal.
     (re.compile(r"(<\w*Mock\b[^<>]* id=')\d+'"), r"\1ID'"),
@@ -147,7 +162,24 @@ GENERATED_VALUES = [
     # `Planning`'s `uuid4().hex[:8]` step ids, in a plan line after the status marker and in the reply that adds a step.
     (re.compile(r'(\[[ ~x!-]\] \[)[0-9a-f]{8}(?=\])'), r'\1STEP_ID'),
     (re.compile(r'(with id: )[0-9a-f]{8}(?![0-9a-f])'), r'\1STEP_ID'),
+    # Prefect ends a `task_key` in a hash of the task function's code object, which holds the file it was compiled from.
+    (re.compile(r'("task_key":"[^"]*-)[0-9a-f]{8}"'), r'\1CODE_HASH"'),
+    # `InMemoryBatchModel`, which `TestModel` subclasses, encodes each request as a random token, and a batch request's
+    # `custom_id` hashes the encoded request. Its batches are the ones whose ID is a UUID; one of their `custom_id`s can
+    # itself have matched the UUID pattern. A suffix that tells apart requests with the same hash stays.
+    (
+        re.compile(
+            r'(?<=batch:batch_UUID:)(?:[0-9a-f]{32}|UUID)'
+            r'|(?<="id":"batch_UUID","custom_id":")(?:[0-9a-f]{32}|UUID)'
+            r'|(?<="custom_id":")(?:[0-9a-f]{32}|UUID)(?=(?:-\d+)?","batch":\{"id":"batch_UUID")'
+        ),
+        'CUSTOM_ID',
+    ),
 ]
+# Prefect's client marks each request it sends with its API version. These paths are its log batches, version checks
+# and CSRF token fetches; the module docstring says why a capture leaves them and the client's retries out.
+PREFECT_API_VERSION_HEADER = 'x-prefect-api-version'
+PREFECT_OWN_PATHS = re.compile(r'/api/(?:logs/|admin/version|csrf-token)$')
 # The second form is ISO 8601's basic format, which SigV4 signs a request's `x-amz-date` header with.
 ISO_DATETIME = re.compile(r'"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?|\d{8}T\d{6}Z)"')
 # Cassette playback hands a response's headers back in a different order each run, and botocore copies them into an
@@ -211,6 +243,8 @@ class RefactorCapture:
         self._iterators: dict[
             int, tuple[AsyncIterator[ModelResponseStreamEvent], AsyncIterator[ModelResponseStreamEvent]]
         ] = {}
+        # The requests Prefect's client has sent, so a retry, which sends one again, isn't recorded twice.
+        self._prefect_requests: weakref.WeakSet[httpx.Request | httpx2.Request] = weakref.WeakSet()
         self._monkeypatch = pytest.MonkeyPatch()
 
     def pytest_configure(self) -> None:
@@ -424,6 +458,10 @@ class RefactorCapture:
         async def recording_send(
             client: object, request: httpx.Request | httpx2.Request, *args: object, **kwargs: object
         ) -> object:
+            if PREFECT_API_VERSION_HEADER in request.headers:
+                if request in self._prefect_requests or PREFECT_OWN_PATHS.search(request.url.path):
+                    return await original(client, request, *args, **kwargs)
+                self._prefect_requests.add(request)
             text = (await request.aread()).decode(errors='backslashreplace')
             self._record_request(f'{request.method} {request.url}', request.headers.items(), text)
             return await original(client, request, *args, **kwargs)
@@ -617,8 +655,7 @@ def compare(base_dir: Path, head_dir: Path) -> int:
     return 1 if only_base or only_head or differing else 0
 
 
-# Runs `git` and two pytest sessions in subprocesses; the tests cover what it calls.
-def main(argv: list[str] | None = None) -> int:  # pragma: no cover
+def main(argv: list[str] | None = None) -> int:
     """Capture the selected tests on a base commit and on the working tree, then compare the captures."""
     parser = argparse.ArgumentParser(prog='python -m tests.refactor_capture', description=main.__doc__)
     parser.add_argument('base', help='the commit to compare against, usually the merge base with `main`')
@@ -634,7 +671,10 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
         for entry in entries
         if entry.is_relative_to(repo) and entry != repo and not entry.is_relative_to(venv)
     )
-    out = Path(tempfile.mkdtemp(prefix='refactor-capture-'))
+    # DBOS resolves a workflow function's file with `os.path.realpath`, which reads each symlink on the way with
+    # `os.readlink`, and blockbuster raises on that in the event loop. On macOS, the temporary directory is reached
+    # through `/var`, a symlink, so only the base side's sources would be.
+    out = Path(tempfile.mkdtemp(prefix='refactor-capture-')).resolve()
     archive = subprocess.run(
         ['git', 'archive', args.base, '--', *map(str, roots)], cwd=repo, check=True, capture_output=True
     ).stdout
