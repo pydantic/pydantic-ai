@@ -7112,6 +7112,12 @@ class PartStartEvent:
     This is useful for UI event streams to know whether to group parts of the same kind together when emitting events.
     """
 
+    canonical_system: str | None = None
+    """The response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system], if it applies to this part, i.e. the part's `provider_name` is the response's.
+
+    This lets UI event streams send it to the frontend alongside the part, so it survives a round trip through the client.
+    """
+
     event_kind: Literal['part_start'] = 'part_start'
     """Event type identifier, used as a discriminator."""
 
@@ -7160,6 +7166,12 @@ class PartEndEvent:
     """The kind of the next part, if any.
 
     This is useful for UI event streams to know whether to group parts of the same kind together when emitting events.
+    """
+
+    canonical_system: str | None = None
+    """The response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system], if it applies to the complete part, i.e. the part's `provider_name` is the response's.
+
+    A part's `provider_name` can arrive in a delta, so this can be set when the part's `PartStartEvent.canonical_system` wasn't.
     """
 
     event_kind: Literal['part_end'] = 'part_end'

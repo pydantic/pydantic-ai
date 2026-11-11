@@ -6,7 +6,7 @@ import json
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, InitVar, dataclass
-from functools import cached_property
+from functools import cached_property, partial
 from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
 
 from pydantic import TypeAdapter, ValidationError
@@ -1388,7 +1388,9 @@ def _with_text_citations(
         result.append(ui_part)
         if isinstance(ui_part, TextUIPart):
             text_parts = text_runs[index]
-            ui_part.provider_metadata = dump_text_metadata(text_parts, response=response)
+            ui_part.provider_metadata = dump_text_metadata(
+                text_parts, canonical_system_for=partial(part_canonical_system, response)
+            )
             result.extend(
                 SourceUrlUIPart(source_id=chunk.source_id, url=chunk.url, title=chunk.title)
                 for chunk in iter_citation_source_chunks(merged_text_citations(text_parts), source_urls)

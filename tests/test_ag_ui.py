@@ -114,6 +114,7 @@ from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import UsageLimits
 
 from ._inline_snapshot import snapshot
+from .canonical_system_utils import PROVIDER_NAME, StampedModel
 from .conftest import (
     IsDatetime,
     IsInt,
@@ -2884,6 +2885,97 @@ def test_dump_load_roundtrip_canonical_system() -> None:
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
     _sync_load_bookkeeping(original, reloaded)
     assert reloaded == original
+
+
+def _stamped_script(messages: list[ModelMessage]) -> list[ModelResponsePart]:
+    if next(iter_message_parts(messages, ModelRequest, ToolReturnPart), None) is None:
+        return [
+            ThinkingPart(content='Thinking...', signature='sig', provider_name=PROVIDER_NAME),
+            ThinkingPart(content='Earlier thinking.', signature='other', provider_name='other'),
+            ToolCallPart(tool_name='lookup', args={'id': 1}, tool_call_id='call-1', provider_name=PROVIDER_NAME),
+        ]
+    return [
+        CompactionPart(content=None, id='cmp-1', provider_name=PROVIDER_NAME, provider_details={'blob': 'x'}),
+        TextPart(content='Done.'),
+    ]
+
+
+async def _stamped_stream_round_trip(
+    canonical_system: str | None,
+) -> tuple[list[ModelMessage], list[ModelMessage], list[Message]]:
+    """Stream a stamped run, then load the messages the client builds from the stream."""
+    agent = Agent(StampedModel(_stamped_script, canonical_system=canonical_system))
+
+    @agent.tool_plain
+    def lookup(id: int) -> str:
+        return 'found'
+
+    user = UserMessage(id='user-1', content='Go')
+    adapter = AGUIAdapter(agent, create_input(user), ag_ui_version='0.1.19')
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+    ]
+    client_messages = _reduce_events(events)
+    return server_history, AGUIAdapter.load_messages([user, *client_messages]), client_messages
+
+
+def _stored_metadata(messages: Sequence[Message]) -> list[Any]:
+    """The reasoning `encrypted_value`s and activity contents, where the AG-UI adapter carries `canonical_system`."""
+    stored: list[Any] = []
+    for msg in messages:
+        if isinstance(msg, ReasoningMessage) and msg.encrypted_value:
+            stored.append(json.loads(msg.encrypted_value))
+        elif isinstance(msg, ActivityMessage):
+            stored.append(msg.content)
+    return stored
+
+
+def _response_stamps(messages: list[ModelMessage]) -> list[tuple[str | None, str | None]]:
+    return [
+        (message.provider_name, message.canonical_system) for message in messages if isinstance(message, ModelResponse)
+    ]
+
+
+@requires_ag_ui('0.1.19')
+async def test_canonical_system_stream_round_trip() -> None:
+    """A streamed response's `canonical_system` survives the client storing the stream and sending it back.
+
+    The stream emits it where `dump_messages` writes it: in the `encrypted_value` of a thinking part from the
+    response's provider, whose `provider_name` only arrived in a delta, and in a compaction's activity content.
+    """
+    server_history, loaded, client_messages = await _stamped_stream_round_trip('stamp-system')
+
+    assert _stored_metadata(client_messages) == snapshot(
+        [
+            {'signature': 'sig', 'provider_name': 'stamped', 'canonical_system': 'stamp-system'},
+            {'signature': 'other', 'provider_name': 'other'},
+            {
+                'id': 'cmp-1',
+                'provider_name': 'stamped',
+                'provider_details': {'blob': 'x'},
+                'canonical_system': 'stamp-system',
+            },
+        ]
+    )
+    assert _stored_metadata(client_messages) == _stored_metadata(
+        AGUIAdapter.dump_messages(server_history, ag_ui_version='0.1.19')
+    )
+    assert _response_stamps(server_history) == snapshot([('stamped', 'stamp-system'), ('stamped', 'stamp-system')])
+    assert _response_stamps(loaded) == _response_stamps(server_history)
+
+
+@requires_ag_ui('0.1.19')
+async def test_canonical_system_stream_round_trip_without_stamp() -> None:
+    """A response without a `canonical_system` streams no claim, and none comes back."""
+    server_history, loaded, client_messages = await _stamped_stream_round_trip(None)
+
+    assert 'canonical_system' not in json.dumps(_stored_metadata(client_messages))
+    assert _response_stamps(server_history) == snapshot([('stamped', None), ('stamped', None)])
+    assert [canonical_system for _, canonical_system in _response_stamps(loaded)] == [None, None]
 
 
 def test_dump_load_roundtrip_tools() -> None:
@@ -10876,8 +10968,8 @@ async def test_compaction_stream_matches_dumped_activity_message() -> None:
 def _reduce_events(events: list[dict[str, Any]]) -> list[Message]:
     """The messages `@ag-ui/client`'s default reducer appends for these events.
 
-    A minimal port covering the event types the enqueued-messages tests produce: text messages, tool
-    calls and results, and activity snapshots, each appended at its stream position.
+    A minimal port covering the event types the enqueued-messages and stream round-trip tests produce: text and
+    reasoning messages, tool calls and results, and activity snapshots, each appended at its stream position.
     """
     messages: list[dict[str, Any]] = []
     by_id: dict[str, dict[str, Any]] = {}
@@ -10918,6 +11010,13 @@ def _reduce_events(events: list[dict[str, Any]]) -> list[Message]:
                         'content': event['content'],
                     }
                 )
+            case 'REASONING_MESSAGE_START':
+                by_id[event['messageId']] = {'id': event['messageId'], 'role': event['role'], 'content': ''}
+                messages.append(by_id[event['messageId']])
+            case 'REASONING_MESSAGE_CONTENT':
+                by_id[event['messageId']]['content'] += event['delta']
+            case 'REASONING_ENCRYPTED_VALUE' if event['subtype'] == 'message':
+                by_id[event['entityId']]['encryptedValue'] = event['encryptedValue']
             case _:
                 pass
     return TypeAdapter(list[Message]).validate_python(messages)

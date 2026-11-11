@@ -3013,10 +3013,12 @@ class StreamedResponse(ABC):
                         index=index,
                         part=part,
                         next_part_kind=next_part.part_kind if next_part else None,
+                        canonical_system=self._part_canonical_system(part),
                     )
 
                 async for event in iterator:
                     if isinstance(event, PartStartEvent):
+                        event.canonical_system = self._part_canonical_system(event.part)
                         if last_start_event:
                             end_event = part_end_event(event.part)
                             if end_event:
@@ -3073,6 +3075,12 @@ class StreamedResponse(ABC):
                 events = self._request_deadline.iterate(events)
             self._event_iterator = iterator_with_cancel_guard(iterator_with_part_end(iterator_with_final_event(events)))
         return self._event_iterator
+
+    def _part_canonical_system(self, part: ModelResponsePart) -> str | None:
+        """The `canonical_system` that applies to `part`: this response's, if `part` is from this response's provider."""
+        if part.provider_name is not None and part.provider_name == self.provider_name:
+            return self.canonical_system
+        return None
 
     def _enforce_request_deadline(self, deadline: RequestDeadline) -> None:
         """Pull each event under `deadline`, the deadlines this stream was opened under."""
@@ -3340,6 +3348,7 @@ class CompletedStreamedResponse(StreamedResponse):
         super().__init__(model_request_parameters)
         self.response = response
         self.state = response.state
+        self.canonical_system = response.canonical_system
         self._replay_events = replay_events
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
