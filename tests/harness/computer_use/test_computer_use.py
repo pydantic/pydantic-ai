@@ -470,17 +470,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         # Every screenshot is sent until one more would pass the limit.
         assert sent[-len(last_requests) :] == last_requests
 
-    async def test_a_batch_over_20_actions_is_sent_back_to_the_model(self) -> None:
-        agent = Agent(
-            _scripted([{'type': 'screenshot'}] * 21),
-            capabilities=[ScreenProvider().capability(), ComputerUse(settle_seconds=0)],
-        )
-        result = await agent.run('Go.')
-
-        capped = [part for part in _returns(result.all_messages()) if part.outcome == 'retried']
-        assert len(capped) == 1
-        assert 'List should have at most 20 items' in capped[0].model_response_str()
-
     @pytest.mark.parametrize('native', [True, False])
     async def test_the_tool_is_sequential_of_the_computer_kind_and_declares_the_latest_screenshot_size(
         self, native: bool

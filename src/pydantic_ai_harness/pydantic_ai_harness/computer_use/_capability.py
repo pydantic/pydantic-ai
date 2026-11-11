@@ -149,8 +149,8 @@ class _SpaceRecord(TypedDict):
 _SPACE_RECORD = TypeAdapter(_SpaceRecord)
 
 _CALL_POLICY = StepPolicy(repeatable=False, timeout=900)
-"""A `computer` call acts, so under durable execution it runs at most once, with time for 20 actions that each
-wait or hold for up to 30 seconds."""
+"""A `computer` call acts, so under durable execution it runs at most once. A call that takes longer fails, and the
+model is told some of its actions may have run."""
 
 _SIZE_POLICY = StepPolicy(timeout=600)
 """Reading the screen size before a model request may start the screen, which can install it first."""
@@ -623,7 +623,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             list[ComputerToolAction],
             Field(
                 min_length=1,
-                max_length=20,
                 description='The steps to run, in order. Stop where you need to see the result before deciding the next step.',
             ),
         ],
