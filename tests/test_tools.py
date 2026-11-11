@@ -6110,6 +6110,16 @@ def test_returns_with_colon_whole_text_when_return_annotated():
             'Rows: one per line,\n            keyed: by id.', 'Rows: one per line,\n    keyed: by id.', id='multi-line'
         ),
         pytest.param('Rows: one per line.   ', 'Rows: one per line.', id='trailing-whitespace'),
+        pytest.param(
+            'A list of rows, capped at 1000\n        and filtered in UTC.',
+            'A list of rows, capped at 1000\nand filtered in UTC.',
+            id='wrapped',
+        ),
+        pytest.param(
+            'The rows. Example: [1]\n        Dates in UTC: always.',
+            'The rows. Example: [1]\nDates in UTC: always.',
+            id='wrapped-with-colons',
+        ),
     ],
 )
 def test_returns_with_colon_written_text_when_return_annotated(returns_text: str, description: str):
