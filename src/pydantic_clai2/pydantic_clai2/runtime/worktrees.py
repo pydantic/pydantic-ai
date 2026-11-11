@@ -38,7 +38,7 @@ class Worktree:
         """The launch line naming the checkout and its branch."""
         opened = 'Worktree' if self.created else 'Reopened worktree'
         if self.remove_if_unchanged:
-            on_exit = 'Removed on exit if unchanged, or if clean and pushed.'
+            on_exit = f'Removed on exit if unchanged{", or if clean and pushed" if self.remove_if_pushed else ""}.'
         elif self.remove_if_pushed:
             on_exit = 'Removed on exit if clean and pushed, otherwise kept unless removal is confirmed.'
         else:

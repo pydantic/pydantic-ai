@@ -367,7 +367,7 @@ def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':
 
 def _remember_worktree(worktree: 'Worktree | None') -> None:
     """Hand a checkout exit may remove to the relaunched build, which starts without `--worktree`."""
-    if worktree is None or not worktree.remove_if_pushed:
+    if worktree is None or not (worktree.remove_if_unchanged or worktree.remove_if_pushed):
         return
     head = worktree.head
     # An older build takes the first word as the commit of a checkout it created; `reopened` never matches, so it asks.

@@ -199,6 +199,8 @@ def test_notice_names_what_exit_does(created: Worktree) -> None:
     )
     kept = replace(created, remove_if_unchanged=False, remove_if_pushed=False)
     assert kept.notice == f'Worktree: {where} Kept unless removal is confirmed on exit.'
+    unread = replace(created, remove_if_pushed=False)
+    assert unread.notice == f'Worktree: {where} Removed on exit if unchanged.'
 
 
 def test_unchanged_checkout_is_kept_unless_marked(created: Worktree, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -864,10 +866,22 @@ def run_cli(
     return prompts
 
 
+@pytest.mark.parametrize('readable', [True, False])
 @pytest.mark.parametrize('commit', [False, True])
-def test_update_keeps_the_launch_snapshot(repo: Path, monkeypatch: pytest.MonkeyPatch, commit: bool) -> None:
-    """The relaunched build starts without `--worktree`, yet still removes an unchanged checkout the first one made."""
+def test_update_keeps_the_launch_snapshot(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, commit: bool, readable: bool
+) -> None:
+    """The relaunched build starts without `--worktree`, yet still removes an unchanged checkout the first one made.
+
+    That holds even when the saved keep choices cannot be read, which only stops removal once pushed.
+    """
     monkeypatch.delenv('CLAI_RELAUNCH_WORKTREE', raising=False)
+    if not readable:
+
+        def unreadable(path: Path, *, store: SettingsStore | None) -> bool | None:
+            return None
+
+        monkeypatch.setattr(worktrees, 'kept_checkout', unreadable)
     monkeypatch.chdir(repo)
     workspace = repo / '.worktrees/task'
     assert run_cli(monkeypatch, '-w', 'task', repo=repo, relaunch=True) == []
