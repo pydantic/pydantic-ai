@@ -91,6 +91,7 @@ from pydantic_clai2.runtime.speculation import Speculation
 from pydantic_clai2.runtime.tasks import Tasks, question_row, resume_prompt
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
+from pydantic_clai2.ui.menus.input_menu import input_menu
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
 from pydantic_clai2.ui.menus.menu_worker import without_terminal
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
@@ -104,6 +105,7 @@ from pydantic_clai2.ui.menus.theme_picker import theme_command
 from pydantic_clai2.ui.menus.update_menu import update_menu
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
+from pydantic_clai2.ui.prompt.input_setup import KeyTest
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_queue import PromptInbox, QueuedPrompt, can_steer, find_queued, input_kind
@@ -569,6 +571,15 @@ def create_shell(
         updates=updates,
     )
     commands.register(
+        Command(
+            name='input',
+            description='Keyboard setup, bindings and question preference; /input test safely tests a key',
+            handler=shell.input_command,
+            during_turn=True,
+            args_during_turn=True,
+        )
+    )
+    commands.register(
         Command(name='reload', description='Reload CLAI2 code without restarting', handler=shell.request_reload)
     )
     commands.register(
@@ -942,6 +953,26 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 partial(child.repl_states.copy, source=self.session.summary.id, target=child.summary.id)
             )
         return child
+
+    def test_input_key(self) -> None:
+        """Capture only after an explicit action; the editor remains the sole input reader."""
+        if self.editor is None:
+            raise ValueError('Key testing needs the terminal composer.')
+        self.editor.key_test = KeyTest()
+
+    async def input_command(self, args: list[str]) -> str:
+        """Open setup, or explicitly start safe key capture after the command releases the screen."""
+        if args == ['test']:
+            self.test_input_key()
+            return 'Test a key now. Ctrl+G closes.'
+        if args == ['reset']:
+            return '\n'.join(
+                self.context.reset_setting(key)
+                for key in ('input.bindings', 'input.keyboard_labels', 'input.question_submit')
+            )
+        if args:
+            raise ValueError('Usage: /input [test|reset]')
+        return '\n'.join(await run_settings_menu(input_menu(self.context, start_test=self.test_input_key)))
 
     async def tasks_command(self, args: list[str]) -> str:
         if not args:

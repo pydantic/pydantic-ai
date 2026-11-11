@@ -170,6 +170,12 @@ class Terminal(Generic[DepsT, OutputT]):
             spinner=lambda: self._shown().spinners.active(),
             panel=lambda glyph: (*self._shown().tasks.rows(glyph), *self._shown().forks.rows(glyph)),
             queue_changed=lambda: self._shown().live_session.changed(),
+            bindings=lambda: self._shown().context.settings.input_bindings,
+            keyboard_labels=lambda: self._shown().context.settings.keyboard_labels,
+            question_preference=lambda: self._shown().context.settings.question_submit,
+            remember_question_preference=lambda preference: self._shown().context.set_setting(
+                ['input.question_submit', preference]
+            ),
         )
         try:
             async with self.editor.opened():

@@ -47,6 +47,10 @@ class SettingsSource:
                 preview = tool_calls_preview
             elif key == 'updates.channel':
                 choices = UPDATE_CHANNELS
+            elif key == 'input.keyboard_labels':
+                choices = ('unset', 'neutral', 'mac', 'pc')
+            elif key == 'input.question_submit':
+                choices = ('ask', 'answer', 'follow-up')
             else:
                 choices = ()
             rows.append(
