@@ -1715,6 +1715,25 @@ def test_live_abandoned_calls_owe_nothing() -> None:
     run_clean(LiveSimulation(), scenario)
 
 
+def test_eleven_realtime_reply_to_an_interjection_abandons_the_calls_before_it() -> None:
+    """Eleven Realtime gives up on a finished response's calls once it replies to what the user typed after them (#13180).
+
+    Their results never reach the model, so the reply to the interjection ends the exchange, though the calls still run.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.send_text()
+        sim.finish()
+        assert sim.turn_completes == []
+        sim.finish()
+        assert sim.tools.pending()
+        assert len(sim.turn_completes) == 1
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', dialect='elevenlabs')), scenario)
+
+
 def test_live_abandoned_call_still_running_doesnt_hold_the_exchange_open() -> None:
     """A tool call whose backend gave up still runs, but its result gets no reply: the exchange ends with the reply.
 
