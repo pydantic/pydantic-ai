@@ -86,13 +86,16 @@ By default, a `Model` instance runs locally and keeps its own provider, client, 
 | Option | Default | Behavior |
 |---|---:|---|
 | `model` | required | Advisor model name or `Model` instance. |
-| `native` | `True` | The provider-native advisor. `False` disables it; an `AdvisorTool` instance or a function returning one replaces the one built from these options. |
-| `local` | `None` | The local fallback. `None` or `True` builds the `advisor` tool; `False` disables it; a `Tool` or function replaces it. |
+| `native` | `True` | The provider-native advisor. `False` disables it; an `AdvisorTool` instance or a function returning one replaces the one built from these options, which then don't apply to it. |
+| `local` | `True` | The local fallback. `True` builds the `advisor` tool; `False` disables it; a `Tool` or function replaces it, and ignores `output_type`, `max_uses`, `max_tokens` and `forward_history`. |
 | `output_type` | `str` | Local advisor output specification. Non-default values require local execution. |
 | `max_uses` | `None` | Maximum consultations in one executor model request. Must be at least `1`. |
 | `max_tokens` | `None` | Maximum output tokens for each consultation. Must be at least `1024`. |
 | `caching` | `None` | Native-only prompt-cache TTL: `'5m'` or `'1h'`. Supported by Anthropic; OpenRouter and the local fallback have no equivalent control. |
 | `forward_history` | `False` | Forward completed executor message history to local consultations. |
+| `id` | `'advisor'` | Capability and toolset ID. Advisors that share it merge into one. |
+| `defer_loading` | `False` | Defer the advisor tool behind Tool Search instead of showing it from the start. |
+| `description` | `None` | Capability description, as on any other capability. |
 
 Pass `local=False` when the consultation must stay inside the executor provider, or `native=False` when the configured advisor provider must receive a separate request, the same switches as the other native-or-local capabilities. `local=False` requires an `anthropic:<model>` or `openrouter:<model>` string and an executor on that same provider. A provider subclass that only changes its `name`, such as an `AnthropicProvider` subclass named `claude-code`, counts as the provider it extends. It does not fall back when the executor lacks support.
 
@@ -130,7 +133,7 @@ Invalid option combinations fail when `Advisor` is constructed. Executor and pro
 
 ## Composition
 
-The advisor tool is visible by default and is not deferred through Tool Search. It reserves the tool name and toolset ID `advisor`. An agent has one advisor, so two `Advisor` capabilities merge into one. An option left at `None` (`max_uses`, `max_tokens`, `caching`) takes the other instance's value, two list `output_type`s are combined, and every other option takes the later instance's value. `native` and `local` merge like any other option, so a later `Advisor` that leaves `local` unset keeps an earlier `local=False`. If the merge gives an OpenRouter `Advisor` with `local=False` a `max_uses`, which no single `Advisor` accepts, `max_uses` is ignored with a `HarnessDeprecationWarning`; this will raise `UserError` in a future release.
+The advisor tool is visible from the start unless `defer_loading=True` defers it through Tool Search. It reserves the tool name `advisor` and, by default, the toolset ID `advisor`. Two `Advisor` capabilities with the same `id` merge into one. An option left at `None` (`max_uses`, `max_tokens`, `caching`) takes the other instance's value, two list `output_type`s are combined, and every other option takes the later instance's value. `native` and `local` both default to `True`, so a later `Advisor` left at its defaults turns an earlier instance's disabled half back on, as the earlier default `mode='auto'` did. If the merge gives an OpenRouter `Advisor` with `local=False` a `max_uses`, which no single `Advisor` accepts, `max_uses` is ignored with a `HarnessDeprecationWarning`; this will raise `UserError` in a future release.
 
 During streaming, the executor stream pauses while an advisor consultation runs and resumes when the completed advice is available. The local fallback does not splice the advisor model's token deltas into the executor stream.
 

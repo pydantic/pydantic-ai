@@ -790,13 +790,39 @@ class TestAdvisorNativeOrLocal:
         with pytest.warns(HarnessDeprecationWarning):
             assert merged.mode == later
 
-    def test_merge_keeps_an_explicit_half_the_later_instance_leaves_unset(self) -> None:
-        merged = Advisor[None].combine(
-            [Advisor('anthropic:claude-opus-4-8', local=False), Advisor('anthropic:claude-opus-4-8')]
-        )
+    @pytest.mark.parametrize('later_model', ['anthropic:claude-opus-4-8', 'openai:gpt-5.4'])
+    def test_a_later_default_advisor_turns_the_local_fallback_back_on(self, later_model: str) -> None:
+        """A default `Advisor` states `local=True`, as the default `mode='auto'` did, so it wins a merge.
+
+        Keeping the earlier `local=False` instead would pair it with a model the native advisor can't use.
+        """
+        merged = Advisor[None].combine([Advisor('anthropic:claude-opus-4-8', local=False), Advisor(later_model)])
 
         assert isinstance(merged, Advisor)
-        assert merged.get_toolset() is None
+        assert merged.get_toolset() is not None
+        with pytest.warns(HarnessDeprecationWarning):
+            assert merged.mode == 'auto'
+
+    def test_setting_the_deprecated_mode_rebuilds_the_halves(self) -> None:
+        advisor = Advisor[None]('anthropic:claude-opus-4-8')
+
+        with pytest.warns(
+            HarnessDeprecationWarning, match=r'`Advisor.mode` is deprecated: pass `native=False`'
+        ) as warned:
+            advisor.mode = 'local'
+
+        assert warned[0].filename == __file__
+        assert advisor.get_native_tools() == []
+        assert advisor.get_toolset() is not None
+
+    def test_accepts_the_shared_capability_options(self) -> None:
+        advisor = Advisor[None]('test', id='team_advisor', defer_loading=True, description='Ask the senior engineer.')
+
+        assert (advisor.id, advisor.defer_loading, advisor.description) == (
+            'team_advisor',
+            True,
+            'Ask the senior engineer.',
+        )
 
     def test_agent_spec_accepts_the_deprecated_mode(self) -> None:
         with pytest.warns(HarnessDeprecationWarning, match=r"`Advisor\(mode='local'\)` is deprecated"):
