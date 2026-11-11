@@ -283,6 +283,22 @@ def test_native_clipboard_errors_get_no_linux_advice(system: str, monkeypatch: p
         clipboard_images()
 
 
+def test_notice_read_write_contract() -> None:
+    """The notice remains a readable, writable string with an empty default."""
+    images = ImageInput()
+    assert images.notice == ''
+    images.notice = 'Custom notice: ✓\nMore details'
+    assert images.notice == 'Custom notice: ✓\nMore details'
+    images.notice = ''
+    assert images.notice == ''
+
+    now = 0.0
+    images.paste_failed(ValueError('clipboard unavailable'), clock=lambda: now)
+    images.notice = 'Ordinary notice'
+    now = 31
+    assert images.notice == 'Ordinary notice'
+
+
 @pytest.mark.parametrize('replacement', ['', 'Image attached', 'Another notice'])
 def test_paste_feedback_lifetime(replacement: str) -> None:
     now = 0.0
