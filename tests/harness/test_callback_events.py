@@ -19,7 +19,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness import HarnessDeprecationWarning
-from pydantic_ai_harness.compaction import ContextUsageEvent, ReportContextUsage
+from pydantic_ai_harness.compaction import ContextUsageMeasuredEvent, ReportContextUsage
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
     PlanCreatedEvent,
@@ -51,15 +51,17 @@ async def test_spend_event_and_legacy_callback() -> None:
 
 
 async def test_context_usage_event_and_legacy_callback() -> None:
-    events: list[ContextUsageEvent] = []
+    events: list[ContextUsageMeasuredEvent] = []
     legacy: list[Any] = []
     hooks = Hooks[Any]()
 
-    @hooks.on.event(ContextUsageEvent)
-    async def record(ctx: RunContext[Any], event: ContextUsageEvent) -> None:
+    @hooks.on.event(ContextUsageMeasuredEvent)
+    async def record(ctx: RunContext[Any], event: ContextUsageMeasuredEvent) -> None:
         events.append(event)
 
-    with pytest.warns(HarnessDeprecationWarning, match=r'ReportContextUsage\.on_usage.*ContextUsageEvent.*on_event'):
+    with pytest.warns(
+        HarnessDeprecationWarning, match=r'ReportContextUsage\.on_usage.*ContextUsageMeasuredEvent.*on_event'
+    ):
         capability = ReportContextUsage(on_usage=legacy.append, context_window=1_000)
     # pydantic-ai 2.41 derives a run-local synthetic id for anonymous capabilities, so pin one
     # rather than asserting on whichever derivation policy the installed core uses.
@@ -68,7 +70,7 @@ async def test_context_usage_event_and_legacy_callback() -> None:
 
     assert len(legacy) == 1
     assert events == [
-        ContextUsageEvent(
+        ContextUsageMeasuredEvent(
             used_tokens=legacy[0].used_tokens,
             window_tokens=1_000,
             resolved=True,
@@ -145,7 +147,7 @@ def test_callback_replacement_events_serialize() -> None:
             priced=True,
             budgets=(),
         ),
-        ContextUsageEvent(used_tokens=25, window_tokens=100, resolved=True, fraction=0.25),
+        ContextUsageMeasuredEvent(used_tokens=25, window_tokens=100, resolved=True, fraction=0.25),
         ReminderFiredEvent(text='focus'),
         PlanCreatedEvent(item=PlanItem(id='step-1', content='ship')),
     ]

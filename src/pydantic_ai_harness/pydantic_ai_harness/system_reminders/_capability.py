@@ -656,10 +656,10 @@ def _is_reminder_data(part: UserPromptPart) -> bool:
 
 
 def _first_user_text(messages: Sequence[ModelMessage]) -> str | None:
-    for msg in messages:
-        if not isinstance(msg, ModelRequest):
+    for message in messages:
+        if not isinstance(message, ModelRequest):
             continue
-        for part in msg.parts:
+        for part in message.parts:
             if not isinstance(part, UserPromptPart) or _is_reminder_data(part):
                 continue
             if text := user_prompt_text(part):
@@ -702,8 +702,8 @@ def _opening_compaction(window: Sequence[ModelMessage]) -> CompactionPart | None
 def _recent_texts(messages: Sequence[ModelMessage], max_messages: int) -> list[str]:
     """The recent user and assistant texts, each quoted in a `<message>` element with its role."""
     fragments: list[str] = []
-    for msg in messages:
-        for part in msg.parts:
+    for message in messages:
+        for part in message.parts:
             if isinstance(part, UserPromptPart) and not _is_reminder_data(part):
                 text = user_prompt_text(part)
                 if text:

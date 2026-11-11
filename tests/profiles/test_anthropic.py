@@ -18,15 +18,17 @@ from __future__ import annotations as _annotations
 
 import warnings
 from enum import Enum, IntEnum
+from importlib.metadata import version
 from typing import Annotated, Any, Literal
 
 import pytest
+from packaging.version import Version
 from pydantic import BaseModel, Field
 
 from pydantic_ai import BoolCriteria, Choices, UseEnumMemberDocstrings
 from pydantic_ai.tools import GenerateToolJsonSchema
 
-from .._inline_snapshot import snapshot
+from .._inline_snapshot import Is, snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -165,12 +167,21 @@ class Weight(UseEnumMemberDocstrings, Enum):
     """Not weighed yet."""
 
 
-def test_strict_true_described_options():
-    """With strict=True, untyped `const` options become typed one-value `enum`s.
+def _enum_schema(type_: str, value: str | int | float, *, description: str | None = None) -> dict[str, Any]:
+    """Expected literal constraint: SDK 2.7.0 drops the redundant type beside an enum."""
+    schema: dict[str, Any] = {'type': type_} if Version(version('anthropic')) < Version('2.7.0') else {}
+    schema['enum'] = [value]
+    if description is not None:
+        schema['description'] = description
+    return schema
 
-    Described enums, `Choices` and `BoolCriteria` all render their options this way. Anthropic's
-    `transform_schema()` raises on an option without a `type`, and moves a `const` into the description,
-    which would leave the option unconstrained. A unit test: `walk()` runs the SDK's `transform_schema()`
+
+def test_strict_true_described_options():
+    """With strict=True, untyped `const` options become one-value `enum`s.
+
+    Described enums, `Choices` and `BoolCriteria` all render their options this way. Before SDK 2.7.0,
+    Anthropic's `transform_schema()` raises on an option without a `type`, and moves a `const` into the
+    description, which would leave the option unconstrained. A unit test: `walk()` runs `transform_schema()`
     on the generated schema, which is where the error was raised, so no request is needed.
     """
 
@@ -190,20 +201,20 @@ def test_strict_true_described_options():
             '$defs': {
                 'Area': {
                     'anyOf': [
-                        {'type': 'string', 'enum': ['billing'], 'description': 'Charges and invoices.'},
-                        {'type': 'string', 'enum': ['bug'], 'description': 'Something is broken.'},
+                        Is(_enum_schema('string', 'billing', description='Charges and invoices.')),
+                        Is(_enum_schema('string', 'bug', description='Something is broken.')),
                     ]
                 },
                 'Priority': {
                     'anyOf': [
-                        {'type': 'integer', 'enum': [1], 'description': 'Can wait a week.'},
-                        {'type': 'integer', 'enum': [2], 'description': 'Needs attention today.'},
+                        Is(_enum_schema('integer', 1, description='Can wait a week.')),
+                        Is(_enum_schema('integer', 2, description='Needs attention today.')),
                     ]
                 },
                 'Weight': {
                     'anyOf': [
-                        {'type': 'number', 'enum': [0.5], 'description': 'Half the usual weight.'},
-                        {'type': 'string', 'enum': ['unknown'], 'description': 'Not weighed yet.'},
+                        Is(_enum_schema('number', 0.5, description='Half the usual weight.')),
+                        Is(_enum_schema('string', 'unknown', description='Not weighed yet.')),
                     ]
                 },
             },
@@ -214,14 +225,14 @@ def test_strict_true_described_options():
                 'weight': {'$ref': '#/$defs/Weight'},
                 'team': {
                     'anyOf': [
-                        {'type': 'string', 'enum': ['finance'], 'description': 'Money matters.'},
-                        {'type': 'string', 'enum': ['eng'], 'description': 'Engineering.'},
+                        Is(_enum_schema('string', 'finance', description='Money matters.')),
+                        Is(_enum_schema('string', 'eng', description='Engineering.')),
                     ]
                 },
                 'urgent': {
                     'anyOf': [
-                        {'type': 'boolean', 'enum': [True], 'description': 'The customer is blocked.'},
-                        {'type': 'boolean', 'enum': [False], 'description': 'The customer can wait.'},
+                        Is(_enum_schema('boolean', True, description='The customer is blocked.')),
+                        Is(_enum_schema('boolean', False, description='The customer can wait.')),
                     ]
                 },
             },
@@ -232,11 +243,11 @@ def test_strict_true_described_options():
 
 
 def test_strict_true_typed_const():
-    """With strict=True, a typed `const` becomes a one-value `enum`, keeping its declared `type`.
+    """With strict=True, a typed `const` becomes a one-value `enum`.
 
     Pydantic emits a typed `const` for a single-value `Literal`, including a tagged union's discriminator.
-    Anthropic's `transform_schema()` moves a `const` into the description, which would leave the model free to
-    return any tag. A unit test: `walk()` runs the SDK's `transform_schema()`, which is where the constraint
+    Before SDK 2.7.0, Anthropic's `transform_schema()` moves a `const` into the description, which would leave
+    the model free to return any tag. A unit test: `walk()` runs `transform_schema()`, where the constraint
     was lost, and the request a recording would capture doesn't show whether the model was held to it.
     """
 
@@ -258,13 +269,13 @@ def test_strict_true_typed_const():
             '$defs': {
                 'Cat': {
                     'type': 'object',
-                    'properties': {'kind': {'type': 'string', 'enum': ['cat']}},
+                    'properties': {'kind': Is(_enum_schema('string', 'cat'))},
                     'additionalProperties': False,
                     'required': ['kind'],
                 },
                 'Dog': {
                     'type': 'object',
-                    'properties': {'kind': {'type': 'string', 'enum': ['dog']}},
+                    'properties': {'kind': Is(_enum_schema('string', 'dog'))},
                     'additionalProperties': False,
                     'required': ['kind'],
                 },
@@ -275,7 +286,7 @@ def test_strict_true_typed_const():
                     'anyOf': [{'$ref': '#/$defs/Cat'}, {'$ref': '#/$defs/Dog'}],
                     'description': "{discriminator: {'mapping': {'cat': '#/$defs/Cat', 'dog': '#/$defs/Dog'}, 'propertyName': 'kind'}}",
                 },
-                'legs': {'type': 'integer', 'enum': [4]},
+                'legs': Is(_enum_schema('integer', 4)),
             },
             'additionalProperties': False,
             'required': ['pet', 'legs'],
