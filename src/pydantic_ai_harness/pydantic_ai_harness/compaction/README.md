@@ -655,7 +655,12 @@ and the summary request's `max_tokens` becomes the smaller of the budget and the
 summary agent's merged settings (the summary model's defaults, `model_settings` and summarization
 capabilities). Defaults on the individual models inside a `FallbackModel` aren't considered, so a
 smaller limit there can be raised to the budget. With the default `None`, output settings are
-unchanged.
+unchanged. The budget is the summary request's output-token limit, which on providers that count them
+includes reasoning and thinking tokens: OpenAI sends it as `max_completion_tokens`, and Anthropic
+counts an extended-thinking `budget_tokens` toward it and rejects a request whose limit isn't larger
+than that budget. On a reasoning summary model, a small budget can be used up by reasoning, leaving a
+length-stopped response that's retried and then raises `UnexpectedModelBehavior`. Set it well above
+the expected reasoning, or disable thinking for the summary call through `model_settings`.
 
 ```python
 from pydantic_ai_harness import SummarizingCompaction

@@ -148,9 +148,12 @@ summary agent's merged settings (the summary model's defaults, `model_settings` 
 capabilities). Defaults on the models inside a `FallbackModel` aren't considered, so a smaller limit
 there can be raised to the budget.
 Incremental summaries are rewritten within the same budget. Smaller budgets can lose details;
-they do not cap retained recent messages. A length-stopped summary is retried once with its
-output budget restated; if that retry also hits the limit, it raises `UnexpectedModelBehavior`
-rather than replacing history.
+they do not cap retained recent messages. A length-stopped summary is rejected and retried within
+the summary run's output retries (`retries`, one by default) with the output limit restated;
+exhausting them raises `UnexpectedModelBehavior` rather than replacing history. The budget is the
+request's output-token limit, which includes reasoning/thinking tokens on providers that count
+them: on a reasoning summary model, set it well above the expected reasoning or disable thinking
+for the summary call via `model_settings`.
 Configure `FallbackCompaction(fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded), ...)`
 to move to the next strategy on summary failure or exhausted usage.
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.

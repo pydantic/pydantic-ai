@@ -643,7 +643,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     models inside a `FallbackModel` aren't considered, so a smaller limit there can be raised to the
     budget. `None` leaves existing output settings unchanged.
     This limits the summary, not the recent messages preserved alongside it; a smaller
-    budget can omit useful details.
+    budget can omit useful details. It's the request's output-token limit, which includes
+    reasoning and thinking tokens on providers that count them: on a reasoning summary model,
+    set it well above the expected reasoning, or disable thinking via `model_settings`.
     """
 
     event_stream_handler: EventStreamHandler[object] | None = field(default=None, kw_only=True)
