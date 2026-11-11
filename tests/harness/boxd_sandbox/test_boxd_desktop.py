@@ -21,9 +21,7 @@ async def test_a_desktop_machine_runs_computer_use(host: FakeBoxd) -> None:
 
     host.answer = answer_display_commands
     sandbox = BoxdSandbox(desktop=True)
-    agent = Agent(
-        FunctionModel(look_click_then_finish), capabilities=[sandbox, ComputerUse(native=False, settle_seconds=0)]
-    )
+    agent = Agent(FunctionModel(look_click_then_finish), capabilities=[sandbox, ComputerUse(native=False)])
 
     result = await agent.run('Click.')
 
