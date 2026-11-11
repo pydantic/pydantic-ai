@@ -25,7 +25,7 @@ _PREFERRED = (
     r'claude-opus-5\.5',
     r'gemini-4-argon',
     r'claude-opus-',
-    r'gemini-(?:[4-9]|\d\d)',
+    r'gemini-[4-9]',
     r'gpt-',
     r'claude-sonnet-',
 )
@@ -155,8 +155,8 @@ def default_model(names: list[str]) -> str:
 
 
 def _version(name: str) -> tuple[int, ...]:
-    """The first dotted number in a model id: `gpt-5.4-mini` gives `(5, 4)`."""
-    found = re.search(r'\d+(?:\.\d+)*', name)
+    """The first dotted version in a model id, else its first digit, as Copilot writes Opus 4.1 as `claude-opus-41`."""
+    found = re.search(r'\d+(?:\.\d+)+|\d', name)
     return tuple(map(int, found.group().split('.'))) if found else ()
 
 

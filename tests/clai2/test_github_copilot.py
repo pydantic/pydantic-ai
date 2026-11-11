@@ -363,6 +363,7 @@ async def test_cancelled_login_adds_no_models(
         (['claude-opus-5.5', 'claude-opus-6', 'gemini-4-argon', 'gpt-6-sol'], 'claude-opus-5.5'),
         (['claude-opus-4.8', 'gemini-4-argon', 'gpt-6-sol'], 'gemini-4-argon'),
         (['claude-opus-4.7', 'claude-opus-4.8', 'gemini-4.1-pro', 'gpt-6-sol'], 'claude-opus-4.8'),
+        (['claude-opus-41', 'claude-opus-4.8'], 'claude-opus-4.8'),
         (['gemini-3.8-flash', 'gemini-4.1-pro', 'gpt-6-sol'], 'gemini-4.1-pro'),
         (['gemini-3.1-pro', 'gpt-5.5', 'gpt-6-sol'], 'gpt-6-sol'),
         (['gpt-4o', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5', 'claude-sonnet-5'], 'gpt-5.5'),
