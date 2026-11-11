@@ -251,7 +251,7 @@ async def test_task_ending_or_asking_before_its_model_gets_its_start_row_without
             output='failed',
             truncated=False,
             usage=None,
-            duration_seconds=1,
+            duration_ms=1000,
             task_id=record.id,
         )
         if first == 'end'
@@ -285,7 +285,7 @@ async def test_resumed_task_ending_before_its_model_does_not_show_the_earlier_mo
         output='failed',
         truncated=False,
         usage=None,
-        duration_seconds=1,
+        duration_ms=1000,
         task_id=record.id,
     )
     await ui.observe(start())
@@ -490,7 +490,7 @@ def test_terminal_row_outcomes(success: bool) -> None:
         output='untrusted',
         truncated=False,
         usage=None,
-        duration_seconds=1.0,
+        duration_ms=1000.0,
     )
     row = task_row(event)
     if success:

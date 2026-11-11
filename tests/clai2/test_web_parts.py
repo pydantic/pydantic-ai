@@ -160,7 +160,7 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
     assert translate(CommandOutputEvent(tool_call_id='c1', text='a.py\n')) == [ToolOutput(id='c1', text='a.py\n')]
     assert translate(CommandOutputEvent(tool_call_id=None, text='lost')) == []
     finished = CommandFinishedEvent(
-        tool_call_id='c1', pid=1, output_path='o', status_path='s', exit_code=0, truncated=False, total_lines=1
+        tool_call_id='c1', pid=1, output_path='o', status_path='s', exit_code=0, truncated=False, line_count=1
     )
     assert translate(finished) == [ShellDone(id='c1', exit_code=0)]
     assert translate(FunctionToolResultEvent(part=ToolReturnPart('shell', 'a.py', tool_call_id='c1'))) == [
