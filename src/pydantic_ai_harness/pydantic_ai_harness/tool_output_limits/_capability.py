@@ -473,7 +473,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return None
         reduction = await self._apply(ctx, call, action, unit)
         # A `Truncate` whose `max_chars` the text already fits returns it unchanged: nothing was cut. A
-        # fallback is still recorded, since the action it replaced failing is what an operator needs to see.
+        # fallback is still recorded: that the band's own action failed is what an operator needs to see.
         if reduction is not None and (reduction.text != unit.text or reduction.fallback_from is not None):
             self._record_reduction(ctx, unit, size, reduction)
         return reduction

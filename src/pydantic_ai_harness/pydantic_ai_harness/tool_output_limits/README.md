@@ -382,8 +382,9 @@ its own: the tool call is already spanned, and the reduction happens inside it.
 
 A `ToolReturn`'s text `content` is reduced on its own, so its reduction is recorded under
 `tool_output_limits.content.*` with the same names. Nothing is recorded for a return under every
-band or a `Truncate` whose `max_chars` the text already fits. A fallback is always recorded, even
-when it cuts nothing (then both sizes are equal). When the default `Spill(then=Truncate())` can't
+band or a `Truncate` whose `max_chars` the text already fits. A `then` that produces a result is
+recorded even when it cuts nothing (then both sizes are equal). An action that can't run and has no
+`then`, or whose `then` is `Passthrough()`, leaves the return unchanged and records nothing. When the default `Spill(then=Truncate())` can't
 write to its store, `action` is `truncate` and `fallback_from` is `spill`, which is how a failing
 store shows up in a trace.
 
