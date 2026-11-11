@@ -171,6 +171,15 @@ class WorkspaceBackendSuite:
         if isinstance(backend, SupportsCommands):
             assert (await backend.run(['sh', '-c', 'pwd -P'])).stdout == f'{working_dir}\n'
 
+    async def test_run_starts_in_cwd(self, backend: WorkspaceBackend) -> None:
+        """`Workspace.run(cwd=...)` starts the command there, relative paths resolving against the working directory."""
+        _commands(backend)
+        workspace = Workspace(backend)
+        async with _scratch_dir(workspace) as root:
+            expected = f'{await workspace.realpath(root)}\n'
+            assert (await workspace.run(['sh', '-c', 'pwd -P'], cwd=posixpath.basename(root))).stdout == expected
+            assert (await workspace.run('pwd -P', shell=True, cwd=root)).stdout == expected
+
     async def test_timeout_raises_workspace_timeout_error(self, backend: WorkspaceBackend) -> None:
         with pytest.raises(WorkspaceTimeoutError):
             await _commands(backend).run(['sh', '-c', 'sleep 3600'], timeout=1.0)

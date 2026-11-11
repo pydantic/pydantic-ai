@@ -1,5 +1,5 @@
-# gh-aw-metadata: {"schema_version":"v4","frontmatter_hash":"f5610523e91ffff5299261ffec70cbd4ddd21da52ceb2f38db30dc251a00ffb4","body_hash":"7f0c56502defed48c228bb4281495cf801c378524d90fc249178cab6f7d9fe40","compiler_version":"v1.2.1","strict":true,"agent_id":"pydantic-ai","agent_model":"anthropic/${{ vars.GH_AW_MODEL }}","engine_versions":{"pydantic-ai":"0.64.0"}}
-# gh-aw-manifest: {"version":1,"secrets":["COPILOT_GITHUB_TOKEN","GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN","LOGFIRE_PROMPT_TOKEN","LOGFIRE_TOKEN","LOGFIRE_URL","OPENCODE_API_KEY","ZAI_API_KEY"],"actions":[{"repo":"actions/checkout","sha":"3d3c42e5aac5ba805825da76410c181273ba90b1","version":"3d3c42e5aac5ba805825da76410c181273ba90b1"},{"repo":"actions/checkout","sha":"de0fac2e4500dabe0009e67214ff5f5447ce83dd","version":"v6.0.2"},{"repo":"actions/download-artifact","sha":"9000827ccba6bdab643e8b6fd33ac0654aef8333","version":"v8.0.2"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"3a2844b7e9c422d3c10d287c895573f7108da1b3"},{"repo":"actions/setup-node","sha":"949feb2413d6458794dcd2491c4babbbce0c15c1","version":"v7.1.0"},{"repo":"actions/setup-python","sha":"6d4fd22b20465ccc0f7354476588e8df7c9ca0e0","version":"v7.1.0"},{"repo":"actions/upload-artifact","sha":"043fb46d1a93c77aae656e7c1c64a875d1fc6a0a","version":"v7.0.1"},{"repo":"actions/upload-artifact","sha":"cf430e030ddbb5b0abf93d22962f4752f3646cd9","version":"v7.0.2"},{"repo":"astral-sh/setup-uv","sha":"68559e99cc807c1eb7e9238fd43a15bba460eec2","version":"v10.3.3"},{"repo":"github/gh-aw-actions/setup","sha":"406c7719e31d7fe354224d4bb8fe3d4aeb47da1c","version":"v1.2.1"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.29.7","digest":"sha256:bd8d363c11b65632920850a44aa61cf9857e2ce9bcd78016e5e9ff57861cb2f5","pinned_image":"ghcr.io/github/gh-aw-firewall/agent:0.29.7@sha256:bd8d363c11b65632920850a44aa61cf9857e2ce9bcd78016e5e9ff57861cb2f5"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.29.7","digest":"sha256:c3b4c800634b9e314b80c0cd8daa6d861ed849381bf69234cd77417e7b79b94a","pinned_image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.29.7@sha256:c3b4c800634b9e314b80c0cd8daa6d861ed849381bf69234cd77417e7b79b94a"},{"image":"ghcr.io/github/gh-aw-firewall/cli-proxy:0.29.7","digest":"sha256:d2c0259d8d3529012885f8b7f7e0d7a20b0e8f4b15a6f5b1d6853999cce124bb","pinned_image":"ghcr.io/github/gh-aw-firewall/cli-proxy:0.29.7@sha256:d2c0259d8d3529012885f8b7f7e0d7a20b0e8f4b15a6f5b1d6853999cce124bb"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.29.7","digest":"sha256:0790d978a820af2dc1bfab74d1f06b159f3a57ad4893ec49f475289691c4d154","pinned_image":"ghcr.io/github/gh-aw-firewall/squid:0.29.7@sha256:0790d978a820af2dc1bfab74d1f06b159f3a57ad4893ec49f475289691c4d154"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.5.4","digest":"sha256:801db64c2456ba2132733b23141fb52ca9d4691765181ee957ee121a21b86c09","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.5.4@sha256:801db64c2456ba2132733b23141fb52ca9d4691765181ee957ee121a21b86c09"},{"image":"ghcr.io/github/gh-aw-node","digest":"sha256:2c2ea524e648b91c8333ce246e3838fcf5b19ac70e45baac1a51b9207299749f","pinned_image":"ghcr.io/github/gh-aw-node@sha256:2c2ea524e648b91c8333ce246e3838fcf5b19ac70e45baac1a51b9207299749f"},{"image":"ghcr.io/github/github-mcp-server:v2.0.3","digest":"sha256:250bc6ce70788207608ef74cef4397230ff2e8481218da74d6093e4bd9101132","pinned_image":"ghcr.io/github/github-mcp-server:v2.0.3@sha256:250bc6ce70788207608ef74cef4397230ff2e8481218da74d6093e4bd9101132"}],"mcp_servers":[{"name":"safeoutputs","tools":["create_issue","noop","report_incomplete","report_missing_data","report_missing_tool"]}],"threat_detection":{"mode":"enabled"},"admission":false}
+# gh-aw-metadata: {"schema_version":"v4","frontmatter_hash":"efb6dc0e647c7c19dc1a0c7687a1aaa1f379ddc5505f926aba4751e22a078337","body_hash":"7f0c56502defed48c228bb4281495cf801c378524d90fc249178cab6f7d9fe40","compiler_version":"v1.2.1","strict":true,"agent_id":"pydantic-ai","agent_model":"anthropic/${{ vars.GH_AW_MODEL }}","engine_versions":{"pydantic-ai":"0.64.0"}}
+# gh-aw-manifest: {"version":1,"secrets":["COPILOT_GITHUB_TOKEN","DEEPINFRA_API_KEY","GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN","LOGFIRE_PROMPT_TOKEN","LOGFIRE_TOKEN","LOGFIRE_URL","OPENCODE_API_KEY","ZAI_API_KEY"],"actions":[{"repo":"actions/checkout","sha":"3d3c42e5aac5ba805825da76410c181273ba90b1","version":"3d3c42e5aac5ba805825da76410c181273ba90b1"},{"repo":"actions/checkout","sha":"de0fac2e4500dabe0009e67214ff5f5447ce83dd","version":"v6.0.2"},{"repo":"actions/download-artifact","sha":"9000827ccba6bdab643e8b6fd33ac0654aef8333","version":"v8.0.2"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"3a2844b7e9c422d3c10d287c895573f7108da1b3"},{"repo":"actions/setup-node","sha":"949feb2413d6458794dcd2491c4babbbce0c15c1","version":"v7.1.0"},{"repo":"actions/setup-python","sha":"6d4fd22b20465ccc0f7354476588e8df7c9ca0e0","version":"v7.1.0"},{"repo":"actions/upload-artifact","sha":"043fb46d1a93c77aae656e7c1c64a875d1fc6a0a","version":"v7.0.1"},{"repo":"actions/upload-artifact","sha":"cf430e030ddbb5b0abf93d22962f4752f3646cd9","version":"v7.0.2"},{"repo":"astral-sh/setup-uv","sha":"68559e99cc807c1eb7e9238fd43a15bba460eec2","version":"v10.3.3"},{"repo":"github/gh-aw-actions/setup","sha":"406c7719e31d7fe354224d4bb8fe3d4aeb47da1c","version":"v1.2.1"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.29.7","digest":"sha256:bd8d363c11b65632920850a44aa61cf9857e2ce9bcd78016e5e9ff57861cb2f5","pinned_image":"ghcr.io/github/gh-aw-firewall/agent:0.29.7@sha256:bd8d363c11b65632920850a44aa61cf9857e2ce9bcd78016e5e9ff57861cb2f5"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.29.7","digest":"sha256:c3b4c800634b9e314b80c0cd8daa6d861ed849381bf69234cd77417e7b79b94a","pinned_image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.29.7@sha256:c3b4c800634b9e314b80c0cd8daa6d861ed849381bf69234cd77417e7b79b94a"},{"image":"ghcr.io/github/gh-aw-firewall/cli-proxy:0.29.7","digest":"sha256:d2c0259d8d3529012885f8b7f7e0d7a20b0e8f4b15a6f5b1d6853999cce124bb","pinned_image":"ghcr.io/github/gh-aw-firewall/cli-proxy:0.29.7@sha256:d2c0259d8d3529012885f8b7f7e0d7a20b0e8f4b15a6f5b1d6853999cce124bb"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.29.7","digest":"sha256:0790d978a820af2dc1bfab74d1f06b159f3a57ad4893ec49f475289691c4d154","pinned_image":"ghcr.io/github/gh-aw-firewall/squid:0.29.7@sha256:0790d978a820af2dc1bfab74d1f06b159f3a57ad4893ec49f475289691c4d154"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.5.4","digest":"sha256:801db64c2456ba2132733b23141fb52ca9d4691765181ee957ee121a21b86c09","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.5.4@sha256:801db64c2456ba2132733b23141fb52ca9d4691765181ee957ee121a21b86c09"},{"image":"ghcr.io/github/gh-aw-node","digest":"sha256:2c2ea524e648b91c8333ce246e3838fcf5b19ac70e45baac1a51b9207299749f","pinned_image":"ghcr.io/github/gh-aw-node@sha256:2c2ea524e648b91c8333ce246e3838fcf5b19ac70e45baac1a51b9207299749f"},{"image":"ghcr.io/github/github-mcp-server:v2.0.3","digest":"sha256:250bc6ce70788207608ef74cef4397230ff2e8481218da74d6093e4bd9101132","pinned_image":"ghcr.io/github/github-mcp-server:v2.0.3@sha256:250bc6ce70788207608ef74cef4397230ff2e8481218da74d6093e4bd9101132"}],"mcp_servers":[{"name":"safeoutputs","tools":["create_issue","noop","report_incomplete","report_missing_data","report_missing_tool"]}],"threat_detection":{"mode":"enabled"},"admission":false}
 # This file was automatically generated by gh-aw (v1.2.1). DO NOT EDIT. To debug this workflow, load the skill at https://github.com/github/gh-aw/blob/main/debug.md
 #
 #    ___                   _   _
@@ -41,6 +41,7 @@
 #
 # Secrets used:
 #   - COPILOT_GITHUB_TOKEN
+#   - DEEPINFRA_API_KEY
 #   - GH_AW_GITHUB_MCP_SERVER_TOKEN
 #   - GH_AW_GITHUB_TOKEN
 #   - GITHUB_TOKEN
@@ -2311,6 +2312,7 @@ jobs:
       - detection
       - fetch_dynamic_prompt
       - provider_health
+      - provider_health_record
       - safe_outputs
     if: >
       always() && (needs.agent.result != 'skipped' || needs.activation.result == 'failure' || needs.activation.outputs.lockdown_check_failed == 'true' ||
@@ -2325,9 +2327,9 @@ jobs:
       cancel-in-progress: false
       queue: max
     env:
-      GH_AW_JOB_DISPLAY_NAMES: "{\"activation\":\"activation\",\"agent\":\"agent\",\"conclusion\":\"conclusion\",\"detection\":\"detection\",\"fetch_dynamic_prompt\":\"fetch_dynamic_prompt\",\"provider_health\":\"Check Z.AI provider health\",\"safe_outputs\":\"safe_outputs\"}"
-      GH_AW_JOB_RESULTS: "{\"activation\":{\"result\":\"${{ needs.activation.result }}\"},\"agent\":{\"result\":\"${{ needs.agent.result }}\"},\"detection\":{\"result\":\"${{ needs.detection.result }}\"},\"fetch_dynamic_prompt\":{\"result\":\"${{ needs.fetch_dynamic_prompt.result }}\"},\"provider_health\":{\"result\":\"${{ needs.provider_health.result }}\"},\"safe_outputs\":{\"result\":\"${{ needs.safe_outputs.result }}\"}}"
-      GH_AW_JOB_TIMING_ELIGIBLE: "{\"activation\":true,\"agent\":true,\"conclusion\":true,\"detection\":true,\"fetch_dynamic_prompt\":true,\"provider_health\":true,\"safe_outputs\":true}"
+      GH_AW_JOB_DISPLAY_NAMES: "{\"activation\":\"activation\",\"agent\":\"agent\",\"conclusion\":\"conclusion\",\"detection\":\"detection\",\"fetch_dynamic_prompt\":\"fetch_dynamic_prompt\",\"provider_health\":\"Check Z.AI provider health\",\"provider_health_record\":\"Record the terminal agent result on the host\",\"safe_outputs\":\"safe_outputs\"}"
+      GH_AW_JOB_RESULTS: "{\"activation\":{\"result\":\"${{ needs.activation.result }}\"},\"agent\":{\"result\":\"${{ needs.agent.result }}\"},\"detection\":{\"result\":\"${{ needs.detection.result }}\"},\"fetch_dynamic_prompt\":{\"result\":\"${{ needs.fetch_dynamic_prompt.result }}\"},\"provider_health\":{\"result\":\"${{ needs.provider_health.result }}\"},\"provider_health_record\":{\"result\":\"${{ needs.provider_health_record.result }}\"},\"safe_outputs\":{\"result\":\"${{ needs.safe_outputs.result }}\"}}"
+      GH_AW_JOB_TIMING_ELIGIBLE: "{\"activation\":true,\"agent\":true,\"conclusion\":true,\"detection\":true,\"fetch_dynamic_prompt\":true,\"provider_health\":true,\"provider_health_record\":true,\"safe_outputs\":true}"
       GH_AW_RUNTIME_FEATURES: ${{ vars.GH_AW_RUNTIME_FEATURES }}
     outputs:
       incomplete_count: ${{ steps.report_incomplete.outputs.incomplete_count }}
@@ -2796,6 +2798,7 @@ jobs:
           export PATH="$RUNNER_TEMP/douwebot-tools/bin:$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin:$PATH"
           python3 .gh-aw-detector/.github/scripts/gh_aw_opencode_detect.py
         env:
+          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
           GH_AW_HARNESS_MAX_RETRIES: "3"
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
@@ -2856,7 +2859,8 @@ jobs:
         if: always() && steps.detection_guard.outputs.run_detection == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          GH_AW_SECRET_NAMES: 'LOGFIRE_TOKEN,OPENCODE_API_KEY'
+          GH_AW_SECRET_NAMES: 'DEEPINFRA_API_KEY,LOGFIRE_TOKEN,OPENCODE_API_KEY'
+          SECRET_DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
           SECRET_LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }}
           SECRET_OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
@@ -2892,7 +2896,8 @@ jobs:
         if: always() && steps.detection_guard.outputs.run_detection == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          GH_AW_SECRET_NAMES: 'LOGFIRE_TOKEN,OPENCODE_API_KEY'
+          GH_AW_SECRET_NAMES: 'DEEPINFRA_API_KEY,LOGFIRE_TOKEN,OPENCODE_API_KEY'
+          SECRET_DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
           SECRET_LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }}
           SECRET_OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
@@ -3035,6 +3040,72 @@ jobs:
           name: provider-health
           overwrite: true
           path: provider-health/provider-health.json
+          retention-days: ${{ vars.GH_AW_DEFAULT_ARTIFACT_RETENTION_DAYS || '7.0' }}
+
+  provider_health_record:
+    name: Record the terminal agent result on the host
+    needs:
+      - agent
+      - detection
+    if: "${{ needs.detection.result == 'success' && needs.detection.outputs.detection_success == 'true' && ((!cancelled()) && needs.agent.result != 'skipped') }}"
+    runs-on: ubuntu-latest
+    # Permissions for the provider_health_record job (workflow permissions default to none).
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - name: Configure GH_HOST for enterprise compatibility
+        id: ghes-host-config
+        shell: bash
+        run: | # zizmor: ignore[github-env] - GITHUB_SERVER_URL is set by GitHub Actions, not user input.
+          # Derive GH_HOST from GITHUB_SERVER_URL so the gh CLI targets the correct
+          # GitHub instance (GHES/GHEC). On github.com this is a harmless no-op.
+          GH_HOST="${GITHUB_SERVER_URL#https://}"
+          GH_HOST="${GH_HOST#http://}"
+          echo "GH_HOST=${GH_HOST}" >> "$GITHUB_ENV"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+          repository: ${{ github.repository }}
+          sparse-checkout: .github/scripts/agent_provider_health.py
+          sparse-checkout-cone-mode: false
+      - name: Download the agent's terminal session record
+        id: agent_artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent
+          path: agent
+        continue-on-error: true
+      - name: Download the health decision the run acted on
+        id: health_artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: provider-health
+          path: provider-health
+        continue-on-error: true
+      - name: Record the terminal agent result
+        if: steps.agent_artifact.outcome == 'success' && steps.health_artifact.outcome == 'success'
+        run: |
+          python3 -I .github/scripts/agent_provider_health.py record \
+            --agent-session agent/agent-session.jsonl \
+            --output provider-health/run-result.json
+        env:
+          GITHUB_WORKFLOW: ${{ github.workflow }}
+          PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
+          PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+      - name: Add the host-recorded agent result to the health decision artifact
+        if: hashFiles('provider-health/run-result.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provider-health
+          overwrite: true
+          path: |
+            provider-health/provider-health.json
+            provider-health/run-result.json
           retention-days: ${{ vars.GH_AW_DEFAULT_ARTIFACT_RETENTION_DAYS || '7.0' }}
 
   safe_outputs:

@@ -42,7 +42,8 @@ if __name__ == '__main__':
 - `LocalWorkspace('.')` gives every run the current directory. Commands start there, and relative
   paths resolve against it.
 - `ctx.workspace.run(...)` returns the command's `exit_code`, `stdout` and `stderr`. A failing command
-  is a normal result, so the model sees what went wrong and can fix it.
+  is a normal result, so the model sees what went wrong and can fix it. Pass `cwd='subdir'` to start a
+  command in another directory, relative to the working directory; it must already exist.
 - `timeout=60` stops a stuck command with a
   [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError]. Turning any
   [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] into `ModelRetry` lets the model try
@@ -255,7 +256,8 @@ For a single run, wrap its workspace in `ReadOnlyWorkspace` and pass it as `work
 [reviewer above](#hand-the-workspace-to-another-agent) does. To write your own policy, subclass
 [`WrapperWorkspace`][pydantic_ai.workspaces.WrapperWorkspace], override the operations you want to
 change, and call `self.wrapped` for the rest. `run()` bypasses file-method policies (including
-shell/grep tools built on it) unless the wrapper also overrides or refuses commands. Symlinks can
+shell/grep tools built on it) unless the wrapper also overrides or refuses commands; a `run()` override
+takes and forwards `cwd` too. Symlinks can
 also lead outside a file root; check `realpath` before a write, for example:
 
 ```python
@@ -506,7 +508,7 @@ conversation from `message_history`, in a new workflow or flow, works in the
 | Commands: `run_command`, `shell` | Yes, within the [activity timeout](durable_execution/temporal.md#harness-command-timeouts) | Yes | Yes |
 | Background jobs: `start_command`, `check_command`, `stop_command` | Yes | Yes | Yes |
 | Sticky `cd`: `Shell(persist_cwd=True)` | Yes | Yes | Yes |
-| File-change approval: [`FileChangeRequestEvent`](harness/filesystem.md#events) | Yes | Yes | Yes |
+| File-change approval: [`FileChangeRequestedEvent`](harness/filesystem.md#events) | Yes | Yes | Yes |
 | Live tool events | [File-change requests and write events only](durable_execution/temporal.md#harness-workspace-capabilities) | Yes | Yes |
 | Delegation: `delegate_task` | [To `self` only](durable_execution/temporal.md#harness-workspace-capabilities) | Yes | Yes |
 
