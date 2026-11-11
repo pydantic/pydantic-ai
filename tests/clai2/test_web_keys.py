@@ -402,3 +402,15 @@ def test_login_typed_in_the_page_asks_there_when_clai_has_no_terminal(
         assert receive_until(socket, Notice)[1].text == "Pasted 'http://localhost/?code=1'."
         web_.post('/api/input', {'text': '/exit'})
         assert running.result(timeout=10) == 'exit'
+
+
+def test_login_typed_after_the_web_ui_unloads_refuses(make_web: MakeWeb, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nobody can answer the dialogs of a web UI that has stopped, so a prompt refuses instead of waiting on one."""
+    web_ = make_web(Agent(TestModel()), extra=[PluginSettings(id='paste', factory=f'{__name__}:PasteLogin')])
+    with open(os.devnull, encoding='utf-8') as stdin:
+        monkeypatch.setattr(sys, 'stdin', stdin)
+        running = web_.run()
+        for text in ('/plugins disable web', '/login paste', '/exit'):
+            assert web_.post('/api/input', {'text': text}).json() == {'menu': None}
+        assert running.result(timeout=10) == 'exit'
+    assert '/login paste opens a terminal menu or prompt, and this CLAI has no terminal' in terminal(web_)

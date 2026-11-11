@@ -155,10 +155,13 @@ class WebService:
         self._unsubscribe = self.live.subscribe(self.live_changed)
 
     def close(self) -> None:
-        """Stop following the live sessions and stop counting browsers as their watchers."""
+        """Stop following the live sessions, counting browsers as their watchers, and asking for commands."""
         self._unsubscribe()
         for client in self.hub.connected():
             self.unwatch(client)
+        # A newer service's stay: a reload during a turn closes this one after building that.
+        if isinstance(self.live, LiveRuntimes) and self.live.dialogs is self.dialogs:
+            self.live.dialogs = None
 
     # Live sessions and their channels.
 
