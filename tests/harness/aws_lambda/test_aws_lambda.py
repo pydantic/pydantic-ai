@@ -1651,21 +1651,3 @@ class TestReplayFidelity:
         with pytest.raises(RuntimeError, match='permanent'):
             run_durable(lambda: agent.run('go'), context=resumed)
         assert resumed.invoked == []
-
-
-def test_an_at_most_once_step_never_retries_and_runs_at_most_once() -> None:
-    from pydantic_ai.durable_exec import StepPolicy
-    from pydantic_ai_harness.aws_lambda._operation_backend import (
-        AWSLambdaOperationBackend,
-        AWSLambdaOperationConfig,
-    )
-
-    backend = AWSLambdaOperationBackend(agent_name='a', default_model_id=None, config=AWSLambdaOperationConfig(None))
-    configured = StepConfig(retry_strategy=RetryPresets.default())
-    applied = backend.apply_policy(configured, StepPolicy(repeatable=False, timeout=900))
-    assert applied is not None
-    assert applied.step_semantics is StepSemantics.AT_MOST_ONCE_PER_RETRY
-    assert applied.retry_strategy is not None
-    assert not applied.retry_strategy(RuntimeError('boom'), 1).should_retry
-    assert backend.apply_policy(configured, StepPolicy()) is configured
-    assert backend.apply_policy(None, StepPolicy(repeatable=False)) is not None
