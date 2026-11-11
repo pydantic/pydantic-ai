@@ -236,6 +236,7 @@ def create_shell(
     session.instructions = settings.instructions
     models = ModelResolver(console=console, store=store, codex_providers=process.codex_providers)
     session.resolve_model = models.resolve
+    session.expand_model = models.expand
     if session.model is None and agent.model is None:
         console.print('Add a model with /model add.', style=theme.color(theme.INFO))
 
@@ -934,6 +935,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         child.tool_retries = self.session.tool_retries
         child.instructions = self.session.instructions
         child.resolve_model = self.session.resolve_model
+        child.expand_model = self.session.expand_model
         child.model_settings = self.context.live_model_overrides(child.model or _model_label(self.agent))
         child.model_defaults = self.context.model_defaults(child.model or _model_label(self.agent))
         child.on_setup_error = self.capability_failed

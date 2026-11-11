@@ -1003,10 +1003,16 @@ picker, under **Fallback chains** below your models (`/model chains` opens it th
   it, after asking. The model you are using, or your saved default, cannot be renamed
   or deleted.
 
-A chain uses its first model's
-`/model settings` controls and defaults, and saves overrides under
-`chain:NAME`, so `/fast` works for a chain that starts with Codex, as it does for
-`openai-codex@*`. A chain cannot contain another chain, but it can contain `@*`. A model whose profile is not signed in fails the turn
+Outside a turn, such as when compacting a conversation or naming a session, a chain or
+`@*` also moves on when a model refuses a request. A turn streams its responses, and so
+does a delegated task. A refusal is only known once it has streamed, so it still ends
+the turn ([#13175](https://github.com/pydantic/pydantic-ai/issues/13175) tracks
+falling back from a streamed refusal). A delegated task on the session's model falls
+back through its chain; a task on a delegate's own model does not. A chain shows its
+first model's `/model settings` controls and saves overrides under `chain:NAME`; the
+overrides apply to every model in the chain, so `/fast` works for a chain that starts
+with Codex, as it does for `openai-codex@*`. Each model otherwise gets CLAI's defaults
+for its own family, such as the reasoning defaults for a GPT model. A chain cannot contain another chain, but it can contain `@*`. A model whose profile is not signed in fails the turn
 instead of falling back, so a missing login is not hidden. Older CLAI builds keep
 the rest of your settings, but cannot run a profile, `@*`, `@default`, or chain
 model, and run a model without an account on the default account only.
