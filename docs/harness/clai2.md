@@ -226,8 +226,8 @@ Open the link on this or another device and approve only your own session's code
 CLAI does not launch a browser, so a text browser cannot block login or take over
 an SSH terminal. Ctrl-C stops polling; GitHub controls expiry. There is no localhost callback.
 
-GitHub authorization does not establish Copilot access. The model menu queries
-your account's catalog and keeps only picker-enabled `/chat/completions` models.
+GitHub authorization does not establish Copilot access. Login and the model menu
+query your account's catalog and keep only picker-enabled `/chat/completions` models.
 It includes current-model details and `Ctrl+S` settings. Subscription and
 organization policy still control inference access. A known ID also works with
 `/model github-copilot:claude-haiku-4.5`.
