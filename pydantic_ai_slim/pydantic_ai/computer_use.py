@@ -582,7 +582,7 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         return _SAFETY_CHECKS_TA.validate_python(checks) if checks else []
 
     @property
-    def shared_coordinate_grid(self) -> int | None:
+    def coordinate_grid(self) -> int | None:
         """The size of the grid the call's positions are on, such as `1000` for 0 to 999, or `None` for pixels.
 
         Pixels are of the latest screenshot before the call. The agent records the grid on the calls of a model whose
