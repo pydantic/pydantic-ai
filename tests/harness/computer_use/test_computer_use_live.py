@@ -39,9 +39,7 @@ async def test_gpt_drives_the_screen_through_the_native_computer_tool(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
     provider = ScreenProvider()
-    agent = Agent(
-        _gpt(openai_api_key, request_capture), capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]
-    )
+    agent = Agent(_gpt(openai_api_key, request_capture), capabilities=[provider.capability(), ComputerUse()])
 
     async def drain(ctx: Any, events: Any) -> None:
         async for _ in events:
@@ -66,7 +64,7 @@ async def test_gpt_computer_calls_go_back_to_a_request_without_the_computer_tool
 ) -> None:
     provider = ScreenProvider()
     model = _gpt(openai_api_key, request_capture)
-    result = await Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]).run(TASK)
+    result = await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
 
     # An agent without the computer tool, such as an advisor that is forwarded the history, sends the calls back.
@@ -88,10 +86,10 @@ async def test_gpt_continues_a_native_history_after_the_tool_opts_out(
     """A run recorded with the native tool goes on with `ComputerUse(native=False)`, and the API accepts it."""
     provider = ScreenProvider()
     model = _gpt(openai_api_key, request_capture)
-    capabilities = [provider.capability(), ComputerUse(settle_seconds=0)]
+    capabilities = [provider.capability(), ComputerUse()]
     result = await Agent(model, capabilities=capabilities).run(TASK)
 
-    opted_out = [provider.capability(), ComputerUse(settle_seconds=0, native=False)]
+    opted_out = [provider.capability(), ComputerUse(native=False)]
     await Agent(model, capabilities=opted_out).run(
         'Now press Enter, then reply "done". Do nothing else.', message_history=result.all_messages()
     )
