@@ -170,24 +170,26 @@ cancellation; ignoring it can prevent the run from stopping.
 Pydantic AI's `execute_tool {tool_name}` span for a background call ends when the started message is
 returned. `BackgroundTools` sets `background_tools.backgrounded` to `true` on that span and records the
 tool's actual work as a `background_tools execute {tool_name}` span. The task starts inside the
-`execute_tool` span, so the new span is its child and ends after it. Spans the tool opens are children
-of the new span.
+`execute_tool` span, so the new span is its child. Spans the tool opens are children of the new span.
 
 | Attribute | Value |
 | --- | --- |
 | `gen_ai.tool.name` | The tool's name. |
 | `gen_ai.tool.call.id` | The call's ID, the same as on the `execute_tool` span and the result's `tool_call_id`. |
-| `background_tools.outcome` | How the call ended: `success`, `retried`, `failed`, `cancelled` or `error`. |
+| `background_tools.outcome` | How the call ended: `success`, `retried`, `failed`, `interrupted` or `error`. |
+| `gen_ai.tool.call.result` | The tool's result, as a string or JSON, only when the run includes content in traces. |
 
 `retried` is a `ModelRetry` or a validation error, which reaches the model as a failed result and counts
 toward the tool's `max_retries`. `failed` is a `ToolFailed`, or an `ApprovalRequired` or `CallDeferred`,
-which cannot defer a call that is already running. `cancelled` means the run stopped the task before the
-tool finished. `error` is any other exception, which ends the run.
+which cannot defer a call that is already running. `interrupted` means the task was cancelled before the
+tool finished, usually because the run stopped it. `error` is any other exception, which ends the run.
 
-Every outcome except `success` and `cancelled` sets the span's status to error, as on Pydantic AI's tool
-span. The exception's message is recorded only when the run includes content in traces, since it can
-quote the tool's arguments or results. The retry attempt attributes a foreground call's span carries are
-not recorded. A call cancelled before it started has no `background_tools execute` span.
+`retried`, `failed` and `error` set the span's status to error; `interrupted` leaves it unset, since the
+run stopped the tool rather than the tool failing. The exception's message is recorded only when the run
+includes content in traces, since it can quote the tool's arguments or results. The span has no retry
+attempt attributes, which a foreground call's span carries: a background retry is charged when its
+result is delivered, after this span ends, so the attempt number isn't known yet. A call cancelled
+before it started has no `background_tools execute` span.
 
 ## Durable execution
 
