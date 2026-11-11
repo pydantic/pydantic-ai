@@ -350,11 +350,10 @@ from pydantic_ai import Agent
 
 from pydantic_ai_harness import ComputerUse, DockerSandbox
 
-agent = Agent('test', capabilities=[DockerSandbox(desktop=True), ComputerUse(requires_approval=True)])
+agent = Agent('test', capabilities=[DockerSandbox(desktop=True), ComputerUse()])
 ```
 
-Fields: `requires_approval=False` (`True` defers every call that does more than look, zoom or wait),
-`settle_seconds=0.5` (pause after acting before a zoom or the closing screenshot), `native=True` (adds a `ComputerTool`
+Fields: `settle_seconds=0.5` (pause after acting before a zoom or the closing screenshot), `native=True` (adds a `ComputerTool`
 so Claude and GPT get their own computer tool, run by this one; `False` sends this tool to every model, for example so
 GPT can zoom). Every request carries every earlier screenshot; nothing drops them, so long runs reach provider image
 limits (100 images on 200k-context Claude, 20 MB on Gemini).
@@ -370,9 +369,11 @@ A workspace backend with a screen implements `SupportsDisplay` (a `display` prop
 
 Gotchas:
 
-- A call with `safety_checks` (OpenAI) needs approval even without
-  `requires_approval`; give the agent a deferred tool handler such as `HandleDeferredToolCalls`, or a
-  flagged call ends the run with an error.
+- Calls run without asking. A call OpenAI flagged (`ComputerCallPart.safety_checks`, each a `SafetyCheck` with
+  `code` and `message`) waits for approval, following OpenAI's guidance that a person confirms it; resolve it with
+  `HandleDeferredToolCalls` (approve, or `ToolDenied`) or `DeferredToolRequests` output, or the run ends with an
+  error. To ask before every action, raise `ApprovalRequired` from a `before_tool_execute` hook when
+  `isinstance(call, ComputerCallPart)` and an action isn't `screenshot`, `zoom`, `wait` or `cursor_position`.
 - Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
   pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one. Under `ModelFallback`,
   each model that answers is told its own coordinates; one that can't take images, or would see the latest screenshot
