@@ -400,12 +400,17 @@ def _row_lines(row: Row, *, selected: bool, frame: str, width: int) -> tuple[str
 
 
 class _Input(Widget):
-    """The view's one focused widget: it holds the typed message and routes every key."""
+    """The view's one focused widget: it holds the typed message and routes every key.
+
+    Enter right after text in the same read is a pasted line break, so it types a space instead of sending.
+    """
 
     def __init__(self, view: TaskView) -> None:
         self.view = view
+        self.typed = False
 
     def update(self, dt: float, keys: KeyState) -> None:
+        self.typed = False
         self.view.tick(dt)
 
     def on_key(self, event: KeyEvent) -> bool:
@@ -414,6 +419,8 @@ class _Input(Widget):
             view.move(_MOVES[event.key])
         elif event.key in (Key.PAGE_UP, Key.PAGE_DOWN):
             view.transcript.widget.on_key(event)
+        elif event.key == Key.ENTER and self.typed:
+            view.draft = view.draft.rstrip() + ' '
         elif event.key == Key.ENTER:
             view.submit()
         elif event.key == Key.BACKSPACE:
@@ -424,6 +431,7 @@ class _Input(Widget):
             view.run(_KEYS[event.key])
         elif event.text.isprintable():
             view.draft += event.text
+            self.typed = True
         return True
 
     def draw(self, region: Region, focused: bool) -> None:

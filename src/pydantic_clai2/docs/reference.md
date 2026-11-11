@@ -2151,8 +2151,8 @@ Definition files are read as data and never executed.
 - **Typing a message and pressing Enter** steers the selected running child: it reads the
   message as user input at its next model request. On a finished child that can resume,
   Enter prompts it again from its saved history, apart from the conversation. Explore, Plan
-  and Review take no messages once they finish. A message is one line, so each line of a
-  pasted block is sent on its own.
+  and Review take no messages once they finish. A pasted block's line breaks become spaces,
+  so a paste is never sent until you press Enter.
 - **Ctrl+B / `/tasks background ID`** backgrounds the selected child.
 - **Ctrl+X / `/tasks stop ID`** stops that child and its descendants, leaving siblings
   running. Stopping a child prevents automatic model resume.

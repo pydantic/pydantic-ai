@@ -180,6 +180,9 @@ def test_enter_steers_a_running_task_and_prompts_a_finished_one() -> None:
     assert 'worker aaaaaaaa' in marked(driver.screen()), 'opens on a running task, not a newer finished one'
     assert '› focus on tx▌' in driver.type('focus on tx')
     assert '› focus on the tests▌' in driver.press('backspace', '\t', *'he tests'), 'a tab is not text'
+    pasted = driver.press(*' first', 'enter', 'enter', *'then')
+    assert '› focus on the tests first then▌' in pasted and driver.acts == [], 'a pasted line break is a space'
+    driver.press(*['backspace'] * len(' first then'))
     screen = driver.press('enter')
     assert driver.acts == [('steer', 'a', 'focus on the tests')]
     assert 'Steer · steer done' in screen and '› Type to steer worker, then Enter.' in screen
