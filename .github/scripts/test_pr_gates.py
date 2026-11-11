@@ -869,7 +869,7 @@ def test_publisher_binds_inline_comments_to_one_marked_review():
     )
 
 
-@pytest.mark.parametrize('engine', ['claude', 'opencode'])
+@pytest.mark.parametrize('engine', ['claude', 'opencode', 'opencode-deepinfra'])
 def test_publisher_engine_attribution_preserves_the_gate(engine: publish_douwebot_review.ReviewEngine):
     result = ReviewResult(verdict='APPROVE', comments=[], discussion='')
     body = json.loads(publication(result, HEAD, 20, engine=engine))['body']

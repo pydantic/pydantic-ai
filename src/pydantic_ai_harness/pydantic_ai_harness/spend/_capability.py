@@ -258,9 +258,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         """Offer `get_spend` when `expose_tools` is set."""
         if not self.expose_tools:
             return None
-        from pydantic_ai_harness.spend._toolset import build_toolset
+        from pydantic_ai_harness.spend._toolset import make_toolset
 
-        return build_toolset(self)
+        return make_toolset(self)
 
     async def before_model_request(
         self,
