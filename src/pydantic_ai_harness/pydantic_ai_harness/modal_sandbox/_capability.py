@@ -9,9 +9,11 @@ from typing import TYPE_CHECKING, Any, Never
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
+from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
     check_provider,
@@ -206,6 +208,17 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
     This flag and its warning go away in the stable harness release.
     """
 
+    authority: Authority = 'operator'
+    """The [authority][pydantic_ai.messages.Authority] of the sandbox's files: `'none'` for files nobody on the
+    application's side wrote, such as a cloned third-party repository, and `'user'` for the user's own files.
+    Anything below `'operator'` wraps the workspace in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace],
+    so capabilities that send its files to the model send them with no more authority than that."""
+
+    path_authority: Mapping[str, Authority] | None = None
+    """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
+    path wins. Paths are sandbox paths: relative ones resolve against the working directory, and `~` isn't expanded.
+    See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
+
     _warned_no_tools: bool = field(default=False, init=False, repr=False, compare=False)
     """Whether this instance has already warned that the run has no workspace tools."""
 
@@ -322,6 +335,10 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         await terminate_sandbox(ref.id, client=self.client)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        """The backend for this run, in an `AuthorityWorkspace` when `authority` or `path_authority` asks for one."""
+        return with_authority(self._run_backend(ctx, ref=ref), self.authority, self.path_authority)
+
+    def _run_backend(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build a backend without performing Modal I/O."""
         del ctx
         if ref is not None and ref.provider != 'modal':

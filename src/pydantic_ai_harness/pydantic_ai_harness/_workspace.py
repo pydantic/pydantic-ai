@@ -4,16 +4,17 @@ import errno
 import hashlib
 import posixpath
 import shlex
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ToolFailed, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import Authority, ModelMessage, ModelResponse
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
     FileEntry,
     SupportsCommands,
     UnavailableWorkspace,
@@ -253,3 +254,13 @@ async def _temp_metadata_dir(workspace: Workspace, real_root: str, name: str, er
             'or a private directory for it in the temp directory.'
         ) from error
     return result.stdout
+
+
+def with_authority(
+    backend: WorkspaceBackend | None, authority: Authority, path_authority: Mapping[str, Authority] | None
+) -> WorkspaceBackend | None:
+    """`backend` in an `AuthorityWorkspace` when a workspace capability's `authority` or `path_authority` asks for one."""
+    if backend is None or (authority == 'operator' and not path_authority):
+        return backend
+    workspace = backend if isinstance(backend, Workspace) else Workspace(backend)
+    return AuthorityWorkspace(workspace, authority=authority, path_authority=path_authority)

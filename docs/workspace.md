@@ -311,6 +311,10 @@ A capability checks authority when it reads a file, so a change applies from the
 already added to a conversation stays in that history, so start a new conversation after lowering a
 workspace's authority.
 
+Pydantic AI Harness's sandbox capabilities, such as `DockerSandbox` and `E2BSandbox`, and `SSHWorkspace` take the
+same `authority` and `path_authority` arguments, for a sandbox or host filled with files the operator didn't write.
+Their paths are paths on the sandbox or host, so `~` isn't expanded.
+
 For a single run, wrap its workspace in `AuthorityWorkspace(workspace, authority=...)` and pass it as
 `workspace=`, as with `ReadOnlyWorkspace`. A wrapper only lowers the authority: with several, the
 lowest wins.

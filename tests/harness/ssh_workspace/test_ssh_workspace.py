@@ -427,3 +427,22 @@ async def test_agent_spec_builds_a_read_only_ssh_workspace(tools: FakeRemoteTool
 
     assert isinstance(result.workspace, ReadOnlyWorkspace)
     assert await result.workspace.working_dir() == str(tools.home.resolve())
+
+
+async def test_authority_reaches_the_runs_workspace(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    capability = SSHWorkspace(
+        'box', working_dir=str(tmp_path), read_only=True, authority='none', path_authority={'docs': 'user'}
+    )
+    agent = Agent(TestModel(call_tools=['probe']), capabilities=[capability])
+
+    @agent.tool
+    async def probe(ctx: RunContext[object]) -> str:
+        return f'{await ctx.workspace.authority_of("AGENTS.md")} {await ctx.workspace.authority_of("docs/a.md")}'
+
+    result = await agent.run('go')
+
+    assert result.output == '{"probe":"none user"}'
+    assert result.workspace.authority == 'none'
+    assert result.workspace.read_only
+    # The ref is the host's, so a later run attaches to it as before.
+    assert result.workspace.ref == WorkspaceRef(provider='ssh', id=f'box:{tmp_path}')
