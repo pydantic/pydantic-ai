@@ -60,8 +60,8 @@ class RecordingWaiter(ExternalEventWaiter):
         self, name: str, *, ask: Callable[[str], Awaitable[JsonValue]], timeout: timedelta | None
     ) -> JsonValue:
         self.waits.append((name, timeout))
-        if (answer := await ask('token-1')) is not None:
-            return answer
+        # The tests using this waiter hand the token on, so `ask` never answers here.
+        assert await ask('token-1') is None
         if isinstance(self.outcome, ExternalEventError):
             raise self.outcome
         return self.outcome

@@ -18,7 +18,6 @@ from pydantic_ai.messages import (
     DeferredToolResultsEvent,
     ModelMessage,
     ModelResponse,
-    TextPart,
     ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -26,26 +25,20 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 
 
 def ask_look_up_and_delete(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    if len(messages) == 1:
-        return ModelResponse(
-            parts=[
-                ToolCallPart('ask', {}, tool_call_id='question'),
-                ToolCallPart('look_up', {}, tool_call_id='external'),
-                ToolCallPart('delete', {}, tool_call_id='approval'),
-            ]
-        )
-    return ModelResponse(parts=[TextPart('done')])
+    # Every run ends with a call still pending, so the model is only asked once.
+    return ModelResponse(
+        parts=[
+            ToolCallPart('ask', {}, tool_call_id='question'),
+            ToolCallPart('look_up', {}, tool_call_id='external'),
+            ToolCallPart('delete', {}, tool_call_id='approval'),
+        ]
+    )
 
 
-async def stream_ask_look_up_and_delete(
-    messages: list[ModelMessage], info: AgentInfo
-) -> AsyncIterator[str | DeltaToolCalls]:
+async def stream_ask_look_up_and_delete(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
     for index, part in enumerate(ask_look_up_and_delete(messages, info).parts):
-        if isinstance(part, TextPart):
-            yield part.content
-        else:
-            assert isinstance(part, ToolCallPart)
-            yield {index: DeltaToolCall(name=part.tool_name, json_args='{}', tool_call_id=part.tool_call_id)}
+        assert isinstance(part, ToolCallPart)
+        yield {index: DeltaToolCall(name=part.tool_name, json_args='{}', tool_call_id=part.tool_call_id)}
 
 
 def deferring_agent(**kwargs: Any) -> Agent[None, str | DeferredToolRequests]:
