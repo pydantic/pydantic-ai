@@ -587,3 +587,18 @@ def approval_agent(capability: RequestInput[None], deleted: list[str], *, durabl
         return f'deleted {path}'
 
     return agent
+
+
+async def test_the_wait_is_named_after_request_input_name() -> None:
+    deleted: list[str] = []
+
+    def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+        pass
+
+    waiter = RecordingWaiter({'approvals': {'call-1': True}})
+    agent = approval_agent(RequestInput[None](ask, name='approve_delete'), deleted)
+    with external_event_scope(waiter):
+        assert (await agent.run('clean up')).output == 'done'
+
+    assert waiter.waits == [('approve_delete', None)]
+    assert deleted == ['a.txt']

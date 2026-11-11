@@ -79,6 +79,14 @@ class RequestInput(AbstractCapability[AgentDepsT]):
     can't be woken from outside the workflow, it still raises.
     """
 
+    name: str = 'deferred_tool_calls'
+    """The wait's name in a durable engine's history, such as `'approve_refund'`.
+
+    On AWS Lambda, the callback and the step that calls `ask` are named after it
+    (`{agent}__external_event.{name}` and `{agent}__external_event.{name}.ask`). Keep it stable across
+    deployments, since a replay matches its history by name.
+    """
+
     def __post_init__(self) -> None:
         _check_timeout(self.timeout)
 
@@ -100,7 +108,7 @@ class RequestInput(AbstractCapability[AgentDepsT]):
             # Current, so the wait can tell a durable run whose engine can't wait from a plain run.
             with set_current_run_context(ctx):
                 payload = await wait_for_external_event(
-                    'deferred_tool_calls',
+                    self.name,
                     ask=partial(self._ask, ctx, requests),
                     timeout=self.timeout,
                     allow_non_durable_wait=self.allow_non_durable_wait,

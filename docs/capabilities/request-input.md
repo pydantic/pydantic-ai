@@ -243,9 +243,11 @@ print(TypeAdapter(DeferredToolResults).dump_json(decision).decode())
 """
 ```
 
-Calls the answer leaves out stay pending, and the run ends with them as its `DeferredToolRequests` output, so include `DeferredToolRequests` in the agent's `output_type` if an answer may leave calls out. An answer that is not valid `DeferredToolResults`, or that names a call that is not pending (an answer sent for an earlier wait, say), fails the run with a [`UserError`][pydantic_ai.exceptions.UserError]. In a durable run the answer is already recorded, so a replay fails the same way.
+An answer must cover every pending call unless `DeferredToolRequests` is in the agent's `output_type`: calls it leaves out stay pending, and the run ends with them as its `DeferredToolRequests` output, which fails the run when that output type isn't allowed. An answer that is not valid `DeferredToolResults`, or that names a call that is not pending (an answer sent for an earlier wait, say), fails the run with a [`UserError`][pydantic_ai.exceptions.UserError]. In a durable run the answer is already recorded, so a replay fails the same way.
 
 ## Timeouts
+
+`name` names the wait in a durable engine's history, `'deferred_tool_calls'` by default: on AWS Lambda, `RequestInput(ask, name='approve_refund')` names the callback `{agent}__external_event.approve_refund` and the step that calls `ask` `{agent}__external_event.approve_refund.ask`. Keep it stable across deployments.
 
 `timeout` bounds the wait. When it elapses, or the token is resolved with a failure instead of an answer, every pending approval is denied and every pending external call fails, with the message `No decision on this tool call arrived: <reason>`. The run then continues, so the model can tell the user what happened. In process, the timeout also bounds `ask`: an async `ask` still running when it elapses is cancelled. Without a `timeout`, an in-process wait has no limit, and a durable one lasts as long as the engine allows, which on AWS Lambda is the execution timeout.
 

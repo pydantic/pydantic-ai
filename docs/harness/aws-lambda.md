@@ -224,8 +224,12 @@ counts from when the callback is created, just before `ask` runs. Without one, t
 until its `ExecutionTimeout`. When `ask` answers right away, nothing waits on the callback: it stays
 open until its timeout, and resolving it has no effect on the run. The `ask` step is a step like any
 other: it is not run again on replay, `step_config` applies to it, and the default retry policy can
-run it again when it fails, so make it idempotent. A checkpointed tool cannot wait for a decision
-itself, because it runs inside a step; that is rejected with a `UserError`.
+run it again when it fails, so make it idempotent. Both are named after `RequestInput(name=...)`,
+`deferred_tool_calls` by default. An approved call's tool appears twice in the history as
+`call_tool:<tool>` steps: once for the attempt that asked for approval, and once for the approved
+run. A decision must cover every pending call unless `DeferredToolRequests` is in the agent's
+`output_type`. A checkpointed tool cannot wait for a decision itself, because it runs inside a step;
+that is rejected with a `UserError`.
 
 Questions from Pydantic AI Harness's [`AskUser`](ask-user.md) wait the same way: its answerer runs in the `ask`
 step, and an answerer that takes a resume token can hand the question on and let the answer arrive
