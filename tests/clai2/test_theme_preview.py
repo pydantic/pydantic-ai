@@ -126,7 +126,21 @@ def test_role_and_code_colours_are_readable_on_their_palette(name: str) -> None:
     assert {role: colour for role, colour in colours.items() if _contrast(colour, palette.bg) < floor} == {}
 
 
-@pytest.mark.parametrize('name', [name for name in theme.names() if name != 'default'])
+@pytest.mark.parametrize(
+    'name',
+    [
+        pytest.param(
+            name,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason='The default theme keeps its public `DIFF_ADDITION`/`DIFF_DELETION` colours (#13001, #13045).',
+            ),
+        )
+        if name == 'default'
+        else name
+        for name in theme.names()
+    ],
+)
 def test_diff_lines_stay_apart_for_colour_blind_readers(name: str) -> None:
     with theme.use(lambda: name):
         colors = theme.diff_theme()

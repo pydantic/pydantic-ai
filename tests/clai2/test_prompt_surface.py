@@ -10,7 +10,7 @@ from rich.text import Text
 from termflow.ansi import make_clipboard_copy
 from termflow.live import Region, ScreenBuffer
 from termflow.live.buffer import REVERSE
-from termflow.themes import PALETTES, reset_palette
+from termflow.themes import reset_palette
 
 from pydantic_clai2.ui.prompt import prompt_surface
 from pydantic_clai2.ui.prompt.prompt_selection import MouseReport, Selection, mouse_report
@@ -441,9 +441,7 @@ def test_a_theme_change_repaints_earlier_tool_output_in_the_new_palette() -> Non
         painted = len(screen.terminal.getvalue())
         selected[0] = 'tokyo_night'
         screen.surface.paint(ROWS)
-        muted = theme.color(theme.MUTED)
-    assert muted != PALETTES['tokyo_night'].ansi[8], 'tokyo_night raises its grey to readable contrast'
-    assert truecolor(muted) in screen.terminal.getvalue()[painted:]
+    assert truecolor('#84889D') in screen.terminal.getvalue()[painted:], "tokyo_night's slot 8, raised to 4.5:1"
     assert screen.lines()[0] == 'earlier tool output'
 
 
