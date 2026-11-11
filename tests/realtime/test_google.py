@@ -4961,6 +4961,7 @@ async def test_a_turn_that_ends_silently_after_a_tool_result_completes(separate_
     already out, the connection reports as usage only: the empty answer's boundary that follows is the same.
     """
     result_sent = asyncio.Event()
+    listening_again = asyncio.Event()
 
     class _EndsTheTurnSilently(_RecordingSession):
         async def send_tool_response(self, *, function_responses: Any) -> None:
@@ -4975,6 +4976,7 @@ async def test_a_turn_that_ends_silently_after_a_tool_result_completes(separate_
             yield genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(generation_complete=True))
             yield _turn_complete_message()
             # Nothing follows: the session goes on listening.
+            listening_again.set()
             await asyncio.Event().wait()
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
@@ -4993,6 +4995,7 @@ async def test_a_turn_that_ends_silently_after_a_tool_result_completes(separate_
         await session.send('Save it.')
         with anyio.fail_after(5):
             await session.wait_for_reply()
+            await listening_again.wait()
         assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
 
