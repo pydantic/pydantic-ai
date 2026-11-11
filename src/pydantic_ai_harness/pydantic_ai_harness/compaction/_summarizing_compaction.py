@@ -444,8 +444,8 @@ def _keep_newest(
     Entries go from the oldest end and whole. The per-entry sum decides how far to go rather than a
     re-measurement per candidate cut, so a long history costs one tokenizer call per entry; that sum
     leaves out the separators between the entries, though, so the joined text can still be over
-    budget. It then costs the next oldest entry rather than the head of an element, and only a single
-    entry left too large keeps a tail of its body.
+    budget. It then drops whole entries from the oldest end rather than cutting the head of an
+    element, and only a single entry left too large keeps a tail of its body.
 
     Dropping an entry also writes `_OMITTED_TRANSCRIPT_HEAD` in front of the text, because a
     summarizer that reads a transcript starting mid-conversation writes its `## Intent` section from
@@ -459,11 +459,23 @@ def _keep_newest(
         total -= sizes[start]
         start += 1
     kept = list(elements[start:])
+    # Each candidate is the suffix left after dropping one more entry, and a longer suffix always costs
+    # at least as much as a shorter one, so the count comes from searching the start index rather than
+    # from one re-join per dropped entry: a history of many small entries would otherwise rebuild the
+    # transcript once per entry.
+    low, high = 0, len(kept) - 1
+    while low < high:
+        middle = (low + high) // 2
+        suffix = '\n'.join(kept[middle:])
+        fitted = estimate_text_tokens(suffix, tokenizer) + (head_tokens if start + middle else 0)
+        if fitted > max_tokens:
+            low = middle + 1
+        else:
+            high = middle
+    if low:
+        kept = kept[low:]
+        start += low
     text = '\n'.join(kept)
-    while len(kept) > 1 and estimate_text_tokens(text, tokenizer) + (head_tokens if start else 0) > max_tokens:
-        kept.pop(0)
-        start += 1
-        text = '\n'.join(kept)
     if estimate_text_tokens(text, tokenizer) + (head_tokens if start else 0) > max_tokens:
         text = _keep_element_tail(
             kept[0],

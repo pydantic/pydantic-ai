@@ -3872,6 +3872,18 @@ class TestFitTranscript:
         assert 'r' * 100 not in trimmed.text
         assert 'newest' in trimmed.text
 
+    def test_drops_as_many_whole_entries_as_the_budget_needs(self):
+        # 200 entries of 37 characters each: keeping m of them costs 38m - 1 without the marker and
+        # 38m + 75 with it, so a 200-token budget keeps three. The count comes from searching the
+        # dropped prefix, so it has to land on the same suffix the linear walk did.
+        entries: list[tuple[Any, str]] = [('user', f'<message role="user">\n{i:04d}\n</message>') for i in range(200)]
+        trimmed = _fit_transcript(entries, 200, len)
+
+        assert trimmed is not None
+        assert trimmed.dropped_entries == 197
+        assert trimmed.text.startswith(f'{_OMITTED_TRANSCRIPT_HEAD}\n<message role="user">\n0197')
+        assert trimmed.text.count('</message>') == 3
+
     def test_drops_whole_entries_from_the_oldest_end(self):
         entries: list[tuple[Any, str]] = [
             ('user', '<message role="user">\n' + 'old' * 100 + '\n</message>'),
