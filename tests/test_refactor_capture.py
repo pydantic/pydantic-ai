@@ -7,6 +7,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -19,12 +24,16 @@ from inline_snapshot import snapshot
 
 import pydantic_ai
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import StreamedResponse, override_allow_model_requests
+from pydantic_ai.models.test import TestModel
 
+from .batch_utils import FAST_BATCH_SETTINGS
 from .conftest import IsStr, try_import
 
 with try_import() as imports_successful:
+    import httpx
     import httpx2
     from anthropic import AsyncAnthropicBedrock
 
@@ -39,6 +48,7 @@ with try_import() as imports_successful:
         RefactorCapture,
         bedrock_canary_model,
         compare,
+        main,
         normalized,
     )
 
@@ -509,6 +519,75 @@ async def test_capture_leaves_out_a_sigv4_session_token(tmp_path: Path):
     assert 'canary-session-token' not in json.dumps(capture.records)
 
 
+@pytest.mark.skipif(importlib.util.find_spec('prefect') is None, reason='`prefect` not installed')
+async def test_capture_records_a_prefect_request_once_and_not_the_ones_prefect_sends_itself(tmp_path: Path):
+    """Prefect's client retries a request by sending it again, which the capture records once.
+
+    The log batches and server version checks it sends of its own accord aren't recorded at all. When its test server is
+    busy, the client retries, and its background worker sends logs and checks the version in whichever test is running.
+    """
+    from prefect.client.orchestration import PrefectClient
+
+    sent: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request.url.path)
+        if request.url.path == '/api/csrf-token':
+            # What a server without CSRF tokens answers, so the client stops asking for one.
+            return httpx.Response(404)
+        if sent.count(request.url.path) == 1:
+            return httpx.Response(503, headers={'Retry-After': '0'})
+        return httpx.Response(200, json={})
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        async with PrefectClient(
+            'http://127.0.0.1:4200/api', httpx_settings={'transport': httpx.MockTransport(answer)}
+        ) as client:
+            assert await client.api_healthcheck() is None
+            await client.api_version()
+            await client.create_logs([])
+    finally:
+        capture.pytest_unconfigure()
+
+    assert sent == snapshot(
+        [
+            '/api/health',
+            '/api/health',
+            '/api/admin/version',
+            '/api/admin/version',
+            '/api/csrf-token',
+            '/api/logs/',
+            '/api/logs/',
+        ]
+    )
+    assert [record['target'] for record in capture.records] == snapshot(
+        ['GET http://127.0.0.1:PORT/api/health', 'GET http://127.0.0.1:PORT/api/csrf-token?client=UUID']
+    )
+
+
+async def test_capture_normalizes_the_custom_id_of_an_in_memory_batch_request(tmp_path: Path):
+    """`TestModel`'s batches encode each request as a random token, which the `custom_id` it's sent with hashes."""
+    agent = Agent(TestModel(), capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)])
+
+    @agent.tool_plain
+    def pick() -> str:
+        return 'a'
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        await agent.run('hello')
+    finally:
+        capture.pytest_unconfigure()
+
+    # The second request carries the first response, which the batch answered.
+    assert re.findall(r'"(?:custom_id|provider_response_id)": "[^"]*"', json.dumps(capture.records)) == snapshot(
+        ['"custom_id": "CUSTOM_ID"', '"provider_response_id": "batch:batch_UUID:CUSTOM_ID"']
+    )
+
+
 def test_capture_stops_the_run_when_it_misses_a_canary_model_call(tmp_path: Path):
     """A canary call on an in-process model the capture doesn't see fails the run instead of recording nothing.
 
@@ -667,6 +746,57 @@ def test_compare_names_the_nodes_that_recorded_no_request(
     )
 
 
+def test_main_extracts_the_base_commit_where_no_symlink_leads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Each pytest session is handed paths that go through no symlink, though the temporary directory is reached by one.
+
+    DBOS resolves a workflow function's file with `os.path.realpath`, which reads a symlink on the way with
+    `os.readlink`, and blockbuster raises on that in the event loop. On macOS the temporary directory is reached through
+    `/var`, a symlink, so DBOS tests failed on the base side alone.
+    """
+    (tmp_path / 'real').mkdir()
+    (tmp_path / 'link').symlink_to(tmp_path / 'real')
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path / 'link'))
+    monkeypatch.delenv('PYTHONPATH', raising=False)
+    # `main` extracts each workspace package on `sys.path`; only `pydantic_graph`, the smallest, is left there.
+    repo, venv = Path(refactor_capture.__file__).resolve().parent.parent, Path(sys.prefix).resolve()
+    kept = [
+        entry
+        for entry in sys.path
+        if not (path := Path(entry).resolve()).is_relative_to(repo) or path == repo or path.is_relative_to(venv)
+    ]
+    monkeypatch.setattr(sys, 'path', [*kept, str(repo / 'pydantic_graph')])
+    run_git = subprocess.run
+    sessions: list[tuple[list[str], str]] = []
+
+    def run(
+        command: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str] | None = None,
+        check: bool = False,
+        capture_output: bool = False,
+    ) -> subprocess.CompletedProcess[bytes]:
+        if env is None:
+            return run_git(command, cwd=cwd, check=check, capture_output=capture_output)
+        sessions.append((command, env['PYTHONPATH']))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, 'run', run)
+
+    # Neither pytest session ran, so there's no capture to compare.
+    assert main(['HEAD', 'tests/test_nothing.py']) == 2
+
+    (out,) = (tmp_path / 'real').iterdir()
+    sources = out / 'base-src' / 'pydantic_graph'
+    assert (sources / 'pydantic_graph' / '__init__.py').is_file()
+    pytest_command = [sys.executable, '-m', 'pytest', '-p', 'tests.refactor_capture']
+    assert sessions == [
+        ([*pytest_command, f'{CAPTURE_OPTION}={out / "base"}', 'tests/test_nothing.py'], str(sources)),
+        ([*pytest_command, f'{CAPTURE_OPTION}={out / "head"}', 'tests/test_nothing.py'], ''),
+    ]
+    assert os.path.realpath(out) == str(out)
+
+
 def test_normalized_replaces_values_that_change_between_runs():
     now = datetime.now(UTC)
     assert normalized(
@@ -700,6 +830,33 @@ def test_normalized_replaces_values_that_change_between_runs():
                 "{'date': 'Mon, 01 Jan 2024 00:00:00 GMT', 'content-type': 'application/json', 'connection': "
                 "'keep-alive'}, 'RetryAttempts': 0}}"
             ),
+            # The trace ID has the shape of a version 4 UUID without dashes.
+            'mcp_meta': {'traceparent': '00-12345678123441238123123456789abc-0123456789abcdef-01', 'progressToken': 2},
+            'prefect_labels': {'__OTEL_TRACEPARENT': '00-01a1cb2f55a38937d7e2c3ba122f0f00-367bccfae831323d-01'},
+            'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-095f908e', 'dynamic_key': '0'},
+            'in_memory_ticket': {
+                'custom_id': '52a31e60e1afe0ff4a1058d5fcf539a6-1',
+                'batch': {'id': 'batch_12345678123441238123123456789abc', 'model_name': 'test'},
+            },
+            'in_memory_response': {
+                'provider_details': {
+                    'batch': {
+                        'id': 'batch_12345678123441238123123456789abc',
+                        'custom_id': '12345678123441238123123456789abc',
+                    }
+                },
+                'provider_response_id': 'batch:batch_12345678123441238123123456789abc:52a31e60e1afe0ff4a1058d5fcf539a6',
+            },
+            # A provider's batch ID isn't a UUID, so the `custom_id` it was sent, which hashes the request, stays.
+            'provider_response': {
+                'provider_details': {
+                    'batch': {
+                        'id': 'batch_6ad154c0fd50819086f8336d5b30addb',
+                        'custom_id': '400d94ba99d83e31c153e0e49776c1a5',
+                    }
+                },
+                'provider_response_id': 'batch:batch_6ad154c0fd50819086f8336d5b30addb:400d94ba99d83e31c153e0e49776c1a5',
+            },
         }
     ) == snapshot(
         {
@@ -732,5 +889,22 @@ def test_normalized_replaces_values_that_change_between_runs():
                 "{'connection': 'keep-alive', 'content-type': 'application/json', 'date': 'Mon, 01 Jan 2024 00:00:00 "
                 "GMT'}, 'RetryAttempts': 0}}"
             ),
+            'mcp_meta': {'traceparent': '00-TRACE_ID-SPAN_ID-01', 'progressToken': 2},
+            'prefect_labels': {'__OTEL_TRACEPARENT': '00-TRACE_ID-SPAN_ID-01'},
+            'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-CODE_HASH', 'dynamic_key': '0'},
+            'in_memory_ticket': {'custom_id': 'CUSTOM_ID-1', 'batch': {'id': 'batch_UUID', 'model_name': 'test'}},
+            'in_memory_response': {
+                'provider_details': {'batch': {'id': 'batch_UUID', 'custom_id': 'CUSTOM_ID'}},
+                'provider_response_id': 'batch:batch_UUID:CUSTOM_ID',
+            },
+            'provider_response': {
+                'provider_details': {
+                    'batch': {
+                        'id': 'batch_6ad154c0fd50819086f8336d5b30addb',
+                        'custom_id': '400d94ba99d83e31c153e0e49776c1a5',
+                    }
+                },
+                'provider_response_id': 'batch:batch_6ad154c0fd50819086f8336d5b30addb:400d94ba99d83e31c153e0e49776c1a5',
+            },
         }
     )
