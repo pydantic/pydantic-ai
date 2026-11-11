@@ -51,6 +51,7 @@ from pydantic_ai_harness.subagents import (
 )
 from pydantic_clai2.plugins import TaskInfo, TaskProgress
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
+from pydantic_clai2.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_clai2.runtime.task_prompts import is_delegate_tool
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status
@@ -72,7 +73,7 @@ def specialists() -> dict[str, SubAgent[object]]:
                 name=name,
                 description=description,
                 instructions=f'{description} Return evidence with paths and line numbers. Do not modify files.',
-                capabilities=[FileSystem(read_only=True)],
+                capabilities=[FileSystem(read_only=True), NON_STRICT_SCHEMAS],
             ),
             read_only=True,
         )
