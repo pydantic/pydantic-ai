@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 from collections import deque
+from collections.abc import Sequence
 from typing import Any, Literal, cast
 
 from openai.types import responses
@@ -120,8 +121,15 @@ def tool_search_call_ids_by_output(response: responses.Response) -> dict[str, st
         for item in response.output
         if isinstance(item, responses.ResponseToolSearchCall) and item.execution == 'server'
     }
+    return pair_tool_search_outputs(response.output, server_call_ids, pending_call_ids)
+
+
+def pair_tool_search_outputs(
+    output: Sequence[responses.ResponseOutputItem], server_call_ids: set[str], pending_call_ids: deque[str]
+) -> dict[str, str]:
+    """Pair each hosted tool-search output in `output` with its call, consuming `pending_call_ids` in order."""
     output_call_ids: dict[str, str] = {}
-    for item in response.output:
+    for item in output:
         if not isinstance(item, responses.ResponseToolSearchOutputItem) or item.execution != 'server':
             continue
         if item.call_id is not None and item.call_id not in server_call_ids:
