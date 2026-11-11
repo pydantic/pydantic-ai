@@ -220,21 +220,72 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
     return []
 
 
-def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = None) -> int:
-    """Approximate the token count of a single string.
+_JSON_STRUCTURE_CHARS = frozenset('{}[],:"')
+_BASE64_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-')
 
-    Uses *tokenizer* when given, otherwise the ~4 characters-per-token heuristic.
-    """
+
+def _estimate_dense_text_segment(text: str) -> int | None:
+    """Estimate a dense text segment more closely than the ASCII-prose baseline."""
+    if not text:
+        return None
+
+    if text.isascii():
+        if len(text) >= 512 and text.isalpha() and len(set(text)) == 1:
+            # Long single-letter runs are heavily merged by common BPE tokenizers.
+            return len(text) // 8
+        if len(text) >= 32 and sum(char in _JSON_STRUCTURE_CHARS for char in text) * 5 >= len(text):
+            return len(text) // 3
+
+    non_ascii_chars = sum(not char.isascii() for char in text)
+    if non_ascii_chars:
+        ascii_chars = len(text) - non_ascii_chars
+        # Cyrillic text averages about 2.7 code points per token in the pinned reference corpus.
+        return ascii_chars // CHARS_PER_TOKEN + (non_ascii_chars * 10 + 13) // 27
+
+    baseline = len(text) // CHARS_PER_TOKEN
+    adjusted = baseline
+    found_base64 = False
+    index = 0
+    while index < len(text):
+        if text[index] not in _BASE64_CHARS:
+            index += 1
+            continue
+        end = index + 1
+        while end < len(text) and text[end] in _BASE64_CHARS:
+            end += 1
+        run = text[index:end]
+        unpadded = run.rstrip('=')
+        if (
+            len(unpadded) >= 24
+            and '=' not in unpadded
+            and len(set(unpadded)) >= 8
+            and (any(char in '+/_-' for char in unpadded) or sum(char.isdigit() for char in unpadded) >= 2)
+        ):
+            run_estimate = (2 * len(run) + 2) // 3
+            adjusted += run_estimate - len(run) // CHARS_PER_TOKEN
+            found_base64 = True
+        index = end
+    return adjusted if found_base64 else None
+
+
+def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = None) -> int:
+    """Approximate a string's token count using *tokenizer* or the shared class-aware estimate."""
     if tokenizer is not None:
         return tokenizer(text)
-    return len(text) // CHARS_PER_TOKEN
+    return _count_segments((text,), None)
 
 
 def _count_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
-    """Token count of text segments: per segment with *tokenizer*, otherwise the heuristic over their total."""
+    """Count segments with *tokenizer*, or apply dense-text adjustments to the ASCII baseline."""
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // CHARS_PER_TOKEN
+
+    estimate = sum(len(s) for s in segments) // CHARS_PER_TOKEN
+    for segment in segments:
+        dense_estimate = _estimate_dense_text_segment(segment)
+        if dense_estimate is not None:
+            estimate += dense_estimate - len(segment) // CHARS_PER_TOKEN
+    return estimate
 
 
 def estimate_token_count(
@@ -246,7 +297,7 @@ def estimate_token_count(
     Args:
         messages: Messages to count tokens for.
         tokenizer: Optional callable that returns the token count for a string.
-            When `None`, falls back to a ~4 characters-per-token heuristic.
+            When `None`, uses the shared class-aware estimate for dense scripts, base64, and compact JSON.
     """
     return _count_segments(_collect_text(messages), tokenizer)
 
@@ -266,13 +317,13 @@ def estimate_context_tokens(
     that response. A response whose usage sums several model requests re-counts the context of each,
     so it anchors on the input tokens of the one that measures the context instead: the first
     request of a Google long decode, the last sampling pass of an Anthropic response that reported
-    its passes. Only the messages after the anchor are estimated with the character
-    heuristic (or *tokenizer*), without re-counting instructions, which the anchor already
-    covers; when the instructions changed since the anchor, the estimate swaps the old set for
-    the new one rather than adding the new set on top. Tool schemas named by availability
-    deltas after the anchor are estimated from the pending request parameters. This is what makes the estimate robust where the pure heuristic
-    is not: token-dense content (minified JSON, base64, non-Latin scripts) and the tool
-    definitions the heuristic cannot see at all are both inside the provider's number.
+    its passes. Only the messages after the anchor are estimated with the shared class-aware text
+    estimate (or *tokenizer*), without re-counting instructions, which the anchor already covers;
+    when the instructions changed since the anchor, the estimate swaps the old set for the new one
+    rather than adding the new set on top. Tool schemas named by availability deltas after the anchor
+    are estimated from the pending request parameters. Dense text is estimated more conservatively
+    than ordinary ASCII prose, while tool definitions the heuristic cannot see are still separately
+    accounted for.
 
     Without provider usage, the history's message text falls back to `estimate_token_count`,
     while schemas named by availability deltas are still estimated from the pending request

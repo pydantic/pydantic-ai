@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import dataclasses
 import time
 import warnings
@@ -329,6 +330,15 @@ class TestEstimateTokenCount:
         ]
         assert estimate_token_count(msgs) > 0
 
+    def test_dense_text_estimates_track_pinned_reference_counts(self):
+        """Pin exact counts for each dense class: repetitive letters, compact JSON, base64, non-ASCII."""
+        payload = base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode()
+        compact_json = '{"id": 1, "name": "x", "tags": [1, 2, 3]}'
+        assert estimate_token_count([_user('a' * 512)]) == 64
+        assert estimate_token_count([_user(payload)]) == 232
+        assert estimate_token_count([_user(compact_json)]) == 13
+        assert estimate_token_count([_user('Привет, как дела? ' * 100)]) == 606
+
 
 # ---------------------------------------------------------------------------
 # estimate_context_tokens
@@ -387,7 +397,7 @@ class TestEstimateContextTokens:
         request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='old')
         request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='i' * 4_000)
         msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
-        assert estimate_context_tokens(msgs) == 50_500 + 10 + 1_000
+        assert estimate_context_tokens(msgs) == 50_500 + 10 + 500
 
     def test_changed_instructions_replace_the_anchored_set(self):
         # The next request sends the new set instead of the one the anchor paid for, as when
@@ -395,13 +405,13 @@ class TestEstimateContextTokens:
         request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='o' * 4_000)
         request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='n' * 4_400)
         msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
-        assert estimate_context_tokens(msgs) == 50_500 + 10 + 100
+        assert estimate_context_tokens(msgs) == 50_500 + 10 + 50
 
     def test_shorter_instructions_lower_the_estimate(self):
         request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='o' * 4_000)
         request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='n' * 400)
         msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
-        assert estimate_context_tokens(msgs) == 50_500 + 10 - 900
+        assert estimate_context_tokens(msgs) == 50_500 + 10 - 400
 
     def test_changed_instructions_are_swapped_with_a_tokenizer(self):
         request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='one two')
@@ -2832,6 +2842,24 @@ class TestTieredCompaction:
             result = await cap.before_model_request(_make_ctx(rc.messages), rc)
 
         assert 'Tiered summary.' in _summary_text(result.messages)
+
+
+async def test_tiered_compaction_triggers_for_dense_post_anchor_tool_result():
+    """Dense tool output crosses the target by the class-aware estimate, with no usage anchor present."""
+    calls: list[str] = []
+    t1 = _RecordingTier('t1', calls, drop=1)
+    cap = TieredCompaction(tiers=[t1], target_tokens=800)
+    # ~87 tokens on the old character baseline, 232 each with the class-aware estimator:
+    # 4 tool returns plus the prompt cross the 800 target only under the new estimate.
+    payload = base64.b64encode(b'binary blob 0123 4567 89ab' * 10).decode()
+    messages: list[ModelMessage] = [
+        _user('hi'),
+        *[_tool_return('tool', f'call-{i}', payload) for i in range(4)],
+    ]
+    rc = _make_request_context(messages)
+    result = await cap.before_model_request(_make_ctx(rc.messages), rc)
+    assert calls == ['t1']
+    assert len(result.messages) == 4
 
 
 # ---------------------------------------------------------------------------

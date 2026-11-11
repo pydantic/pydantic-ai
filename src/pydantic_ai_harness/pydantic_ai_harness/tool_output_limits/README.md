@@ -64,12 +64,12 @@ agent = Agent(
         LocalWorkspace('.'),
         ToolOutputLimits(
             bands=[
-                Band(over=100_000, action=Spill()),       # huge: keep losslessly, read back on demand
-                Band(over=20_000, action=Summarize()),     # large: compress with the run's model
-                Band(over=5_000, action=Truncate()),       # medium: cheap clamp
+                Band(over=100_000, action=Spill()),  # huge: keep losslessly, read back on demand
+                Band(over=20_000, action=Summarize()),  # large: compress with the run's model
+                Band(over=5_000, action=Truncate()),  # medium: cheap clamp
             ],
             # below 5,000: passthrough
-        )
+        ),
     ],
 )
 ```
@@ -114,7 +114,7 @@ agent = Agent(
                 'run_shell': [Band(over=8_000, action=Truncate(strategy=TruncationStrategy.tail))],
             },
             tool_filter=['read_file', 'run_shell', 'search'],
-        )
+        ),
     ],
 )
 ```
@@ -205,7 +205,7 @@ marker add to that length.
 ## Size unit
 
 Thresholds are measured in characters by default. Set `over_tokens=True` to measure in
-estimated tokens (the same ~4-chars-per-token heuristic as `compaction`); pass a `tokenizer`
+estimated tokens (the same shared class-aware heuristic as `compaction`, with adjustments for dense scripts, base64, and compact JSON); pass a `tokenizer`
 callable for accuracy. `Truncate.max_chars` is always characters -- truncation is a
 character operation regardless of the threshold unit. The cap includes the truncation marker
 and applies separately to each reduced text value. If the budget cannot fit both retained
@@ -335,7 +335,7 @@ from typing import Protocol
 
 
 class OverflowStore(Protocol):
-    async def write(self, key: str, data: bytes) -> str: ...   # returns a handle
+    async def write(self, key: str, data: bytes) -> str: ...  # returns a handle
     async def read(self, handle: str) -> bytes: ...
 ```
 

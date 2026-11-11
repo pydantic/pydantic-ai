@@ -40,7 +40,7 @@ Every size-based strategy triggers on `max_messages`, `max_tokens` (estimated), 
 Token counts anchor on the provider-reported usage of the most recent model response when one is
 available: its `input_tokens` measured the whole request that produced it (instructions, tool
 definitions, every prior message), so only the messages added since are estimated. The estimate for
-those, and the fallback when no response carries usage yet, is a ~4-chars-per-token heuristic; pass
+those, and the fallback when no response carries usage yet, is the shared class-aware estimate. It counts ordinary ASCII prose at roughly 4 characters per token, with adjustments for dense scripts, base64, and compact JSON; pass
 a `tokenizer` callable (e.g. `tiktoken`) to sharpen it. The anchor corrects the heuristic's
 undercount on token-dense content: minified JSON or base64 tokenizes at ~1-2 chars per token, enough
 that, without the anchor, a history could exceed the context window before any trigger fires. Instruction replacement and withdrawal records contribute their full rendered system text to token estimates. Superseded updates before a new instruction baseline are excluded. Newly revealed tool schemas that are pending in the request are conservatively
@@ -219,6 +219,7 @@ agent = Agent(
     ],
 )
 
+
 @agent.on_event(ContextUsageEvent)
 async def show(ctx, event):
     print(f'{event.fraction:.0%}')
@@ -301,7 +302,7 @@ fallback = FallbackCompaction(
     fallback_chain=[
         SummarizingCompaction(max_messages=1, keep_tokens=20_000),
         SlidingWindowCompaction(max_messages=1, keep_tokens=20_000),
-    ]
+    ],
 )
 ```
 
@@ -758,6 +759,7 @@ call is not a file read:
 ```python
 from pydantic_ai.messages import ToolCallPart
 
+
 def my_file_key(call: ToolCallPart) -> str | None:
     if call.tool_name != 'read_file':
         return None
@@ -791,7 +793,7 @@ to keep span cardinality low. Attributes:
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is
 harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the
-~4-chars-per-token heuristic.
+the shared class-aware estimate, which adjusts for dense scripts, base64, and compact JSON. Recalibrate tuned token thresholds after upgrading; denser content may trigger compaction differently.
 Raw message content is not recorded.
 
 `SummarizingCompaction` runs its summarizer as a nested `Agent` named `summarizing_compaction`,
