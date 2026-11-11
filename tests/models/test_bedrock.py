@@ -9128,6 +9128,25 @@ def test_bedrock_zai_default_output_mode_falls_back_while_thinking_on(bedrock_pr
     assert prepared_params.output_mode == 'native'
 
 
+async def test_bedrock_zai_explicit_tool_output_while_thinking_on(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+) -> None:
+    """An explicit `ToolOutput` reaches Z.AI GLM while it thinks, offered with `toolChoice: auto`."""
+
+    class City(BaseModel):
+        city: str
+        country: str
+
+    model = BedrockConverseModel('zai.glm-5', provider=bedrock_provider)
+    agent = Agent(model, output_type=ToolOutput(City))
+    with _capture_bedrock_request_bodies(model, 'Converse') as sent:
+        result = await agent.run('What is the capital of France?', model_settings={'thinking': True})
+
+    assert result.output == City(city='Paris', country='France')
+    assert sent[0]['toolConfig']['toolChoice'] == {'auto': {}}
+    assert sent[0]['additionalModelRequestFields'] == {'reasoning_effort': 'high'}
+
+
 @pytest.mark.parametrize(
     ('model_name', 'thinking', 'expected_effort', 'reasons'),
     [

@@ -1123,8 +1123,7 @@ class BedrockConverseModel(Model[BaseClient]):
         if (
             model_request_parameters.output_mode == 'tool'
             and not model_request_parameters.allow_text_output
-            and profile.get('bedrock_thinking_variant') not in (None, 'anthropic')
-            and _thinking_rejects_tool_forcing(
+            and _thinking_rejects_output_tools(
                 _effective_thinking_type(model_settings, model_request_parameters, profile), profile
             )
         ):
@@ -2818,6 +2817,20 @@ def _thinking_rejects_tool_forcing(
     text instead.
     """
     return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') not in ('xai', 'openai_responses')
+
+
+def _thinking_rejects_output_tools(
+    thinking_type: Literal['adaptive', 'enabled'] | None, profile: BedrockModelProfile
+) -> bool:
+    """Whether this request's thinking rules out an explicit Tool Output on a non-Anthropic variant.
+
+    Z.AI GLM is the exception: Converse accepts its output tools while it reasons, so only its default output mode
+    falls back. An explicit `ToolOutput` is offered with `toolChoice: auto`, as forcing is off while thinking, and
+    relies on output retries when GLM answers in text instead.
+    """
+    if profile.get('bedrock_thinking_variant') in (None, 'anthropic', 'zai', 'zai_effort'):
+        return False
+    return _thinking_rejects_tool_forcing(thinking_type, profile)
 
 
 def _support_tool_forcing(
