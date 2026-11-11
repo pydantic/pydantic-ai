@@ -5,9 +5,10 @@ A capability that gives an agent a screen, such as Pydantic AI Harness's `Comput
 sends that tool as the native one, translates the provider's calls into these arguments, and reads the result back
 from them. Driving a screen is not part of Pydantic AI: the capability does that.
 
-Coordinates are pixels of the latest screenshot the model saw, with the origin at the top left, or, when the model's
-profile sets `computer_use_coordinate_grid`, points on that grid. A click or scroll without coordinates happens at the
-pointer.
+Coordinates are pixels of the latest screenshot the model saw, with the origin at the top left, unless the call's
+[`coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid] names a grid they are on instead. The
+agent sets it on the calls of a model whose profile sets `computer_use_coordinate_grid`, such as Gemini, after telling
+that model in the tool's description. A click or scroll without coordinates happens at the pointer.
 
 The actions follow the providers' computer tools: each is told apart by `type`, not the `kind` Pydantic AI's own
 message types use, and named as OpenAI's are (`click`, `keypress`). A key is a single character or one of a fixed set
@@ -538,6 +539,25 @@ _SAFETY_CHECKS = 'safety_checks'
 
 _SAFETY_CHECKS_TA = pydantic.TypeAdapter(list[SafetyCheck])
 
+_COORDINATE_GRID = 'coordinate_grid'
+"""The `provider_details` key under which the agent records the grid a call's positions are on."""
+
+_SCREENSHOT_MAX_SIDE = 'screenshot_max_side'
+"""The `provider_details` key under which the agent records the longest screenshot side the call's model takes."""
+
+_SCREENSHOT_MAX_PIXELS = 'screenshot_max_pixels'
+"""The `provider_details` key under which the agent records the most screenshot pixels the call's model takes."""
+
+
+_CALL_LABELS = frozenset({_COORDINATE_GRID, _SCREENSHOT_MAX_SIDE, _SCREENSHOT_MAX_PIXELS})
+"""The `provider_details` keys the agent adds to a `computer` call after the model returned it, which the provider
+never saw."""
+
+
+def _positive(value: object, minimum: int = 1) -> int | None:
+    """`value` when it's an `int` (not a `bool`) of at least `minimum`, otherwise `None`."""
+    return value if type(value) is int and value >= minimum else None
+
 
 COMPUTER_KIND = ToolKind(
     'computer_use', 'computer', args=ComputerArgs, content=ComputerContent, metadata=ComputerResult
@@ -560,6 +580,34 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         """The checks the provider asks a person to make before this call runs; empty when there are none."""
         checks = (self.provider_details or {}).get(_SAFETY_CHECKS)
         return _SAFETY_CHECKS_TA.validate_python(checks) if checks else []
+
+    @property
+    def coordinate_grid(self) -> int | None:
+        """The size of the grid the call's positions are on, such as `1000` for 0 to 999, or `None` for pixels.
+
+        Pixels are of the latest screenshot before the call. The agent records the grid on the calls of a model whose
+        profile sets `computer_use_coordinate_grid`; a history that lost the call's `provider_details`, such as one a
+        UI rebuilt, reads `None`.
+        """
+        return _positive((self.provider_details or {}).get(_COORDINATE_GRID), minimum=2)
+
+    @property
+    def screenshot_max_side(self) -> int | None:
+        """The longest side, in pixels, of a screenshot the model that made the call takes, or `None` for no limit.
+
+        The agent records it from the profile's `computer_use_screenshot_max_side`, so the screenshot the call returns
+        can be taken at a size that model can see; a call without it, such as in a history a UI rebuilt, reads `None`.
+        """
+        return _positive((self.provider_details or {}).get(_SCREENSHOT_MAX_SIDE))
+
+    @property
+    def screenshot_max_pixels(self) -> int | None:
+        """The most pixels in a screenshot the model that made the call takes, or `None` for no limit.
+
+        Recorded from the profile's `computer_use_screenshot_max_pixels`; see
+        [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side].
+        """
+        return _positive((self.provider_details or {}).get(_SCREENSHOT_MAX_PIXELS))
 
 
 class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=COMPUTER_KIND):
