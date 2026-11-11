@@ -272,8 +272,8 @@ Even better, Pydantic AI extracts the docstring from functions and (thanks to [g
 
 Four parts of the docstring reach the model: the description text, the parameter descriptions (including
 those under `Keyword Args` or `Other Parameters`), the first entry of the returns section, and recognized
-admonition sections, such as `Warning:`, `Note:` and `Important:`, with their header as written. Other sections
-Griffe can parse, such as `Raises`, `Examples` and `Yields`, are dropped, so anything the model needs to act on
+admonition sections, such as `Warning:`, `Warnings:`, `Note:` and `Important:`, with their header as written.
+Other sections Griffe can parse, such as `Raises`, `Warns`, `Examples` and `Yields`, are dropped, so anything the model needs to act on
 belongs in the description text, a parameter description, the first returns entry, or an admonition section.
 When a function has a return annotation, the whole text of a Google-style `Returns:` section is the return
 description; without one, text before the first colon is treated as the return type.

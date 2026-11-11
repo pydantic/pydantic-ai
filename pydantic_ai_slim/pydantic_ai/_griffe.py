@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from inspect import Signature, cleandoc, signature
 from itertools import takewhile
 from typing import TYPE_CHECKING, Any, Literal
@@ -13,6 +13,7 @@ from griffe import (
     DocstringSectionParameters,
     DocstringSectionReturns,
     DocstringSectionText,
+    DocstringSectionWarns,
     GoogleOptions,
     NumpyOptions,
     SphinxOptions,
@@ -68,7 +69,10 @@ def doc_descriptions(
             for param in section.value:
                 params.setdefault(param.name.lstrip('*'), param.description)
 
-    main_desc = _main_description(sections, docstring_style)
+    # Griffe parses a Google `Warnings:` section as a structured `Warns:` section, but authors write it as an
+    # admonition, so its written text reaches the model. The written blocks line up with griffe's warns sections.
+    google_warns = iter(_google_section_blocks(doc, _GOOGLE_WARNS_HEADER) if docstring_style == 'google' else [])
+    main_desc = _main_description(sections, docstring_style, google_warns)
 
     if return_ := next((p for p in sections if isinstance(p, DocstringSectionReturns)), None):
         main_desc = _main_desc_with_returns(return_, docstring_style, func, doc, main_desc)
@@ -76,11 +80,14 @@ def doc_descriptions(
     return main_desc, params
 
 
-def _main_description(sections: list[DocstringSection], docstring_style: DocstringStyle) -> str:
+def _main_description(
+    sections: list[DocstringSection], docstring_style: DocstringStyle, google_warns: Iterator[tuple[str, str]]
+) -> str:
     """Build the main description from the docstring's text and admonition sections, in source order.
 
-    Text sections and recognized admonition sections (e.g. `Warning:`) are joined where they appear, so prose
-    after an admonition is kept too.
+    Text sections, recognized admonition sections (e.g. `Warning:`) and Google `Warnings:` sections are joined
+    where they appear, so prose after an admonition is kept too. `google_warns` yields the written header and
+    text of each Google `Warns:` or `Warnings:` section, in source order.
     """
     main_desc_parts: list[str] = []
     for section in sections:
@@ -88,6 +95,13 @@ def _main_description(sections: list[DocstringSection], docstring_style: Docstri
             main_desc_parts.append(section.value)
         elif isinstance(section, DocstringSectionAdmonition):
             main_desc_parts.append(f'{_admonition_header(section, docstring_style)}\n{section.value.contents}')
+        elif (
+            isinstance(section, DocstringSectionWarns)
+            and (written := next(google_warns, None))
+            and written[0].lower().startswith('warnings')
+        ):
+            header, text = written
+            main_desc_parts.append(f'{header.rstrip()}\n{text}')
     return '\n\n'.join(main_desc_parts)
 
 
@@ -116,10 +130,13 @@ def _main_desc_with_returns(
     return_type = return_statement.annotation
     if docstring_style == 'google' and signature(func).return_annotation is not Signature.empty:
         # The Python return annotation is authoritative: keep the whole docstring text as the return
-        # description instead of griffe splitting a type off at the first colon.
-        return_desc = _google_returns_text(doc, return_desc) or (
-            f'{return_type}: {return_desc}' if return_type else return_desc
+        # description instead of griffe splitting a type off at the first colon. Griffe's description is the tail of
+        # the written text, which picks out the right section; if none matches, join griffe's parts back up.
+        written = next(
+            (text for _, text in _google_section_blocks(doc, _GOOGLE_RETURNS_HEADER) if text.endswith(return_desc)),
+            None,
         )
+        return_desc = written or (f'{return_type}: {return_desc}' if return_type else return_desc)
         return_type = None
     type_tag = f'<type>{return_type}</type>\n' if return_type else ''
     return_xml = f'<returns>\n{type_tag}<description>{return_desc}</description>\n</returns>'
@@ -129,31 +146,32 @@ def _main_desc_with_returns(
 
 
 _GOOGLE_RETURNS_HEADER = re.compile(r'^returns:(\s|$)', re.IGNORECASE)
+_GOOGLE_WARNS_HEADER = re.compile(r'^(warns|warnings):(\s|$)', re.IGNORECASE)
 
 
-def _google_returns_text(doc: str, parsed_description: str) -> str | None:
-    """The written, dedented text of the Google-style `Returns:` section griffe parsed into `parsed_description`.
+def _google_section_blocks(doc: str, header: re.Pattern[str]) -> list[tuple[str, str]]:
+    """The written header line and dedented text of each Google-style section whose header matches `header`.
 
-    Griffe's parsed entry can't be joined back into the written text: before the first colon, it strips parentheses
-    and normalizes the text as a type expression. The section is found the way griffe's Google parser finds it: a
-    `Returns:` line outside a code fence, after a blank line, with an indented line below. As a safeguard, griffe's
-    description must be the tail of the text; if no section qualifies, this returns `None`.
+    Griffe's parsed entries can't always be joined back into the written text: e.g. before the first colon of a
+    returns entry, it strips parentheses and normalizes the text as a type expression. Sections are found the way
+    griffe's Google parser finds them: a header line outside a code fence, after a blank line, with an indented line
+    below.
     """
     # Clean the same text griffe parses, so trailing whitespace can't differ.
     lines = cleandoc(doc.rstrip()).splitlines()
+    blocks: list[tuple[str, str]] = []
     in_fence = False
     for i, line in enumerate(lines):
         if line.lstrip(' ').startswith('```'):
             in_fence = not in_fence
         elif (
             not in_fence
-            and _GOOGLE_RETURNS_HEADER.match(line)
+            and header.match(line)
             and (i == 0 or not lines[i - 1].strip())
             and (block := _indented_block(lines[i + 1 :]))
-            and block.endswith(parsed_description)
         ):
-            return block
-    return None
+            blocks.append((line, block))
+    return blocks
 
 
 def _indented_block(lines: list[str]) -> str:

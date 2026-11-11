@@ -5922,6 +5922,76 @@ def test_admonition_headers_reach_tool_description_as_written():
     )
 
 
+def test_google_warnings_section_reaches_tool_description():
+    """A Google `Warnings:` section reaches the model as written, in source order, like an admonition.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    def fetch_ad_rows(account_id: str) -> str:
+        """Fetch ad rows for an account.
+
+        Warnings:
+            Result rows are capped at 1000.
+            Blank spend: no data, not zero.
+
+        Trailing prose after the warnings.
+
+        Args:
+            account_id: The ad account id.
+        """
+        return 'ok'
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    descriptions = {t.name: t.description for t in params.function_tools}
+    assert descriptions['fetch_ad_rows'] == (
+        'Fetch ad rows for an account.\n'
+        '\n'
+        'Warnings:\n'
+        'Result rows are capped at 1000.\n'
+        'Blank spend: no data, not zero.\n'
+        '\n'
+        'Trailing prose after the warnings.'
+    )
+
+
+@pytest.mark.parametrize(
+    ('docstring_format', 'warns_section'),
+    [
+        pytest.param('google', 'Warns:\n            UserWarning: If the account is archived.', id='google'),
+        pytest.param(
+            'numpy', 'Warns\n        -----\n        UserWarning\n            If the account is archived.', id='numpy'
+        ),
+    ],
+)
+def test_warns_section_still_dropped(docstring_format: Literal['google', 'numpy'], warns_section: str):
+    """A structured `Warns` section, listing the warnings a function emits, keeps its current handling.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    def fetch_ad_rows(account_id: str) -> str:
+        return 'ok'
+
+    fetch_ad_rows.__doc__ = f"""Fetch ad rows for an account.
+
+        {warns_section}
+        """
+    agent.tool_plain(docstring_format=docstring_format)(fetch_ad_rows)
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    assert params.function_tools[0].description == 'Fetch ad rows for an account.'
+
+
 def test_admonition_sections_reach_tool_description_numpy():
     """NumPy `Warnings` and `Notes` sections are recognized admonitions and reach the model.
 
