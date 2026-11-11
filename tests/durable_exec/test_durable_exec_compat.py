@@ -40,7 +40,6 @@ from pydantic_ai.durable_exec import (
     ModelCompactMessagesId,
     ModelRequestId,
     OperationConfigRole,
-    StepPolicy,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
@@ -192,7 +191,6 @@ def test_public_engine_builder_exports() -> None:
         'ParameterTransport',
         'ParameterTransports',
         'ResultCodec',
-        'StepPolicy',
         'ToolsetCallToolParams',
         'ToolsetGetToolsParams',
         'revalidate_function_call',
@@ -559,34 +557,6 @@ def test_render_task_name_matrix_and_assembly_completeness(workspace: bool) -> N
     expected = RENDER_TASK_NAMES | (JOURNAL_WORKSPACE_NAMES if workspace else set[str]())
     assert set(names) == expected
     assert len(names) == len(expected)
-
-
-class AtMostOnceCapability(AbstractCapability[Any]):
-    id = 'once'
-
-    @durable_operation('send', policy=StepPolicy(repeatable=False, timeout=180))
-    async def send(self, ctx: RunContext[Any]) -> None:
-        """Declaration used only for task registration."""  # pragma: no cover
-
-
-@pytest.mark.parametrize(('configured', 'expected'), [(60, 180), (600, 600)])
-def test_render_at_most_once_operation_raises_a_shorter_configured_timeout_and_keeps_a_longer_one(
-    configured: int, expected: int
-) -> None:
-    pytest.importorskip('render')
-    pytest.importorskip('pydantic_ai_harness')
-    from render.workflows import Options
-
-    from pydantic_ai_harness import RenderWorkflows
-
-    from ..harness.render.conftest import RecordingWorkflows
-
-    app = RecordingWorkflows()
-    durability = RenderWorkflows(app, capability_options=Options(timeout_seconds=configured))
-    Agent(TestModel(), name='compat', capabilities=[durability, AtMostOnceCapability()])
-    # Render task options are fixed when the task is registered, so the step policy goes into them.
-    send = app.options['compat__capability__once.send']
-    assert (send.retry and send.retry.max_retries, send.timeout_seconds) == (0, expected)
 
 
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:

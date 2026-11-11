@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import dataclasses
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from datetime import timedelta
 from typing import Any, Generic, Literal, Protocol, TypeVar, cast
 
 from temporalio import activity, workflow
-from temporalio.common import RetryPolicy
 from temporalio.exceptions import ApplicationError, TemporalError
 from temporalio.workflow import ActivityConfig
 
@@ -23,7 +20,6 @@ from pydantic_ai.durable_exec._operation import (
     OperationConfigRole,
     ParameterTransport,
     ParameterTransports,
-    StepPolicy,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
@@ -113,26 +109,6 @@ class TemporalOperationConfig(DurableOperationConfig[TemporalOperationConfigValu
         return self._resolve_tool(operation_id, tool, tool_name)
 
 
-_AT_MOST_ONCE_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
-"""How soon an at-most-once activity whose worker was lost fails, unless its config sets a heartbeat timeout."""
-
-
-def _apply_policy(config: ActivityConfig, policy: StepPolicy) -> ActivityConfig:
-    config = config.copy()
-    if not policy.repeatable:
-        config['retry_policy'] = dataclasses.replace(config.get('retry_policy') or RetryPolicy(), maximum_attempts=1)
-        # Every activity heartbeats in the background, so a lost worker fails the attempt after this rather than after
-        # the whole start-to-close timeout.
-        config.setdefault('heartbeat_timeout', _AT_MOST_ONCE_HEARTBEAT_TIMEOUT)
-    if policy.timeout is not None:
-        floor = timedelta(seconds=policy.timeout)
-        config['start_to_close_timeout'] = max(config.get('start_to_close_timeout') or floor, floor)
-        # An overall deadline shorter than the floor would end the activity before the floor does.
-        if (overall := config.get('schedule_to_close_timeout')) is not None:
-            config['schedule_to_close_timeout'] = max(overall, floor)
-    return config
-
-
 class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[ParamsT, WireT, ResultT]):
     def __init__(
         self,
@@ -151,17 +127,9 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
     def operation(self) -> DurableOperation[ParamsT, WireT, ResultT]:
         return self._operation
 
-    def _policy_config(self, config: TemporalOperationConfigValue) -> TemporalOperationConfigValue:
-        """`config` under the operation's step policy if it has one."""
-        policy = self._operation.policy
-        if policy is None or 'child_workflow' in config:
-            return config
-        return _apply_policy(config, policy)
-
     async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
         payload = self._operation.parameter_transport.dump(params)
-        # A config passed for one invocation still runs under the operation's policy.
-        resolved_config = self._policy_config(cast(TemporalOperationConfigValue, config or self._config))
+        resolved_config = cast(TemporalOperationConfigValue, config or self._config)
         if 'child_workflow' in resolved_config:
             toolset_id = cast(Any, self._operation.operation_id).toolset_id
             # A replay re-issues what the original execution did, which already passed this check, and may run

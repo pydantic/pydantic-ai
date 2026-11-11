@@ -12,7 +12,6 @@ from ._operation import (
     DurableOperationId,
     OperationConfigRole,
     ParameterTransports,
-    StepPolicy,
     resolve_tool_operation_config,
 )
 from ._operation_names import DurableOperationNamer, JournalOperationNamer
@@ -146,9 +145,6 @@ class CallableOperationBackend(DurableOperationBackend[ConfigT]):
                 if explicit_config is not None
                 else self._config.base(operation.config_role, operation_id=operation.operation_id)
             )
-            # After resolving, so a config passed for one invocation can't loosen the operation's policy.
-            if (policy := operation.policy) is not None:
-                resolved_config = self.apply_policy(resolved_config, policy)
             cache_key = operation.cache_identity.project(params)
 
             async def body() -> object:
@@ -177,10 +173,6 @@ class CallableOperationBackend(DurableOperationBackend[ConfigT]):
 
     def registrations(self) -> Sequence[Callable[..., object]]:
         return ()
-
-    def apply_policy(self, config: ConfigT, policy: StepPolicy) -> ConfigT:
-        """The config for one invocation under `policy`; an engine without retries or timeouts keeps `config`."""
-        return config
 
     @abstractmethod
     async def execute(
