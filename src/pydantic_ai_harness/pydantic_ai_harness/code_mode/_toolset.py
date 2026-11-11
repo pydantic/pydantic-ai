@@ -73,10 +73,9 @@ from pydantic_ai_harness._monty_exec import (
     PrintCapture,
     in_temporal_workflow,
     is_sandbox_panic,
-    renamed_duration_limit,
 )
 from pydantic_ai_harness._typeguards import is_mapping
-from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duration_limit, warn_argument_renamed
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 

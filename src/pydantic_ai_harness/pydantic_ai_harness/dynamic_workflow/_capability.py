@@ -10,7 +10,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness._monty_exec import renamed_duration_limit
+from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.dynamic_workflow._toolset import (
     DynamicWorkflowToolset,
     WorkflowAgent,

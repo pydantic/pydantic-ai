@@ -51,7 +51,6 @@ from pydantic_ai_harness._monty_exec import (
     PrintCapture,
     in_temporal_workflow,
     is_sandbox_panic,
-    renamed_duration_limit,
 )
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
@@ -59,6 +58,7 @@ from pydantic_ai_harness._sub_agent_output import (
     resumable_output_reason,
     without_resumable_outputs,
 )
+from pydantic_ai_harness._warn import renamed_duration_limit
 
 # Set while a workflow script is executing, so `get_tools` hides `run_workflow` from sub-agents
 # running inside it -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
