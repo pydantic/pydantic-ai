@@ -421,16 +421,26 @@ file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
 `~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
 CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--resume`,
 `--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
-(`SessionStart.conversation_chosen`). A conversation saved in another
-directory, such as after AoE moved a worktree, is not resumed; use `/resume`. AoE's
+(`SessionStart.conversation_chosen`). It is resumed also when it was saved in another
+directory, such as after AoE renamed or moved a worktree, and continues in the pane's
+directory. When it cannot be resumed, CLAI2 says why and starts a new conversation. AoE's
 own resume, `--fork-from`, and smart rename apply to its built-in agents only.
 
-**Title.** When the conversation's title changes (its first prompt, background naming,
-or a rename in `/resume`), the plugin runs `aoe session rename ID --title=TITLE`, in a linked
-Git worktree too. There, AoE's `session.tie_workdir_to_name` (on by default) refuses the
-rename while a turn runs, and otherwise may move an AoE-managed worktree to follow the title.
-The plugin stops trying for the session once AoE refuses a rename; a rename that times out is
-tried again with the next title. AoE renames the tmux session to match.
+**Title.** Off by default, so the AoE session keeps the title you gave it. To title it after
+the conversation instead, turn on `titles`:
+
+```text
+/plugins add aoe pydantic_clai2.builtin_plugins.aoe '{"titles": true}'
+```
+
+Then, when the conversation's title changes (its first prompt, background naming, or a rename
+in `/resume`), the plugin runs `aoe session rename ID --title=TITLE`, in a linked Git worktree
+too. There, AoE's `session.tie_workdir_to_name` (on by default) refuses the rename while a turn
+runs, but between turns it moves an AoE-managed worktree to follow the title, out from under the
+CLAI2 still working in it: its file and shell tools then fail until you restart it in the new
+directory. Turn `tie_workdir_to_name` off in AoE before turning `titles` on. The plugin stops
+trying for the session once AoE refuses a rename; a rename that times out is tried again with
+the next title. AoE renames the tmux session to match.
 
 All file and process work runs off the event loop, and failures are logged at debug
 level, never raised into a turn. `/plugins disable aoe` stops reporting.
@@ -1340,7 +1350,7 @@ workspace and its default filenames: one instruction file per directory,
 |---|---|---|
 | `walk_up` | `true` | also load instruction files from the directories above the workspace: up to the nearest `repo_context.walk_up_roots` entry containing it, inclusive (home by default), or up to the repository root (the nearest `.git`) when no entry contains it |
 | `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
-| `nested_traversal` | `true` | when the agent reads a file in, or lists, a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
+| `nested_traversal` | `true` | when the agent reads, lists, writes or edits in a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
 | `nested_inject` | `"contents"` | what nested traversal adds: `"contents"` (the file itself) or `"pointer"` (one line naming the file) |
 
 Under home, the walk-up reads every directory up to and including `~`, not just
@@ -1704,7 +1714,9 @@ In a terminal, `/update now` and `/reload` are refused while other live sessions
 the restart would end; bare `/update` can still open its menu in the shown session, whose
 **Update…** then shows why and stays in the menu. In `host.command_menu('update')`, the menu the
 page's Settings > About shows, a refused **Update…** action raises `ValueError` with the reason
-instead, which the page shows as an error.
+instead, which the page shows as an error. That menu enters `/update now` in the session CLAI
+restarts from, whichever live session's page asks, and gives that session's refusal; the page that
+asked shows uv's output and the result too.
 Installing from another folder shown in the terminal is refused, as CLAI
 restarts in the folder it started in.
 
@@ -3503,7 +3515,10 @@ when either changes. `await resume(conversation_id)` switches to a saved convers
 `/resume ID` does, returning the notice to show: it only restores history, never runs the
 model or replays a tool. Call it between turns, for example from `on_session_start`; it raises
 `RuntimeError` during a run, `LookupError` for an unknown ID, and `ValueError` for a
-conversation saved in another directory or when persistence is not configured. A conversation
+conversation saved in another directory or when persistence is not configured.
+`resume(conversation_id, allow_other_workspace=True)` continues a conversation saved in another
+directory in this one instead, as confirming it in the `/resume` browser does: tools then run
+in this directory, and the saved conversation keeps its original one. A conversation
 still running in another process is not taken over: the newest unarchived copy CLAI made to
 continue it that no other process runs is resumed, else a new copy, and the notice says which.
 When the conversation or its title changed, every loaded plugin, the caller included, then

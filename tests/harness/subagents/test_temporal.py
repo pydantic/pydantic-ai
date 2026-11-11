@@ -28,7 +28,14 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents
+from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents, TaskControl
+from tests.harness.subagents._background import (
+    WORKER_CALLS,
+    EventKinds,
+    background_parent,
+    background_worker,
+    reset_worker,
+)
 from tests.harness.subagents._dynamic import POET_CALLS, POET_RESULT, creator
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -324,6 +331,96 @@ async def test_child_workflow_rejects_options_that_need_the_parent_run(client: C
     child_error = exc_info.value.cause
     assert isinstance(child_error, ChildWorkflowError)
     assert 'does not support' in str(child_error.cause)
+
+
+background_events = EventKinds()
+
+
+def _background_agent(name: str, control: TaskControl, *, background: bool) -> Agent[None, str]:
+    worker = Agent(FunctionModel(background_worker), name='worker')
+    return Agent(
+        background_parent(background=background),
+        name=name,
+        deps_type=type(None),
+        capabilities=[
+            SubAgents[None](agents=[SubAgent(worker)], task_control=control),
+            background_events,
+            TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
+        ],
+    )
+
+
+background_agent = _background_agent('background_delegating_agent', TaskControl(), background=True)
+# The timer is a workflow timer, so replay moves the task to the background at the same point.
+auto_background_agent = _background_agent(
+    'auto_background_delegating_agent', TaskControl(auto_background_after=0.01), background=False
+)
+
+
+@workflow.defn
+class BackgroundWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[str]:
+        background_events.kinds.clear()
+        result = await background_agent.run(prompt)
+        return [result.output, *background_events.kinds]
+
+
+@workflow.defn
+class AutoBackgroundWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[str]:
+        background_events.kinds.clear()
+        result = await auto_background_agent.run(prompt)
+        return [result.output, *background_events.kinds]
+
+
+@pytest.mark.parametrize(
+    ('workflow_type', 'agent'),
+    [
+        pytest.param(BackgroundWorkflow, background_agent, id='requested'),
+        pytest.param(AutoBackgroundWorkflow, auto_background_agent, id='auto'),
+    ],
+)
+async def test_background_task_survives_replay(
+    client: Client, workflow_type: type[BackgroundWorkflow | AutoBackgroundWorkflow], agent: Agent[None, str]
+) -> None:
+    """Every workflow task replays from history, so the task and its events replay in order and its result is reused."""
+    reset_worker()
+    workflow_id = f'test_subagents_temporal_{agent.name}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[workflow_type],
+        plugins=[AgentPlugin(agent)],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
+        max_cached_workflows=0,
+        debug_mode=True,
+    ):
+        output, *kinds = await client.execute_workflow(
+            workflow_type.run,
+            'Delegate it',
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=60),
+        )
+    assert 'from the worker' in output
+    assert kinds == [
+        'sub_agents.task_assigned',
+        'sub_agents.task_started',
+        'sub_agents.task_backgrounded',
+        'sub_agents.task_completed',
+    ]
+    assert WORKER_CALLS == ['worker']
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    replay = await Replayer(
+        workflows=[workflow_type],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
+        debug_mode=True,
+    ).replay_workflow(history)
+    assert replay.replay_failure is None
 
 
 @pytest.fixture(scope='module')

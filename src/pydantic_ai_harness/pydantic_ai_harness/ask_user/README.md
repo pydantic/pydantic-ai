@@ -31,7 +31,7 @@ async def pick_first(request: AskUserRequest) -> AskUserResponse:
     return AskUserResponse(answers=tuple(answers))
 
 
-agent = Agent('anthropic:claude-fable-5-1', capabilities=[AskUser(answerer=pick_first)])
+agent = Agent('anthropic:claude-fable-5-2', capabilities=[AskUser(answerer=pick_first)])
 ```
 
 `pick_first` stands in for a real UI. [CLAI](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2/)
@@ -92,7 +92,7 @@ async def answer_for_session(ctx: RunContext[str], request: AskUserRequest) -> A
     return AskUserResponse(answers=tuple(answers))
 
 
-agent = Agent('anthropic:claude-fable-5-1', deps_type=str, capabilities=[AskUser(answerer=answer_for_session)])
+agent = Agent('anthropic:claude-fable-5-2', deps_type=str, capabilities=[AskUser(answerer=answer_for_session)])
 ```
 
 In an in-process run, `ctx.deps`, `ctx.model`, and `ctx.messages` belong to the run that called
@@ -187,7 +187,7 @@ from pydantic_ai_harness import AskUser
 from pydantic_ai_harness.ask_user import TOOL_NAME, AskUserRequest, AskUserResponse, ask_user_result
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     output_type=[str, DeferredToolRequests],
     capabilities=[AskUser(answerer=None)],
 )
