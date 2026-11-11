@@ -307,13 +307,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         catalog = await self._load(ctx.workspace)
         for skipped in catalog.skipped:
             if skipped.scan is not None:
-                record_flagged(
-                    ctx.tracer,
-                    skipped.scan,
-                    artifact='skill',
-                    action='skipped',
-                    include_content=ctx.trace_include_content,
-                )
+                record_flagged(ctx, skipped.scan, artifact='skill', action='skipped')
         for message in (*(skipped.message for skipped in catalog.skipped), *self._advice(catalog.skills)):
             warnings.warn(message, UserWarning, stacklevel=2)
         offered = [_Skill[AgentDepsT](skill) for skill in catalog.skills if skill.model_invocable]

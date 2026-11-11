@@ -16,7 +16,7 @@ from typing import Literal, TypeAlias
 from opentelemetry.trace import INVALID_SPAN, Span
 from opentelemetry.util.types import AttributeValue
 
-from .._telemetry import RunTelemetry, current_run_telemetry, open_span, set_content
+from .._telemetry import RunTelemetry, current_run_telemetry, open_span, set_content_attribute
 from ..messages import WorkspaceRef
 from .protocol import WorkspaceBackend, WorkspaceCommand
 
@@ -98,9 +98,9 @@ def command_span(step: Step) -> AbstractContextManager[Span]:
 def set_command(span: Span, command: WorkspaceCommand) -> None:
     """Record `command` on a `workspace run` span, only when the run captures content."""
     if isinstance(command, str):
-        set_content(span, 'process.command_line', command)
+        set_content_attribute(span, 'process.command_line', command)
     else:
-        set_content(span, 'process.command_args', list(command))
+        set_content_attribute(span, 'process.command_args', list(command))
 
 
 @contextmanager

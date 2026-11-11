@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
 from pydantic import TypeAdapter
 
+from pydantic_ai._telemetry import record_decision
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
 from pydantic_ai.exceptions import UsageLimitUnavailableWarning, UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestAttempt, ModelResponse
@@ -750,12 +751,14 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
     def _refuse(self, budget: Budget[AgentDepsT], ctx: RunContext[AgentDepsT], detail: str) -> None:
         """Record the refusal as a span and raise."""
-        attributes: dict[str, str] = {'spend.budget': budget.name, 'spend.window': budget.window}
-        if ctx.trace_include_content and budget.scope is not None:
-            # A scope key is usually a tenant or user id, and a trace has a wider
-            # audience than the application that produced it.
-            attributes['spend.scope'] = budget.scope(ctx)
-        ctx.tracer.start_span('spend budget exhausted', attributes=attributes).end()
+        record_decision(
+            'spend budget exhausted',
+            ctx=ctx,
+            attributes={'spend.budget': budget.name, 'spend.window': budget.window},
+            # A scope key is usually a tenant or user id, and a trace has a wider audience than the
+            # application that produced it.
+            content={'spend.scope': budget.scope(ctx)} if budget.scope is not None else None,
+        )
         raise SpendLimitExceeded(f'Budget {budget.name!r} exhausted for this {budget.window}: {detail}')
 
     @durable_operation('read')

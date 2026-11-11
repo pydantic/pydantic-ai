@@ -260,7 +260,7 @@ def scan_memory(
     result = capability.scanner.scan(content, source=f'memory:{name}')
     if not result.flagged:
         return None
-    record_flagged(ctx.tracer, result, artifact='memory', action=action, include_content=ctx.trace_include_content)
+    record_flagged(ctx, result, artifact='memory', action=action)
     return result
 
 
