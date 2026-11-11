@@ -921,8 +921,11 @@ async def test_a_conversation_s_title_and_metadata_change_only_through_update() 
     conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('one')])])
     await store.save(conversation, scope='user-1')
 
-    updated = await store.update(conversation.conversation_id, title='Greetings', metadata={'pinned': True})
+    metadata = {'pinned': True}
+    updated = await store.update(conversation.conversation_id, title='Greetings', metadata=metadata)
     assert (updated.title, updated.metadata, updated.revision) == ('Greetings', {'pinned': True}, conversation.revision)
+    # The store keeps its own copy, so changing the dict passed in doesn't change the stored one.
+    metadata['pinned'] = False
 
     # The update didn't change the revision, so the conversation saves on, and the save keeps both.
     conversation.messages.append(ModelResponse(parts=[TextPart('two')]))
@@ -1033,10 +1036,12 @@ async def test_a_save_keeps_a_title_on_a_backend_that_stores_records_as_given() 
     await store.save(conversation)
     record = await store.read_record(conversation.conversation_id)
     assert record is not None
-    await store.write_record(dataclasses.replace(record, title='Set elsewhere'), expected_revision=record.revision)
+    await store.write_record(
+        dataclasses.replace(record, title='Set elsewhere', metadata={'pinned': True}), expected_revision=record.revision
+    )
 
     await store.save(conversation)
 
     saved = await store.read_record(conversation.conversation_id)
     assert saved is not None
-    assert saved.title == 'Set elsewhere'
+    assert (saved.title, saved.metadata) == ('Set elsewhere', {'pinned': True})
