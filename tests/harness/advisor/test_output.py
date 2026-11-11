@@ -92,5 +92,5 @@ class TestAdvisorOutput:
         assert [tool.name for tool in parameters.function_tools] == ['advisor']
 
     def test_native_only_advisor_rejects_custom_output(self) -> None:
-        with pytest.raises(ValueError, match=r'Advisor.output_type is not supported with `local=False`'):
+        with pytest.raises(ValueError, match=r'`Advisor.output_type` is not supported with `local=False`'):
             Advisor('anthropic:claude-opus-4-8', local=False, output_type=Decision)

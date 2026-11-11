@@ -6,7 +6,7 @@ import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal, Self
+from typing import Any, ClassVar, Literal, Self, TypeVar
 
 from typing_extensions import TypeIs
 
@@ -24,26 +24,6 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
-_LIMIT_REACHED = 'Advisor consultation limit reached for this model request. Continue without further advice.'
-
-
-def _caller_stacklevel() -> int:
-    """The `warnings.warn` stacklevel, from a function in this module, of the nearest frame in the user's code.
-
-    Skips this module, Pydantic AI, Pydantic Graph, and the `asyncio`, `contextlib` and `typing`
-    frames a call goes through, so the warning points at the caller whether they construct
-    `Advisor[None](...)`, call `combine` directly, build an `Agent`, or pass capabilities to a run.
-    """
-    frame = inspect.currentframe()
-    stacklevel = 0
-    while frame is not None and (
-        (module := frame.f_globals.get('__name__', '')) == __name__
-        or module.partition('.')[0] in {'pydantic_ai', 'pydantic_graph', 'asyncio', 'contextlib', 'typing'}
-    ):
-        frame = frame.f_back
-        stacklevel += 1
-    return stacklevel
-
 
 @dataclass
 class _Advice:
@@ -52,20 +32,10 @@ class _Advice:
     output: object
 
 
-def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:
-    """Narrow a run's model without losing its provider client type."""
-    return isinstance(model, Model)
+_Mode = Literal['auto', 'native', 'local']
+"""The deprecated `Advisor.mode` values."""
 
-
-def _executor_service(model: AbstractModel) -> str:
-    """The service the executor reaches, which decides the native advisor's model-ID namespace.
-
-    The provider's canonical system rather than its name, so a provider subclass that only renames
-    itself, such as a `claude-code` `AnthropicProvider`, still gets the Anthropic advisor. Not the
-    model's, which `BedrockConverseModel` reports as `'anthropic'` for Claude's thinking signatures.
-    """
-    provider = model.provider if _is_request_response_model(model) else None
-    return provider.canonical_system if provider is not None else model.system
+_T = TypeVar('_T')
 
 
 @dataclass(init=False)
@@ -141,14 +111,14 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
 
     _local_uses: int = field(init=False, repr=False, compare=False, default=0)
 
-    _MODE_DECLARATIONS: ClassVar[dict[str, tuple[bool, bool]]] = {
+    _MODE_DECLARATIONS: ClassVar[dict[_Mode, tuple[bool, bool]]] = {
         'auto': (True, True),
         'native': (True, False),
         'local': (False, True),
     }
     """The `(native, local)` pair each deprecated `mode` stands for."""
 
-    _MODE_REPLACEMENTS: ClassVar[dict[str, str]] = {
+    _MODE_REPLACEMENTS: ClassVar[dict[_Mode, str]] = {
         'auto': 'omit `mode`; the defaults use the native advisor where it applies and the local tool otherwise',
         'native': 'pass `local=False`',
         'local': 'pass `native=False`',
@@ -170,7 +140,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         id: str | None = 'advisor',
         defer_loading: bool = False,
         description: str | None = None,
-        mode: Literal['auto', 'native', 'local'] | None = None,
+        mode: _Mode | None = None,
     ) -> None:
         """Create an advisor capability.
 
@@ -179,32 +149,35 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             native: The provider-native advisor: `True` builds it from the fields, `False` disables
                 it, and an `AdvisorTool` or a function returning one replaces it. A replacement
                 carries its own configuration, so `max_uses`, `max_tokens` and `caching` don't
-                apply to it.
+                apply to it, and a later default `Advisor` in a merge restores the built one.
             local: The local fallback: `True` (the default) or `None` builds the `advisor` tool from
                 the fields, `False` disables it, and a `Tool` or function replaces it. A replacement
-                ignores `output_type`, `max_uses`, `max_tokens` and `forward_history`. The default
-                states `True` rather than `None` so that, as with the earlier `mode='auto'`, a
-                merge with a later default `Advisor` turns the local fallback back on.
+                ignores `output_type` and `forward_history`, while `max_uses`, `max_tokens` and
+                `caching` still shape the native advisor. `None` is stored as `True`, so that, as
+                with the earlier `mode='auto'`, a later default `Advisor` in a merge restores the
+                built local fallback, replacing an earlier `False` or replacement tool.
             output_type: Output specification for local consultations.
             max_uses: Maximum consultations in one executor model request.
             max_tokens: Maximum output tokens for each consultation.
             caching: Prompt-cache TTL for the native advisor's transcript.
             forward_history: Whether local consultations receive the executor's message history.
             id: The capability id.
-            defer_loading: Whether to defer the capability's tools through tool search.
+            defer_loading: Whether to make this an on-demand capability, whose tools the model loads by `id`.
             description: The capability description.
             mode: Deprecated: use `native` and `local`.
         """
+        if local is None:
+            # `None` and `True` build the same tool; stating `True` makes them merge the same way too.
+            local = True
         if mode is not None:
-            if mode not in self._MODE_DECLARATIONS:
-                raise ValueError("Advisor.mode must be 'auto', 'native', or 'local'")
+            self._check_mode(mode)
             if native is not True or local is not True:
-                raise UserError('Advisor: pass either the deprecated `mode` or `native`/`local`, not both')
+                raise UserError('`Advisor`: pass either the deprecated `mode` or `native`/`local`, not both')
             warnings.warn(
                 f'`Advisor(mode={mode!r})` is deprecated: {self._MODE_REPLACEMENTS[mode]}. '
                 '`mode` will be removed in a future release.',
                 HarnessDeprecationWarning,
-                stacklevel=_caller_stacklevel(),
+                stacklevel=self._caller_stacklevel(),
             )
             native, local = self._MODE_DECLARATIONS[mode]
         self.model = model
@@ -217,7 +190,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         super().__init__(native=native, local=local, id=id, defer_loading=defer_loading, description=description)
 
     @property
-    def mode(self) -> Literal['auto', 'native', 'local']:
+    def mode(self) -> _Mode:
         """Deprecated: read the `native` and `local` declarations instead.
 
         `'native'` when the local fallback is disabled, `'local'` when the native advisor is, and
@@ -234,15 +207,26 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         return 'native' if self._declared_local is False else 'auto'
 
     @mode.setter
-    def mode(self, mode: Literal['auto', 'native', 'local']) -> None:
+    def mode(self, mode: _Mode) -> None:
+        self._check_mode(mode)
         warnings.warn(
             f'`Advisor.mode` is deprecated: {self._MODE_REPLACEMENTS[mode]}. '
             '`mode` will be removed in a future release.',
             HarnessDeprecationWarning,
             stacklevel=2,
         )
+        previous = self.native, self.local
         self.native, self.local = self._MODE_DECLARATIONS[mode]
-        self.__post_init__()
+        try:
+            self.__post_init__()
+        except Exception:
+            self.native, self.local = previous
+            raise
+
+    @classmethod
+    def _check_mode(cls, mode: str) -> None:
+        if mode not in cls._MODE_DECLARATIONS:
+            raise ValueError("`Advisor.mode` must be 'auto', 'native', or 'local'")
 
     @classmethod
     def from_spec(
@@ -255,7 +239,10 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         max_tokens: int | None = None,
         caching: Literal['5m', '1h'] | None = None,
         forward_history: bool = False,
-        mode: Literal['auto', 'native', 'local'] | None = None,
+        id: str | None = 'advisor',
+        defer_loading: bool = False,
+        description: str | None = None,
+        mode: _Mode | None = None,
         **kwargs: Any,
     ) -> Advisor[Any]:
         """Build from an agent spec, covering the fields a spec can express.
@@ -273,6 +260,9 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             max_tokens=max_tokens,
             caching=caching,
             forward_history=forward_history,
+            id=id,
+            defer_loading=defer_loading,
+            description=description,
             mode=mode,
             **kwargs,
         )
@@ -284,25 +274,25 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         combination no constructor accepts.
         """
         if self.max_uses is not None and self.max_uses < 1:
-            raise ValueError('Advisor.max_uses must be at least 1')
+            raise ValueError('`Advisor.max_uses` must be at least 1')
         if self.max_tokens is not None and self.max_tokens < 1024:
-            raise ValueError('Advisor.max_tokens must be at least 1024')
+            raise ValueError('`Advisor.max_tokens` must be at least 1024')
         if self.output_type is not str:
             if self.local is False:
-                raise ValueError('Advisor.output_type is not supported with `local=False`')
+                raise ValueError('`Advisor.output_type` is not supported with `local=False`')
             if self.native is not True and self.native is not False:
                 raise UserError(
-                    'Advisor.output_type is not supported by a native advisor tool, which returns text: '
+                    '`Advisor.output_type` is not supported by a native advisor tool, which returns text: '
                     'pass `native=False`, or drop `output_type`'
                 )
         if self.native is True and self.local is False:
             native_provider, _ = self._parse_native_model(self.model)
             if native_provider is None:
                 raise ValueError(
-                    "Advisor(local=False) requires an 'anthropic:<model>' or 'openrouter:<model>' model name"
+                    "`Advisor(local=False)` requires an 'anthropic:<model>' or 'openrouter:<model>' model name"
                 )
             if native_provider == 'openrouter' and self.max_uses is not None:
-                raise ValueError('Advisor.max_uses is not supported by OpenRouter with `local=False`')
+                raise ValueError('`Advisor.max_uses` is not supported by OpenRouter with `local=False`')
         super().__post_init__()
 
     def _default_native(self) -> Callable[[RunContext[AgentDepsT]], AdvisorTool | None]:
@@ -316,7 +306,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         async def advisor(ctx: RunContext[AgentDepsT], prompt: str) -> object:
             if max_uses is not None:
                 if self._local_uses >= max_uses:
-                    return _LIMIT_REACHED
+                    return 'Advisor consultation limit reached for this model request. Continue without further advice.'
                 self._local_uses += 1
 
             history = ctx.messages[:-1] if forward_history else None
@@ -390,13 +380,13 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                 "which OpenRouter's native advisor does not support, so `max_uses` is ignored. "
                 'This will raise `UserError` in a future release: remove `max_uses` or `local=False`.',
                 HarnessDeprecationWarning,
-                stacklevel=_caller_stacklevel(),
+                stacklevel=cls._caller_stacklevel(),
             )
             capabilities = [replace_no_init(advisor, max_uses=None) for advisor in advisors]
         return super().combine(capabilities)
 
     @staticmethod
-    def _last_stated(values: Sequence[object]) -> object:
+    def _last_stated(values: Sequence[_T | None]) -> _T | None:
         """The value a merge keeps: the last one stated, where `None` means not stated."""
         stated = [value for value in values if value is not None]
         return stated[-1] if stated else None
@@ -432,7 +422,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     def _native_advisor(self, ctx: RunContext[AgentDepsT]) -> AdvisorTool | None:
         """Build a native tool only when an explicit advisor model name is lossless."""
         native_provider, native_model_name = self._parse_native_model(self.model)
-        provider = _executor_service(ctx.model)
+        provider = self._executor_service(ctx.model)
         if provider != native_provider or native_model_name is None or self.output_type is not str:
             return None
         # OpenRouter's native advisor ignores `max_uses`, so the local tool enforces it there. Core has
@@ -447,8 +437,8 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         With no local fallback, omitting the native tool would leave the executor without an advisor.
         """
         native_provider, native_model_name = self._parse_native_model(self.model)
-        if _executor_service(ctx.model) != native_provider:
-            raise UserError(f'Advisor(local=False) requires a {native_provider} executor, not {ctx.model.system}')
+        if self._executor_service(ctx.model) != native_provider:
+            raise UserError(f'`Advisor(local=False)` requires a {native_provider} executor, not {ctx.model.system}')
         assert native_model_name is not None
         return self._advisor_tool(native_model_name)
 
@@ -459,6 +449,40 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             max_tokens=self.max_tokens,
             provider_settings={'anthropic': {'caching': self.caching}} if self.caching is not None else None,
         )
+
+    @staticmethod
+    def _caller_stacklevel() -> int:
+        """The `warnings.warn` stacklevel, from a function in this module, of the nearest frame in the user's code.
+
+        Skips this module, Pydantic AI, Pydantic Graph, and the `asyncio`, `contextlib` and `typing`
+        frames a call goes through, so the warning points at the caller whether they construct
+        `Advisor[None](...)`, call `combine` directly, build an `Agent`, or pass capabilities to a run.
+        """
+        frame = inspect.currentframe()
+        stacklevel = 0
+        while frame is not None and (
+            (module := frame.f_globals.get('__name__', '')) == __name__
+            or module.partition('.')[0] in {'pydantic_ai', 'pydantic_graph', 'asyncio', 'contextlib', 'typing'}
+        ):
+            frame = frame.f_back
+            stacklevel += 1
+        return stacklevel
+
+    @staticmethod
+    def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:
+        """Narrow a run's model without losing its provider client type."""
+        return isinstance(model, Model)
+
+    @staticmethod
+    def _executor_service(model: AbstractModel) -> str:
+        """The service the executor reaches, which decides the native advisor's model-ID namespace.
+
+        The provider's canonical system rather than its name, so a provider subclass that only renames
+        itself, such as a `claude-code` `AnthropicProvider`, still gets the Anthropic advisor. Not the
+        model's, which `BedrockConverseModel` reports as `'anthropic'` for Claude's thinking signatures.
+        """
+        provider = model.provider if Advisor._is_request_response_model(model) else None
+        return provider.canonical_system if provider is not None else model.system
 
     @staticmethod
     def _parse_native_model(

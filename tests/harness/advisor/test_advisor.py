@@ -673,9 +673,9 @@ class TestAdvisor:
 
     def test_rejects_invalid_options(self) -> None:
         model = FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart('done')]))
-        with pytest.raises(ValueError, match=r'Advisor.max_uses must be at least 1'):
+        with pytest.raises(ValueError, match=r'`Advisor.max_uses` must be at least 1'):
             Advisor(model, max_uses=0)
-        with pytest.raises(ValueError, match=r'Advisor.max_tokens must be at least 1024'):
+        with pytest.raises(ValueError, match=r'`Advisor.max_tokens` must be at least 1024'):
             Advisor(model, max_tokens=1023)
         with pytest.raises(ValueError, match=r'local=False.*model name'):
             Advisor(model, local=False)
@@ -700,6 +700,9 @@ class TestAdvisor:
             'max_tokens',
             'caching',
             'forward_history',
+            'id',
+            'defer_loading',
+            'description',
         }
         assert definitions['short_spec_Advisor']['properties']['Advisor']['anyOf'][-1] == {'type': 'string'}
 
@@ -771,7 +774,7 @@ class TestAdvisorNativeOrLocal:
                 assert advisor.mode == mode
 
     def test_deprecated_mode_rejects_an_unknown_value_or_native_and_local(self) -> None:
-        with pytest.raises(ValueError, match=r"Advisor.mode must be 'auto', 'native', or 'local'"):
+        with pytest.raises(ValueError, match=r"`Advisor.mode` must be 'auto', 'native', or 'local'"):
             Advisor('test', mode='invalid')  # pyright: ignore[reportArgumentType]
         with pytest.raises(UserError, match=r'either the deprecated `mode` or `native`/`local`'):
             Advisor('anthropic:claude-opus-4-8', mode='native', local=False)
@@ -790,13 +793,18 @@ class TestAdvisorNativeOrLocal:
         with pytest.warns(HarnessDeprecationWarning):
             assert merged.mode == later
 
+    @pytest.mark.parametrize('later_local', [True, None])
     @pytest.mark.parametrize('later_model', ['anthropic:claude-opus-4-8', 'openai:gpt-5.4'])
-    def test_a_later_default_advisor_turns_the_local_fallback_back_on(self, later_model: str) -> None:
+    def test_a_later_default_advisor_turns_the_local_fallback_back_on(
+        self, later_model: str, later_local: Literal[True] | None
+    ) -> None:
         """A default `Advisor` states `local=True`, as the default `mode='auto'` did, so it wins a merge.
 
         Keeping the earlier `local=False` instead would pair it with a model the native advisor can't use.
         """
-        merged = Advisor[None].combine([Advisor('anthropic:claude-opus-4-8', local=False), Advisor(later_model)])
+        merged = Advisor[None].combine(
+            [Advisor('anthropic:claude-opus-4-8', local=False), Advisor(later_model, local=later_local)]
+        )
 
         assert isinstance(merged, Advisor)
         assert merged.get_toolset() is not None
@@ -815,14 +823,30 @@ class TestAdvisorNativeOrLocal:
         assert advisor.get_native_tools() == []
         assert advisor.get_toolset() is not None
 
+    def test_setting_an_invalid_deprecated_mode_leaves_the_advisor_unchanged(self) -> None:
+        advisor = Advisor[None]('openrouter:anthropic/claude-opus-4.8', max_uses=2)
+
+        with pytest.raises(ValueError, match=r"`Advisor.mode` must be 'auto', 'native', or 'local'"):
+            advisor.mode = 'invalid'  # pyright: ignore[reportAttributeAccessIssue]
+        with pytest.warns(HarnessDeprecationWarning), pytest.raises(ValueError, match='not supported by OpenRouter'):
+            advisor.mode = 'native'
+
+        assert advisor.get_toolset() is not None
+        assert advisor.get_native_tools()
+
     def test_accepts_the_shared_capability_options(self) -> None:
-        advisor = Advisor[None]('test', id='team_advisor', defer_loading=True, description='Ask the senior engineer.')
+        advisor = Advisor[None](
+            'test', native=False, id='team_advisor', defer_loading=True, description='Ask the senior engineer.'
+        )
 
         assert (advisor.id, advisor.defer_loading, advisor.description) == (
             'team_advisor',
             True,
             'Ask the senior engineer.',
         )
+        toolset = advisor.get_toolset()
+        assert toolset is not None
+        assert toolset.id == 'team_advisor'
 
     def test_agent_spec_accepts_the_deprecated_mode(self) -> None:
         with pytest.warns(HarnessDeprecationWarning, match=r"`Advisor\(mode='local'\)` is deprecated"):
