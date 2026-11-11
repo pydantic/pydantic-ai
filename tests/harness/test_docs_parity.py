@@ -397,6 +397,13 @@ def test_capability_readme_links_source(package: Path) -> None:
     )
 
 
+@pytest.mark.parametrize('package', _CAPABILITY_PACKAGES, ids=lambda p: str(p.relative_to(_ROOT)))
+def test_capability_readme_names_models_not_aliases(package: Path) -> None:
+    """GitHub and PyPI render READMEs as-is, so the docs site's `{{ provider:size }}` model aliases stay literal there."""
+    readme = (package / 'README.md').read_text(encoding='utf-8')
+    assert not re.findall(r'\{\{\s*[\w-]+:[\w.-]+\s*\}\}', readme)
+
+
 # The Coder blown-out example is repeated on four markdown surfaces (plus, parameterized,
 # in src/pydantic_ai_harness/examples/coding_agent.py). They must stay byte-identical so no
 # page drifts from what `coder_agent` actually is; see

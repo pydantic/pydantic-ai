@@ -516,10 +516,10 @@ from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.durable_exec.temporal import TemporalDurability
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
 
-worker = Agent('{{ anthropic:large }}', name='worker', capabilities=[TemporalDurability()])
+worker = Agent('anthropic:claude-opus-5-5', name='worker', capabilities=[TemporalDurability()])
 
 lead = Agent(
-    '{{ anthropic:large }}',
+    'anthropic:claude-opus-5-5',
     name='lead',
     capabilities=[
         SubAgents(agents=[SubAgent(worker)]),
