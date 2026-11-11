@@ -829,10 +829,10 @@ class Session(Generic[DepsT, OutputT]):
     def _bind(self) -> tuple[str | None, list[AgentCapability[DepsT]]]:
         """The model to pass to the next run and its run-level capabilities, rebinding a stock agent first."""
         run_model = self.model
-        window = ImportedSummaryWindow[DepsT]()
-        # Bound to a stock agent, so the conversations it delegates to get it too.
-        capabilities: list[AgentCapability[DepsT]] = [*self.plugins, window]
+        capabilities: list[AgentCapability[DepsT]] = list(self.plugins)
         if isinstance(self._base_agent, StockAgent):
+            # Bound to the stock agent, so the conversations it delegates to get it too.
+            window = ImportedSummaryWindow[DepsT]()
             # CLAI's default is the agent's own model, so a capability that selects one wins.
             agent_model = None if self.model_chosen else self.model
             if agent_model is not None:
@@ -843,7 +843,7 @@ class Session(Generic[DepsT, OutputT]):
                 or any(new is not old for new, old in zip(self.plugins, self._bound_plugins))
             ):
                 instructions = Capability[DepsT](instructions=self._user_instructions)
-                self.agent = self._base_agent.with_plugins([*capabilities, instructions], model=agent_model)
+                self.agent = self._base_agent.with_plugins([*self.plugins, window, instructions], model=agent_model)
                 self._bound_plugins = tuple(self.plugins)
                 self._bound_model = agent_model
             # Already bound to the stock agent, including delegation and guardrails; one never rebound lacks the window.

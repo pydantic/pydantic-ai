@@ -633,8 +633,7 @@ async def test_claude_code_import_keeps_the_history_compaction_replaced(tmp_path
     assert result.all_messages()[:3] == messages[:3]
 
 
-@pytest.mark.parametrize('stock', [True, False])
-async def test_sessions_send_only_what_follows_an_imported_summary(stock: bool) -> None:
+async def test_stock_sessions_send_only_what_follows_an_imported_summary() -> None:
     at = timestamp(AT)
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Start')]),
@@ -654,10 +653,8 @@ async def test_sessions_send_only_what_follows_an_imported_summary(stock: bool) 
         )
         yield 'ok'
 
-    model = FunctionModel(stream_function=respond)
-    agent: Agent[None, str] = (
-        StockAgent(model, deps_type=type(None), output_type=str, capabilities=[]) if stock else Agent(model)
-    )
+    # Never rebound, as it has no plugins and keeps its own model.
+    agent = StockAgent(FunctionModel(stream_function=respond), deps_type=type(None), output_type=str, capabilities=[])
     session = Session(agent, deps=None, message_history=history)
     await session.prompt('More')
     assert sent == ['Theirs', 'Next', 'More']
