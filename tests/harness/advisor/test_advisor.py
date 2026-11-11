@@ -768,7 +768,7 @@ class TestAdvisorNativeOrLocal:
         for advisor in (deprecated, current):
             assert (bool(advisor.get_native_tools()), advisor.get_toolset() is not None) == halves
             with pytest.warns(HarnessDeprecationWarning, match=r'`Advisor.mode` is deprecated'):
-                assert advisor.mode == mode
+                assert advisor.mode == mode  # pyright: ignore[reportDeprecated]
 
     # TODO(harness 1.0, #12997): remove this deprecated `mode` test.
     def test_deprecated_mode_rejects_an_unknown_value_or_native_and_local(self) -> None:
@@ -790,7 +790,7 @@ class TestAdvisorNativeOrLocal:
 
         assert isinstance(merged, Advisor)
         with pytest.warns(HarnessDeprecationWarning):
-            assert merged.mode == later
+            assert merged.mode == later  # pyright: ignore[reportDeprecated]
 
     @pytest.mark.parametrize('later_local', [True, None])
     @pytest.mark.parametrize('later_model', ['anthropic:claude-opus-4-8', 'openai:gpt-5.4'])
@@ -809,7 +809,7 @@ class TestAdvisorNativeOrLocal:
         assert merged.get_toolset() is not None
         # TODO(harness 1.0, #12997): drop this deprecated `mode` check.
         with pytest.warns(HarnessDeprecationWarning):
-            assert merged.mode == 'auto'
+            assert merged.mode == 'auto'  # pyright: ignore[reportDeprecated]
 
     # TODO(harness 1.0, #12997): remove this deprecated `mode` test.
     def test_setting_the_deprecated_mode_rebuilds_the_halves(self) -> None:
@@ -818,7 +818,7 @@ class TestAdvisorNativeOrLocal:
         with pytest.warns(
             HarnessDeprecationWarning, match=r'`Advisor.mode` is deprecated: pass `native=False`'
         ) as warned:
-            advisor.mode = 'local'
+            advisor.mode = 'local'  # pyright: ignore[reportDeprecated]
 
         assert warned[0].filename == __file__
         assert advisor.get_native_tools() == []
@@ -831,7 +831,7 @@ class TestAdvisorNativeOrLocal:
         with pytest.raises(ValueError, match=r"Advisor.mode must be 'auto', 'native', or 'local'"):
             advisor.mode = 'invalid'  # pyright: ignore[reportAttributeAccessIssue]
         with pytest.warns(HarnessDeprecationWarning), pytest.raises(ValueError, match='not supported by OpenRouter'):
-            advisor.mode = 'native'
+            advisor.mode = 'native'  # pyright: ignore[reportDeprecated]
 
         assert advisor.get_toolset() is not None
         assert advisor.get_native_tools()
@@ -957,4 +957,5 @@ class TestAdvisorNativeOrLocal:
 
         assert advisor.get_native_tools() == []
         with pytest.warns(HarnessDeprecationWarning):
-            assert advisor.mode == 'auto'  # TODO(harness 1.0, #12997): drop this deprecated `mode` check.
+            # TODO(harness 1.0, #12997): drop this deprecated `mode` check.
+            assert advisor.mode == 'auto'  # pyright: ignore[reportDeprecated]

@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, Self, TypeVar
 
-from typing_extensions import TypeIs
+from typing_extensions import TypeIs, deprecated
 
 from pydantic_ai import Agent
 from pydantic_ai._utils import replace_no_init
@@ -199,7 +199,9 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         super().__init__(native=native, local=local, id=id, defer_loading=defer_loading, description=description)
 
     # TODO(harness 1.0, #12997): remove the deprecated `mode` property, its setter and `_check_mode`.
+    # `category=None` only marks it for type checkers; the body warns at runtime, naming the exact replacement.
     @property
+    @deprecated('`Advisor.mode` is deprecated; use `native` and `local` instead.', category=None)
     def mode(self) -> _Mode:
         """Deprecated: read the `native` and `local` declarations instead.
 
@@ -217,6 +219,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         return 'native' if self._declared_local is False else 'auto'
 
     @mode.setter
+    @deprecated('`Advisor.mode` is deprecated; use `native` and `local` instead.', category=None)
     def mode(self, mode: _Mode) -> None:
         self._check_mode(mode)
         warnings.warn(
