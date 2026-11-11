@@ -229,7 +229,7 @@ lands, without parsing tool arguments:
 | `FileWrittenEvent` | stream | `write_file` | `path`, `root_dir`, `content_hash` |
 | `FileEditedEvent` | stream | `edit_file` | a `FileWrittenEvent` plus `diff`, `truncated` |
 | `DirectoryCreatedEvent` | stream | `create_directory` | `path`, `root_dir` |
-| `FilesSearchedEvent` | stream | `search_files`, `find_files`, `list_files`, `grep` | `path`, `root_dir`, `pattern`, `search` (`grep` or `find`), `match_count`, `truncated` |
+| `FilesSearchedEvent` | stream | `search_files`, `find_files`, `list_files`, `grep` | `path`, `root_dir`, `pattern`, `search_kind` (`grep` or `find`), `match_count`, `truncated` |
 
 `FileChangeRequestedEvent` is a decision; the other events are notifications.
 
@@ -271,7 +271,9 @@ exceeds 65536, bounding line-matching work before calling the differ.
 A final line without a newline is marked the way `git diff` marks it, so a
 change to the final newline alone is visible. A `FilesSearchedEvent` counts
 the matches the model received; `truncated` says the search stopped at
-`max_search_results` or `max_find_results`.
+`max_search_results` or `max_find_results`. `search` is the deprecated name of
+`search_kind`: it still reads, with a warning, and a payload saved under it
+still loads.
 
 `path` is the normalized location relative to `root_dir`, never an absolute
 path, so it is safe to echo to the model or a UI. `root_dir` is the emitting
