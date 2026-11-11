@@ -84,7 +84,7 @@ needs the exa extra installed in CLAI's Python environment and EXA_API_KEY set,
 then one command, no file:
 
 ```text
-/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"max_results": 8}'
 ```
 
 The JSON supplies constructor keyword arguments, so only values JSON can
@@ -114,7 +114,7 @@ from pydantic_clai2.plugins import Plugin
 
 class Search(Plugin):
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (ExaSearch(num_results=8, text_summary=True),)
+        return (ExaSearch(max_results=8, text_summary=True),)
 
     def get_commands(self) -> Sequence[Command]:
         return (
