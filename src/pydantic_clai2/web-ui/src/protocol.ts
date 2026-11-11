@@ -276,6 +276,8 @@ export type LiveState = 'running' | 'queued' | 'asking' | 'idle'
 export interface LiveEntry {
   id: string
   state: LiveState
+  /** It handles input or has some queued, a turn's `TurnEnd` hooks included: Edit and Retry are refused. */
+  busy: boolean
   title: string | null
   workspace: string
 }

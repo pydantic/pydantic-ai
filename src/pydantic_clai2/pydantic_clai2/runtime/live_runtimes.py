@@ -19,6 +19,7 @@ from anyio.abc import TaskGroup, TaskStatus
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import LiveSession, SessionEndReason
+from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.plugins.process_plugins import JoinedSessions, LiveRuntime, handling
 from pydantic_clai2.runtime.live_registry import LiveRegistry
 from pydantic_clai2.runtime.session import continuing_fork
@@ -107,6 +108,8 @@ class LiveRuntimes(JoinedSessions):
         """Builds the sessions `open` and `new` start; `None` where CLAI opens no others, as with `-p`."""
         self.focused: str | None = None
         """The session the terminal shows, never closed for being idle; `None` while no terminal shows one."""
+        self.dialogs: Dialogs | None = None
+        """A remote UI's dialogs, where a command asks while CLAI has no terminal; the web UI sets its own."""
         self._group: TaskGroup | None = None
         self._opening: dict[str, Event] = {}
         """Conversations being opened or resumed, set once that is done."""
