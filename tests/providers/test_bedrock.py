@@ -956,6 +956,73 @@ def test_bedrock_contains_other_families_unchanged(model_name: str):
     assert schema == original
 
 
+@pytest.mark.parametrize('strict', [True, False])
+def test_bedrock_zai_glm_5_3_inlines_defs(strict: bool):
+    """GLM-5.3 stringifies nested `$ref` arguments, so its schemas are inlined while `contains` keeps Bedrock's rewrite.
+
+    Pin the outgoing schema: cassette matching alone does not check request bodies.
+    See https://github.com/pydantic/pydantic-ai/issues/12103.
+    """
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'inner': {'$ref': '#/$defs/Inner'}},
+        'required': ['inner'],
+        '$defs': {
+            'Inner': {
+                'type': 'object',
+                'properties': {'tags': {'type': 'array', 'items': {'type': 'string'}, 'contains': {'type': 'string'}}},
+                'required': ['tags'],
+            }
+        },
+    }
+    original = deepcopy(schema)
+    profile = BedrockProvider.model_profile('us.zai.glm-5.3')
+    assert profile is not None
+    transformer_type = profile.get('json_schema_transformer')
+    assert transformer_type is not None
+    transformed = transformer_type(schema, strict=strict).walk()
+
+    if strict:
+        assert transformed == snapshot(
+            {
+                'type': 'object',
+                'properties': {
+                    'inner': {
+                        'type': 'object',
+                        'properties': {
+                            'tags': {
+                                'type': 'array',
+                                'items': {'type': 'string'},
+                                'description': "contains={'type': 'string'}",
+                            }
+                        },
+                        'required': ['tags'],
+                        'additionalProperties': False,
+                    }
+                },
+                'required': ['inner'],
+                'additionalProperties': False,
+            }
+        )
+    else:
+        assert transformed == snapshot(
+            {
+                'type': 'object',
+                'properties': {
+                    'inner': {
+                        'type': 'object',
+                        'properties': {
+                            'tags': {'type': 'array', 'items': {'type': 'string'}, 'contains': {'type': 'string'}}
+                        },
+                        'required': ['tags'],
+                    }
+                },
+                'required': ['inner'],
+            }
+        )
+    assert schema == original
+
+
 def test_strict_true_strips_array_min_items_gt1():
     """With strict=True, minItems > 1 is stripped and noted in description."""
 
