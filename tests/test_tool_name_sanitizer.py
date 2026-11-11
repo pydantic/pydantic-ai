@@ -25,7 +25,7 @@ from pydantic_ai._utils import sanitize_tool_name
         ("", ""),  # empty stays empty
     ],
 )
-def test_sanitize_tool_name(raw, expected):
+def test_sanitize_tool_name(raw: str, expected: str) -> None:
     assert sanitize_tool_name(raw) == expected
 
 
