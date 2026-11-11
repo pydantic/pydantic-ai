@@ -136,9 +136,16 @@ the other background tools.
 A run waits for its background tools to finish, also when it pauses for deferred tools or ends
 with a [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits). A pending call counts
 toward `tool_calls_limit`. At a deferred-tool pause, the results are added to the message history
-after the paused step, so a resumed run sees them. At a `PendingModelResponse` pause they stay
-queued on [`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages]. A failed tool
-still ends the run, and a run's [`timeout`](../timeouts.md#bounding-a-whole-run) bounds the wait.
+after the paused step, so a resumed run sees them. At a `PendingModelResponse` pause, or when other
+queued content includes a `ModelResponse`, they stay queued on
+[`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages] and `BackgroundTools`
+doesn't queue them again, so pass them to the next run yourself. A failed tool still ends the run.
+A tool's own `timeout` bounds how long the run waits for it, and a run's
+[`timeout`](../timeouts.md#bounding-a-whole-run) bounds the whole wait.
+
+Because the pause waits, `DeferredToolRequests` reaches the caller only after the slowest background
+tool finishes. To answer approvals while background tools keep running, resolve them inside the run
+with a [`HandleDeferredToolCalls`](../deferred-tools.md#resolving-deferred-calls-with-a-handler) handler.
 If the run stops early, unfinished tools are cancelled and results that have not been delivered
 are dropped. Async tools must allow cancellation; ignoring it can prevent the run from stopping.
 
