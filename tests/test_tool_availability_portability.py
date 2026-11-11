@@ -1985,18 +1985,20 @@ async def test_tool_search_tools_selector_defers_selected_tools(
     def selected_tool() -> str:
         return 'selected'
 
+    # These tool bodies are unreachable by design: the fake model asserts tool availability per
+    # request and never invokes the unselected or deferred tools.
     @user_toolset.tool_plain
-    def ordinary_tool() -> str:
+    def ordinary_tool() -> str:  # pragma: no cover
         return 'ordinary'
 
     @user_toolset.tool_plain
-    def toolset_deferred_tool() -> str:
+    def toolset_deferred_tool() -> str:  # pragma: no cover
         return 'deferred by toolset'
 
     capability_toolset = FunctionToolset()
 
     @capability_toolset.tool_plain
-    def capability_tool() -> str:
+    def capability_tool() -> str:  # pragma: no cover
         return 'deferred capability tool'
 
     capability = Capability(
@@ -2067,16 +2069,18 @@ async def test_tool_search_tools_none_preserves_default_and_exclusions() -> None
     seen_function_tools: list[set[str]] = []
     toolset = FunctionToolset()
 
+    # These tool bodies are unreachable by design: the fake model returns immediately and the test
+    # asserts tool availability per request, not return values.
     @toolset.tool_plain
-    def ordinary_tool() -> str:
+    def ordinary_tool() -> str:  # pragma: no cover
         return 'ordinary'
 
     @toolset.tool_plain(defer_loading=True)
-    def per_tool_deferred_tool() -> str:
+    def per_tool_deferred_tool() -> str:  # pragma: no cover
         return 'deferred by tool'
 
     @toolset.tool_plain
-    def toolset_deferred_tool() -> str:
+    def toolset_deferred_tool() -> str:  # pragma: no cover
         return 'deferred by toolset'
 
     def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
