@@ -154,14 +154,18 @@ class ModelProfile(TypedDict, total=False):
     computer_use_coordinate_grid: int
     """The size of the grid the model points on instead of pixels. Default: unset, meaning pixels.
 
-    With `1000`, a computer-use capability, such as Pydantic AI Harness's `ComputerUse`, asks the model for
-    coordinates from 0 to 999 across the screenshot and scales them to pixels. Gemini 3 profiles set it.
+    With `1000`, the agent tells the model in the `computer` tool's description that positions are from 0 to 999
+    across the screenshot, and records that grid on its calls as
+    [`ComputerCallPart.coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid], for the
+    capability running the tool to scale them to pixels. Gemini 3 profiles set it: Gemini points on that grid.
     """
 
     computer_use_screenshot_max_side: int
     """The longest side, in pixels, of a screenshot the model takes. Default: unset, meaning no limit.
 
-    A computer-use capability, such as Pydantic AI Harness's `ComputerUse`, sends a larger screen scaled down to fit
+    The agent records it on the model's `computer` calls as
+    [`ComputerCallPart.screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side]. A
+    computer-use capability, such as Pydantic AI Harness's `ComputerUse`, sends a larger screen scaled down to fit
     this and `computer_use_screenshot_max_pixels`, and scales the model's coordinates back up. Claude profiles set
     both: Claude refuses a larger image, or, on its earlier computer use tools, is sent it scaled down and answers in
     the smaller image's pixels. OpenAI's computer use models set it too: they take a 4K screenshot but click less
