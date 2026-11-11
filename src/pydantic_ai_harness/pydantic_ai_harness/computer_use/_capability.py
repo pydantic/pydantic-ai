@@ -155,26 +155,26 @@ class _NotRun:
         return UserError(self.message)
 
 
-def _models_that_may_answer(model: AbstractModel) -> list[Model]:
+def _candidate_models(model: AbstractModel) -> list[Model]:
     """The models that may answer a request to `model`.
 
     That's the model itself, a `FallbackModel`'s models, or, for a wrapper without a profile of its own, those of the
     model it wraps.
     """
     if isinstance(model, FallbackModel):
-        return [answering for inner in model.models for answering in _models_that_may_answer(inner)]
+        return [answering for inner in model.models for answering in _candidate_models(inner)]
     if not isinstance(model, Model):
         return []
     try:
         model.profile
     except NotImplementedError:
-        return _models_that_may_answer(model.wrapped) if isinstance(model, WrapperModel) else []
+        return _candidate_models(model.wrapped) if isinstance(model, WrapperModel) else []
     return [model]
 
 
-def _smallest_screenshot_limit(model: AbstractModel) -> _Limit:
+def _model_limit(model: AbstractModel) -> _Limit:
     """The largest screenshot every model that may answer takes, as `(longest side, pixel count)`."""
-    profiles = [answering.profile for answering in _models_that_may_answer(model)]
+    profiles = [answering.profile for answering in _candidate_models(model)]
     sides = [side for profile in profiles if (side := profile.get('computer_use_screenshot_max_side'))]
     pixels = [count for profile in profiles if (count := profile.get('computer_use_screenshot_max_pixels'))]
     if not sides and not pixels:
@@ -182,13 +182,13 @@ def _smallest_screenshot_limit(model: AbstractModel) -> _Limit:
     return min(sides, default=None), min(pixels, default=None)
 
 
-def _screenshot_limit_of_call(call: ComputerCallPart) -> _Limit:
+def _call_limit(call: ComputerCallPart) -> _Limit:
     """The largest screenshot the model that made `call` takes, as the agent recorded it on the call."""
     side, pixels = call.screenshot_max_side, call.screenshot_max_pixels
     return None if side is None and pixels is None else (side, pixels)
 
 
-def _smaller_limit(first: _Limit, second: _Limit) -> _Limit:
+def _min_limit(first: _Limit, second: _Limit) -> _Limit:
     """The largest screenshot both limits allow."""
     if first is None or second is None:
         return first or second
@@ -537,9 +537,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         call = made[1] if made else None
         # The agent records on the call the grid and screenshot limit of the model that made it, if it has them.
         grid, made_limit = (
-            (call.coordinate_grid, _screenshot_limit_of_call(call))
-            if isinstance(call, ComputerCallPart)
-            else (None, None)
+            (call.coordinate_grid, _call_limit(call)) if isinstance(call, ComputerCallPart) else (None, None)
         )
         plan = _Plan(
             grid=grid,
@@ -549,7 +547,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             changed=actions if call and _changed(call, actions) else None,
             # The next request starts at the run's model, or with a sticky `ModelFallback` at the model that made the
             # call, so the screenshot fits both. Another model is refused before its request if it can't see it.
-            limit=_smaller_limit(made_limit, _smallest_screenshot_limit(ctx.model)),
+            limit=_min_limit(made_limit, _model_limit(ctx.model)),
             model_name=ctx.model.model_name,
             acts=acts,
         )
@@ -681,7 +679,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 return None  # the call itself will report the display's error
             raise size.error()
         seen = _last_screenshot_size(ctx.messages)
-        return ComputerTool(display_size=seen or _fit(size, _smallest_screenshot_limit(ctx.model)), optional=True)
+        return ComputerTool(display_size=seen or _fit(size, _model_limit(ctx.model)), optional=True)
 
     @durable_operation('display_size')
     async def _screen_size(self, ctx: RunContext[AgentDepsT]) -> tuple[int, int] | _NotRun:
@@ -718,7 +716,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         model = request_context.model
         blind = [
             answering
-            for answering in _models_that_may_answer(model)
+            for answering in _candidate_models(model)
             if not answering.profile.get('supports_image_input', True)
         ]
         if blind:
@@ -727,7 +725,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 '`computer` call returns a screenshot.'
             )
         size = _last_screenshot_size(request_context.messages)
-        if size is not None and (fitted := _fit(size, _smallest_screenshot_limit(model))) != size:
+        if size is not None and (fitted := _fit(size, _model_limit(model))) != size:
             raise UserError(
                 f'The latest screenshot is {size[0]}x{size[1]}, larger than {model.model_name!r} can see. Start the '
                 f'display at {fitted[0]}x{fitted[1]} or smaller to use this model on it.'
