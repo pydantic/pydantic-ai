@@ -1900,6 +1900,46 @@ class TestTaskControlTelemetry:
             ]
             assert not [text_ for text_ in recorded if 'poet' in text_ or 'private text' in text_]
 
+    async def test_a_created_agents_name_stays_content_when_its_task_settles_after_the_run(self) -> None:
+        """A bound owner lets the run return before its task settles, after the run dropped its created agents."""
+        gate = Gate()
+
+        async def streamed(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            await gate.opened.wait()
+            yield 'A poem.'
+
+        settings, exporter = traced(False)
+        parent = Agent(
+            scripted(
+                call('create_agent', name='poet', description='Poems.', instructions='Write.'),
+                call('delegate_task', agent_name='poet', task='One.', background=True),
+                text('Bye.'),
+            ),
+            capabilities=[
+                SubAgents(
+                    models={'slow': FunctionModel(stream_function=streamed)},
+                    task_control=TaskControl(),
+                    dynamic_agents=DynamicAgents(models=['slow']),
+                )
+            ],
+        )
+        parent.instrument = settings
+        owner = DelegationTasks()
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+                with owner.bind():
+                    await parent.run('Go.')
+                gate.opened.set()
+                await owner.wait_children(None)
+
+        assert decisions(exporter) == [
+            ('sub_agents task backgrounded', {'sub_agents.reason': 'requested'}),
+            (
+                'sub_agents task settled',
+                {'sub_agents.outcome': 'ok', 'sub_agents.model': 'function:function::streamed'},
+            ),
+        ]
+
     async def test_a_remote_task_nobody_picks_up_is_a_span(self) -> None:
         parent, _ = remote_parent(
             InMemoryTransport(),

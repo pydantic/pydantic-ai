@@ -1224,6 +1224,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # again would register every tool twice.
         is_self = self._is_self(agent_name)
         inherit_tools = self._inherit_tools and not is_self
+        # Built now: the run that created an agent drops its roster when it returns, and a background
+        # task can settle after that, when a created agent's name would no longer read as model-chosen.
+        telemetry = self._telemetry(ctx)
         # Announced before the child coroutine exists, so an emit that does not return
         # (a cancellation landing on the await) leaves no never-awaited coroutine behind.
         owner = DelegationTasks.current() if record is not None else None
@@ -1272,7 +1275,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 'cancelled' if isinstance(exc, (asyncio.CancelledError, RunCancelled)) else 'error'
             )
             model = _served_model_label(serving_model, run_model, sub_agent)
-            self._telemetry(ctx).delegation_ended(agent_name=agent_name, outcome=outcome, model=model, record=record)
+            telemetry.delegation_ended(agent_name=agent_name, outcome=outcome, model=model, record=record)
             if owner is not None:
                 with anyio.move_on_after(5, shield=True):
                     await emit(
@@ -1291,7 +1294,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if child_usage is not None and self._forward_usage:
                 ctx.usage.incr(child_usage)
         model = _served_model_label(serving_model, run_model, sub_agent)
-        self._telemetry(ctx).delegation_ended(agent_name=agent_name, outcome=ended.outcome, model=model, record=record)
+        telemetry.delegation_ended(agent_name=agent_name, outcome=ended.outcome, model=model, record=record)
         if record is not None:
             record.outcome = ended.outcome
         if emits:

@@ -251,7 +251,7 @@ Nested model streaming from the child run is not an event concern; pass an `even
 | `sub_agents.outcome` | the `DelegationOutcome`: `ok`, `timeout`, `budget`, `failed`, `contained`, `cancelled` or `error`; or `max_calls` when the delegate's `max_calls` budget refused the call before the child ran |
 | `sub_agents.model` | the model that answered the child's last request, else the one it was configured to run on: `<system>:<model name>` for a `Model` instance, or the model string as given; absent for `max_calls`, or when there's no model to name |
 
-On `error` the span also records the exception, as for any tool call that raises. A task in the background settles after its tool call has returned, so its outcome is recorded as the `sub_agents task settled` decision below, with the same attributes, and the same `sub_agents.outcome` filter finds both. A remote task's outcome is not recorded yet: its run is on its worker.
+On `error` the span also records the exception, as for any tool call that raises. A task in the background settles after its tool call has returned, so its outcome is recorded as the `sub_agents task settled` decision below, with the same attributes, and the same `sub_agents.outcome` filter finds both. A remote task's outcome is not recorded yet: its run is on its worker. Nor is the outcome of a delegation inside a durable unit, such as a Temporal activity, whose context carries no tracer.
 
 Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer, with `sub_agents.`-prefixed attributes, including `sub_agents.agent_name` (for a created agent, whose name the model chose, only as content) and, for a task, `sub_agents.task_id`:
 
