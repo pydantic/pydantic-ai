@@ -1469,3 +1469,30 @@ class TestAgentIntegration:
         # files, the first payload overwritten by the second.
         spilled = sorted(path.read_bytes() for path in tmp_path.rglob('*') if path.is_file())
         assert spilled == [b'first payload\n' * 100, b'middle payload\n' * 100, b'second payload\n' * 100]
+
+    async def test_a_failed_run_does_not_keep_its_spill_names(self, tmp_path: Path, anyio_backend: str):
+        """A run that fails never reaches `after_run`, so its names must be dropped from `wrap_run`."""
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('dump', {'tag': 'first'}, tool_call_id='call_0')])
+            return ModelResponse(parts=[ToolCallPart('boom', tool_call_id='call_1')])
+
+        store = LocalFileStore(base_dir=tmp_path)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=100, action=Spill(preview_chars=20))], store=store
+        )
+        agent = Agent(FunctionModel(respond), capabilities=[cap])
+
+        @agent.tool_plain
+        def dump(tag: str) -> str:
+            return f'{tag} payload\n' * 100
+
+        @agent.tool_plain
+        def boom() -> str:
+            raise RuntimeError('boom')
+
+        with pytest.raises(RuntimeError, match='boom'):
+            await agent.run('go')
+
+        assert cap._spilled_calls == {}

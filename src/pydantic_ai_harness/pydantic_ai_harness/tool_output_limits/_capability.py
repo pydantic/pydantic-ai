@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic_ai import AgentRunResult, FunctionToolset, Tool, ToolKind
 from pydantic_ai._utils import replace_no_init
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
@@ -270,10 +270,16 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 'to keep spills on this machine.'
             )
 
-    async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
-        """Drop the run's spill names: no step is left to reuse one of its handles."""
-        self._spilled_calls.pop(ctx.run_id or 'run', None)
-        return result
+    async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        """Drop the run's spill names however the run ends: no step is left to reuse one of its handles.
+
+        `after_run` is skipped for a cancelled run and for a failure that no `on_run_error` recovers,
+        so the names are released here, where the `finally` sees either exit.
+        """
+        try:
+            return await handler()
+        finally:
+            self._spilled_calls.pop(ctx.run_id or 'run', None)
 
     @property
     def _spills_to_run_workspace(self) -> bool:
