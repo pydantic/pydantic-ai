@@ -188,6 +188,27 @@ async def _read(path: anyio.Path) -> DelegationTask:
     return record
 
 
+def _ancestry_loops(record: DelegationTask, tasks: Mapping[str, DelegationTask]) -> bool:
+    """Whether following `parent_id` from `record` through `tasks` comes back to a task already passed."""
+    ancestors = {record.id}
+    parent = record.parent_id
+    while parent is not None and parent in tasks:
+        if parent in ancestors:
+            return True
+        ancestors.add(parent)
+        parent = tasks[parent].parent_id
+    return False
+
+
+def _validation_reason(exc: ValidationError) -> str:
+    """Describe `exc` by error type and location only, since its message quotes the saved prompt and history."""
+    reasons: list[str] = []
+    for error in exc.errors(include_url=False, include_context=False, include_input=False):
+        location = '.'.join(str(part) for part in error['loc'])
+        reasons.append(f'{error["type"]} at {location}' if location else error['type'])
+    return f'ValidationError: {"; ".join(reasons)}'
+
+
 class DelegationTasks:
     """Own detached children until `opened` exits; bind to runs with `bind`.
 
@@ -263,24 +284,16 @@ class DelegationTasks:
         for path in paths:
             try:
                 record = await _read(path)
-            except (OSError, ValidationError) as exc:
+            except ValidationError as exc:
+                problems.append(SavedTaskProblem(path=Path(path), reason=_validation_reason(exc)))
+            except OSError as exc:
                 problems.append(SavedTaskProblem(path=Path(path), reason=f'{type(exc).__name__}: {exc}'))
             except ValueError:
                 problems.append(SavedTaskProblem(path=Path(path), reason='Invalid saved task identity'))
             else:
                 tasks[record.id] = record
 
-        def loops(record: DelegationTask) -> bool:
-            ancestors = {record.id}
-            parent = record.parent_id
-            while parent is not None and parent in tasks:
-                if parent in ancestors:
-                    return True
-                ancestors.add(parent)
-                parent = tasks[parent].parent_id
-            return False
-
-        for task_id in [task_id for task_id, record in tasks.items() if loops(record)]:
+        for task_id in [task_id for task_id, record in tasks.items() if _ancestry_loops(record, tasks)]:
             del tasks[task_id]
             problems.append(SavedTaskProblem(path=directory / f'{task_id}.json', reason='Cyclic saved task ancestry'))
         return SavedTasks(tasks=tasks, problems=problems)
@@ -316,7 +329,7 @@ class DelegationTasks:
                 self.problems = saved.problems
                 for problem in saved.problems:
                     logging.getLogger(__name__).warning(
-                        'Skipping saved delegation task %r: %s', str(problem.path), problem.reason
+                        'Skipping saved delegation task %r: %r', str(problem.path), problem.reason
                     )
                 for record in saved.tasks.values():
                     if record.status == 'running':

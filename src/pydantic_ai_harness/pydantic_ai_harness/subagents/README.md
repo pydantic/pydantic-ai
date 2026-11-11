@@ -495,7 +495,7 @@ does not match its task ID, or whose saved ancestry loops is skipped and left on
 and the reason), and the other tasks still load. To list a saved task tree without
 opening an owner or resuming anything, for example from a dashboard or another process,
 call `DelegationTasks.discover(directory)`. It returns `SavedTasks`, with the loaded
-`tasks` by ID (follow `parent_id` for the tree) and the same `problems`. Discovery
+`tasks` by ID (follow `parent_id` for the tree) and the same `problems`. `discover()`
 writes nothing, and returns a task saved as `running` unchanged, since the process that
 owns it may still be running it.
 
