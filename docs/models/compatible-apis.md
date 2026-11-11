@@ -412,6 +412,28 @@ To keep that data, set [`openai_include_unmapped_response_data`][pydantic_ai.mod
 
 A streamed response collects it per chunk, as `{'chunks': [...]}` with `delta` in place of `message`, once the stream ends. Fields Pydantic AI already maps, like `reasoning_content`, aren't repeated. The data is for reading only: it's kept with the message history but never sent back to a provider.
 
+### Viktor
+
+[Viktor](https://viktor.com) is an AI employee with an OpenAI-compatible API at `https://api.viktor.com/api/compat/v1`; the only model name is `viktor`. Each request starts an agent run that can take minutes and may act on connected systems, so turn off the OpenAI client's automatic retries and allow for Viktor's 600-second run limit. The [`pydantic-ai-viktor`](https://github.com/viktor-com/viktor-integrations/tree/main/python/pydantic-ai) package provides a `ViktorProvider` with these defaults.
+
+```python
+from openai import AsyncOpenAI
+
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+client = AsyncOpenAI(
+    base_url='https://api.viktor.com/api/compat/v1',
+    api_key='your-viktor-api-key',
+    max_retries=0,
+    timeout=660,
+)
+model = OpenAIChatModel('viktor', provider=OpenAIProvider(openai_client=client))
+agent = Agent(model)
+...
+```
+
 ## Model profile
 
 A model profile tells the model class how to shape requests for a particular model and API: which JSON schema restrictions its tool definitions have, whether tools can be marked as strict, how reasoning is configured, and so on. The providers above select one automatically based on the model name, so you only need this section if a model behind a custom endpoint doesn't work correctly out of the box.
