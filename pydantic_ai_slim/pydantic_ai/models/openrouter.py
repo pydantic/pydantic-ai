@@ -254,13 +254,7 @@ def _move_trailing_cache_control(openai_messages: list[chat.ChatCompletionMessag
     last part of the closest earlier user or assistant message. A breakpoint inside the final user message, with
     content after it, stays where it is. System message breakpoints aren't touched.
     """
-    carriers: list[tuple[int, int, dict[str, Any]]] = [
-        (message_index, part_index, part)
-        for message_index, message in enumerate(openai_messages)
-        if message['role'] not in ('system', 'developer') and isinstance(content := message.get('content'), list)
-        for part_index, part in enumerate(cast(list[dict[str, Any]], content))
-        if 'cache_control' in part
-    ]
+    carriers = _conversation_cache_control_carriers(openai_messages)
     if not carriers:
         return
     message_index, part_index, last_carrier = carriers[-1]
@@ -285,6 +279,19 @@ def _move_trailing_cache_control(openai_messages: list[chat.ChatCompletionMessag
             else:
                 cast(list[dict[str, Any]], content)[-1]['cache_control'] = cache_control
             return
+
+
+def _conversation_cache_control_carriers(
+    openai_messages: list[chat.ChatCompletionMessageParam],
+) -> list[tuple[int, int, dict[str, Any]]]:
+    """Each content part outside system messages that carries a `cache_control`, with its message and part index."""
+    return [
+        (message_index, part_index, part)
+        for message_index, message in enumerate(openai_messages)
+        if message['role'] not in ('system', 'developer') and isinstance(content := message.get('content'), list)
+        for part_index, part in enumerate(cast(list[dict[str, Any]], content))
+        if 'cache_control' in part
+    ]
 
 
 def _chat_message_block_count(message: chat.ChatCompletionMessageParam) -> int:
@@ -696,28 +703,30 @@ def _map_openrouter_usage_provider_details(
     response: _OpenRouterChatCompletion | _OpenRouterChatCompletionChunk,
 ) -> dict[str, Any]:
     provider_details: dict[str, Any] = {}
-    if usage := response.usage:
-        if cost := usage.cost:
-            provider_details['cost'] = cost
+    if not (usage := response.usage):
+        return provider_details
 
-        if cost_details := usage.cost_details:
-            provider_details['upstream_inference_cost'] = cost_details.upstream_inference_cost
-            provider_details['upstream_inference_prompt_cost'] = cost_details.upstream_inference_prompt_cost
-            provider_details['upstream_inference_completions_cost'] = cost_details.upstream_inference_completions_cost
+    if cost := usage.cost:
+        provider_details['cost'] = cost
 
-        if (is_byok := usage.is_byok) is not None:
-            provider_details['is_byok'] = is_byok
+    if cost_details := usage.cost_details:
+        provider_details['upstream_inference_cost'] = cost_details.upstream_inference_cost
+        provider_details['upstream_inference_prompt_cost'] = cost_details.upstream_inference_prompt_cost
+        provider_details['upstream_inference_completions_cost'] = cost_details.upstream_inference_completions_cost
 
-        server_tool_use: dict[str, int | None] = {}
-        if server_tool_use_details := usage.server_tool_use_details:
-            if (tool_calls_requested := server_tool_use_details.tool_calls_requested) is not None:
-                server_tool_use['tool_calls_requested'] = tool_calls_requested
-            if (tool_calls_executed := server_tool_use_details.tool_calls_executed) is not None:
-                server_tool_use['tool_calls_executed'] = tool_calls_executed
-            if (web_search_requests := server_tool_use_details.web_search_requests) is not None:
-                server_tool_use['web_search_requests'] = web_search_requests
-        if server_tool_use:
-            provider_details['server_tool_use'] = server_tool_use
+    if (is_byok := usage.is_byok) is not None:
+        provider_details['is_byok'] = is_byok
+
+    server_tool_use: dict[str, int | None] = {}
+    if server_tool_use_details := usage.server_tool_use_details:
+        if (tool_calls_requested := server_tool_use_details.tool_calls_requested) is not None:
+            server_tool_use['tool_calls_requested'] = tool_calls_requested
+        if (tool_calls_executed := server_tool_use_details.tool_calls_executed) is not None:
+            server_tool_use['tool_calls_executed'] = tool_calls_executed
+        if (web_search_requests := server_tool_use_details.web_search_requests) is not None:
+            server_tool_use['web_search_requests'] = web_search_requests
+    if server_tool_use:
+        provider_details['server_tool_use'] = server_tool_use
 
     return provider_details
 
@@ -778,18 +787,11 @@ def _openrouter_settings_to_openai_settings(
         extra_body['transforms'] = transforms
     # Fall back to unified thinking when openrouter_reasoning is not set
     if 'openrouter_reasoning' not in model_settings and model_request_parameters.thinking is not None:
-        thinking = model_request_parameters.thinking
-        openrouter_reasoning: OpenRouterReasoning
-        if thinking is False and thinking_always_enabled:
-            # The routed model can't stop reasoning (OpenRouter rejects `effort='none'` with "Reasoning is
-            # mandatory"), so it reasons as little as it can.
-            openrouter_reasoning = {'effort': lowest_reasoning_effort}
-        else:
-            openrouter_reasoning = {'effort': _OPENROUTER_EFFORT_MAP[thinking]}
-        if thinking is not False:
-            # Some reasoning-optional routes require explicit `enabled` even when `effort` is set.
-            openrouter_reasoning['enabled'] = True
-        model_settings['openrouter_reasoning'] = openrouter_reasoning
+        model_settings['openrouter_reasoning'] = _openrouter_reasoning_from_thinking(
+            model_request_parameters.thinking,
+            thinking_always_enabled=thinking_always_enabled,
+            lowest_reasoning_effort=lowest_reasoning_effort,
+        )
 
     # Fall back to unified cache; explicit openrouter_cache_* settings take precedence. OpenRouter has
     # no automatic caching mode, so the library places breakpoints at the end of the tool definitions,
@@ -816,6 +818,23 @@ def _openrouter_settings_to_openai_settings(
     model_settings['extra_body'] = extra_body
 
     return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
+
+
+def _openrouter_reasoning_from_thinking(
+    thinking: ThinkingLevel, *, thinking_always_enabled: bool, lowest_reasoning_effort: Literal['minimal', 'low']
+) -> OpenRouterReasoning:
+    """The `reasoning` that unified thinking maps to, for a request that sets no `openrouter_reasoning`."""
+    openrouter_reasoning: OpenRouterReasoning
+    if thinking is False and thinking_always_enabled:
+        # The routed model can't stop reasoning (OpenRouter rejects `effort='none'` with "Reasoning is
+        # mandatory"), so it reasons as little as it can.
+        openrouter_reasoning = {'effort': lowest_reasoning_effort}
+    else:
+        openrouter_reasoning = {'effort': _OPENROUTER_EFFORT_MAP[thinking]}
+    if thinking is not False:
+        # Some reasoning-optional routes require explicit `enabled` even when `effort` is set.
+        openrouter_reasoning['enabled'] = True
+    return openrouter_reasoning
 
 
 def _map_web_search_parameters(tool: WebSearchTool) -> dict[str, Any]:
@@ -1050,15 +1069,22 @@ class OpenRouterModel(OpenAIChatModel):
                     'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to. '
                     'To cache system instructions or tool definitions, use the `openrouter_cache_instructions` or `openrouter_cache_tool_definitions` settings instead.'
                 )
-            target = next((m for m in reversed(earlier) if m['role'] == 'user' and m.get('content')), None)
-            if target is not None:
-                if isinstance(target_content := target['content'], str):
-                    target['content'] = [
-                        {'type': 'text', 'text': target_content, 'cache_control': placeholder['cache_control']}
-                    ]
-                elif target_content[-1].get('cache_control', {}).get('ttl') != '1h':
-                    target_content[-1]['cache_control'] = placeholder['cache_control']
+            OpenRouterModel._move_cache_control_to_previous_user_message(earlier, placeholder)
             cast(dict[str, Any], message)['content'] = rest
+
+    @staticmethod
+    def _move_cache_control_to_previous_user_message(
+        earlier: list[dict[str, Any]], placeholder: _LeadingCachePointPlaceholder
+    ) -> None:
+        """Put the placeholder's `cache_control` on the last user message in `earlier`, unless it has a `1h` one."""
+        target = next((m for m in reversed(earlier) if m['role'] == 'user' and m.get('content')), None)
+        if target is not None:
+            if isinstance(target_content := target['content'], str):
+                target['content'] = [
+                    {'type': 'text', 'text': target_content, 'cache_control': placeholder['cache_control']}
+                ]
+            elif target_content[-1].get('cache_control', {}).get('ttl') != '1h':
+                target_content[-1]['cache_control'] = placeholder['cache_control']
 
     def _add_cache_control_to_message(
         self, message: chat.ChatCompletionMessageParam, ttl: OpenRouterCacheTTL = '5m'
@@ -1349,22 +1375,7 @@ class OpenRouterModel(OpenAIChatModel):
             and (cache_messages := model_settings.get('openrouter_cache_messages'))
             and self._resolved_profile.get('openrouter_supports_cache_control', False)
         ):
-            # OpenRouter may route to Amazon Bedrock, whose lookback for the previous request's cache entry
-            # spans only about 20 content blocks, so after a wide turn the end of the previous request gets a
-            # breakpoint too. On other downstreams it's redundant but harmless.
-            previous_tail = previous_tail_needing_breakpoint(
-                [message['role'] for message in openai_messages],
-                [_chat_message_block_count(message) for message in openai_messages],
-            )
-            if previous_tail is not None:
-                self._add_cache_control_to_message(openai_messages[previous_tail], cache_messages)
-            # A request-scoped prompt ends the request as its own user message (see `_request_scoped_tail_texts`),
-            # and the next request won't send it, so the breakpoint goes on the message before it.
-            end, _ = _request_scoped_suffix_start(
-                openai_messages, _request_scoped_tail_texts(messages), _request_scoped_message_text
-            )
-            if end:
-                self._add_cache_control_to_message(openai_messages[end - 1], cache_messages)
+            self._add_message_cache_controls(openai_messages, messages, cache_messages)
 
         if (
             model_settings
@@ -1389,6 +1400,30 @@ class OpenRouterModel(OpenAIChatModel):
         for index, update in updates:
             openai_messages.insert(index, update)
         return openai_messages
+
+    def _add_message_cache_controls(
+        self,
+        openai_messages: list[chat.ChatCompletionMessageParam],
+        messages: Sequence[ModelMessage],
+        cache_messages: OpenRouterCacheTTL,
+    ) -> None:
+        """Put the `openrouter_cache_messages` breakpoints on the conversation."""
+        # OpenRouter may route to Amazon Bedrock, whose lookback for the previous request's cache entry
+        # spans only about 20 content blocks, so after a wide turn the end of the previous request gets a
+        # breakpoint too. On other downstreams it's redundant but harmless.
+        previous_tail = previous_tail_needing_breakpoint(
+            [message['role'] for message in openai_messages],
+            [_chat_message_block_count(message) for message in openai_messages],
+        )
+        if previous_tail is not None:
+            self._add_cache_control_to_message(openai_messages[previous_tail], cache_messages)
+        # A request-scoped prompt ends the request as its own user message (see `_request_scoped_tail_texts`),
+        # and the next request won't send it, so the breakpoint goes on the message before it.
+        end, _ = _request_scoped_suffix_start(
+            openai_messages, _request_scoped_tail_texts(messages), _request_scoped_message_text
+        )
+        if end:
+            self._add_cache_control_to_message(openai_messages[end - 1], cache_messages)
 
     @override
     def _map_model_settings_delta(self, part: ModelSettingsDeltaPart) -> chat.ChatCompletionMessageParam | None:
