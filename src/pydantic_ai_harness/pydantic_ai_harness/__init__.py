@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from .boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
     from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
     from .browser_use import BrowserUse
-    from .bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
+    from .bubblewrap_sandbox import BubblewrappedWorkspace, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
     from .code_mode import CodeMode
     from .coder import Coder
@@ -104,7 +104,7 @@ __all__ = [
     'BoxLiteSandbox',
     'BoxLiteSandboxBackend',
     'BrowserUse',
-    'BubblewrapSandbox',
+    'BubblewrappedWorkspace',
     'BubblewrapWorkspace',
     'CapabilityCreation',
     'ClampOversizedMessages',
@@ -208,7 +208,7 @@ _LAZY_EXPORTS = {
     'BoxLiteSandbox': 'boxlite_sandbox',
     'BoxLiteSandboxBackend': 'boxlite_sandbox',
     'BrowserUse': 'browser_use',
-    'BubblewrapSandbox': 'bubblewrap_sandbox',
+    'BubblewrappedWorkspace': 'bubblewrap_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
     'ClampOversizedMessages': 'compaction',
@@ -295,8 +295,9 @@ _LAZY_EXPORTS = {
     'WarnOnCacheBusts': 'warn_on_cache_busts',
     'YouResearch': 'youdotcom',
     'YouSearch': 'youdotcom',
-    # Pre-rename names; `pydantic_ai_harness.guardrails.__getattr__` emits the
+    # Pre-rename names; the target module's `__getattr__` emits the
     # deprecation warning when these resolve.
+    'BubblewrapSandbox': 'bubblewrap_sandbox',
     'GuardResult': 'guardrails',
     'InputGuard': 'guardrails',
     'InputGuardFunc': 'guardrails',

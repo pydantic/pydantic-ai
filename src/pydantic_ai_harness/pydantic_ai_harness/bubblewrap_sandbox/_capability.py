@@ -10,18 +10,18 @@ from pydantic_ai_harness.bubblewrap_sandbox._workspace import BubblewrapWorkspac
 
 
 @dataclass
-class BubblewrapSandbox(WrapperCapability[AgentDepsT]):
-    """Runs the commands of the wrapped capability's workspace in a bubblewrap sandbox, on that workspace's host.
+class BubblewrappedWorkspace(WrapperCapability[AgentDepsT]):
+    """Runs the commands of the wrapped capability's workspace in a bubblewrap wrapper, on that workspace's host.
 
-    See [`BubblewrapWorkspace`][pydantic_ai_harness.bubblewrap_sandbox.BubblewrapWorkspace] for what the sandbox allows.
+    See [`BubblewrapWorkspace`][pydantic_ai_harness.bubblewrap_sandbox.BubblewrapWorkspace] for what the wrapper allows.
 
     ```python
     from pydantic_ai import Agent
-    from pydantic_ai_harness import BubblewrapSandbox, SSHWorkspace
+    from pydantic_ai_harness import BubblewrappedWorkspace, SSHWorkspace
 
     agent = Agent(
         'anthropic:claude-opus-5-5',
-        capabilities=[BubblewrapSandbox(SSHWorkspace('dev@build-box', working_dir='/srv/app'))],
+        capabilities=[BubblewrappedWorkspace(SSHWorkspace('dev@build-box', working_dir='/srv/app'))],
     )
     ```
     """
