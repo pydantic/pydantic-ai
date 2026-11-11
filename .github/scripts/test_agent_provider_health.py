@@ -1071,7 +1071,8 @@ def test_result_parser_rejects_ambiguous_agent_artifacts(tmp_path: Path) -> None
     [
         ({'kind': 'timeout'}, None, None),
         ({'kind': 'rate_limit', 'http_status': 429}, None, None),
-        ({'kind': 'plan_limit', 'http_status': 429}, 'provider', 'plan_limit'),
+        # The agent artifact alone never confirms a provider failure, so the plan limit stays with its task.
+        ({'kind': 'plan_limit', 'http_status': 429}, 'task', 'plan_limit'),
     ],
 )
 def test_monitor_selects_current_attempt_before_resolving_agent_artifacts(
@@ -1130,6 +1131,7 @@ def test_monitor_selects_current_attempt_before_resolving_agent_artifacts(
                 run_attempt=2,
                 conclusion='failure',
                 health_artifact=health_artifact,
+                run_result=None,
                 agent_artifact=artifacts,
                 dry_run=False,
                 recover_issue=None,
@@ -1145,7 +1147,7 @@ def test_monitor_selects_current_attempt_before_resolving_agent_artifacts(
         assert expected_kind is not None
         [issue] = client.issues
         assert _marker_from_body(issue.body) == health.IncidentMarker(
-            expected_scope, 'zai', expected_kind, '85', None, run_attempt=2
+            expected_scope, f'{workflow}:{task_key}', expected_kind, '85', None, run_attempt=2
         )
 
 
@@ -1194,6 +1196,7 @@ def test_monitor_rejects_current_attempt_artifact_identity_mismatch(
             run_attempt=2,
             conclusion='failure',
             health_artifact=health_artifact,
+            run_result=None,
             agent_artifact=agent_log,
             dry_run=False,
             recover_issue=None,
@@ -1304,6 +1307,13 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
     assert health.parse_run_result(agent_artifact) == health.RunResult(
         workflow, task_key, trigger_event, 1, health.Failure('plan_limit', 429, None)
     )
+    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: health.Quota('exhausted', '2026-10-01T17:00:00Z'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    # The host record reads the same metadata from the engine's terminal session record.
+    agent_session = tmp_path / 'agent-session.jsonl'
+    terminal = {'status': 'failure', 'metadata': {'provider_health': result_event['provider_health']}}
+    agent_session.write_text(json.dumps({'type': 'session.result', 'data': terminal}) + '\n')
+    run_result = tmp_path / 'run-result.json'
+    assert health.main(['record', '--agent-session', str(agent_session), '--output', str(run_result)]) == 0
 
     health_artifact = tmp_path / 'provider-health.json'
     _write_health(
@@ -1329,6 +1339,7 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
         run_attempt=1,
         conclusion='failure',
         health_artifact=health_artifact,
+        run_result=run_result,
         agent_artifact=agent_artifact,
         dry_run=False,
         recover_issue=None,
@@ -1343,6 +1354,7 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
             run_attempt=1,
             conclusion='failure',
             health_artifact=health_artifact,
+            run_result=run_result,
             agent_artifact=agent_artifact,
             dry_run=False,
             recover_issue=None,
@@ -1409,6 +1421,7 @@ def test_shim_time_limit_opens_a_task_incident_that_does_not_blame_the_provider(
             run_attempt=1,
             conclusion='failure',
             health_artifact=health_artifact,
+            run_result=None,
             agent_artifact=agent_artifact,
             dry_run=False,
             recover_issue=None,
@@ -1477,6 +1490,7 @@ def test_monitor_uses_fresh_quota_when_agent_result_is_from_prior_attempt(
                 run_attempt=2,
                 conclusion='failure',
                 health_artifact=health_artifact,
+                run_result=None,
                 agent_artifact=log,
                 dry_run=False,
                 recover_issue=None,
@@ -1537,6 +1551,7 @@ def test_monitor_ignores_stale_failure_on_current_healthy_success(
                 run_attempt=2,
                 conclusion='success',
                 health_artifact=health_artifact,
+                run_result=None,
                 agent_artifact=agent_log,
                 dry_run=False,
                 recover_issue=None,
@@ -1594,6 +1609,7 @@ def test_monitor_reuses_existing_provider_block_when_agent_result_is_stale(
                 run_attempt=2,
                 conclusion='failure',
                 health_artifact=health_artifact,
+                run_result=None,
                 agent_artifact=agent_log,
                 dry_run=False,
                 recover_issue=None,
@@ -1636,6 +1652,7 @@ def test_monitor_rejects_health_artifact_from_different_run_attempt(
                 run_attempt=2,
                 conclusion='failure',
                 health_artifact=health_artifact,
+                run_result=None,
                 agent_artifact=None,
                 dry_run=False,
                 recover_issue=None,
@@ -1674,6 +1691,7 @@ def test_monitor_rejects_health_artifact_from_different_run_id(tmp_path: Path, m
                 run_attempt=2,
                 conclusion='failure',
                 health_artifact=health_artifact,
+                run_result=None,
                 agent_artifact=None,
                 dry_run=False,
                 recover_issue=None,
@@ -1829,6 +1847,7 @@ def test_agent_start_recheck_blocks_a_stale_ready_gate_and_replaces_its_decision
             run_attempt=1,
             conclusion='failure',
             health_artifact=decision,
+            run_result=None,
             agent_artifact=agent_artifact,
             dry_run=False,
             recover_issue=None,
@@ -2282,18 +2301,27 @@ def test_missing_credentials_on_secretless_pull_request_events_leave_the_alert_t
 
 def test_scope_rules_for_typed_and_untyped_failures() -> None:
     """Terminal failure kinds map to provider, task, or scheduled workflow scope."""
-    assert _scope_for(health.RunResult('w', 't', 'schedule', 1, health.Failure('authentication', None, None))) == (
-        'provider',
-        'zai',
+    assert _scope_for(
+        health.RunResult('w', 't', 'schedule', 1, health.Failure('authentication', None, None), provider_confirmed=True)
+    ) == ('provider', 'zai', 'authentication')
+    assert _scope_for(
+        health.RunResult('w', 't', 'schedule', 1, health.Failure('other', 403, None), provider_confirmed=True)
+    ) == ('provider', 'zai', 'other')
+    plan_limited = health.RunResult(
+        'w', 't', 'workflow_dispatch', 1, health.Failure('plan_limit', 429, None), provider_confirmed=True
+    )
+    assert _scope_for(plan_limited) == ('provider', 'zai', 'plan_limit')
+    # Without the host's confirmation, a provider-scope kind stays with its workflow or task.
+    assert _scope_for(replace(plan_limited, provider_confirmed=False)) == ('task', 'w:t', 'plan_limit')
+    assert _scope_for(health.RunResult('w', 't', 'schedule', 1, health.Failure('authentication', 401, None))) == (
+        'workflow',
+        'w',
         'authentication',
     )
-    assert _scope_for(health.RunResult('w', 't', 'schedule', 1, health.Failure('other', 403, None))) == (
-        'provider',
-        'zai',
-        'other',
-    )
-    plan_limited = health.RunResult('w', 't', 'workflow_dispatch', 1, health.Failure('plan_limit', 429, None))
-    assert _scope_for(plan_limited) == ('provider', 'zai', 'plan_limit')
+    # Confirmation cannot widen a failure that does not claim provider scope.
+    assert _scope_for(
+        health.RunResult('w', 't', 'workflow_dispatch', 1, health.Failure('other', 500, None), provider_confirmed=True)
+    ) == ('task', 'w:t', 'other')
     scheduled_timeout = health.RunResult('w', 'target-head-a1b2', 'schedule', 1, health.Failure('timeout', None, None))
     repeated_scheduled_timeout = health.RunResult(
         'w', 'target-head-a1b2', 'schedule', 1, health.Failure('timeout', None, None)
@@ -2304,6 +2332,257 @@ def test_scope_rules_for_typed_and_untyped_failures() -> None:
         health.RunResult('w', 'target-head-a1b2', 'workflow_dispatch', 1, health.Failure('timeout', None, None))
     ) == ('task', 'w:target-head-a1b2', 'timeout')
     assert _scope_for(health.RunResult('w', 't', 'schedule', 1, None)) == ('workflow', 'w', 'execution')
+
+
+_SCHEDULED_RUN = ('Pydantic AI Stale Issues Finder', 'Stale Issues:schedule:main:abc123:', 'schedule')
+_CREDENTIAL_REJECTED = health.Quota('unknown', diagnostic='http_error', http_status=401)
+_PLAN_EXHAUSTED = health.Quota('exhausted', '2026-10-22T18:00:00Z')
+
+
+def _agent_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: BaseException | None) -> Path:
+    """Write the engine's terminal `session.result` for a scheduled run, with the workflow agent's metadata."""
+    workflow, task_key, trigger_event = _SCHEDULED_RUN
+    monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
+    monkeypatch.delenv('PYDANTIC_AI_TASK_ID', raising=False)
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', task_key)
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', trigger_event)
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    provider_health = shim.provider_health()
+    if error is not None:
+        provider_health['failure'] = shim.failure_details(error)
+    terminal = {'status': 'failure' if error else 'success', 'metadata': {'provider_health': provider_health}}
+    session = tmp_path / 'agent' / 'agent-session.jsonl'
+    session.parent.mkdir()
+    session.write_text(json.dumps({'type': 'session.result', 'data': terminal}) + '\n')
+    return session
+
+
+def _record(
+    session: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, quota: health.Quota
+) -> tuple[Path, list[str]]:
+    """Run the host-side `record` command with a stubbed Z.ai check, returning the record path and checked keys."""
+    probes: list[str] = []
+
+    def probe(api_key: str) -> health.Quota:
+        probes.append(api_key)
+        return quota
+
+    monkeypatch.setattr(health, '_fetch_zai_quota', probe)
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-host-key')
+    record = tmp_path / 'provider-health' / 'run-result.json'
+    assert health.main(['record', '--agent-session', str(session), '--output', str(record)]) == 0
+    return record, probes
+
+
+def _zai_error(status: int, code: str) -> ModelHTTPError:
+    return ModelHTTPError(status, 'glm-5.3', {'error': {'code': code, 'message': 'provider detail'}})
+
+
+@pytest.mark.parametrize(
+    ('error', 'quota', 'confirmed'),
+    [
+        pytest.param(_zai_error(401, '1000'), _CREDENTIAL_REJECTED, True, id='credential-rejected-by-host'),
+        pytest.param(
+            _zai_error(403, '1000'),
+            health.Quota('unknown', diagnostic='http_error', http_status=403),
+            True,
+            id='forbidden-to-host',
+        ),
+        pytest.param(_zai_error(401, '1000'), health.Quota('healthy'), False, id='credential-accepted-by-host'),
+        pytest.param(
+            _zai_error(401, '1000'), health.Quota('unknown', diagnostic='timeout'), False, id='host-check-unavailable'
+        ),
+        pytest.param(_zai_error(401, '1000'), _PLAN_EXHAUSTED, False, id='credential-accepted-quota-exhausted'),
+        pytest.param(_zai_error(429, '1310'), _PLAN_EXHAUSTED, True, id='plan-exhausted-for-host'),
+        pytest.param(_zai_error(429, '1310'), health.Quota('healthy'), False, id='plan-healthy-for-host'),
+        pytest.param(
+            _zai_error(429, '1310'),
+            health.Quota('unknown', diagnostic='http_error', http_status=429),
+            False,
+            id='plan-unreadable-for-host',
+        ),
+    ],
+)
+def test_record_confirms_a_provider_failure_only_when_its_own_zai_check_observes_it(
+    error: ModelHTTPError,
+    quota: health.Quota,
+    confirmed: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The host record keeps the reported kind and confirms it only from the host's own Z.ai check."""
+    session = _agent_session(tmp_path, monkeypatch, error)
+
+    record, probes = _record(session, tmp_path, monkeypatch, quota)
+
+    assert probes == ['zai-host-key']
+    kind = 'plan_limit' if error.status_code == 429 else 'authentication'
+    assert json.loads(record.read_text()) == {
+        'version': 1,
+        'workflow': _SCHEDULED_RUN[0],
+        'task_key': _SCHEDULED_RUN[1],
+        'trigger_event': _SCHEDULED_RUN[2],
+        'run_attempt': 1,
+        'failure': {'kind': kind, 'http_status': error.status_code, 'retry_at': None},
+        'provider_confirmed': confirmed,
+    }
+
+
+@pytest.mark.parametrize(
+    ('error', 'failure'),
+    [
+        pytest.param(None, None, id='success'),
+        pytest.param(
+            _zai_error(429, '1302'), {'kind': 'rate_limit', 'http_status': 429, 'retry_at': None}, id='rate-limit'
+        ),
+    ],
+)
+def test_record_skips_the_zai_check_for_a_result_without_a_provider_claim(
+    error: ModelHTTPError | None,
+    failure: dict[str, object] | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Results that cannot open a provider incident keep their kind without spending a Z.ai request."""
+    session = _agent_session(tmp_path, monkeypatch, error)
+
+    record, probes = _record(session, tmp_path, monkeypatch, _CREDENTIAL_REJECTED)
+
+    assert probes == []
+    data = json.loads(record.read_text())
+    assert (data['failure'], data['provider_confirmed']) == (failure, False)
+
+
+@pytest.mark.parametrize('mismatch', ['missing-session', 'other-attempt', 'other-task'])
+def test_record_writes_nothing_without_a_result_for_this_run(
+    mismatch: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The host records only a result that carries this run's identity."""
+    session = _agent_session(tmp_path, monkeypatch, _zai_error(401, '1000'))
+    if mismatch == 'missing-session':
+        session.unlink()
+    elif mismatch == 'other-attempt':
+        monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '2')
+    else:
+        monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'another-task')
+
+    record, probes = _record(session, tmp_path, monkeypatch, _CREDENTIAL_REJECTED)
+
+    assert not record.exists()
+    assert probes == []
+    assert 'No terminal agent result matches this run; recording none' in capsys.readouterr().out
+
+
+def _monitor_scheduled_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, agent_session: Path, run_result: Path | None
+) -> FakeGitHub:
+    workflow, task_key, trigger_event = _SCHEDULED_RUN
+    health_artifact = tmp_path / 'provider-health' / 'provider-health.json'
+    _write_health(
+        health_artifact,
+        health.Health(
+            workflow,
+            task_key,
+            trigger_event,
+            1,
+            True,
+            'Provider health check passed',
+            '2026-10-22T16:00:00Z',
+            health.Quota('healthy'),
+            run_id='42',
+        ),
+    )
+    client = FakeGitHub()
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    args = [
+        '--run-id',
+        '42',
+        '--run-attempt',
+        '1',
+        '--conclusion',
+        'failure',
+        '--health-artifact',
+        str(health_artifact),
+    ]
+    if run_result is not None:
+        args += ['--run-result', str(run_result)]
+    assert health.main(['monitor', *args, '--agent-artifact', str(agent_session.parent)]) == 0
+    return client
+
+
+@pytest.mark.parametrize(
+    ('error', 'quota', 'kind'),
+    [
+        pytest.param(_zai_error(401, '1000'), _CREDENTIAL_REJECTED, 'authentication', id='credential'),
+        pytest.param(_zai_error(429, '1310'), _PLAN_EXHAUSTED, 'plan_limit', id='plan-limit'),
+    ],
+)
+@pytest.mark.parametrize('confirmed', [True, False])
+def test_provider_incident_opens_only_from_a_host_confirmed_record(
+    error: ModelHTTPError,
+    quota: health.Quota,
+    kind: str,
+    confirmed: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A genuine provider failure still blocks every workflow; an unconfirmed one stays with its workflow."""
+    session = _agent_session(tmp_path, monkeypatch, error)
+    record, _ = _record(session, tmp_path, monkeypatch, quota if confirmed else health.Quota('healthy'))
+
+    client = _monitor_scheduled_run(tmp_path, monkeypatch, agent_session=session, run_result=record)
+
+    [issue] = client.issues
+    marker = _marker_from_body(issue.body)
+    assert marker is not None
+    assert (marker.scope, marker.key, marker.kind) == (
+        ('provider', 'zai', kind) if confirmed else ('workflow', _SCHEDULED_RUN[0], kind)
+    )
+    assert ('no host-side Z.ai check confirmed a provider-wide failure' in issue.body) is not confirmed
+    blocked = health.check_health(
+        'Pydantic AI Bug Hunter', 'other-task', 'schedule', 1, health.Quota('healthy'), client.issues
+    )
+    assert blocked.ready is not confirmed
+
+
+@pytest.mark.parametrize(
+    'record',
+    [
+        pytest.param(None, id='absent'),
+        pytest.param('not json', id='not-json'),
+        pytest.param({'workflow': None}, id='incomplete'),
+        pytest.param({'version': 2}, id='unknown-version'),
+        pytest.param({'version': True}, id='boolean-version'),
+        pytest.param({'version': 1.0}, id='float-version'),
+        pytest.param({'provider_confirmed': 'true'}, id='non-boolean-confirmation'),
+    ],
+)
+def test_an_agent_written_result_cannot_open_a_provider_incident_without_host_confirmation(
+    record: str | dict[str, object] | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a valid host record, the agent artifact still types the failure but never confirms a provider."""
+    session = _agent_session(tmp_path, monkeypatch, _zai_error(401, '1000'))
+    event = json.loads(session.read_text())
+    event['data']['metadata']['provider_health']['provider_confirmed'] = True
+    session.write_text(json.dumps(event) + '\n')
+    run_result = tmp_path / 'provider-health' / 'run-result.json'
+    if record is not None:
+        # Start from a record the host confirmed, then make it one the monitor cannot validate.
+        run_result, _ = _record(session, tmp_path, monkeypatch, _CREDENTIAL_REJECTED)
+        confirmed = json.loads(run_result.read_text())
+        assert confirmed['provider_confirmed'] is True
+        run_result.write_text(record if isinstance(record, str) else json.dumps({**confirmed, **record}))
+
+    client = _monitor_scheduled_run(tmp_path, monkeypatch, agent_session=session, run_result=run_result)
+
+    [issue] = client.issues
+    assert _marker_from_body(issue.body) == health.IncidentMarker(
+        'workflow', _SCHEDULED_RUN[0], 'authentication', '42', None, run_attempt=1
+    )
 
 
 def test_monitor_uses_attempt_validation_failure_after_successful_model_result(
@@ -2357,6 +2636,7 @@ def test_monitor_uses_attempt_validation_failure_after_successful_model_result(
             run_attempt=1,
             conclusion='failure',
             health_artifact=artifact,
+            run_result=None,
             agent_artifact=log,
             dry_run=False,
             recover_issue=None,
@@ -2422,6 +2702,7 @@ def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
             run_attempt=1,
             conclusion='failure',
             health_artifact=artifact,
+            run_result=None,
             agent_artifact=log,
             dry_run=False,
             recover_issue=None,
@@ -2476,6 +2757,24 @@ def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
                 None,
             )
             for name in health.AGENT_START_HEALTH_STEPS
+        ),
+        # A failed host record job only leaves the monitor without that record.
+        (
+            [
+                {
+                    'name': 'Record the terminal agent result on the host',
+                    'conclusion': 'failure',
+                    'steps': [
+                        {'name': "Download the agent's terminal session record", 'conclusion': 'success'},
+                        {'name': 'Record the terminal agent result', 'conclusion': 'failure'},
+                        {
+                            'name': 'Add the host-recorded agent result to the health decision artifact',
+                            'conclusion': 'skipped',
+                        },
+                    ],
+                }
+            ],
+            None,
         ),
         ([{'name': 'agent', 'conclusion': 'failure', 'runner_name': None, 'steps': []}], None),
         ([{'name': 'provider_health', 'conclusion': 'failure', 'steps': []}], None),
@@ -3171,6 +3470,7 @@ def test_monitor_ignores_successful_run(tmp_path: Path, monkeypatch: pytest.Monk
             run_attempt=1,
             conclusion='success',
             health_artifact=artifact,
+            run_result=None,
             agent_artifact=None,
             dry_run=False,
             recover_issue=None,
@@ -3414,6 +3714,7 @@ def test_monitor_handles_missing_terminal_log(
             run_attempt=1,
             conclusion=conclusion,
             health_artifact=health_artifact,
+            run_result=None,
             agent_artifact=missing_agent_log,
             dry_run=False,
             recover_issue=None,
@@ -3459,6 +3760,7 @@ def test_blocked_run_without_agent_artifact_creates_provider_incident(
             run_attempt=1,
             conclusion='success',
             health_artifact=artifact,
+            run_result=None,
             agent_artifact=None,
             dry_run=False,
             recover_issue=None,
@@ -3517,6 +3819,7 @@ def test_monitor_does_not_classify_untrusted_terminal_metadata_without_host_stag
             run_attempt=1,
             conclusion='failure',
             health_artifact=health_artifact,
+            run_result=None,
             agent_artifact=agent_log,
             dry_run=False,
             recover_issue=None,
