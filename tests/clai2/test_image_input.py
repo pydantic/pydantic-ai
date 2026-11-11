@@ -4,7 +4,7 @@ import base64
 import io
 import subprocess
 from array import array
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from uuid import UUID
 
@@ -12,7 +12,7 @@ import anyio
 import pytest
 from PIL import Image
 from prompt_toolkit import PromptSession
-from prompt_toolkit.application import create_app_session
+from prompt_toolkit.application import Application, create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
@@ -34,6 +34,7 @@ from pydantic_clai2.ui.prompt.image_input import (
     read_image,
     read_images,
 )
+from tests.conftest import no_leaked_tasks
 
 
 @pytest.fixture
@@ -369,6 +370,70 @@ async def test_shell_image_and_text_turns(image_path: Path, tmp_path: Path, term
             store=SettingsStore(tmp_path / 'config.db'),
         )
     assert observed == [['describe', read_image(image_path)], 'text only']
+
+
+async def test_line_prompt_error_timer_survives_prompt_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    now = 0.0
+    delays: list[float] = []
+    first_started, second_started, release, invalidated = (anyio.Event() for _ in range(4))
+    images_seen: list[ImageInput] = []
+    paste_failed = ImageInput.paste_failed
+    invalidate = Application[str].invalidate
+
+    def failed(self: ImageInput, exc: Exception, *, clock: Callable[[], float] | None = None) -> None:
+        images_seen.append(self)
+        paste_failed(self, exc, clock=lambda: now)
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        if len(delays) == 1:
+            first_started.set()
+            await anyio.sleep_forever()
+        second_started.set()
+        await release.wait()
+
+    def redraw(self: Application[str]) -> None:
+        if now == 30:
+            invalidated.set()
+        invalidate(self)
+
+    def grab() -> None:
+        raise ChildProcessError('synthetic inaccessible clipboard')
+
+    monkeypatch.setattr(ImageInput, 'paste_failed', failed)
+    monkeypatch.setattr(image_input.anyio, 'sleep', sleep)
+    monkeypatch.setattr(image_input.ImageGrab, 'grabclipboard', grab)
+    monkeypatch.setattr(Application, 'invalidate', redraw)
+    with (
+        no_leaked_tasks(),
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+        anyio.fail_after(10),
+    ):
+
+        async def interact() -> None:
+            nonlocal now
+            pipe.send_text('\x16')
+            await first_started.wait()
+            now = 20
+            pipe.send_text('\x03')
+            await second_started.wait()
+            assert delays == [30, 10]
+            assert images_seen[0].notice.startswith('Image paste failed')
+            now = 30
+            release.set()
+            await invalidated.wait()
+            assert images_seen[0].notice == ''
+            pipe.send_text('/exit\n')
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(interact)
+            await chat(
+                Agent(TestModel()),
+                deps=None,
+                console=Console(file=io.StringIO(), force_terminal=False),
+                store=SettingsStore(tmp_path / 'config.db'),
+            )
 
 
 async def test_images_persist_and_resume(image_path: Path, tmp_path: Path) -> None:

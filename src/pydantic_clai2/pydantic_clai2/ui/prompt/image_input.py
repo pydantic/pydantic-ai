@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import anyio
 from PIL import Image, ImageGrab
+from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 
 from pydantic_ai.messages import BinaryContent
@@ -163,6 +164,18 @@ class ImageInput:
         """Bound the existing repaint wait by the paste error's deadline."""
         return max(0, self._error_expires - self._error_clock()) if self._error_expires is not None else float('inf')
 
+    def resume_notice(self, app: Application[str]) -> None:
+        """Re-arm the remaining error lifetime when a line prompt starts again."""
+        remaining = self.notice_remaining()
+        if remaining == float('inf'):
+            return
+
+        async def expire_feedback() -> None:
+            await anyio.sleep(remaining)
+            app.invalidate()
+
+        app.create_background_task(expire_feedback())
+
     def attach(self, images: Sequence[BinaryContent]) -> str:
         """Stage all images atomically; the editor inserts these removable markers."""
         size = sum(len(image.data) for image in (*self.pending.values(), *images))
@@ -203,10 +216,6 @@ class ImageInput:
         def paste(event: KeyPressEvent) -> None:
             insert(event=event, text=event.data)
 
-        async def expire_feedback(event: KeyPressEvent) -> None:
-            await anyio.sleep(30)
-            event.app.invalidate()
-
         def insert(*, event: KeyPressEvent, text: str | None) -> None:
             buffer = event.current_buffer
             self.retain([buffer.text, *queued()])
@@ -224,7 +233,7 @@ class ImageInput:
                 self.notice = ATTACHED
             except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
                 self.paste_failed(exc)
-                event.app.create_background_task(expire_feedback(event))
+                self.resume_notice(event.app)
             finally:
                 event.app.invalidate()
 
