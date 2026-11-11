@@ -1003,3 +1003,17 @@ def test_structured_dict_oneof_beside_type():
     result = agent.run_sync('hello')
 
     assert result.output == snapshot({'a': 0})
+
+
+def test_one_of_ref_to_boolean_schema_via_json_pointer():
+    """A required `oneOf` member whose `$ref` points at a boolean schema must not be spread as a dict."""
+    from pydantic_ai.models.test import _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
+
+    schema = {
+        'type': 'object',
+        'properties': {'x': {'oneOf': [{'$ref': '#/defs/any'}], 'required': ['kind']}},
+        'required': ['x'],
+        'defs': {'any': True},
+    }
+    data = _JsonSchemaTestData(schema).generate()
+    assert isinstance(data['x'], str)
