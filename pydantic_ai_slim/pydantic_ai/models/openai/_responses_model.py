@@ -712,11 +712,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return cast(OpenAIModelProfile, profile)
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Turn off Batch API and Responses WebSocket defaults for Azure clients and the gateway.
+        """Set Azure's tool call ID limit, and turn off Batch API and Responses WebSocket defaults for Azure clients and the gateway.
 
         Every model resolves this, so it reads only the client's type and the provider's identity, never client state
         such as URLs, which a mocked or partly built client may not have yet.
         """
+        if is_azure(self._provider.client, self._provider.name):
+            # Azure's Responses API rejects a `call_id` longer than 64 characters:
+            # https://github.com/pydantic/pydantic-ai/issues/11786
+            profile = merge_profile(profile, ModelProfile(tool_call_id_max_length=64))
         if is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
@@ -739,6 +743,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if isinstance(native_tool, WebSearchTool):
             return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'external_web_access'}
         return frozenset()
+
+    def _wire_tool_call_id(self, tool_call_id: str) -> str:
+        # An older history holds the item ID in the same string, and `_map_messages` sends only the call ID.
+        return split_combined_tool_call_id(tool_call_id)[0]
 
     async def compact_messages(
         self,

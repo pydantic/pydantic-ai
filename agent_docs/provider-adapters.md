@@ -45,7 +45,7 @@ Paths are relative to `pydantic_ai_slim/pydantic_ai/`.
 ### Tool-call IDs
 
 - Store the provider's call ID in `tool_call_id` as the provider sent it. When the provider sends none, mint one with `_utils.generate_tool_call_id()`. Never encode another value into `tool_call_id`. — Other adapters replay the ID as-is, and [`pydantic_ai/AGENTS.md`](../pydantic_ai_slim/pydantic_ai/AGENTS.md) says to "Store provider-specific metadata in structured `provider_details` or `provider_metadata` fields, not in `id`, `content`, or `args`".
-- Fit IDs to an API's format only by setting the profile's `tool_call_id_length`. `Model.prepare_messages` then rewrites the outgoing copy of a call and its result together, with a hash of the original ID (`models/__init__.py::_fit_tool_call_ids`). — A remapped ID must be a pure function of the original, or the cached prefix moves (see "Canonicalize on send" in [Message History & Prompt Caching](message-history-and-caching.md)).
+- Fit IDs to an API's format only by setting the profile's `tool_call_id_length` or `tool_call_id_max_length`. `Model.prepare_messages` then rewrites the outgoing copy of a call and its result together, with a hash of the original ID (`models/__init__.py::_fit_tool_call_ids`). — A remapped ID must be a pure function of the original, or the cached prefix moves (see "Canonicalize on send" in [Message History & Prompt Caching](message-history-and-caching.md)).
 - Recognize a minted ID by `_utils.TOOL_CALL_ID_PREFIX`, never by a string literal.
 
 ### Replay data

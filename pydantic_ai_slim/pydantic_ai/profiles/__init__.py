@@ -394,6 +394,15 @@ class ModelProfile(TypedDict, total=False):
     Only the outgoing copy changes: stored message history keeps the original IDs.
     """
 
+    tool_call_id_max_length: int | None
+    """The maximum length of a function tool call ID sent to the model. Default: `None` (no maximum enforced).
+
+    When set, `Model.prepare_messages` measures the transmitted call ID and replaces oversized IDs with
+    stable hashes of this many ASCII letters and digits. IDs that fit remain unchanged unless collision
+    resolution requires a replacement. Calls and their results keep pairing up, and stored history keeps
+    the original IDs. `tool_call_id_length` takes precedence when set; this maximum has no effect.
+    """
+
     tool_deferral_mode: ToolDeferralMode | None
     """When the provider permits a `tools` entry whose schema is withheld. Default: `None`.
 
@@ -523,6 +532,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     'context_window': None,
     'tool_call_id_length': None,
+    'tool_call_id_max_length': None,
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
 }

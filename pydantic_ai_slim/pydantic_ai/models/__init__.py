@@ -1933,8 +1933,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         profile's file-input flags say the model can't read with a note naming it, and puts the
         tool results in each request in the order of the calls they answer, so the request bytes
         (and the provider's prompt cache) don't depend on the order a history happened to store
-        them in. When the profile sets `tool_call_id_length`, tool call IDs that don't fit it are
-        replaced with stable hashes that do.
+        them in. When the profile sets `tool_call_id_length` or `tool_call_id_max_length`, tool call
+        IDs that don't fit it are replaced with stable hashes that do.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -2089,10 +2089,23 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         messages = _order_tool_results_by_call(messages)
 
-        if (tool_call_id_length := self.profile.get('tool_call_id_length')) is not None:
-            messages = _fit_tool_call_ids(messages, tool_call_id_length)
+        return self._fit_tool_call_ids_to_profile(messages)
 
+    def _fit_tool_call_ids_to_profile(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Fit the tool call IDs to the profile's `tool_call_id_length`, or else its `tool_call_id_max_length`."""
+        if (tool_call_id_length := self.profile.get('tool_call_id_length')) is not None:
+            return _fit_tool_call_ids(messages, tool_call_id_length)
+        if (tool_call_id_max_length := self.profile.get('tool_call_id_max_length')) is not None:
+            return _fit_tool_call_ids(messages, tool_call_id_max_length, exact=False, wire_id=self._wire_tool_call_id)
         return messages
+
+    def _wire_tool_call_id(self, tool_call_id: str) -> str:
+        """The call ID this model sends for a function tool call stored with `tool_call_id`.
+
+        `prepare_messages` holds it to the profile's `tool_call_id_max_length`. An adapter whose mapping
+        sends only part of a stored ID overrides this.
+        """
+        return tool_call_id
 
     def _should_announce_system_voice(
         self,
@@ -4685,10 +4698,25 @@ def _hashed_tool_call_id(tool_call_id: str, length: int) -> str:
     return ''.join(digits)
 
 
-def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelMessage]:
+def _tool_call_id_fits(tool_call_id: str, length: int, *, exact: bool, wire_id: Callable[[str], str]) -> bool:
+    """Whether `tool_call_id` meets the profile's `tool_call_id_length` or, without `exact`, its `tool_call_id_max_length`, which limits the ID the model sends."""
+    if exact:
+        return len(tool_call_id) == length and tool_call_id.isascii() and tool_call_id.isalnum()
+    return len(wire_id(tool_call_id)) <= length
+
+
+def _fit_tool_call_ids(
+    messages: list[ModelMessage],
+    length: int,
+    *,
+    exact: bool = True,
+    wire_id: Callable[[str], str] = lambda tool_call_id: tool_call_id,
+) -> list[ModelMessage]:
     """Replace the function tool call IDs that aren't exactly `length` ASCII alphanumerics with ones that are.
 
-    Implements the profile's `tool_call_id_length`. An ID that already fits is kept, and any other is
+    Implements the profile's `tool_call_id_length` and, with `exact=False`, its `tool_call_id_max_length`,
+    under which an ID fits when `wire_id`, the call ID the model sends for it, is at most `length`
+    characters. An ID that already fits is kept, and any other is
     replaced with `_hashed_tool_call_id` of it, so the same history always renders the same bytes and the
     provider's prompt cache keeps hitting. Every part that names a call is rewritten with the same mapping,
     so a call, its result (a retried one included), and the `<tool_result>` tags rendered from the result's ID keep
@@ -4702,8 +4730,9 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
     original list when nothing changed, so the identity check in `_make_request` can skip the redundant
     `_clean_message_history` pass.
     """
+    profile_key = 'tool_call_id_length' if exact else 'tool_call_id_max_length'
     if length < 1:
-        raise UserError(f'`tool_call_id_length` must be at least 1, got {length}.')
+        raise UserError(f'`{profile_key}` must be at least 1, got {length}.')
     replacements: dict[str, str] = {}
     taken: set[str] = set()
 
@@ -4714,16 +4743,17 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
         if len(taken) >= 62**length:
             raise UserError(
                 f'The message history has more distinct tool call IDs than fit in {length} alphanumeric characters '
-                "(the profile's `tool_call_id_length`)."
+                f"(the profile's `{profile_key}`)."
             )
-        fits = len(tool_call_id) == length and tool_call_id.isascii() and tool_call_id.isalnum()
+        fits = _tool_call_id_fits(tool_call_id, length, exact=exact, wire_id=wire_id)
         replacement = tool_call_id if fits else _hashed_tool_call_id(tool_call_id, length)
         attempt = 0
-        while replacement in taken:
+        # `taken` holds the IDs the model sends: those are what must not collide.
+        while wire_id(replacement) in taken:
             attempt += 1
             replacement = _hashed_tool_call_id(f'{tool_call_id}#{attempt}', length)
         replacements[tool_call_id] = replacement
-        taken.add(replacement)
+        taken.add(wire_id(replacement))
         return replacement
 
     def fit_request_part(part: ModelRequestPart) -> ModelRequestPart:
