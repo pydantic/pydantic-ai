@@ -667,8 +667,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     call read from the transcript it summarizes. A second consecutive failure raises
     `UnexpectedModelBehavior`: on this capability's own trigger the attempt is discarded and the
     history left unchanged, `FallbackCompaction` moves on to its next strategy, and an explicit
-    `compact()` or `compact_now()` call raises it. The agent is toolless, so raising this burns nothing but requests -- every retry is a real request
-    charged to the run's usage, so a finite `request_limit` still binds first.
+    `compact()` or `compact_now()` call raises it. The agent is toolless, so raising this burns nothing but
+    requests -- every retry is a real request charged to the run's usage, so a finite `request_limit`
+    still binds first.
     """
 
     max_messages: int | None = None

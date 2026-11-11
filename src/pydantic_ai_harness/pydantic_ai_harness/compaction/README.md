@@ -734,8 +734,9 @@ discarded, and a `compact_messages` span records `compaction.skipped='summary_fa
 The summary's usage still counts. While the trigger stays exceeded, the next request tries again.
 
 Inside `FallbackCompaction`, the next strategy runs: its default `fallback_on` includes
-`UnexpectedModelBehavior` as well as the API errors. Direct `compact()` and `compact_now()` calls
-still raise summary errors, as does a `TieredCompaction` tier. An explicit fallback chain still
+`UnexpectedModelBehavior` as well as the API errors. A direct `compact()` or `compact_now()` call on
+a `SummarizingCompaction` still raises summary errors, as does a `TieredCompaction` tier; on a
+`FallbackCompaction`, those calls follow its `fallback_on`. An explicit fallback chain still
 honors its `fallback_on` and re-raises the last error if every strategy fails. Its trigger does not
 replace the chain's failure policy: without a successful strategy there is no result to select.
 
