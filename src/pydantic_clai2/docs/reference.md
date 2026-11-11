@@ -77,7 +77,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `--request-limit N` | The full prompt's model-request budget |
 | `--database PATH` | Use another settings database (and session folder) |
 | `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell. A change that could let the agent do more, such as a wider `run.permissions`, is refused: make it with `/config` in a session, since the agent can run `clai2` too |
-| `clai2 plugins list\|disable ID` | List or turn off saved plugin declarations from your shell; add, enable, and remove them with `/plugins` in a session |
+| `clai2 plugins list` | List saved plugin declarations from your shell; add, enable, disable, and remove them with `/plugins` in a session |
 
 ### Settings
 

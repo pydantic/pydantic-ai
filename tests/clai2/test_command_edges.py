@@ -71,26 +71,12 @@ def test_command_boundaries(tmp_path: Path) -> None:
     config_command(store, ['reset', 'display.thinking'])
     assert store.load().thinking
     assert plugins_command(store, []) == 'No plugins.'
-    store.save_plugin(PluginSettings(id='one', factory='module:Factory'))
-    plugins_command(store, ['disable', 'one'])
-    assert 'disabled' in plugins_command(store, ['list'])
+    store.save_plugin(PluginSettings(id='one', factory='module:Factory', enabled=False))
+    assert plugins_command(store, ['list']) == 'one: module:Factory (disabled)'
     with pytest.raises(ValueError, match='with /plugins inside a CLAI session'):
         plugins_command(store, ['bad'])
-    with pytest.raises(ValueError, match='Unknown plugin'):
-        plugins_command(store, ['disable', 'missing'])
     with pytest.raises(ValueError):
         store.reset('missing')
-
-
-def test_plugins_command_disables_never_saved_builtins(tmp_path: Path) -> None:
-    """`clai2 plugins disable notifications` saves the built-in declaration turned off."""
-    store = SettingsStore(tmp_path / 'config.db')
-    plugins_command(store, ['disable', 'notifications'])
-    assert store.plugins() == [
-        PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications', enabled=False),
-    ]
-    with pytest.raises(ValueError, match='Unknown plugin: missing'):
-        plugins_command(store, ['disable', 'missing'])
 
 
 def test_command_availability_is_live() -> None:
@@ -215,6 +201,8 @@ def _clai2(monkeypatch: pytest.MonkeyPatch, store: SettingsStore, *args: str) ->
         ['plugins', 'add', 'mine', 'module:Factory'],
         ['plugins', 'enable', 'aoe'],
         ['plugins', 'remove', 'mine'],
+        # A disabled plugin such as `hooks` may be what blocks a tool call.
+        ['plugins', 'disable', 'hooks'],
     ],
 )
 def test_clai2_from_a_shell_cannot_widen_what_the_agent_may_do(
@@ -241,10 +229,9 @@ def test_clai2_from_a_shell_can_still_narrow_what_the_agent_may_do(
     _clai2(monkeypatch, store, 'config', 'set', 'run.permissions', 'read-only')
     _clai2(monkeypatch, store, 'config', 'set', 'display.thinking', 'false')
     _clai2(monkeypatch, store, 'config', 'reset', 'display.thinking')
-    _clai2(monkeypatch, store, 'plugins', 'disable', 'notifications')
+    _clai2(monkeypatch, store, 'plugins', 'list')
     _clai2(monkeypatch, store, 'config', 'get', 'run.permissions')
     assert store.overrides() == {'run.permissions': 'read-only'}
-    assert [(plugin.id, plugin.enabled) for plugin in store.plugins()] == [('notifications', False)]
     store.set('run.permissions', 'full')
     _clai2(monkeypatch, store, 'config', 'reset', 'run.permissions')
     assert store.overrides() == {}

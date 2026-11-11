@@ -1101,9 +1101,9 @@ Three ways to install one:
 
 No restart needed when you do it from inside CLAI. A plugin you add or enable is
 active for the next prompt; one you disable or remove is gone for the next
-prompt. From the shell, `clai2 plugins` only lists declarations and disables
-them, for the next start: the agent can run `clai2` too, so only `/plugins` adds,
-enables, or removes one. Plugins in the folder and the ones you added by name are managed the
+prompt. From the shell, `clai2 plugins` only lists declarations: the agent can
+run `clai2` too, and turning off a plugin such as `hooks` can let it do more, so only
+`/plugins` adds, enables, disables, or removes one. Plugins in the folder and the ones you added by name are managed the
 same way. Explicit module declarations take precedence over a same-named drop-in
 file. Reloading a disabled plugin is rejected; enable it first. Drop-in entry
 modules are compiled from current source. Installed modules use `importlib.reload`,
@@ -2511,8 +2511,8 @@ is still reported, and `/plugins enable`, `add`, and `reload` always report
 failures.
 
 With arguments `/plugins` is a plain command. The standalone `clai2 plugins list`
-and `clai2 plugins disable NAME` read and turn off saved declarations without loading
-plugin code. Adding, enabling, removing, configuring, and reloading plugins are
+reads saved declarations without loading plugin code. Adding, enabling, disabling,
+removing, configuring, and reloading plugins are
 available only inside a CLAI session, since the agent can run `clai2` from its shell:
 
 | Command | Does |

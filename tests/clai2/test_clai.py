@@ -165,8 +165,7 @@ def test_settings_round_trip_and_validation(tmp_path: Path) -> None:
     config_command(store, ['set', 'model', 'test'])
     assert store.load().model == 'test'
     store.save_plugin(PluginSettings(id='audit', factory='missing.module:Plugin'))
-    plugins_command(store, ['disable', 'audit'])
-    assert [plugin.enabled for plugin in store.plugins()] == [False]
+    assert plugins_command(store, ['list']) == 'audit: missing.module:Plugin (enabled)'
 
 
 def test_completion_uses_registry(tmp_path: Path) -> None:

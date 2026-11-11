@@ -245,7 +245,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   cannot widen anything. `update_channel` is user-only, rejected in a project file.
   Approval is a `/command` only, never a `clai2` subcommand, because the agent
   can run `clai2` from its shell. For the same reason `clai2 config` refuses a
-  change `widens` (`refuse_widening`), and `clai2 plugins` only lists and disables. Unapproved `instructions` go to the model as
+  change `widens` (`refuse_widening`), and `clai2 plugins` only lists. Unapproved `instructions` go to the model as
   `ProjectInstructions` user-channel data, never as `Session.instructions`.
   Default-on CLI `.env` loading is a deliberate exception to this repository-content
   trust rule: it assumes trusted launch and parent directories, without plugin

@@ -27,9 +27,8 @@ from pydantic_clai2.config import (
     Settings,
     resolve_settings,
 )
-from pydantic_clai2.config.builtins import STOCK_PLUGINS
 from pydantic_clai2.config.project_settings import SAFE_PROJECT_KEYS, widens
-from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_id
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
 from pydantic_clai2.ui.rendering.theme import names as theme_names
@@ -377,7 +376,7 @@ PLUGINS_USAGE = (
     '\nGit repositories can be installed only inside a CLAI session: /plugins add GIT_URL'
 )
 _SHELL_PLUGINS_USAGE = (
-    'Usage: plugins list|disable ID\nAdd, enable, or remove plugins with /plugins inside a CLAI session.'
+    'Usage: plugins list\nAdd, enable, disable, or remove plugins with /plugins inside a CLAI session.'
 )
 
 
@@ -390,25 +389,15 @@ def added_plugin(args: list[str]) -> PluginSettings:
 
 
 def plugins_command(store: SettingsStore, args: list[str]) -> str:
-    """`clai2 plugins`: list or disable plugin declarations without importing plugins; `/plugins` does the rest."""
-    if len(args) > 1:
-        args = [args[0], canonical_plugin_id(args[1]), *args[2:]]
-    declarations = store.plugins()
+    """`clai2 plugins`: list plugin declarations without importing plugins; only `/plugins` changes them."""
     match args:
         case [] | ['list']:
             return (
-                '\n'.join(f'{p.id}: {p.factory} ({"enabled" if p.enabled else "disabled"})' for p in declarations)
+                '\n'.join(f'{p.id}: {p.factory} ({"enabled" if p.enabled else "disabled"})' for p in store.plugins())
                 or 'No plugins.'
             )
-        case ['disable', plugin_id]:
-            # A saved declaration overrides the built-in, as in the shell; the CLI owns its agent, so the stock ones.
-            builtin = {p.id: p for p in STOCK_PLUGINS}
-            plugin = next((p for p in declarations if p.id == plugin_id), builtin.get(plugin_id))
-            if plugin is None:
-                raise ValueError(f'Unknown plugin: {plugin_id}')
-            store.save_plugin(plugin.model_copy(update={'enabled': False}))
-        case ['add' | 'enable' | 'remove', *_]:
+        case ['add' | 'enable' | 'disable' | 'remove', *_]:
+            # Disabling can widen too: a plugin such as `hooks` may be what blocks a tool call.
             raise _session_only('plugins', args)
         case _:
             raise ValueError(_SHELL_PLUGINS_USAGE)
-    return 'Saved. Applies when you restart CLAI.'
