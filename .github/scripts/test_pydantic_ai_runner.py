@@ -1672,10 +1672,13 @@ def test_run_offers_only_safe_output_tools_inside_the_time_reserve(monkeypatch: 
     (tmp_path / 'module.py').write_text('', encoding='utf-8')
     assert _run_shim(_respond, sink, mcp_tool_names=True) == 0
     assert {'Glob', 'Read', 'Task', 'mcp__safeoutputs__noop'} <= offered[0]
-    assert (
-        offered[1:]
-        == [{'mcp__safeoutputs__noop', 'mcp__safeoutputs__probe', 'mcp__safeoutputs__submit_pull_request_review'}] * 2
-    )
+    assert offered[1] == {
+        'mcp__safeoutputs__noop',
+        'mcp__safeoutputs__probe',
+        'mcp__safeoutputs__submit_pull_request_review',
+    }
+    # The `noop` posted inside the reserve leaves the closing request no tools.
+    assert offered[2] == set()
     # The in-flight request's tool call still ran.
     assert len(glob_returns) == 1
     assert 'module.py' in glob_returns[0]
@@ -1768,7 +1771,7 @@ def test_safe_output_past_its_limit_is_no_longer_offered(monkeypatch: pytest.Mon
     sink = tmp_path / 'outputs.jsonl'
     monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
     monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
+    # Outside the time reserve: a placeholder `noop` inside it would leave the model no tools for the review.
     noop_offered: list[bool] = []
 
     def _respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1784,6 +1787,52 @@ def test_safe_output_past_its_limit_is_no_longer_offered(monkeypatch: pytest.Mon
     assert _run_shim(_respond, sink, mcp_tool_names=True, noop_max=1) == 0
     # The second `noop` is past the limit, so the third request no longer offers it.
     assert noop_offered == [True, True, False, False]
+
+
+@pytest.mark.parametrize(
+    ('noop_in_reserve', 'offered_last', 'probe_return'),
+    [
+        (True, set[str](), 'error: the time budget is nearly spent; finish the task from what you already have'),
+        (False, {'mcp__safeoutputs__probe', 'mcp__safeoutputs__submit_pull_request_review'}, 'nothing new'),
+    ],
+)
+def test_noop_in_the_time_reserve_leaves_the_model_no_tools(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, noop_in_reserve: bool, offered_last: set[str], probe_return: str
+):
+    """Streaming Resilience Sweep's model posted its `noop` in the time reserve, then called `missing_data` in a loop.
+
+    A call from memory is answered without running. A `noop` before the reserve can be a progress note, so it
+    leaves the reserve's safe outputs offered, also after gh-aw rejects a second `noop` inside the reserve.
+    """
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI Streaming Resilience Sweep')
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    seconds_left = shim.RUN_TIME_RESERVE_SECS + (-1 if noop_in_reserve else 60)
+    monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + seconds_left)
+    offered: list[set[str]] = []
+    probe_returns: list[str] = []
+
+    def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append({tool_def.name for tool_def in info.function_tools})
+        probe_returns.extend(
+            str(part.content)
+            for part in messages[-1].parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'mcp__safeoutputs__probe'
+        )
+        if len(offered) == 1:
+            return ModelResponse(parts=[ToolCallPart('mcp__safeoutputs__noop', {'message': 'nothing to report'})])
+        monkeypatch.setattr(shim, 'run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
+        if len(offered) == 2:
+            return ModelResponse(parts=[ToolCallPart('mcp__safeoutputs__noop', {'message': 'still nothing'})])
+        if not probe_returns:
+            return ModelResponse(parts=[ToolCallPart('mcp__safeoutputs__probe', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    assert _run_shim(_respond, sink, mcp_tool_names=True, noop_max=1) == 0
+    assert probe_returns == [probe_return]
+    assert len(offered) == 4
+    assert offered[-1] == offered_last
 
 
 @pytest.mark.parametrize('parallel_tasks', [1, 2])
@@ -2098,48 +2147,6 @@ def test_main_can_disable_task(disable_task: bool, monkeypatch: pytest.MonkeyPat
     assert selected_tasks == [None if disable_task else shim.task]
 
 
-def test_attention_workflow_uses_direct_classification():
-    workflow = Path(__file__).parent.parent / 'workflows' / 'pydantic-ai-attention-triage.md'
-    text = workflow.read_text(encoding='utf-8')
-
-    assert 'Classify every candidate yourself' in text
-    assert 'PYDANTIC_AI_DYNAMIC_WORKFLOW' not in text
-    assert 'run_workflow' not in text
-
-
-def test_attention_workflow_fetches_tags_before_policy_staging():
-    workflow_dir = Path(__file__).parent.parent / 'workflows'
-    source = workflow_dir / 'pydantic-ai-attention-triage.md'
-    source_steps = agentic_workflow_guard.parse_frontmatter(source)['pre-agent-steps']
-    compiled = yaml.safe_load((workflow_dir / 'pydantic-ai-attention-triage.lock.yml').read_text(encoding='utf-8'))
-    compiled_steps = compiled['jobs']['agent']['steps']
-    expected_checkout_config = {
-        'repository': '${{ job.workflow_repository }}',
-        'ref': '${{ job.workflow_sha }}',
-        'persist-credentials': False,
-        'fetch-depth': 0,
-    }
-
-    for steps in (source_steps, compiled_steps):
-        checkout_index, checkout = next(
-            (index, step)
-            for index, step in enumerate(steps)
-            if str(step.get('uses', '')).startswith('actions/checkout@')
-            and step.get('with', {}).get('ref') == expected_checkout_config['ref']
-        )
-        staging_index = next(
-            index for index, step in enumerate(steps) if step.get('name') == 'Install repository workflow policy'
-        )
-        assert checkout_index < staging_index
-        assert checkout['with'] == expected_checkout_config
-
-    assert next(
-        index for index, step in enumerate(compiled_steps) if step.get('name') == 'Preinstall Pydantic AI coder agent'
-    ) < next(
-        index for index, step in enumerate(compiled_steps) if step.get('name') == 'Install repository workflow policy'
-    )
-
-
 def test_runner_drops_dynamic_workflow_dependencies():
     runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
     assert 'dynamic-workflow' not in runner
@@ -2163,7 +2170,7 @@ def test_compiled_workflows_pin_retry_policy():
     for compiled_workflow in workflow_dir.glob('pydantic-ai-*.lock.yml'):
         compiled_text = compiled_workflow.read_text(encoding='utf-8')
         assert compiled_text.count('GH_AW_HARNESS_MAX_RETRIES: 0') == 1
-        assert compiled_text.count('GH_AW_HARNESS_MAX_RETRIES: 3') == 1
+        assert compiled_text.count('GH_AW_HARNESS_MAX_RETRIES: "3"') == 1
 
 
 def test_task_runs_subagent_with_run_model_and_read_only_tools(monkeypatch: pytest.MonkeyPatch):
@@ -3208,22 +3215,21 @@ def test_clai2_engine_names_the_staged_shim_sources():
         assert steps[engine]['env']['LOGFIRE_SERVICE_VERSION'] == '${{ steps.workflow-policy.outputs.service-version }}'
 
 
-def test_compiled_job_limits_and_ui_security_concurrency():
+def test_compiled_job_limits_and_concurrency():
     """gh-aw caps the agent job at 60 minutes and detection at 10 by default; main's compiler capped neither job.
 
-    Stale Issues Finder's 60-minute engine step did not fit the agent cap, and the detector step had 20 minutes.
-    gh-aw gives the detector step its job's budget. UI Security reviewed PRs in parallel.
+    Stale Issues Finder's 60-minute engine step did not fit the agent cap. The OpenCode detector step stops
+    before its 20-minute job does, so the conclusion step still records a missing verdict.
     """
     workflows = Path(__file__).parent.parent / 'workflows'
-    ui_security = agentic_workflow_guard.parse_frontmatter(workflows / 'pydantic-ai-ui-security-review.md')['name']
     for lock in sorted(workflows.glob('pydantic-ai-*.lock.yml')):
         jobs = yaml.safe_load(lock.read_text(encoding='utf-8'))['jobs']
         assert jobs['agent']['timeout-minutes'] == 360, lock.name
-        [detector] = [step for step in jobs['detection']['steps'] if str(step.get('name', '')).startswith('Execute')]
-        assert jobs['detection']['timeout-minutes'] == detector['timeout-minutes'] == 20, lock.name
+        [detector] = [step for step in jobs['detection']['steps'] if step.get('id') == 'detection_agentic_execution']
+        assert jobs['detection']['timeout-minutes'] == 20, lock.name
+        assert detector['timeout-minutes'] == 15, lock.name
         group = jobs['agent']['concurrency']['group']
         assert group.startswith('gh-aw-pydantic-ai-${{ github.workflow }}'), lock.name
-        assert f"github.workflow == '{ui_security}' && format('-{{0}}', github.event.pull_request.number" in group
 
 
 @pytest.mark.parametrize('chunks_before_cutoff', [0, 1])

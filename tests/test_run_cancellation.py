@@ -1995,9 +1995,8 @@ async def test_nested_run_stream_events_binding_isolated_under_outer_cancellatio
         except RunCancelled:  # pragma: no cover - the inner handle must not claim the outer cancel
             inner_outcome.append('inner run cancelled')
             raise
-        # Never executed (the inner run blocks until cancelled), but coverage's exception-table
-        # attribution counts this exit arc as covered, so it must not carry a `no cover` pragma.
-        return 'never reached'
+        # The inner run blocks until cancelled.
+        return 'never reached'  # pragma: no cover
 
     async with outer_agent.run_stream_events('outer') as outer_events:
         consumer = asyncio.create_task(_consume_events(outer_events))

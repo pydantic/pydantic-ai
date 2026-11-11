@@ -263,7 +263,7 @@ dev = [
     "asgi-lifespan>=2.1.0",
     "httpx>=0.27",
     "devtools>=0.12.2",
-    "coverage[toml]>=7.10.7",
+    "coverage[toml]>=7.17.0",
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
     "pydocket>=0.20.2",
@@ -400,6 +400,7 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
+    ".github/scripts/test_pr_guard.py",
     ".github/scripts/test_ci_content_classifier.py",
     ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
@@ -497,6 +498,7 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
+".github/scripts/test_pr_guard.py" = ["D"]
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
 ".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]

@@ -416,7 +416,7 @@ print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
 
-Pass the whole conversation, as `all_messages()` does, even though only the messages after the latest response are sent. A history missing its earlier messages, such as `new_messages()` from a later turn, looks the same as one that compaction or a history processor trimmed. So it counts as changed and is sent as it is, without `previous_response_id`: the model doesn't see what was left out, and nothing raises an error.
+Pass the whole conversation, as [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] does, even though only the messages after the latest response are sent. A history missing its earlier messages, such as [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] from a later turn, looks the same as one that compaction or a history processor trimmed. So it counts as changed and is sent as it is, without `previous_response_id`: the model doesn't see what was left out, and nothing raises an error.
 
 As an alternative to passing `message_history`, you can pass a concrete `provider_response_id` from an earlier run as the seed. Pydantic AI uses the seed for the first request in the new run, then automatically chains to the response returned for that request on any subsequent in-run calls — so the chain still extends correctly if the run includes tool-call continuations or retries.
 
@@ -516,7 +516,7 @@ agent = Agent(
 )
 ```
 
-As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], or when you need explicit out-of-band control over when compaction runs. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
+As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], when you need explicit out-of-band control over when compaction runs, or when the per-request cost of stateful mode matters. Stateful mode sends `context_management` on every `/responses` request, not only once the conversation nears the threshold; in our measurements, that added roughly 50 ms of server processing time per request, and setting `token_threshold` didn't reduce it. Stateless mode sends no `context_management`, and instead makes a separate `/responses/compact` request before the model request whenever its trigger fires. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
 
 ```python {title="openai_compaction_stateless.py" test="skip"}
 from pydantic_ai import Agent

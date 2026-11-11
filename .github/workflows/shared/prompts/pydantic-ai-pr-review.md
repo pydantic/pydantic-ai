@@ -193,7 +193,8 @@ For each sub-agent, include in its prompt:
 3. The **assigned file list** from that sub-agent's
    `.review-context/file-orderings/delegate-<N>.txt` and instructions
    to:
-   - Read each `.review-context/diff/<path>.diff` for changes.
+   - Read each file's diff, named in the third column of
+     `.review-context/changed-files.txt`, for changes.
    - Read the **full file** from the workspace for surrounding context
      (full files are checked out — use `Read`).
    - Check `.review-context/review-comments.txt` for existing
@@ -244,9 +245,9 @@ Before posting **any** inline comment:
    matches a "what NOT to flag" pattern, drop it.
 4. **Check existing threads** for the same `path:line` and apply the
    thread-handling rules above.
-5. **Confirm the line is commentable** — open
-   `.review-context/diff/<file>.diff` and check the target line
-   has an `NL:<n>` prefix. If not, move the finding into the review body.
+5. **Confirm the line is commentable** — open the file's diff (third
+   column of `changed-files.txt`) and check the target line has an
+   `NL:<n>` prefix. If not, move the finding into the review body.
 
 Once the time budget is nearly spent, only the safe-output tools remain. Do
 not post an unverified finding as an inline comment: name it in the review
