@@ -22,7 +22,7 @@ from .models.fallback import FallbackModel
 from .models.wrapper import WrapperModel
 
 
-def _grid_description(grid: int) -> str:
+def _grid_sentence(grid: int) -> str:
     """The sentence the `computer` tool's description gets for a model that points on a grid of `grid` points."""
     last = grid - 1
     return (
@@ -31,36 +31,36 @@ def _grid_description(grid: int) -> str:
     )
 
 
-def _answering_models(model: Model) -> list[Model]:
+def _models_that_may_answer(model: Model) -> list[Model]:
     """The models that may answer a request to `model`: itself, a `FallbackModel`'s models, or those a wrapper wraps."""
     if isinstance(model, FallbackModel):
-        return [answering for inner in model.models for answering in _answering_models(inner)]
+        return [answering for inner in model.models for answering in _models_that_may_answer(inner)]
     try:
         model.profile
     except NotImplementedError:
-        return _answering_models(model.wrapped) if isinstance(model, WrapperModel) else []
+        return _models_that_may_answer(model.wrapped) if isinstance(model, WrapperModel) else []
     return [model]
 
 
-def coordinate_grid(model: Model) -> int | None:
+def shared_coordinate_grid(model: Model) -> int | None:
     """The grid `model` points on, when every model that may answer it uses the same one."""
-    grids = {answering.profile.get('computer_use_coordinate_grid') for answering in _answering_models(model)}
+    grids = {answering.profile.get('computer_use_coordinate_grid') for answering in _models_that_may_answer(model)}
     return grids.pop() if len(grids) == 1 else None
 
 
-def _smallest(
+def _smallest_limit(
     models: list[Model], key: Literal['computer_use_screenshot_max_side', 'computer_use_screenshot_max_pixels']
 ) -> int | None:
     """The smallest of the models' screenshot limits under `key`, which every one of them can see."""
     return min((limit for answering in models if (limit := answering.profile.get(key))), default=None)
 
 
-def describe_grid(model: Model, params: ModelRequestParameters) -> ModelRequestParameters:
+def add_grid_to_tool_description(model: Model, params: ModelRequestParameters) -> ModelRequestParameters:
     """Tell a model that points on a grid so in the `computer` tool's description."""
     name = params.tool_name_for_kind(COMPUTER_KIND)
-    if name is None or (grid := coordinate_grid(model)) is None:
+    if name is None or (grid := shared_coordinate_grid(model)) is None:
         return params
-    sentence = _grid_description(grid)
+    sentence = _grid_sentence(grid)
     tools = [
         replace(tool, description=f'{tool.description} {sentence}' if tool.description else sentence)
         if tool.name == name
@@ -70,16 +70,18 @@ def describe_grid(model: Model, params: ModelRequestParameters) -> ModelRequestP
     return replace(params, function_tools=tools)
 
 
-def label_computer_calls(model: Model, params: ModelRequestParameters, response: _messages.ModelResponse) -> None:
+def record_grid_and_screenshot_limit(
+    model: Model, params: ModelRequestParameters, response: _messages.ModelResponse
+) -> None:
     """Record on the response's `computer` calls the grid `model` was told to point on and the screenshots it takes."""
     name = params.tool_name_for_kind(COMPUTER_KIND)
     if name is None:
         return
-    models = _answering_models(model)
+    models = _models_that_may_answer(model)
     labels = {
-        _COORDINATE_GRID: coordinate_grid(model),
-        _SCREENSHOT_MAX_SIDE: _smallest(models, 'computer_use_screenshot_max_side'),
-        _SCREENSHOT_MAX_PIXELS: _smallest(models, 'computer_use_screenshot_max_pixels'),
+        _COORDINATE_GRID: shared_coordinate_grid(model),
+        _SCREENSHOT_MAX_SIDE: _smallest_limit(models, 'computer_use_screenshot_max_side'),
+        _SCREENSHOT_MAX_PIXELS: _smallest_limit(models, 'computer_use_screenshot_max_pixels'),
     }
     labels = {key: value for key, value in labels.items() if value is not None}
     if not labels:
