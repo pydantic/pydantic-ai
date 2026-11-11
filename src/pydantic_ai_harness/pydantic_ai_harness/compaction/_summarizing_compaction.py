@@ -373,7 +373,7 @@ _TOOL_OUTPUT_KINDS: frozenset[str] = frozenset({'tool_return', 'retry_feedback'}
 """Entry kinds whose body is dropped first: what a tool printed, which a summary can do without."""
 
 _SUMMARY_OUTPUT_RESERVE_TOKENS = 8_192
-"""Most of the summarizer's window kept free for the summary it writes back."""
+"""Most tokens of the summarizer's window kept free for the summary it writes back."""
 
 
 @dataclass(frozen=True)
@@ -392,7 +392,12 @@ def _without_body(element: str) -> str:
     return f'{element[: element.index(">") + 1]}\n{_OMITTED_TOOL_OUTPUT}\n</message>'
 
 
-def _keep_element_tail(element: str, max_tokens: int, tokenizer: Callable[[str], int] | None) -> str:
+def _keep_element_tail(
+    element: str,
+    max_tokens: int,
+    tokenizer: Callable[[str], int] | None,
+    marker: str = _OMITTED_TRANSCRIPT_HEAD,
+) -> str:
     """*element* with the longest tail of its body that fits *max_tokens*, its own tags kept.
 
     The head of the body goes rather than its middle or its tail: the newest turn is what the summary
@@ -402,13 +407,16 @@ def _keep_element_tail(element: str, max_tokens: int, tokenizer: Callable[[str],
     search asks the tokenizer rather than assuming it counts characters, so a real tokenizer still
     lands under the budget. A budget too small for the marker alone leaves the tags around the
     marker, which is a request the provider may still reject but the closest thing to fitting.
+
+    *marker* is what says the body was cut, and is empty when the caller prefixed the whole request
+    with it instead.
     """
     # `_message_element` and `_harness_data_element` are the only producers of these elements and
     # always write `...>\n{body}\n</...>`, with `>` escaped in their attributes and `<` in the body,
     # so the first and the last newline bracket the body.
     opening, _, rest = element.partition('\n')
     body, _, closing = rest.rpartition('\n')
-    fixed = f'{opening}\n{_OMITTED_TRANSCRIPT_HEAD}\n{closing}'
+    fixed = f'{opening}\n{marker}\n{closing}'
     budget = max_tokens - estimate_text_tokens(fixed, tokenizer)
     start, end = 0, len(body)
     while start < end:
@@ -419,7 +427,7 @@ def _keep_element_tail(element: str, max_tokens: int, tokenizer: Callable[[str],
             start = middle + 1
     if not (tail := body[start:]):
         return fixed
-    return f'{opening}\n{_OMITTED_TRANSCRIPT_HEAD}\n{tail}\n{closing}'
+    return f'{opening}\n{marker}\n{tail}\n{closing}'
 
 
 def _keep_newest(
@@ -436,20 +444,32 @@ def _keep_newest(
     separators between entries are not in that sum, though, so the joined text can still be over
     budget. It then costs the next oldest entry rather than the head of an element, and only a single
     entry left too large keeps a tail of its body.
+
+    Dropping an entry also writes `_OMITTED_TRANSCRIPT_HEAD` in front of the text, because a
+    summarizer that reads a transcript starting mid-conversation writes its `## Intent` section from
+    whatever turn happens to be first. That marker is part of the request, so its own tokens come off
+    the budget before the entries are fitted into it.
     """
+    head = f'{_OMITTED_TRANSCRIPT_HEAD}\n'
+    head_tokens = estimate_text_tokens(head, tokenizer)
     start = 0
-    while total > max_tokens and len(elements) - start > 1:
+    while len(elements) - start > 1 and total + head_tokens > max_tokens:
         total -= sizes[start]
         start += 1
     kept = list(elements[start:])
     text = '\n'.join(kept)
-    while len(kept) > 1 and estimate_text_tokens(text, tokenizer) > max_tokens:
+    while len(kept) > 1 and estimate_text_tokens(text, tokenizer) + (head_tokens if start else 0) > max_tokens:
         kept.pop(0)
         start += 1
         text = '\n'.join(kept)
-    if estimate_text_tokens(text, tokenizer) > max_tokens:
-        text = _keep_element_tail(kept[0], max_tokens, tokenizer)
-    return text, start
+    if estimate_text_tokens(text, tokenizer) + (head_tokens if start else 0) > max_tokens:
+        text = _keep_element_tail(
+            kept[0],
+            max_tokens - head_tokens if start else max_tokens,
+            tokenizer,
+            marker='' if start else _OMITTED_TRANSCRIPT_HEAD,
+        )
+    return (f'{head}{text}' if start else text), start
 
 
 def _fit_transcript(
@@ -938,17 +958,6 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     """Per-return character cap when rendering tool results for the summarizer. `None` renders
     them whole."""
 
-    summary_request_max_tokens: int | None = field(default=None, kw_only=True)
-    """Input-token budget for the summary request. `None` resolves it from the summarizer's window.
-
-    A summarizer is often smaller than the model the run uses, and the request is built from the
-    whole transcript, which that smaller window may not hold. Rather than let such a request fail,
-    the transcript is fitted to this budget first: the oldest tool output loses its body, then whole
-    entries go from the oldest end, and user and assistant text is what survives. Resolution takes a
-    quarter of the window, at most `8192` tokens, off for the summary itself; an unresolved window
-    leaves the request untrimmed. Set this for an endpoint whose window neither its profile nor the
-    registry reports correctly."""
-
     preserve_loaded_capabilities: bool = field(default=True, kw_only=True)
     """When `True`, a deferred capability loaded in the summarized messages stays loaded.
 
@@ -983,8 +992,6 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             raise ValueError('keep_user_messages_max_chars must be positive.')
         if self.tool_return_max_chars is not None and self.tool_return_max_chars < 1:
             raise ValueError('tool_return_max_chars must be positive.')
-        if self.summary_request_max_tokens is not None and self.summary_request_max_tokens < 1:
-            raise ValueError('summary_request_max_tokens must be positive.')
         if not _is_valid_summary_prompt(self.summary_prompt):
             # Such a prompt used to be accepted here, and either fails at the first compaction or
             # sends no transcript, so warn now rather than break code that constructs one.
@@ -1294,25 +1301,18 @@ def _summary_prompt(
     return prompt
 
 
-def _summary_input_budget(
-    summarizer: SummarizingCompaction[AgentDepsT],
-    model: AbstractModel | str,
-) -> int | None:
-    """Tokens the summarizer request may spend, or `None` when its model's window is unknown.
+def _summary_input_budget(model: AbstractModel | str) -> int | None:
+    """Tokens the summarizer request may spend, or `None` when the summarizer's window is unknown.
 
     A summarizer is often a smaller model than the one the run uses, which is the case this exists
     for: the request is built from the whole transcript, so it can overflow a window the history it
     came from never reached. An unknown window is left untrimmed rather than assumed to be
     `DEFAULT_CONTEXT_WINDOW`: a summary cut short loses information, and only a model with no window
-    at all -- a local endpoint, one the registry doesn't know -- reaches here. `context_window` is
-    honoured when the summarizer is the run's own model, since that override is documented for
-    exactly the registry-wrong case.
+    at all -- a local endpoint, one the registry doesn't know -- reaches here. An endpoint whose
+    window is wrong sets it on the summarizer's profile, which `resolve_context_window` reads, so
+    this needs no field of its own.
     """
-    if summarizer.summary_request_max_tokens is not None:
-        return summarizer.summary_request_max_tokens
-    window = summarizer.context_window if summarizer.model is None else None
-    if window is None:
-        window = resolve_context_window(model)
+    window = resolve_context_window(model)
     if window is None:
         return None
     return max(1, window - min(window // 4, _SUMMARY_OUTPUT_RESERVE_TOKENS))
@@ -1347,11 +1347,13 @@ def _fit_summary_input(
     `compact_messages` span, because a summary of part of the history is a different thing, and a
     difference nobody can see is what makes compaction hard to trust.
 
-    A fixed part that leaves no room for a transcript at all is reported rather than trimmed around:
-    the trim would keep the omission marker and send the oversized instructions anyway, so the
-    history would be replaced by a summary of nothing and the request would still go over budget.
+    A fixed part that leaves no room for a transcript at all leaves the request whole rather than
+    trimmed around it: a trim would keep the omission marker and send the oversized instructions
+    anyway, so the history would be replaced by a summary of nothing and the request would still go
+    over budget. The provider then decides, as it did before the transcript was fitted at all, and
+    its `ModelAPIError` is what a `FallbackCompaction` chain's `fallback_on` already catches.
     """
-    budget = _summary_input_budget(summarizer, model)
+    budget = _summary_input_budget(model)
     if budget is None:
         return None
     tokenizer = summarizer.tokenizer
@@ -1359,12 +1361,7 @@ def _fit_summary_input(
     overhead += estimate_text_tokens(summarizer.instructions, tokenizer)
     room = (budget - overhead) // _transcript_copies(summarizer.summary_prompt)
     if room < 1:
-        raise UserError(
-            f'The summary request cannot be fitted into its {budget}-token budget: the prompt, '
-            f'instructions and previous summary need {overhead} tokens on their own, so no transcript '
-            'fits after them. Raise `summary_request_max_tokens`, shorten `summary_prompt` or '
-            '`instructions`, or summarize with a model whose context window is larger.'
-        )
+        return None
     trimmed = _fit_transcript(entries, room, tokenizer)
     if trimmed is None:
         return None

@@ -23,7 +23,7 @@ from pydantic_ai import Agent, Tool, ToolReturn
 from pydantic_ai._context_size import mark_context_input_tokens
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
-from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
     AgentInstructionSource,
     AgentStreamEvent,
@@ -114,6 +114,7 @@ from pydantic_ai_harness.compaction._shared import (
 from pydantic_ai_harness.compaction._summarizing_compaction import (
     _DEFAULT_SUMMARY_PROMPT,  # pyright: ignore[reportPrivateUsage]
     _KEPT_USER_MESSAGE_METADATA,  # pyright: ignore[reportPrivateUsage]
+    _OMITTED_TOOL_OUTPUT,  # pyright: ignore[reportPrivateUsage]
     _OMITTED_TRANSCRIPT_HEAD,  # pyright: ignore[reportPrivateUsage]
     SUMMARY_PREFIX,
     _extract_system_prompts,  # pyright: ignore[reportPrivateUsage]
@@ -3692,11 +3693,34 @@ class TestSummarizerContextWindow:
         # Dropping that one body was enough, so no user or assistant text went with it.
         assert 'oldest question' in request
 
+    async def test_the_oldest_tool_output_goes_and_the_newest_survives(self):
+        """#12115 asks for the request to fit *and* for the most recent tool results to survive."""
+        seen: list[str] = []
+        comp = _always_compacting(_summarizer_with_window(8_000, seen), tool_return_max_chars=None)
+        messages = [
+            _user('oldest question ' + 'u' * 2_000),
+            _tool_call('read_file', 'call-1'),
+            _tool_return('read_file', 'call-1', 'old' * 30_000),
+            _tool_call('read_file', 'call-2'),
+            _tool_return('read_file', 'call-2', 'new' * 5_000),
+            _user('kept turn'),
+        ]
+        await comp.before_model_request(_make_ctx(messages), _make_request_context(messages))
+
+        [request] = seen
+        assert len(request) // 4 <= 6_000
+        # Tool bodies go oldest first, so the older one is reduced to the marker and the call that
+        # produced it stays visible.
+        assert 'old' * 1_000 not in request
+        assert _OMITTED_TOOL_OUTPUT in request
+        assert 'name="read_file"' in request
+        # The newest result is the one the summary most needs, so its body is still in the request.
+        assert 'new' * 1_000 in request
+
     async def test_text_is_dropped_from_the_oldest_end_only_when_it_has_to_be(self):
         seen: list[str] = []
-        comp = _always_compacting(
-            FunctionModel(_capture_summary_requests(seen), model_name='tiny'), summary_request_max_tokens=1_000
-        )
+        # 1333 tokens of window leaves 1000 for the request: a quarter goes to the summary.
+        comp = _always_compacting(_summarizer_with_window(1_333, seen))
         messages = _oversized_history(text_chars=4_000, tool_chars=8_000)
         await comp.before_model_request(_make_ctx(messages), _make_request_context(messages))
 
@@ -3704,6 +3728,9 @@ class TestSummarizerContextWindow:
         assert len(request) // 4 <= 1_000
         assert 'newest question' in request
         assert 'oldest question' not in request
+        # A summarizer that reads a transcript starting mid-conversation writes its `## Intent`
+        # section from whatever turn is first, so the request says it starts partway through.
+        assert _OMITTED_TRANSCRIPT_HEAD in request
 
     async def test_a_request_that_fits_is_sent_whole(self):
         seen: list[str] = []
@@ -3728,9 +3755,31 @@ class TestSummarizerContextWindow:
         assert 'oldest question' in request
         assert 'r' * 1_000 in request
 
-    def test_summary_request_max_tokens_must_be_positive(self):
-        with pytest.raises(ValueError, match='summary_request_max_tokens must be positive'):
-            SummarizingCompaction(max_messages=2, summary_request_max_tokens=0)
+    async def test_a_fixed_part_that_alone_exceeds_the_budget_is_left_to_the_provider(self):
+        seen: list[str] = []
+        # 27 tokens of window leaves 21 for the whole request, and the prompt and instructions
+        # alone are more than that. A `FallbackCompaction` chain is set up to catch the provider's
+        # own error, so the request goes out whole rather than being replaced by a summary of
+        # nothing -- the trim would keep the omission marker and still go over budget.
+        comp = _always_compacting(_summarizer_with_window(27, seen), tool_return_max_chars=None)
+        messages = _oversized_history(text_chars=1_000, tool_chars=1_000)
+
+        await comp.before_model_request(_make_ctx(messages), _make_request_context(messages))
+
+        [request] = seen
+        assert 'oldest question' in request
+        assert 'r' * 1_000 in request
+
+    def test_the_budget_is_a_quarter_off_the_summarizer_models_window(self):
+        # A quarter of the window goes to the summary, capped at 8192 tokens.
+        assert _summary_input_budget(_summarizer_with_window(4_000, [])) == 3_000
+
+    def test_context_window_is_not_the_summary_budget(self):
+        # `context_window` places the `max_fraction` trigger; reading it as the request budget too
+        # would trim every summary request of a run that only set it for the trigger.
+        comp = SummarizingCompaction(max_messages=2, context_window=4_000)
+
+        assert _summary_input_budget(comp.model if comp.model is not None else TestModel()) != 3_000
 
     async def test_a_prompt_that_shows_the_transcript_twice_still_keeps_what_fits(self):
         # A prompt may render `{messages}` more than once, and every copy is sent. The template was
@@ -3738,9 +3787,8 @@ class TestSummarizerContextWindow:
         # fixed overhead, so only half the history that fits in the budget was kept.
         seen: list[str] = []
         comp = _always_compacting(
-            FunctionModel(_capture_summary_requests(seen), model_name='tiny'),
+            _summarizer_with_window(1_600, seen),
             summary_prompt='<messages>{messages}</messages>\nagain:\n<messages>{messages}</messages>',
-            summary_request_max_tokens=1_200,
         )
         messages = [
             _user('oldest question ' + 'u' * 800),
@@ -3755,26 +3803,6 @@ class TestSummarizerContextWindow:
         [request] = seen
         assert len(request) // 4 <= 1_200
         assert 'second question' in request
-
-    async def test_a_fixed_part_that_alone_exceeds_the_budget_is_reported(self):
-        seen: list[str] = []
-        comp = _always_compacting(
-            FunctionModel(_capture_summary_requests(seen), model_name='tiny'), summary_request_max_tokens=20
-        )
-        messages = _oversized_history(text_chars=1_000, tool_chars=1_000)
-
-        # No transcript can make the request fit, so nothing is sent: a summary of the omission
-        # marker alone would replace the history with nothing and still go over the budget.
-        with pytest.raises(UserError, match='cannot be fitted'):
-            await comp.before_model_request(_make_ctx(messages), _make_request_context(messages))
-
-        assert seen == []
-
-    def test_the_run_models_context_window_override_is_the_budget(self):
-        comp = SummarizingCompaction(max_messages=2, context_window=4_000)
-
-        # A quarter of the window goes to the summary, capped at 8192 tokens.
-        assert _summary_input_budget(comp, TestModel()) == 3_000
 
 
 class TestFitTranscript:
@@ -3791,9 +3819,10 @@ class TestFitTranscript:
 
         assert trimmed is not None
         # One token over is still over, and the newest entry is what the trim keeps: the older one
-        # goes whole rather than being cut into its tag.
+        # goes whole rather than being cut into its tag. The marker that says so is part of the
+        # request, and its own tokens come out of the budget.
         assert trimmed.dropped_entries == 1
-        assert trimmed.text == 'y' * 402
+        assert trimmed.text == f'{_OMITTED_TRANSCRIPT_HEAD}\n{"y" * 402}'
 
     def test_drops_tool_output_bodies_first_and_keeps_their_tag(self):
         entries: list[tuple[Any, str]] = [
@@ -3818,7 +3847,7 @@ class TestFitTranscript:
 
         assert trimmed is not None
         assert trimmed.dropped_entries == 1
-        assert trimmed.text == '<message role="user">\nnewest\n</message>'
+        assert trimmed.text == f'{_OMITTED_TRANSCRIPT_HEAD}\n<message role="user">\nnewest\n</message>'
 
     def test_a_tool_output_entry_shorter_than_the_marker_is_left_alone(self):
         entries: list[tuple[Any, str]] = [
@@ -3826,12 +3855,12 @@ class TestFitTranscript:
             ('user', '<message role="user">\n' + 'old' * 100 + '\n</message>'),
             ('user', '<message role="user">\nnewest\n</message>'),
         ]
-        trimmed = _fit_transcript(entries, 20)
+        trimmed = _fit_transcript(entries, 60)
 
         assert trimmed is not None
         assert trimmed.dropped_tool_results == 0
         assert trimmed.dropped_entries == 2
-        assert trimmed.text == '<message role="user">\nnewest\n</message>'
+        assert trimmed.text == f'{_OMITTED_TRANSCRIPT_HEAD}\n<message role="user">\nnewest\n</message>'
 
     def test_a_single_entry_too_large_on_its_own_keeps_its_tail(self):
         entry = '<message role="user">\n' + 'x' * 4_000 + '\nnewest tail\n</message>'
@@ -3855,9 +3884,12 @@ class TestFitTranscript:
 
         assert trimmed is not None
         assert trimmed.dropped_entries == 1
-        assert trimmed.text.startswith('<harness_data origin="background_tool">\n')
+        # The dropped entry is recorded in front of the request, so the summarizer knows the
+        # transcript starts partway through.
+        assert trimmed.text.startswith(f'{_OMITTED_TRANSCRIPT_HEAD}\n<harness_data origin="background_tool">\n')
         assert trimmed.text.endswith('line\n</harness_data>')
         assert trimmed.text.count('<harness_data') == 1
+        assert trimmed.text.count(_OMITTED_TRANSCRIPT_HEAD) == 1
 
     def test_a_tool_return_entry_too_large_on_its_own_keeps_its_role(self):
         entry = '<message role="tool_return" name="read_file">\n' + 'r' * 4_000 + '\n</message>'
@@ -3983,7 +4015,7 @@ class TestCompactionSpan:
         assert spans[0]['attributes']['compaction.strategy'] == 'SummarizingCompaction'
 
     async def test_a_trimmed_summarizer_request_is_recorded_on_the_span(self, capfire: CaptureLogfire) -> None:
-        comp = _always_compacting('test:m', summary_request_max_tokens=1_000)
+        comp = _always_compacting(_summarizer_with_window(1_333, []))
         messages = _oversized_history(text_chars=4_000, tool_chars=8_000)
         rc = _make_request_context(messages)
         ctx = _make_ctx_with_tracer(messages)
@@ -4003,7 +4035,7 @@ class TestCompactionSpan:
         assert attrs['compaction.summary_request_entries_dropped'] >= 1
 
     async def test_an_untrimmed_summarizer_request_records_nothing(self, capfire: CaptureLogfire) -> None:
-        comp = _always_compacting('test:m', summary_request_max_tokens=1_000_000)
+        comp = _always_compacting(_summarizer_with_window(1_000_000, []))
         messages = [_user('first'), _assistant('a'), _user('b'), _assistant('c')]
         rc = _make_request_context(messages)
         ctx = _make_ctx_with_tracer(messages)
