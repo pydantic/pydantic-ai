@@ -2,7 +2,7 @@
 
 import json
 import os
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
@@ -77,7 +77,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     save_import,
 )
 from pydantic_clai2.runtime.rewind import rewind_points
-from pydantic_clai2.runtime.session import Session
+from pydantic_clai2.runtime.session import Session, StockAgent
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -631,6 +631,37 @@ async def test_claude_code_import_keeps_the_history_compaction_replaced(tmp_path
     ]
     assert not any(isinstance(part, ToolReturnPart) for part in requests)
     assert result.all_messages()[:3] == messages[:3]
+
+
+@pytest.mark.parametrize('stock', [True, False])
+async def test_sessions_send_only_what_follows_an_imported_summary(stock: bool) -> None:
+    at = timestamp(AT)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Start')]),
+        ModelResponse(parts=[TextPart('Started')]),
+        ModelRequest(parts=[imported_summary('Theirs', source='claude-code', at=at), UserPromptPart('Next')]),
+        ModelResponse(parts=[TextPart('Done')]),
+    ]
+    sent: list[str] = []
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        sent.extend(
+            str(part.content)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart | CompactionPart)
+        )
+        yield 'ok'
+
+    model = FunctionModel(stream_function=respond)
+    agent: Agent[None, str] = (
+        StockAgent(model, deps_type=type(None), output_type=str, capabilities=[]) if stock else Agent(model)
+    )
+    session = Session(agent, deps=None, message_history=history)
+    await session.prompt('More')
+    assert sent == ['Theirs', 'Next', 'More']
+    assert session.messages[:4] == history
 
 
 def test_summary_window_cuts_only_at_an_imported_summary() -> None:
