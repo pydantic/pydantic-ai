@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel, Field
@@ -14,6 +14,7 @@ from pydantic_ai import Agent, ToolOutput
 from ...conftest import try_import
 
 with try_import() as imports_successful:
+    from botocore.client import BaseClient
     from botocore.hooks import HierarchicalEmitter
     from botocore.loaders import Loader
     from botocore.model import ServiceModel
@@ -92,7 +93,7 @@ async def test_glm53_tool_schema_inlines_nested_defs(allow_model_requests: None)
         ]
     )
     agent = Agent(
-        BedrockConverseModel(MODEL_NAME, provider=BedrockProvider(bedrock_client=client)),
+        BedrockConverseModel(MODEL_NAME, provider=BedrockProvider(bedrock_client=cast(BaseClient, client))),
         tools=[get_weather],
         retries=0,
     )
@@ -124,7 +125,7 @@ async def test_glm53_strict_output_schema_inlines_and_rewrites_contains(allow_mo
         ]
     )
     agent = Agent(
-        BedrockConverseModel(MODEL_NAME, provider=BedrockProvider(bedrock_client=client)),
+        BedrockConverseModel(MODEL_NAME, provider=BedrockProvider(bedrock_client=cast(BaseClient, client))),
         output_type=ToolOutput(Result, strict=True),
         retries=0,
     )

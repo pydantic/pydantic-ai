@@ -51,7 +51,7 @@ target, to load it.
 - `'repo_root'` walks up to the nearest directory, starting at the working directory, that contains one of `root_markers` (`('.git',)` by default), as Codex does. A `.git` file, as in a linked worktree, counts like a `.git` directory. When no such directory exists, only the working directory is scanned.
 - `'all'` walks every ancestor up to the filesystem root, as Claude Code does.
 
-`home_dir` also walks up, to that workspace directory inclusive, and with `walk_up='all'` it stops the walk there. It cannot be combined with `walk_up='repo_root'`. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`. If `home_dir` is not an ancestor of the working directory, only the working directory is scanned.
+`home_dir` also walks up, to that workspace directory inclusive, and with `walk_up='all'` it stops the walk there. It cannot be combined with `walk_up='repo_root'`. For a remote sandbox, use its home (for example `home_dir='/home/user'` on E2B), not the agent host's `Path.home()`. If `home_dir`, with its symlinks followed, is not an ancestor of the working directory, only the working directory is scanned.
 
 Precedence is ancestor-first, workspace-last: broadest context first, most specific last. Files are deduped by content hash, so two ancestors with identical content load once. A file in an ancestor is labeled relative to the working directory, such as `../AGENTS.md`, not by its absolute path.
 
@@ -93,13 +93,17 @@ With `FileSystem` on the agent, the inventory tool steps aside for `FileSystem`'
 
 ### 3. Nested-on-traversal (on by default)
 
-When the model lists a directory or reads a file in it, surface the
-instruction file of that directory and of every directory between it and
-the working directory, shallowest first: reading `packages/foo/src/x.py` also
-surfaces `packages/foo/AGENTS.md`. This strategy subscribes to `FileReadEvent` and
-`DirectoryListedEvent`, so it receives normalized, containment-checked paths
-instead of inspecting raw tool arguments. It is on by default, so with
-`FileSystem` on the agent nothing else is needed; this switches it to pointers:
+When the model lists a directory, reads a file in it, or writes or edits a file
+in it, surface the instruction file of that directory and of every directory
+between it and the working directory, shallowest first: reading
+`packages/foo/src/x.py` also surfaces `packages/foo/AGENTS.md`. A plain
+`FileWrittenEvent` for the instruction file itself counts as surfacing it, since
+the model wrote the whole file. A `FileReadEvent` or `FileEditedEvent` for it
+doesn't: a read can return part of the file and an edit changes part of it. This
+strategy subscribes to `FileReadEvent`, `DirectoryListedEvent` and
+`FileWrittenEvent`, so it receives normalized, containment-checked paths instead
+of inspecting raw tool arguments. It is on by default, so with `FileSystem` on the
+agent nothing else is needed; this switches it to pointers:
 
 ```python
 from pydantic_ai import Agent
@@ -145,9 +149,9 @@ more deeply nested file wins a conflict, and the user's direct instructions win
 over all of them. The statement is static, so it stays in the cached prefix.
 
 `FileSystem` emits these events directly. Hosts with other file tools can emit
-the same types by importing `FileReadEvent` and `DirectoryListedEvent` from
-`pydantic_ai_harness.filesystem`; set `root_dir` to the directory the event's
-`path` is relative to.
+the same types by importing `FileReadEvent`, `DirectoryListedEvent` and
+`FileWrittenEvent` from `pydantic_ai_harness.filesystem`; set `root_dir` to the
+directory the event's `path` is relative to.
 
 The traversed location is `root_dir / path`, so a `FileSystem` rooted at a
 subdirectory of the working directory still surfaces the right directory. A

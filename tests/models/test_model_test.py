@@ -594,6 +594,12 @@ def test_json_schema_test_data_narrow_exclusive_bounds():
     )
 
 
+def test_gen_unknown_type():
+    """A hand-written tool schema can name a `type` no Pydantic model emits, so this calls the generator directly."""
+    with pytest.raises(NotImplementedError, match='Unknown type: foo'):
+        _JsonSchemaTestData({'type': 'foo'}).generate()
+
+
 def test_json_schema_number_uses_strictest_bounds():
     class TestModel(BaseModel):
         lower: Annotated[float, Field(ge=0, gt=0.5, le=1)]

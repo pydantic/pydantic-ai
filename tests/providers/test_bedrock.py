@@ -332,9 +332,11 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert zai_profile.get('supports_thinking', False) is True
     assert zai_profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) == frozenset()
 
+    # The `us.` inference-profile prefix is stripped before the upstream Z.AI profile is looked up.
+    provider.model_profile('us.zai.glm-5.3')
+    zai_model_profile_mock.assert_called_with('glm-5.3')
     # GLM-5.3 additionally requires `$defs`/`$ref` inlining (see `zai_model_profile`); the Bedrock overlay keeps it.
     zai_glm53_profile = provider.model_profile('zai.glm-5.3')
-    zai_model_profile_mock.assert_called_with('glm-5.3')
     assert isinstance(zai_glm53_profile, dict)
     assert zai_glm53_profile.get('json_schema_transformer', None) is _BedrockZaiJsonSchemaTransformer
     assert issubclass(

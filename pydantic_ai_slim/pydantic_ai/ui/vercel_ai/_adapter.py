@@ -14,6 +14,7 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_ai._utils import is_str_dict as _is_str_dict
 
 from ... import _instructions
+from ...conversation_store import ConversationEntry, ConversationStore
 from ...messages import (
     _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
     ERROR_OUTCOMES,
@@ -87,6 +88,7 @@ from ._event_stream import VercelAIEventStream
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
     COMPACTION_DATA_TYPE,
+    CONVERSATION_SAVED_DATA_TYPE,
     ENQUEUED_MESSAGES_DATA_TYPE,
     MODEL_SETTINGS_DELTA_DATA_TYPE,
     PROVIDER_METADATA_KEY,
@@ -246,6 +248,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         server_message_id: str | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        conversation_store: ConversationStore | None = None,
+        conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -265,6 +269,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             server_message_id=server_message_id,
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            conversation_store=conversation_store,
+            conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -299,6 +305,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         on_cancel: OnCancelFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        conversation_store: ConversationStore | None = None,
+        conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -335,6 +343,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             on_cancel=on_cancel,
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            conversation_store=conversation_store,
+            conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -379,6 +389,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
     def _regenerates(self) -> bool:
         return isinstance(self.run_input, RegenerateMessage)
+
+    def _conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[BaseChunk]:
+        """A transient `data-conversation-saved` part with the stored entries' ids, for `useChat`'s `onData`."""
+        return [
+            DataChunk(
+                type=CONVERSATION_SAVED_DATA_TYPE,
+                data={'conversation_id': conversation_id, 'entry_ids': [entry.id for entry in entries]},
+                transient=True,
+            )
+        ]
 
     @classmethod
     def load_messages(cls, messages: Sequence[UIMessage]) -> list[ModelMessage]:  # noqa: C901
