@@ -235,3 +235,51 @@ From the client's messages, the adapter then uses only the new turn: the message
 The default, `manage_message_history='client'`, treats the client's messages as the conversation and puts any `message_history` you pass in front of them, which suits server-only context such as a pinned preamble. If a client message's UI message id already appears in `message_history`, the adapter warns, because the model sees that message twice. Only a history that went through an adapter carries those ids, so for one built any other way, such as by hand or from `agent.run()`, the adapter can't tell: passing it as `message_history` while the client sends its whole conversation sends that conversation to the model twice, without a warning.
 
 The client needs no changes, but it can save bandwidth by sending only its new messages; see the [Vercel AI](./vercel-ai.md#keeping-the-history-on-the-server) and [AG-UI](./ag-ui.md#keeping-the-history-on-the-server) pages.
+
+#### Saving to a conversation store
+
+Instead of loading and saving the history yourself, you can give the adapter a [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] (see [Persistence](../persistence.md)) as [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store]. Passing a store means the history is held on the server: `manage_message_history` is ignored, and the client's new turn follows the `'server'` rules above. A store also keeps the conversation's [`usage`][pydantic_ai.conversation.Conversation.usage], so it can't be combined with the run methods' `message_history` or `usage` arguments. The adapter then loads the conversation the request names (the Vercel AI chat `id` or the AG-UI `threadId`, unless you pass `conversation_id`), applies the rules above to the client's new turn, runs the agent and saves what the run added. Always pass the authenticated user or tenant as [`conversation_scope`][pydantic_ai.ui.UIAdapter.conversation_scope]: a conversation saved with another scope is treated as not found, as is one saved with any scope when you pass none, so `dispatch_request` answers `404` before running anything, and the other run methods reject the request with a protocol error event.
+
+A store keys conversations by ID alone, and the ID comes from the client, so in a multi-tenant app conversation IDs must be unguessable or prefixed per scope, which you can do by passing your own `conversation_id`. Otherwise, a tenant who creates an ID first holds it, and its owner gets that `404`. A client can also tell from the `404` that an ID it holds exists under another scope, but no tenant reaches another's messages. A [`delete`][pydantic_ai.conversation_store.ConversationStore.delete] that names the owner's scope leaves the conversation as it is, so freeing the ID takes one from your app without a scope.
+
+```py {title="conversation_store_ui.py"}
+from fastapi import FastAPI
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent
+from pydantic_ai.conversation_store import InMemoryConversationStore
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+
+agent = Agent('{{ openai:medium }}')
+
+app = FastAPI()
+
+store = InMemoryConversationStore()  # (1)!
+
+
+@app.post('/chat')
+async def chat(request: Request) -> Response:
+    user_id = 'user-123'  # (2)!
+    return await VercelAIAdapter.dispatch_request(
+        request,
+        agent=agent,
+        conversation_store=store,
+        conversation_scope=user_id,
+    )
+```
+
+1. Use a database-backed store in production; see [Persistence](../persistence.md).
+2. The user your own authentication identified.
+
+With a store, the adapter also uses what the store knows that the messages don't:
+
+- **Tool approvals and results.** The stored conversation's [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests] say what each pending call is waiting for, so an approval or denial has to answer a call waiting on one, and a tool result a call waiting on a result. A result for a call that's waiting on an approval is dropped with a warning.
+- **Regenerating and editing.** The turn a resubmitted message replaces stays stored as a branch of the conversation, rather than being dropped from the record. The stored conversation only changes once the new run completes, so a regenerate whose run fails leaves it as it was.
+- **Usage limits.** A run counts on from the stored conversation's usage, so [`usage_limits`][pydantic_ai.usage.UsageLimits], including the default `request_limit` of 50, cover the whole conversation rather than each request. A conversation that reaches a limit fails every later turn, since a failed run isn't saved, so pass limits sized for a whole chat, or `UsageLimits(request_limit=None)`.
+- **Concurrent requests.** If another request saved the conversation while this one ran, this run's turn isn't saved, and the stream ends with a protocol error event asking the client to reload the conversation.
+- **Store failures.** If the store itself raises while loading or saving, the client's protocol error event, or the `500` that `dispatch_request` answers if the store fails before the run starts, says only that the conversation could not be loaded or saved, since a database error can hold queries or hostnames. The original exception's type and text go to a `UserWarning` on the server, and its type is recorded on the current OpenTelemetry span, if one is recording. A [`UserError`][pydantic_ai.exceptions.UserError] the store raises itself is the exception: it's sent to the client as is, so keep queries, hostnames and credentials out of it.
+
+After saving, the stream sends the ids of the stored [`ConversationEntry`][pydantic_ai.conversation_store.ConversationEntry]s to the client, so it can record them next to its own messages, for a rating, say: a transient Vercel AI `data-conversation-saved` part, or an AG-UI `pydantic_ai_conversation_saved` custom event, each with a `conversation_id` and a list of `entry_ids`. An adapter instance drives one run at a time, as [`from_request`][pydantic_ai.ui.UIAdapter.from_request] builds one per request.
+
+A run that fails or is stopped isn't saved, so the rules under "Runs that don't complete" above still apply.

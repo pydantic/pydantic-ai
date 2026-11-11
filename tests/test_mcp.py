@@ -29,6 +29,7 @@ import httpx
 import httpx2
 import pytest
 from inline_snapshot import snapshot
+from opentelemetry import propagate
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent, ToolsetTool, models
@@ -67,6 +68,9 @@ from pydantic_ai.usage import RunUsage
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 from .conftest import IsStr, try_import
+
+with try_import() as logfire_imports_successful:
+    import logfire
 
 with try_import() as imports_successful:
     from fastmcp.client import Client
@@ -1295,6 +1299,37 @@ A later <context> element with the same id replaces the earlier one and stays in
         async with toolset:
             tools = await toolset.get_tools(run_context)
             result = await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+        assert result == 'Echo: hi'
+
+    @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+    async def test_call_tool_returns_text_with_logfire_propagator(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext, tmp_path: Path
+    ):
+        """Logfire's propagator `RuntimeWarning` stays filtered instead of becoming the `tools/call` result.
+
+        fastmcp extracts the caller's trace context on the server, where logfire's default propagator warns.
+        Under `filterwarnings = ['error']`, a warning the `pyproject.toml` filter misses turns the call into an error.
+        """
+        # The call emits only the installed logfire's wording; these raise if the filter misses either one.
+        warnings.warn('Found propagated trace context.', RuntimeWarning)  # logfire < 5.5
+        warnings.warn('Found propagated context.', RuntimeWarning)  # logfire 5.5+
+        textmap = propagate.get_global_textmap()
+        instance = logfire.configure(
+            local=True,
+            send_to_logfire=False,
+            console=False,
+            metrics=False,
+            config_dir=tmp_path / 'logfire',
+            data_dir=tmp_path / 'logfire',
+        )
+        try:
+            toolset = MCPToolset(fastmcp_server)
+            async with toolset:
+                tools = await toolset.get_tools(run_context)
+                with instance.span('caller'):
+                    result = await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+        finally:
+            propagate.set_global_textmap(textmap)
         assert result == 'Echo: hi'
 
     async def test_tool_error_raises_model_retry(self, fastmcp_server: FastMCP[None], run_context: RunContext):

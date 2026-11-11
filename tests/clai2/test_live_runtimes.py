@@ -73,9 +73,12 @@ class _Output(io.StringIO):
 class Fleet:
     """One process whose `live.build` makes a runtime per folder, with that folder's agent, project, and console."""
 
-    def __init__(self, root: Path, *, builtin: tuple[PluginSettings, ...] = (RECORDER,)) -> None:
+    def __init__(
+        self, root: Path, *, builtin: tuple[PluginSettings, ...] = (RECORDER,), load_plugins: bool = True
+    ) -> None:
         Recorder.ended.clear()
         self.root = root
+        self.load_plugins = load_plugins
         self.process = ClaiProcess[None].open(SettingsStore(root / 'config.db'), builtin_plugins=builtin)
         self.agents: dict[str, Agent[None, str]] = {}
         self.projects: dict[str, ProjectSettings] = {}
@@ -112,6 +115,7 @@ class Fleet:
             workspace=directory,
             process=self.process,
             signals=False,
+            load_plugins=self.load_plugins,
         )
         self.runtimes[runtime.live_session.id] = runtime
         self.built.append(directory.name)
@@ -588,7 +592,8 @@ async def test_the_registry_counts_each_session_once(tmp_path: Path) -> None:
 
 async def test_a_closed_session_is_freed(tmp_path: Path) -> None:
     """Closing a live session stops it hearing the process's titles, so nothing keeps it alive (#11307)."""
-    fleet = Fleet(tmp_path, builtin=())
+    # Plugin loading runs an AnyIO worker-thread job that keeps the context naming this session past its result.
+    fleet = Fleet(tmp_path, builtin=(), load_plugins=False)
     with anyio.fail_after(20):
         async with fleet.live.serving():
             kept = await fleet.live.new(workspace=fleet.folder('kept'))

@@ -113,7 +113,7 @@ async def _run(
     except TimeoutError:
         raise GitError(f'{_label(args)} did not finish within {timeout:g} seconds.') from None
     except OSError as exc:
-        if not workspace.is_dir():
+        if not await to_thread.run_sync(workspace.is_dir):
             # Gone, or replaced by a file, since it was checked.
             raise LookupError(f'{workspace} no longer exists.') from None
         if isinstance(exc, FileNotFoundError):
@@ -209,7 +209,7 @@ async def _read(workspace: Path, *, pull_request: bool) -> tuple[Path, GitStatus
     Its paths are Git's own, with any byte that is not UTF-8 kept as a surrogate; `git_status` shows them.
     Without `pull_request`, whether one can be opened is not checked, which asks `gh`, and is `None`.
     """
-    _directory(workspace)
+    await to_thread.run_sync(_directory, workspace)
     top = await _try_git(workspace, 'rev-parse', '--show-toplevel')
     if not top:
         return None
@@ -384,7 +384,9 @@ async def _commit_paths(root: Path, chosen: list[ChangedFile], *, message: str) 
     """Commit only `chosen`, whatever else is staged."""
     # New files must be known to Git before `commit PATHS` takes them; a deleted or renamed-away one
     # is known already, and `add` would refuse one no longer in the index.
-    present = [file.path for file in chosen if (root / file.path).is_symlink() or (root / file.path).exists()]
+    present = await to_thread.run_sync(
+        lambda: [file.path for file in chosen if (root / file.path).is_symlink() or (root / file.path).exists()]
+    )
     if present:
         await _git(root, 'add', '--all', '--pathspec-from-file=-', '--pathspec-file-nul', input=_pathspecs(present))
     paths = [path for file in chosen for path in (file.path, file.original) if path is not None]
