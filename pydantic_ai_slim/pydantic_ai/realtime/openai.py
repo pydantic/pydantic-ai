@@ -62,7 +62,7 @@ from ..messages import (
     ToolCallPart,
 )
 from ..models import ModelRequestParameters
-from ..models.openai import _map_api_errors as map_openai_api_errors  # pyright: ignore[reportPrivateUsage]
+from ..models.openai._errors import map_api_errors as map_openai_api_errors
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
