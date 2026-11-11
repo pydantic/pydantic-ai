@@ -34,7 +34,7 @@ from pydantic_clai2.ui.prompt.image_input import (
     read_image,
     read_images,
 )
-from tests.conftest import no_leaked_tasks
+from tests.conftest import IsStr, no_leaked_tasks
 
 
 @pytest.fixture
@@ -122,22 +122,102 @@ def test_clipboard_backend(image_path: Path, monkeypatch: pytest.MonkeyPatch, ki
             clipboard_images()
 
 
+_CLIPBOARD_BACKEND_ERROR = 'wl-paste or xclip is required for ImageGrab.grabclipboard() on Linux. '
+_CLIPBOARD_TRANSPORT_GUIDANCE = (
+    'Run in an accessible graphical session, check your remote clipboard bridge if using SSH, '
+    'or paste an image file path accessible on this machine.'
+)
+_NO_CLIPBOARD_IMAGE = 'No image in the clipboard. Copy an image or paste an image file path.'
+
+
 @pytest.mark.parametrize(
     'display,binaries,distribution,stderr,expected',
     [
-        ('wayland', ['apt-get'], 'ubuntu', None, 'sudo apt-get install wl-clipboard'),
-        ('x11', ['apt-get'], 'debian', None, 'sudo apt-get install xclip'),
-        ('x11', ['dnf'], 'fedora', None, 'sudo dnf install xclip'),
-        ('x11', ['pacman'], 'arch', None, 'sudo pacman -S xclip'),
-        ('wayland', ['apk'], 'alpine', None, 'sudo apk add wl-clipboard'),
-        ('x11', ['apt-get'], 'unknown', None, "distribution's package manager"),
-        ('x11', [], 'ubuntu', None, "distribution's package manager"),
-        ('headless', [], 'ubuntu', None, 'remote clipboard bridge'),
-        ('headless', ['xclip'], 'ubuntu', b"Error: Can't open display: (null)", 'remote clipboard bridge'),
-        ('wayland', ['wl-paste'], 'ubuntu', b'Failed to connect to a Wayland server', 'graphical session'),
-        ('x11', ['xclip'], 'ubuntu', b'target image/png not available', 'No image in the clipboard'),
-        ('x11', ['xclip'], 'ubuntu', b'No selection', 'No image in the clipboard'),
-        ('x11', ['xclip'], 'ubuntu', b'', 'cannot identify image file'),
+        (
+            'wayland',
+            ['apt-get'],
+            'ubuntu',
+            None,
+            _CLIPBOARD_BACKEND_ERROR
+            + 'Install `wl-clipboard` with `sudo apt-get install wl-clipboard`. '
+            + _CLIPBOARD_TRANSPORT_GUIDANCE,
+        ),
+        (
+            'x11',
+            ['apt-get'],
+            'debian',
+            None,
+            _CLIPBOARD_BACKEND_ERROR
+            + 'Install `xclip` with `sudo apt-get install xclip`. '
+            + _CLIPBOARD_TRANSPORT_GUIDANCE,
+        ),
+        (
+            'x11',
+            ['dnf'],
+            'fedora',
+            None,
+            _CLIPBOARD_BACKEND_ERROR
+            + 'Install `xclip` with `sudo dnf install xclip`. '
+            + _CLIPBOARD_TRANSPORT_GUIDANCE,
+        ),
+        (
+            'x11',
+            ['pacman'],
+            'arch',
+            None,
+            _CLIPBOARD_BACKEND_ERROR + 'Install `xclip` with `sudo pacman -S xclip`. ' + _CLIPBOARD_TRANSPORT_GUIDANCE,
+        ),
+        (
+            'wayland',
+            ['apk'],
+            'alpine',
+            None,
+            _CLIPBOARD_BACKEND_ERROR
+            + 'Install `wl-clipboard` with `sudo apk add wl-clipboard`. '
+            + _CLIPBOARD_TRANSPORT_GUIDANCE,
+        ),
+        (
+            'x11',
+            ['apt-get'],
+            'unknown',
+            None,
+            _CLIPBOARD_BACKEND_ERROR
+            + "Install `xclip` using your distribution's package manager. "
+            + _CLIPBOARD_TRANSPORT_GUIDANCE,
+        ),
+        (
+            'x11',
+            [],
+            'ubuntu',
+            None,
+            _CLIPBOARD_BACKEND_ERROR
+            + "Install `xclip` using your distribution's package manager. "
+            + _CLIPBOARD_TRANSPORT_GUIDANCE,
+        ),
+        ('headless', [], 'ubuntu', None, _CLIPBOARD_BACKEND_ERROR + _CLIPBOARD_TRANSPORT_GUIDANCE),
+        (
+            'headless',
+            ['xclip'],
+            'ubuntu',
+            b"Error: Can't open display: (null)",
+            "xclip error: Error: Can't open display: (null). " + _CLIPBOARD_TRANSPORT_GUIDANCE,
+        ),
+        (
+            'wayland',
+            ['wl-paste'],
+            'ubuntu',
+            b'Failed to connect to a Wayland server',
+            'wl-paste error: Failed to connect to a Wayland server. ' + _CLIPBOARD_TRANSPORT_GUIDANCE,
+        ),
+        ('x11', ['xclip'], 'ubuntu', b'target image/png not available', _NO_CLIPBOARD_IMAGE),
+        ('x11', ['xclip'], 'ubuntu', b'No selection', _NO_CLIPBOARD_IMAGE),
+        (
+            'x11',
+            ['xclip'],
+            'ubuntu',
+            b'',
+            IsStr(regex=r'^cannot identify image file <_io\.BytesIO object at 0x[0-9a-fA-F]+>$'),
+        ),
     ],
 )
 async def test_clipboard_diagnostics(
@@ -168,16 +248,7 @@ async def test_clipboard_diagnostics(
     monkeypatch.setattr(image_input.ImageGrab.subprocess, 'run', run)
     with pytest.raises((OSError, ValueError, NotImplementedError)) as raised:
         await anyio.to_thread.run_sync(clipboard_images)
-    message = str(raised.value)
-    assert expected in message
-    if stderr and 'No image' not in expected:
-        assert stderr.decode() in message
-    if stderr is not None or display == 'headless':
-        assert 'Install' not in message
-    if distribution == 'unknown':
-        assert 'sudo' not in message
-    if 'No image' in expected or 'cannot identify' in expected:
-        assert 'remote clipboard bridge' not in message
+    assert str(raised.value) == expected
 
 
 async def test_headless_clipboard_shim_keeps_pillow_argv(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

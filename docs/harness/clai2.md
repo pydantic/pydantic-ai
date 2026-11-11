@@ -17,30 +17,11 @@ is the terminal's text paste, not CLAI's clipboard-image shortcut. You can also
 paste or drag an existing image file path into the prompt using your terminal's
 bracketed-paste support.
 
-Paste errors appear in the footer without submitting a message. They clear after
-30 seconds, even without keyboard input, so the status row can return. Each new
-paste error starts its own 30-second lifetime. Expiry preserves your draft,
-attachments, and queued input; it does not clear a newer notice. Successful
-attachment feedback and unrelated notices do not use this timeout.
+Paste errors clear from the footer after 30 seconds, even without keyboard input,
+without losing your draft, attachments, or queued input.
 
-Clipboard access uses Pillow's native Windows and macOS backends. On Linux,
-Pillow uses `wl-paste` (from `wl-clipboard`) for Wayland or `xclip` for X11.
-If the active desktop backend's binary is missing, CLAI names the package to
-install. It includes an installation command only when it recognizes your
-Linux distribution and finds its package manager; otherwise, use your
-distribution's package manager.
-
-If an installed backend cannot read the clipboard, check access to the graphical
-session or, over SSH, your remote clipboard bridge. Installing the package again
-does not restore that access. A working remote bridge can provide clipboard
-images in a headless session. Alternatively, paste a path to an image accessible
-on the machine running CLAI. CLAI leaves your existing clipboard transport
-unchanged and reads the clipboard only when you invoke the image shortcut.
-Linux setup advice is not added to Windows or macOS errors, or to errors about
-an empty clipboard, image decoding, or attachment limits.
-
-See the [image-paste reference](../../src/pydantic_clai2/docs/reference.md#pasting-images)
-for supported formats, attachment limits, and image markers.
+See the [image-paste reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#pasting-images)
+for Linux clipboard setup, remote bridges, error guidance, and attachment limits.
 
 ## Word deletion
 

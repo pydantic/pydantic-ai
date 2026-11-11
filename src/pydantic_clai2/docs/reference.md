@@ -1204,10 +1204,8 @@ If an installed backend cannot read the clipboard, check access to the graphical
 session or, over SSH, your remote clipboard bridge. Installing the package again
 does not restore that access. A working remote bridge can provide clipboard
 images in a headless session. Alternatively, paste a path to an image accessible
-on the machine running CLAI. CLAI leaves your existing clipboard transport
-unchanged and reads the clipboard only when you invoke the image shortcut.
-Linux setup advice is not added to Windows or macOS errors, or to errors about
-an empty clipboard, image decoding, or attachment limits.
+on the machine running CLAI. The clipboard is read only when you invoke the
+image shortcut.
 
 Use a model that accepts images. CLAI sends the image bytes to the selected model;
 provider-specific size and format restrictions can still apply. Each source file
