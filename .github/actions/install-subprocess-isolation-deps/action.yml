@@ -9,9 +9,15 @@ runs:
     # job's timeout on those retries.
     #
     # These are noble builds: run every job that uses this action on `ubuntu-24.04`.
-    # Each hash matches the signed noble-updates Packages index. Source packages:
+    # Source packages:
     #   bubblewrap: http://archive.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_0.9.0-1ubuntu0.3.dsc
     #   socat: http://archive.ubuntu.com/ubuntu/pool/main/s/socat/socat_1.8.0.0-4ubuntu0.1.dsc
+    #
+    # The pins do not receive Ubuntu security updates. To refresh them, download the current .debs
+    # from the same pool directories. Check each sha256 against its `SHA256:` line in
+    # dists/noble-updates/main/binary-amd64/Packages.gz, and that file's sha256 against
+    # dists/noble-updates/InRelease after `gpgv --keyring /usr/share/keyrings/ubuntu-archive-keyring.gpg`
+    # accepts InRelease. Then replace the files, the hashes and the source URLs here.
     - name: Install bubblewrap and socat
       shell: bash
       working-directory: ${{ github.action_path }}
@@ -21,4 +27,5 @@ runs:
         2461f1beee9cb04c8942739fe1a2b37e7b7c2a3d518f0779dc75f9245baa3094  bubblewrap_0.9.0-1ubuntu0.3_amd64.deb
         46e854289b6b1c97e28be5d9293bea61e8633d00d6a65d9513f019c7232696fe  socat_1.8.0.0-4ubuntu0.1_amd64.deb
         EOF
-        sudo dpkg -i bubblewrap_0.9.0-1ubuntu0.3_amd64.deb socat_1.8.0.0-4ubuntu0.1_amd64.deb
+        # Keep a newer version that the runner image already ships.
+        sudo dpkg -i --refuse-downgrade bubblewrap_0.9.0-1ubuntu0.3_amd64.deb socat_1.8.0.0-4ubuntu0.1_amd64.deb
