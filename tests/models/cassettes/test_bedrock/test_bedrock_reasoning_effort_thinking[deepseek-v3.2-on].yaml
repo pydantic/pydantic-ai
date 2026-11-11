@@ -44,16 +44,16 @@ interactions:
                 reasoningText:
                   text: |-
                     We are asked: "What is 17 * 23?" This is a straightforward multiplication. We can compute it directly.
-                    
+
                     17 * 23 = ?
-                    
-                    We can compute: 
+
+                    We can compute:
                     17 * 20 = 340
                     17 * 3 = 51
                     Sum: 340 + 51 = 391.
-                    
+
                     Alternatively, using standard multiplication: 17 * 23 = 391.
-                    
+
                     Thus, the answer is 391.
             - text: The product of 17 and 23 is 391.
             role: assistant
