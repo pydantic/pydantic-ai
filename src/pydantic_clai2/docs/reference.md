@@ -811,6 +811,9 @@ the model uses it, unless a pooled account falls back to the one saved for its o
 must be HTTPS. A chain uses each of its models' own `base_url`, so its settings and a
 plugin model's have no Base URL row; a provider with no endpoint, such as
 `sentence-transformers`, fails the turn.
+CLAI versions before this setting ignore it and send to the provider's default
+endpoint, so if you depend on a gateway, also set the provider's environment variable
+or don't downgrade.
 
 For `/set` and `/model add`, Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,

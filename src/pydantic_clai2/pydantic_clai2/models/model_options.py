@@ -10,6 +10,8 @@ from pydantic_clai2.models.profiles import base_model, provider_of
 
 def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
     """Offer native controls only for the provider that will consume them, whichever profile runs it."""
+    from pydantic_clai2.models.key_profiles import takes_endpoint
+
     provider, _, name = base_model(model).partition(':')
     name = name.rsplit('/', 1)[-1]
     family_defaults = bool(gpt_defaults(model=model))
@@ -30,7 +32,8 @@ def model_options(*, model: str) -> dict[str, tuple[str, ...]]:
         if provider in ('openrouter', 'vllm') or (provider == 'azure' and family_defaults):
             options = _openai_options(provider='openai-chat', name=name, family_defaults=family_defaults)
     options['cache'] = ()
-    options['base_url'] = ()
+    if takes_endpoint(provider):
+        options['base_url'] = ()
     options.update(_glm_options(name=name))
     return options
 

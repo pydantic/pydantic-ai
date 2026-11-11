@@ -181,12 +181,26 @@ def build_provider(provider: str, *, key: str | None = None, base_url: str | Non
         return gateway_provider(provider.removeprefix('gateway/'), api_key=key, base_url=base_url)
     if provider == 'xai' and base_url is not None:
         base_url = urlsplit(base_url).netloc or base_url  # xAI's gRPC `api_host` is `host:port`, not a URL.
-    options = {'api_key': key, URL_ARGUMENTS.get(provider, 'base_url'): base_url}
+    options = {'api_key': key, _url_argument(provider): base_url}
     options = {name: value for name, value in options.items() if value is not None}
     provider_class = keyed_provider(provider, *options)
     if provider_class is None:
         raise _no_profiles(provider) if base_url is None else no_endpoint(provider)
     return provider_class(**options)
+
+
+def takes_endpoint(provider: str) -> bool:
+    """Whether `build_provider` can send `provider:` models to a `base_url`, as plugin providers' cannot."""
+    if provider.startswith('gateway/'):
+        return True
+    try:
+        return keyed_provider(provider, _url_argument(provider)) is not None
+    except ImportError:  # A known provider; building it reports the missing extra.
+        return True
+
+
+def _url_argument(provider: str) -> str:
+    return URL_ARGUMENTS.get(provider, 'base_url')
 
 
 def no_endpoint(provider: str) -> UserError:

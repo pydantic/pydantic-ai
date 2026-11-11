@@ -17,7 +17,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai_codex import OpenAICodexModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.providers import infer_provider_class
+from pydantic_ai.providers import Provider, infer_provider_class
 from pydantic_ai.providers.github_copilot import GitHubCopilotCredentials
 from pydantic_clai2.config.credential_store import save_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -184,6 +184,14 @@ def test_a_provider_without_an_endpoint_fails_clearly() -> None:
         key_profiles.build_provider('sentence-transformers', base_url=URL)
 
 
+def test_a_known_provider_without_its_extra_still_offers_a_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing_extra(provider: str) -> type[Provider[object]]:
+        raise ImportError(f'install the `{provider}` extra')
+
+    monkeypatch.setattr(key_profiles, 'infer_provider_class', missing_extra)
+    assert key_profiles.takes_endpoint('mistral')
+
+
 def test_openai_chatgpt_takes_the_base_url_and_still_needs_its_sign_in() -> None:
     with pytest.raises(UserError, match='`OpenAIChatGPTProvider` needs `credentials` or a `credential_source`'):
         key_profiles.build_provider('openai-chatgpt', base_url=URL)
@@ -262,3 +270,5 @@ def test_base_url_is_a_model_setting_that_no_request_carries(tmp_path: Path) -> 
     )
     store.save_chain(name='both', models=['openai:gpt-5', 'openai:gpt-4.1'])
     assert FieldMenu(ModelSettingsSource(store, 'chain:both', settings_as='openai:gpt-5')).row_for('base_url') is None
+    assert FieldMenu(ModelSettingsSource(store, 'single:x')).row_for('base_url') is None
+    assert FieldMenu(ModelSettingsSource(store, 'gateway/openai:gpt-5')).row_for('base_url') is not None

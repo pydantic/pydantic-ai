@@ -278,4 +278,4 @@ def test_azure_without_family_defaults_keeps_generic_rows(model: str) -> None:
 
 @pytest.mark.parametrize('model', ['custom:gpt-6', 'custom:o3'])
 def test_unknown_provider_does_not_claim_chat_protocol_support(model: str) -> None:
-    assert set(model_options(model=model)) == {'max_tokens', 'thinking', 'custom_params', 'cache', 'base_url'}
+    assert set(model_options(model=model)) == {'max_tokens', 'thinking', 'custom_params', 'cache'}
