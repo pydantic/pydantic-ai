@@ -173,6 +173,8 @@ class SettingsMenu:
     searchable: bool = True
     """Whether the terminal list can be filtered.
 
-    Lists offering boolean Space toggles use `/` to start search; printable keys then edit the query.
-    Lists without eligible toggleable rows filter as you type and keep uppercase `R` for reset.
+    Lists offering Space cycling use `/` to start search; printable keys then edit the query.
+    Cycling requires multiple declared choices and no action/submenu mapping.
+    Lists without eligible rows filter as you type and keep uppercase `R` for reset.
+    Nonsearchable lists have no search and use lowercase `r` for reset.
     """

@@ -122,9 +122,9 @@ class FieldMenu:
         return '\n'.join(lines)
 
     def build(self, initial: int = 0) -> Menu:
-        """The field list: boolean toggles use slash search; other searchable lists filter as you type."""
+        """The field list: choice cycling uses slash search; other searchable lists filter as you type."""
         self.rows = list(self._source.rows())
-        toggle_hint = 'Space toggle - ' if any(self.toggleable(row) for row in self.rows) else ''
+        cycle_hint = 'Space cycle - ' if any(self.can_cycle(row) for row in self.rows) else ''
         builder = (
             MenuBuilder(self._source.title)
             .style(markdown_style())
@@ -132,34 +132,35 @@ class FieldMenu:
             .initial_index(min(initial, len(self.rows) - 1))
             .preview(self.details)
         )
-        if self._searchable and toggle_hint:
+        if self._searchable and cycle_hint:
             return slash_search(
                 builder,
-                footer=toggle_hint + _LIST_HINT,
+                footer=cycle_hint + _LIST_HINT,
                 key_source=menu_key,
-                hotkeys={' ': self.toggle, 'R': self._reset_key},
+                hotkeys={' ': self.cycle, 'R': self._reset_key},
             )
-        # Only toggle-bearing lists need hotkey routing; keep ordinary filtering for the rest.
+        # Only lists offering choice cycling need hotkey routing; keep ordinary filtering for the rest.
         if self._searchable:
             builder.searchable().on_key('R', self._reset_key).footer_hint('type to filter - ' + _LIST_HINT)
         else:
             builder.list_width(46).on_key('r', self._reset_key).footer_hint(
-                toggle_hint + 'Enter edit - r reset - Esc back'
+                cycle_hint + 'Enter edit - r reset - Esc back'
             )
-            if toggle_hint:
-                builder.on_key(' ', self.toggle)
+            if cycle_hint:
+                builder.on_key(' ', self.cycle)
         return builder.key_source(menu_key).build()
 
-    def toggleable(self, row: FieldRow) -> bool:
-        """Only boolean value rows toggle; action and submenu rows keep their own flow."""
-        return row.choices in (('true', 'false'), ('false', 'true')) and row.key not in self.action_keys
+    def can_cycle(self, row: FieldRow) -> bool:
+        """Rows with multiple choices cycle; action and submenu rows keep their own flow."""
+        return len(row.choices) > 1 and row.key not in self.action_keys
 
-    def toggle(self, menu: Menu, item: MenuItem) -> None:
-        """Space toggles a boolean through its source and redraws without reopening the list."""
+    def cycle(self, menu: Menu, item: MenuItem) -> None:
+        """Space advances to the next declared choice, wrapping, without reopening the list."""
         row = self.row_for(item.value)
-        if row is not None and self.toggleable(row):
+        if row is not None and self.can_cycle(row):
             current = self._source.current(row)
-            self.messages.append(self.apply(row, 'false' if current == 'true' else 'true'))
+            index = row.choices.index(current) + 1 if current in row.choices else 0
+            self.messages.append(self.apply(row, row.choices[index % len(row.choices)]))
             self.rows = list(self._source.rows())
             menu.replace_items(self.items())
 
