@@ -55,6 +55,7 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
+from ..computer_use import _CALL_LABELS  # pyright: ignore[reportPrivateUsage]
 from ..durable_exec._operation_backend import in_durable_unit
 from ..exceptions import (
     ModelConnectionError,
@@ -3035,19 +3036,21 @@ def _continuation_digest(history: _Hasher, parts: Sequence[ModelResponsePart]) -
 
 
 def _call_as_sent(part: ToolCallPart) -> ToolCallPart:
-    """`part` as the server holds it: a base call, without the `tool_kind` the agent graph stamps on after `request()`.
+    """`part` as the server holds it: a base call, without what the agent graph adds after `request()`.
 
-    The digest is taken in `request()`, and the graph then promotes the call to its kind's typed subclass. Neither
-    the kind nor the subclass is sent, so leaving them in would make a response compared later never match.
+    The digest is taken in `request()`, and the graph then promotes the call to its kind's typed subclass and labels a
+    `computer` call with the coordinates and screenshot size of the model that made it. None of that is sent, so
+    leaving it in would make a response compared later never match.
     """
     args = part.args if part.args is None or isinstance(part.args, str) else {**part.args}
+    details = {key: value for key, value in (part.provider_details or {}).items() if key not in _CALL_LABELS}
     return ToolCallPart(
         tool_name=part.tool_name,
         args=args,
         tool_call_id=part.tool_call_id,
         id=part.id,
         provider_name=part.provider_name,
-        provider_details=part.provider_details,
+        provider_details=details or None,
     )
 
 
