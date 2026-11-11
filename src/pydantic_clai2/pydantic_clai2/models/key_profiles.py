@@ -11,6 +11,7 @@ import json
 import re
 from functools import partial
 from typing import Annotated, Protocol, TypeGuard
+from urllib.parse import urlsplit
 
 from anyio import to_thread
 from prompt_toolkit import PromptSession
@@ -177,6 +178,8 @@ def build_provider(provider: str, *, key: str | None = None, base_url: str | Non
         from pydantic_ai.providers.gateway import gateway_provider
 
         return gateway_provider(provider.removeprefix('gateway/'), api_key=key, base_url=base_url)
+    if provider == 'xai' and base_url is not None:
+        base_url = urlsplit(base_url).netloc or base_url  # xAI's gRPC `api_host` is `host:port`, not a URL.
     options = {'api_key': key, URL_ARGUMENTS.get(provider, 'base_url'): base_url}
     options = {name: value for name, value in options.items() if value is not None}
     provider_class = keyed_provider(provider, *options)

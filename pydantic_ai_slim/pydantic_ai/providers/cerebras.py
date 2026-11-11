@@ -142,6 +142,7 @@ class CerebrasProvider(_OpenAISDKProvider):
 
         default_headers = {'X-Cerebras-3rd-Party-Integration': 'pydantic-ai'}
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
         self._base_url = base_url or 'https://api.cerebras.ai/v1'
         if openai_client is not None:
             self._client = openai_client

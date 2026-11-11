@@ -92,7 +92,7 @@ class ModelResolver:
         """
         from pydantic_clai2.models.chains import chain_name
 
-        base_url = self._base_url(name)
+        base_url = await self._base_url(name)
         if (chain := chain_name(name)) is not None:
             if base_url is not None:
                 raise _no_endpoint(name)
@@ -108,9 +108,11 @@ class ModelResolver:
                 return await self._fall_back(members, ref.name, base_url=base_url)
         return await self._one_account(name, base_url=base_url)
 
-    def _base_url(self, name: str) -> str | None:
+    async def _base_url(self, name: str) -> str | None:
         """The endpoint `/model settings` saved for `name`, which its accounts all use."""
-        base_url = self.store.model_settings(name).get('base_url') if self.store else None
+        if (store := self.store) is None:
+            return None
+        base_url = await to_thread.run_sync(lambda: store.model_settings(name).get('base_url'), abandon_on_cancel=True)
         return base_url if isinstance(base_url, str) else None
 
     async def _one_account(self, name: str, *, base_url: str | None) -> Model | str:

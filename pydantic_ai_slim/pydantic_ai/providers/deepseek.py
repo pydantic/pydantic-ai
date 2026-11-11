@@ -128,6 +128,7 @@ class DeepSeekProvider(_OpenAISDKProvider):
                 ' to use the DeepSeek provider.'
             )
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
         self._base_url = base_url or 'https://api.deepseek.com'
         if openai_client is not None:
             self._client = openai_client

@@ -95,6 +95,7 @@ class OVHcloudProvider(_OpenAISDKProvider):
                 '`OVHcloudProvider(api_key=...)` to use OVHcloud AI Endpoints provider.'
             )
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
         self._base_url = base_url or 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1'
         if openai_client is not None:
             self._client = openai_client

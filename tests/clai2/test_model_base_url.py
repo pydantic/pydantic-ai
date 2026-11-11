@@ -151,7 +151,8 @@ def resolver(store: SettingsStore, providers: dict[str, ModelProvider] | None = 
 def test_every_provider_is_built_with_the_base_url(provider: str) -> None:
     try:
         infer_provider_class(provider.removeprefix('gateway/'))
-    except ImportError as exc:  # pragma: lax no cover - a cell without this provider's extra
+    # A cell without this provider's extra.
+    except ImportError as exc:  # pragma: lax no cover
         pytest.skip(str(exc))
     for key in (None,) if provider in UNKEYED else (None, 'sk-profile'):
         built = key_profiles.build_provider(provider, key=key, base_url=URL)
@@ -162,8 +163,9 @@ def test_xai_takes_the_base_url_as_its_api_host() -> None:
     pytest.importorskip('xai_sdk', reason='needs the `xai` extra')
     from pydantic_ai.providers.xai import XaiProvider
 
-    built = key_profiles.build_provider('xai', key='sk-profile', base_url='gateway.example')
-    assert isinstance(built, XaiProvider) and built.api_host == 'gateway.example'
+    for base_url in ('gateway.example:8443', 'https://gateway.example:8443/v1'):
+        built = key_profiles.build_provider('xai', key='sk-profile', base_url=base_url)
+        assert isinstance(built, XaiProvider) and built.api_host == 'gateway.example:8443'
 
 
 def test_a_provider_without_an_endpoint_fails_clearly() -> None:

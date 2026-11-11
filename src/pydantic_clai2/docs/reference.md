@@ -804,7 +804,8 @@ Set `base_url` to send a model's requests to your own endpoint, such as a corpor
 proxy, an AI gateway, or a self-hosted server. It is saved per model, so two models of
 one provider can use different endpoints, and it wins over the provider's environment
 variable, such as `OPENAI_BASE_URL`. It sets the provider's own endpoint option:
-`azure_endpoint` for Azure, `api_host` for xAI, and `api_base` for LiteLLM. Every
+`azure_endpoint` for Azure, `api_base` for LiteLLM, and `api_host` for xAI, which
+takes the URL's host and port. Every
 account of the model uses it, and `openai-codex` sends its credentials to that host,
 which must be HTTPS. A chain uses each of its models' own `base_url`. A provider with
 no endpoint, such as `sentence-transformers` or a plugin's, fails the turn.

@@ -110,6 +110,7 @@ class VercelProvider(_OpenAISDKProvider):
 
         default_headers = {'http-referer': 'https://pydantic.dev/docs/ai/', 'x-title': 'pydantic-ai'}
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
         self._base_url = base_url or 'https://ai-gateway.vercel.sh/v1'
         if openai_client is not None:
             self._client = openai_client

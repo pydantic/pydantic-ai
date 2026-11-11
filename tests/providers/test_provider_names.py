@@ -151,6 +151,8 @@ def test_provider_base_url_replaces_the_default(provider: str):
     custom = provider_cls(api_key='api-key', base_url='https://gateway.example/v1')
     assert custom.base_url == 'https://gateway.example/v1' != provider_cls(api_key='api-key').base_url
     assert custom.client.base_url == 'https://gateway.example/v1/'
+    with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `base_url`'):
+        provider_cls(openai_client=custom.client, base_url='https://gateway.example/v1')
 
 
 @pytest.mark.parametrize('removed_prefix', ['google-gla', 'google-vertex', 'vertexai'])

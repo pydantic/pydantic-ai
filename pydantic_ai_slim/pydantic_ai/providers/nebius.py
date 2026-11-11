@@ -103,6 +103,7 @@ class NebiusProvider(_OpenAISDKProvider):
                 '`NebiusProvider(api_key=...)` to use the Nebius AI Studio provider.'
             )
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
         self._base_url = base_url or 'https://api.studio.nebius.com/v1'
         if openai_client is not None:
             self._client = openai_client

@@ -429,14 +429,14 @@ class OpenAIChatGPTProvider(OAuthCredentialsProvider[OpenAIChatGPTCredentials]):
                 [`OpenAIChatGPTCredentialSource`][pydantic_ai.providers.openai_chatgpt.OpenAIChatGPTCredentialSource].
                 Mutually exclusive with `credentials`.
             base_url: The base URL to use for requests, if not provided, `https://api.openai.com/v1` will be used.
-                Credentials are injected on requests to its host, which must be served over HTTPS.
+                Credentials are injected on requests to its origin (host and port), which must be served over HTTPS.
             openai_client: An existing `AsyncOpenAI` client to use as-is. Opts out of credential
                 injection entirely; `credentials`, `credential_source`, `base_url`, and `http_client`
                 must be `None`.
             http_client: An existing `httpx2.AsyncClient` to use. Must be dedicated to this
                 provider (no auth of its own): the provider attaches its credential-injecting auth to it, and
                 sharing a client between providers would mix their credentials. The auth only
-                injects credentials on HTTPS requests to the `base_url` host, so the client can safely
+                injects credentials on HTTPS requests to the `base_url` origin, so the client can safely
                 be reused for other destinations.
         """
         if openai_client is None and credentials is None and credential_source is None:
