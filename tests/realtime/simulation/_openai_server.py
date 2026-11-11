@@ -666,7 +666,7 @@ class OpenAIServer:
             # Eleven Realtime gives up on a finished response's calls still without results once a response starts after
             # the user said something since the first of them (`ElevenLabsRealtimeConnection` documents it): their
             # results never reach the model.
-            said = [input_.seq for input_ in self.truth.inputs if input_.kind in ('text', 'context', 'image', 'speech')]
+            said = [input_.seq for input_ in self.truth.inputs if input_.kind in ('text', 'image', 'speech')]
             for caller in self.truth.responses.values():
                 calls = [self.truth.tool_calls[call_id] for call_id in caller.tool_calls]
                 if caller.status == 'completed' and calls and any(seq > calls[0].seq for seq in said):

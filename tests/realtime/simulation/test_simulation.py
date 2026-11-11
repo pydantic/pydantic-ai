@@ -1730,6 +1730,11 @@ def test_eleven_realtime_reply_to_an_interjection_abandons_the_calls_before_it()
         sim.finish()
         assert sim.tools.pending()
         assert len(sim.turn_completes) == 1
+        # Its result still goes out, asking for no reply; the next turn's reply gives up on nothing more.
+        sim.finish_tool()
+        sim.send_text()
+        sim.finish()
+        assert len(sim.turn_completes) == 2
 
     run_clean(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', dialect='elevenlabs')), scenario)
 
