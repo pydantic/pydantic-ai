@@ -105,6 +105,7 @@ _NON_CAPABILITY_PAGES = {
     'AGENTS.md',
     'CLAUDE.md',
     'clai2.md',
+    'cloud-storage-mounts.md',
     'examples.md',
     'gh-aw.md',
     'index.md',

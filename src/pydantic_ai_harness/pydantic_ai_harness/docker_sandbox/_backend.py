@@ -46,6 +46,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._mounts import MountError
 from pydantic_ai_harness._workspace_provider import check_provider, check_timeout, command_argv, stop_shielded
 
 __all__ = ('DockerSandboxBackend', 'remove_container')
@@ -172,6 +173,10 @@ _CLIENT_ENV = (
     'XDG_RUNTIME_DIR',
 )
 """Passed to the local `docker` client, on top of `LocalWorkspaceBackend`'s, so it finds the daemon it's configured for."""
+
+_FUSE_CHECK = 'if [ -c /dev/fuse ]; then exec "$@"; fi; head -n 1 > /dev/null; exit 86'
+"""Runs a root command only in a container with the FUSE device that mounting needs; it reads the stdin line either way."""
+_NO_FUSE = 86
 
 
 def _after_ready(stderr: str) -> str:
@@ -454,6 +459,26 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             raise WorkspaceUnavailableError(f'Docker workspace {self._name}: the container stopped during the command')
         return CommandResult(
             exit_code=int(done[2]), stdout=result.stdout, stderr=stderr[: done.start()] + stderr[done.end() :]
+        )
+
+    async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
+        """Run `argv` as root in the container with `stdin` as its input, which reaches no command line or log."""
+        await self._acquire()
+        docker = [self._executable, 'exec', '--interactive', '--user', '0', '--workdir', '/', self._name]
+        env = {name: os.environ[name] for name in ('PATH', 'HOME', *_CLIENT_ENV) if name in os.environ}
+        result = await anyio.run_process(
+            [*docker, 'sh', '-c', _FUSE_CHECK, 'sh', *argv], input=stdin, check=False, env=env
+        )
+        if result.returncode == _NO_FUSE:
+            raise MountError(
+                f'Docker workspace {self._name} has no FUSE device, which mounts need. Create its container with '
+                "`docker_args=['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', "
+                "'apparmor:unconfined']`."
+            )
+        return CommandResult(
+            exit_code=result.returncode,
+            stdout=result.stdout.decode(errors='replace'),
+            stderr=result.stderr.decode(errors='replace'),
         )
 
     async def _stop(self, tag: str) -> None:

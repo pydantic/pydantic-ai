@@ -87,6 +87,12 @@ def test_sandboxes_check_owns_every_sandbox_backend(backend: str) -> None:
     assert select([_file(path)]) == {'sandboxes': [path]}
 
 
+def test_sandboxes_check_owns_the_mount_helper() -> None:
+    """The root helper that mounts buckets in every sandbox gets the sandbox review."""
+    path = 'src/pydantic_ai_harness/pydantic_ai_harness/_mounts/_helper.py'
+    assert select([_file(path)]) == {'sandboxes': [path]}
+
+
 @pytest.mark.parametrize(
     ('path', 'check'),
     [
