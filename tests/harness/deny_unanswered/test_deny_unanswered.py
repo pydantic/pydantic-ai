@@ -58,21 +58,20 @@ async def test_deny_unanswered_answers_approval_required_tool_in_run():
 
 
 @pytest.mark.parametrize(
-    ('capability', 'expected'),
+    ('question_message', 'expected'),
     [
-        pytest.param(DenyUnanswered(), DEFAULT_QUESTION_MESSAGE, id='default'),
-        pytest.param(
-            DenyUnanswered(question_message='Nobody is on duty; decide yourself.'),
-            'Nobody is on duty; decide yourself.',
-            id='custom',
-        ),
+        pytest.param(None, DEFAULT_QUESTION_MESSAGE, id='default'),
+        pytest.param('Nobody is on duty; decide yourself.', 'Nobody is on duty; decide yourself.', id='custom'),
     ],
 )
-async def test_deny_unanswered_answers_ask_user_question_in_run(capability: DenyUnanswered[None], expected: str):
+async def test_deny_unanswered_answers_ask_user_question_in_run(question_message: str | None, expected: str):
     """An unanswered `AskUser` question gets `question_message` as its tool result, and the run finishes."""
     agent = Agent(
         FunctionModel(_call_then_echo('ask_user_question', {'questions': QUESTION}, 'q1', 'done')),
-        capabilities=[AskUser(answerer=None), capability],
+        capabilities=[
+            AskUser(answerer=None),
+            DenyUnanswered() if question_message is None else DenyUnanswered(question_message=question_message),
+        ],
         output_type=[str, DeferredToolRequests],
     )
 
