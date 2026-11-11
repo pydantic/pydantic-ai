@@ -13,7 +13,6 @@ from griffe import (
     DocstringSectionParameters,
     DocstringSectionReturns,
     DocstringSectionText,
-    DocstringSectionWarns,
     GoogleOptions,
     NumpyOptions,
     SphinxOptions,
@@ -52,8 +51,12 @@ def doc_descriptions(
         return None, {}
 
     docstring_style = _infer_docstring_style(doc) if docstring_format == 'auto' else docstring_format
+    warnings_headers: list[str] = []
+    parsed_doc = doc
+    if docstring_style == 'google':
+        parsed_doc, warnings_headers = _google_warnings_as_admonitions(doc)
     docstring = Docstring(
-        doc,
+        parsed_doc,
         lineno=1,
         parser=docstring_style,
         parser_options=_parser_options(docstring_style),
@@ -69,10 +72,7 @@ def doc_descriptions(
             for param in section.value:
                 params.setdefault(param.name.lstrip('*'), param.description)
 
-    # Griffe parses a Google `Warnings:` section as a structured `Warns:` section, but authors write it as an
-    # admonition, so its written text reaches the model. The written blocks line up with griffe's warns sections.
-    google_warns = iter(_google_section_blocks(doc, _GOOGLE_WARNS_HEADER) if docstring_style == 'google' else [])
-    main_desc = _main_description(sections, docstring_style, google_warns)
+    main_desc = _main_description(sections, docstring_style, iter(warnings_headers))
 
     if return_ := next((p for p in sections if isinstance(p, DocstringSectionReturns)), None):
         main_desc = _main_desc_with_returns(return_, docstring_style, func, doc, main_desc)
@@ -81,27 +81,24 @@ def doc_descriptions(
 
 
 def _main_description(
-    sections: list[DocstringSection], docstring_style: DocstringStyle, google_warns: Iterator[tuple[str, str]]
+    sections: list[DocstringSection], docstring_style: DocstringStyle, warnings_headers: Iterator[str]
 ) -> str:
     """Build the main description from the docstring's text and admonition sections, in source order.
 
-    Text sections, recognized admonition sections (e.g. `Warning:`) and Google `Warnings:` sections are joined
-    where they appear, so prose after an admonition is kept too. `google_warns` yields the written header and
-    text of each Google `Warns:` or `Warnings:` section, in source order.
+    Text sections and recognized admonition sections (e.g. `Warning:`) are joined where they appear, so prose
+    after an admonition is kept too. `warnings_headers` yields the written header of each Google `Warnings:`
+    section, which was parsed as an admonition (see `_google_warnings_as_admonitions`), in source order.
     """
     main_desc_parts: list[str] = []
     for section in sections:
         if isinstance(section, DocstringSectionText):
             main_desc_parts.append(section.value)
         elif isinstance(section, DocstringSectionAdmonition):
-            main_desc_parts.append(f'{_admonition_header(section, docstring_style)}\n{section.value.contents}')
-        elif (
-            isinstance(section, DocstringSectionWarns)
-            and (written := next(google_warns, None))
-            and written[0].lower().startswith('warnings')
-        ):
-            header, text = written
-            main_desc_parts.append(f'{header.rstrip()}\n{text}')
+            if section.value.kind == _WARNINGS_ADMONITION_KIND:
+                header = next(warnings_headers)
+            else:
+                header = _admonition_header(section, docstring_style)
+            main_desc_parts.append(f'{header}\n{section.value.contents}')
     return '\n\n'.join(main_desc_parts)
 
 
@@ -133,7 +130,7 @@ def _main_desc_with_returns(
         # description instead of griffe splitting a type off at the first colon. Griffe's description is the tail of
         # the written text, which picks out the right section; if none matches, join griffe's parts back up.
         written = next(
-            (text for _, text in _google_section_blocks(doc, _GOOGLE_RETURNS_HEADER) if text.endswith(return_desc)),
+            (text for _, _, text in _google_section_blocks(doc, _GOOGLE_RETURNS_HEADER) if text.endswith(return_desc)),
             None,
         )
         return_desc = written or (f'{return_type}: {return_desc}' if return_type else return_desc)
@@ -148,11 +145,30 @@ def _main_desc_with_returns(
 # The header of a Google section or admonition, as griffe's Google parser matches it.
 _GOOGLE_SECTION_HEADER = re.compile(r'^[\w][\s\w-]*:(\s+[^\s].*)?\s*$')
 _GOOGLE_RETURNS_HEADER = re.compile(r'^returns:(\s|$)', re.IGNORECASE)
-_GOOGLE_WARNS_HEADER = re.compile(r'^(warns|warnings):(\s|$)', re.IGNORECASE)
+_GOOGLE_WARNINGS_HEADER = re.compile(r'^warnings:(\s|$)', re.IGNORECASE)
+_WARNINGS_ADMONITION_KIND = 'pydantic-ai-warnings'
 
 
-def _google_section_blocks(doc: str, header: re.Pattern[str]) -> list[tuple[str, str]]:
-    """The written header line and dedented text of each Google-style section whose header matches `header`.
+def _google_warnings_as_admonitions(doc: str) -> tuple[str, list[str]]:
+    """Rewrite each Google `Warnings:` section header so griffe parses the section as an admonition.
+
+    Griffe parses `Warnings:` like `Warns:`, as a list of warning classes, and drops any line without a colon. Authors
+    write it as prose for the reader, like a `Warning:` admonition, so it should reach the model the same way.
+    Returns the rewritten docstring and the written headers, in source order.
+    """
+    blocks = _google_section_blocks(doc, _GOOGLE_WARNINGS_HEADER)
+    if not blocks:
+        return doc, []
+    lines = cleandoc(doc.rstrip()).splitlines()
+    for i, _, _ in blocks:
+        lines[i] = f'{_WARNINGS_ADMONITION_KIND}:'
+    # The lines are already cleaned; the leading newline keeps griffe's `cleandoc` from dedenting them again, which
+    # it would if the first line were a section header.
+    return '\n' + '\n'.join(lines), [header.rstrip() for _, header, _ in blocks]
+
+
+def _google_section_blocks(doc: str, header: re.Pattern[str]) -> list[tuple[int, str, str]]:
+    """The line index (in the cleaned docstring), written header line and dedented text of each Google-style section whose header matches `header`.
 
     Griffe's parsed entries can't always be joined back into the written text: e.g. before the first colon of a
     returns entry, it strips parentheses and normalizes the text as a type expression. Sections are found the way
@@ -161,7 +177,7 @@ def _google_section_blocks(doc: str, header: re.Pattern[str]) -> list[tuple[str,
     """
     # Clean the same text griffe parses, so trailing whitespace can't differ.
     lines = cleandoc(doc.rstrip()).splitlines()
-    blocks: list[tuple[str, str]] = []
+    blocks: list[tuple[int, str, str]] = []
     in_fence = False
     i = 0
     while i < len(lines):
@@ -176,7 +192,7 @@ def _google_section_blocks(doc: str, header: re.Pattern[str]) -> list[tuple[str,
             and (block := _indented_block(lines[i:]))
         ):
             if header.match(line):
-                blocks.append((line, '\n'.join(block).rstrip('\n')))
+                blocks.append((i - 1, line, '\n'.join(block).rstrip('\n')))
             i += len(block)
     return blocks
 

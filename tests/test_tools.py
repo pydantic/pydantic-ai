@@ -5925,6 +5925,8 @@ def test_admonition_headers_reach_tool_description_as_written():
 def test_google_warnings_section_reaches_tool_description():
     """A Google `Warnings:` section reaches the model as written, in source order, like an admonition.
 
+    Griffe parses it like a `Warns:` section and would drop lines without a colon; the `Warns:` section stays dropped.
+
     Not a VCR test: the tool description is built from the docstring before any request is made.
     """
     test_model = TestModel()
@@ -5934,9 +5936,12 @@ def test_google_warnings_section_reaches_tool_description():
     def fetch_ad_rows(account_id: str) -> str:
         """Fetch ad rows for an account.
 
+        Warns:
+            Emitted when the account is archived.
+
         Warnings:
             Result rows are capped at 1000.
-            Blank spend: no data, not zero.
+            Blank spend means no data, not zero.
 
         Trailing prose after the warnings.
 
@@ -5954,10 +5959,33 @@ def test_google_warnings_section_reaches_tool_description():
         '\n'
         'Warnings:\n'
         'Result rows are capped at 1000.\n'
-        'Blank spend: no data, not zero.\n'
+        'Blank spend means no data, not zero.\n'
         '\n'
         'Trailing prose after the warnings.'
     )
+
+
+def test_google_warnings_section_opening_docstring():
+    """A `Warnings:` section that opens the docstring reaches the model with its written header.
+
+    Not a VCR test: the tool description is built from the docstring before any request is made.
+    """
+    test_model = TestModel()
+    agent = Agent(test_model)
+
+    def fetch_ad_rows(account_id: str) -> str:
+        return 'ok'
+
+    fetch_ad_rows.__doc__ = """
+    Warnings:
+        Result rows are capped at 1000.
+    """
+    agent.tool_plain(fetch_ad_rows)
+
+    agent.run_sync('Fetch my ad rows')
+    params = test_model.last_model_request_parameters
+    assert params is not None
+    assert params.function_tools[0].description == 'Warnings:\nResult rows are capped at 1000.'
 
 
 @pytest.mark.parametrize(
