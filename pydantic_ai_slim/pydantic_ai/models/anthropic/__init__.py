@@ -1696,7 +1696,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         prompt cache it reads) stays the same.
 
         With `thread_record`, the request uses a message thread when `anthropic_thread` is set (see
-        `_first_attempt`), and the record gets the fingerprint to stamp on the response when it did.
+        `_first_attempt`), and the record gets the fingerprint to stamp on the response when it did, or when threads
+        don't support the request.
         """
         prepared = await self._prepare_messages_create(
             messages,
@@ -1770,11 +1771,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         In a thread it's a continue request when possible, else a create. A continue request needs the most recent
         response in the history to have been stored in a thread whose fixed fields match this request's. A continue
-        request that the API can't serve is replayed as a create request with the full conversation. The recovery
-        retries in `_messages_create` send no thread, as they change fixed fields, so a response is only stamped with
-        the fingerprint of a thread request that succeeded. A compaction request samples no reply, so it never uses
-        a thread. A create request that threads don't support is sent again without one, and the response records
-        that, so the next request with the same fingerprint is sent without a thread straight away.
+        request that the API can't serve is replayed as a create request with the full conversation. A create
+        request that threads don't support is sent again without one, and the response records that, so the next
+        request with the same fingerprint is sent without a thread straight away. The recovery retries in
+        `_messages_create` send no thread, as they change fixed fields, so a response is only stamped with the
+        fingerprint of a thread request that succeeded, or of a request threads don't support (see `ThreadRecord`).
+        A compaction request samples no reply, so it never uses a thread.
         """
         if thread_record is None or not may_use_thread(model_settings, compaction):
             return await send(None)
