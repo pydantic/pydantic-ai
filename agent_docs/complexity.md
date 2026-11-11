@@ -56,7 +56,7 @@ The function was already over the limit, and the change made it worse. Keep the 
 **Fix**:
 
 - Keep per-stream state on dataclass fields with `field(init=False)`, not in locals or closures.
-- Handle each event type in a method that returns an `Iterable` of events, as `OpenAIStreamedResponse._map_part_delta` in `models/openai.py` does.
+- Handle each event type in a method that returns an `Iterable` of events, as `OpenAIStreamedResponse._map_part_delta` in `models/openai/_chat_streaming.py` does.
 - Dispatch in a sync method with one `match`, and forward its result once in the generator. An async generator cannot `yield from`, so each branch that delegates inside it costs a loop.
 - Keep a `case _:` fallback over SDK event unions. Those unions grow with the SDK, so `assert_never` is wrong there.
 
@@ -100,13 +100,13 @@ The function was already over the limit, and the change made it worse. Keep the 
 
 **Shape**: a long, flat run of independent checks: validation that raises, predicates that return `False`, or projections such as `if value is not None: out[key] = value`.
 
-**Fix**: group the checks into named predicates along the sections the code already has, as `SpanNode._attribute_matches` in `pydantic_evals/otel/span_tree.py` does. Build `provider_details` and similar projections in one function that the streaming and non-streaming paths share, as `_map_provider_details` in `models/openai.py` does.
+**Fix**: group the checks into named predicates along the sections the code already has, as `SpanNode._attribute_matches` in `pydantic_evals/otel/span_tree.py` does. Build `provider_details` and similar projections in one function that the streaming and non-streaming paths share, as `map_provider_details` in `models/openai/_chat_completions.py` does.
 
 ### name-dispatch
 
 **Shape**: a flat `if`/`elif` chain on a string or literal key, such as a provider name, a model prefix, a command or a key binding, or an `except` ladder over SDK error classes.
 
-**Fix**: `match key:` with one `case 'a' | 'b':` per target, ending in `case _:` that raises or calls `assert_never`, as `WorkspaceCall.execute` in `durable_exec/_workspace.py` does. For an error ladder, map each error class in its own function, as `_map_api_errors` and `_map_status_error` in `models/openai.py` do.
+**Fix**: `match key:` with one `case 'a' | 'b':` per target, ending in `case _:` that raises or calls `assert_never`, as `WorkspaceCall.execute` in `durable_exec/_workspace.py` does. For an error ladder, map each error class in its own function, as `map_api_errors` and `map_status_error` in `models/openai/_errors.py` do.
 
 ### presentation
 
