@@ -190,8 +190,9 @@ attempt attributes, which a foreground call's span carries: a background retry i
 result is delivered, after this span ends, so the attempt number isn't known yet. A call cancelled
 before it started has no `background_tools execute` span.
 
-The tool's result is not on this span. When the run includes content in traces, it appears in the input
-of the next `chat` span, which follows all of the run's content settings.
+The tool's result is not on this span. When the run includes content in traces, it appears in the
+input of the `chat` span of the model request that delivers it, which follows all of the run's
+content settings.
 
 ## Durable execution
 

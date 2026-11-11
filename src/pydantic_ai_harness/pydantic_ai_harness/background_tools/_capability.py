@@ -155,8 +155,8 @@ async def _execute_traced(
 ) -> Any:
     """Run a background call under its own span, since its `execute_tool` span ended with the placeholder reply.
 
-    The task starts inside that `execute_tool` span, so this span is its child. Every outcome but
-    `interrupted` marks the span as failed: in the background, `ApprovalRequired` and `CallDeferred`
+    The task starts inside that `execute_tool` span, so this span is its child. `retried`, `failed`
+    and `error` mark the span as failed: in the background, `ApprovalRequired` and `CallDeferred`
     cannot defer the call, so they fail it.
     """
     attributes = {'gen_ai.tool.name': call.tool_name, 'gen_ai.tool.call.id': call.tool_call_id}
