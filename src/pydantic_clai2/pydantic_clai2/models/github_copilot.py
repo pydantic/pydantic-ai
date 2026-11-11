@@ -1,8 +1,10 @@
 """GitHub device login and model discovery through Pydantic AI's Copilot provider."""
 
 import os
+import re
 import time
 from collections.abc import Callable
+from functools import partial
 
 import httpx2
 from anyio import to_thread
@@ -18,6 +20,8 @@ from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.plugins.menus import Dialogs
 
 ACCOUNT = 'github-copilot'
+_PREFERRED = ('claude-opus-5.5', 'gemini-4-argon', 'claude-opus-', 'gemini-', 'gpt-', 'claude-sonnet-')
+_SMALL = re.compile(r'\b(?:mini|nano|flash|lite|haiku|turbo|codex)\b')
 
 
 class Connection(BaseModel):
@@ -106,16 +110,16 @@ class ModelList(BaseModel):
     data: list[ServedModel]
 
 
-async def discover(*, transport: httpx2.AsyncBaseTransport | None = None) -> list[str]:
+async def discover(*, account: str = ACCOUNT, transport: httpx2.AsyncBaseTransport | None = None) -> list[str]:
     """Use core's endpoint, authentication and headers, without following redirects."""
     async with httpx2.AsyncClient(transport=transport, timeout=20, follow_redirects=False) as client:
-        copilot = GitHubCopilotProvider(api_key=await to_thread.run_sync(token), http_client=client)
+        copilot = GitHubCopilotProvider(api_key=await to_thread.run_sync(partial(token, account)), http_client=client)
         try:
             response = await copilot.client.with_options(max_retries=0).models.with_raw_response.list()
         except APIError:
             raise UserError(
                 'Copilot model discovery failed. Check connectivity, your subscription and organization policy, '
-                'or run /login github-copilot again.'
+                f'or run /login {account} again.'
             ) from None
         try:
             models = ModelList.model_validate_json(response.content)
@@ -133,9 +137,26 @@ async def discover(*, transport: httpx2.AsyncBaseTransport | None = None) -> lis
     return names
 
 
-async def ensure_login(*, console: Console) -> None:
-    """Request device authorization when saved or environment credentials cannot be used."""
+def default_model(names: list[str]) -> str:
+    """The newest of the first `_PREFERRED` family Copilot serves, passing over small models when it serves others."""
+    large = [name for name in names if not _SMALL.search(name)] or names
+    for prefix in _PREFERRED:
+        if matches := [name for name in large if name.startswith(prefix)]:
+            return max(matches, key=_version)
+    return max(large, key=_version)
+
+
+def _version(name: str) -> tuple[int, ...]:
+    """The first dotted number in a model id: `gpt-5.4-mini` gives `(5, 4)`."""
+    found = re.search(r'\d+(?:\.\d+)*', name)
+    return tuple(map(int, found.group().split('.'))) if found else ()
+
+
+async def ensure_login(*, console: Console) -> bool:
+    """Request device authorization when saved or environment credentials cannot be used; whether it signed in."""
     try:
         await to_thread.run_sync(token)
     except UserError:
         console.print(await login(console=console), markup=False)
+        return True
+    return False

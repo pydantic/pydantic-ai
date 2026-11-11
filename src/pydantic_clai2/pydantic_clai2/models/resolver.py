@@ -45,6 +45,8 @@ class ModelResolver:
     """Where a plugin sign-in saves its models."""
     pool_accounts: Callable[[], bool] = lambda: False
     """The `accounts.pool` setting, read per resolution so `/set` applies to the next run."""
+    select_default: Callable[[str], bool] = lambda model: False
+    """Select a model a sign-in prefers when the session has none chosen; whether it did."""
     codex_providers: 'dict[str, OpenAICodexProvider]' = field(default_factory=dict[str, 'OpenAICodexProvider'])
     """The native Codex provider per account, which the process's sessions share; sign-ins prompt on `console`."""
     _auth: 'CodexAuth | None' = None
@@ -61,7 +63,12 @@ class ModelResolver:
         from pydantic_clai2.auth import login_command
 
         return await login_command(
-            args, codex=self.codex_auth(), plugins=self.logins(), store=self.store, dialogs=dialogs
+            args,
+            codex=self.codex_auth(),
+            plugins=self.logins(),
+            store=self.store,
+            dialogs=dialogs,
+            select_default=self.select_default,
         )
 
     def accounts_menu(self) -> SettingsMenu:

@@ -206,8 +206,12 @@ From a source checkout:
 uv run --project pydantic-clai2 clai2
 ```
 
-Run `/login github-copilot`, then open `/model add` and choose `github-copilot`.
-The provider menu also starts login when no credentials exist. No application
+Run `/login github-copilot`. Login adds every model your account's catalog lists
+to `/model` and, when you have not chosen a model, selects a recent strong one, such
+as Claude Opus 5.5 or Gemini 4 Argon; a model you chose stays selected. To switch,
+open `/model add` and choose `github-copilot`. The provider menu also starts login
+when no credentials exist. If listing the models fails, the login stays saved and
+CLAI reports why. No application
 registration or client ID configuration is required. CLAI supplies the same
 [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
 and requests `read:user` access to your GitHub profile. This identifies the existing
