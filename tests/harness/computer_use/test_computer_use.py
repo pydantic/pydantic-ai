@@ -70,6 +70,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerAction, ComputerUse
 from pydantic_ai_harness.computer_use._capability import (
     _changed,  # pyright: ignore[reportPrivateUsage]
+    _screenshot_limit,  # pyright: ignore[reportPrivateUsage]
     _the_call,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.harness._recording_durability import RecordingDurability
@@ -1339,6 +1340,8 @@ def test_the_call_helpers_fall_back_when_the_messages_lack_what_they_look_for() 
     assert _the_call(ctx) is None
     # Arguments that no longer validate don't match any actions.
     assert _changed(other, []) is True
+    # A realtime model has no profile, so its screenshots aren't limited.
+    assert _screenshot_limit(_Realtime()) is None
 
 
 class _Realtime(AbstractModel):

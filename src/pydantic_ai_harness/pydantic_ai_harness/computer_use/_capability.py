@@ -130,9 +130,10 @@ class _Plan:
     """The size of the screenshot the model pointed on, if it saw one."""
     changed: list[ComputerToolAction] | None
     """The actions to run, when they differ from the ones the model asked for."""
+    seen_limit: _Limit
+    """The largest screenshot the model that made the call takes, which sizes the one it expected without one seen."""
     limit: _Limit
-    """The largest screenshot the run's model takes: the size it expected without a screenshot seen, and the size the
-    next screenshot is taken at."""
+    """The largest screenshot both that model and the run's model take, which the next screenshot is taken at."""
     model_name: str
     acts: bool
     """Whether any action changes the screen."""
@@ -178,6 +179,21 @@ def _screenshot_limit(model: AbstractModel) -> _Limit:
     pixels = [count for profile in profiles if (count := profile.get('computer_use_screenshot_max_pixels'))]
     if not sides and not pixels:
         return None
+    return min(sides, default=None), min(pixels, default=None)
+
+
+def _call_limit(call: ComputerCallPart) -> _Limit:
+    """The largest screenshot the model that made `call` takes, as the agent recorded it on the call."""
+    side, pixels = call.screenshot_max_side, call.screenshot_max_pixels
+    return None if side is None and pixels is None else (side, pixels)
+
+
+def _tighter(first: _Limit, second: _Limit) -> _Limit:
+    """The largest screenshot both limits allow."""
+    if first is None or second is None:
+        return first or second
+    sides = [side for side in (first[0], second[0]) if side]
+    pixels = [count for count in (first[1], second[1]) if count]
     return min(sides, default=None), min(pixels, default=None)
 
 
@@ -519,13 +535,19 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise ToolFailed(refused)
         made = _the_call(ctx)
         call = made[1] if made else None
+        # The agent records on the call the grid and screenshot limit of the model that made it, if it has them.
+        grid, made_limit = (
+            (call.coordinate_grid, _call_limit(call)) if isinstance(call, ComputerCallPart) else (None, None)
+        )
         plan = _Plan(
-            # The agent records the grid on the calls of a model that points on one; other calls are in pixels.
-            grid=call.coordinate_grid if isinstance(call, ComputerCallPart) else None,
+            grid=grid,
             # The model pointed on the latest screenshot before its call.
             seen=_last_screenshot_size(ctx.messages[: made[0]]) if made else None,
+            seen_limit=made_limit,
             changed=actions if call and _changed(call, actions) else None,
-            limit=_screenshot_limit(ctx.model),
+            # The next request starts at the run's model, or with a sticky `ModelFallback` at the model that made the
+            # call, so the screenshot fits both. Another model is refused before its request if it can't see it.
+            limit=_tighter(made_limit, _screenshot_limit(ctx.model)),
             model_name=ctx.model.model_name,
             acts=acts,
         )
@@ -575,7 +597,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         # Also starts a display that stopped, before anything acts.
         size = await _display_size(display)
         # A screenshot the model saw, or the next one, may be scaled down from the display.
-        call = _Call(space=(plan.grid, plan.grid) if plan.grid else plan.seen or _fit(size, plan.limit), display=size)
+        call = _Call(
+            space=(plan.grid, plan.grid) if plan.grid else plan.seen or _fit(size, plan.seen_limit), display=size
+        )
         # The backend would move a position outside the screen to its edge and act there.
         if refused := _off_screen(actions, *call.space, 'grid' if plan.grid else 'screen'):
             raise ToolFailed(refused)
