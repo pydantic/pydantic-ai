@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import struct
 import threading
+import zlib
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from typing import Any, cast
@@ -73,10 +74,15 @@ from pydantic_ai_harness.computer_use._capability import (
     _model_limit,  # pyright: ignore[reportPrivateUsage]
     _the_call,  # pyright: ignore[reportPrivateUsage]
 )
+from tests.conftest import try_import
 from tests.harness._recording_durability import RecordingDurability
 
 from ...workspace_fakes import WorkspaceCapability
-from ..display_fakes import FAKE_SCREENSHOT, DisplayOnlyBackend, ScreenBackend, ScreenProvider, png
+from ..display_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT, DisplayOnlyBackend, ScreenBackend, ScreenProvider, png
+
+with try_import() as google_imports:
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
 
 SCREENSHOT = BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')
 
@@ -1354,3 +1360,54 @@ class _Realtime(AbstractModel):
     @property
     def system(self) -> str:
         return 'test'
+
+
+RED_SQUARE = (974, 176, 1022, 224)
+"""Left, top, right and bottom of the red square on `_RedSquareScreen`, in pixels."""
+
+
+def _red_square_png() -> bytes:
+    """A white 1280x800 PNG with a red square at `RED_SQUARE`."""
+    (width, height), (left, top, right, bottom) = FAKE_DISPLAY_SIZE, RED_SQUARE
+    white, red = b'\xff\xff\xff', b'\xff\x00\x00'
+    plain = b'\x00' + white * width
+    marked = b'\x00' + white * left + red * (right - left) + white * (width - right)
+    rows = b''.join(marked if top <= y < bottom else plain for y in range(height))
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+
+    header = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
+
+
+class _RedSquareScreen(ScreenProvider):
+    def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
+        return _RedSquareBackend(self, ref)
+
+
+class _RedSquareBackend(ScreenBackend):
+    async def screenshot(self) -> bytes:
+        return _red_square_png()
+
+
+@pytest.mark.vcr
+@pytest.mark.skipif(not google_imports(), reason='google-genai not installed')
+async def test_gemini_clicks_on_target_through_its_grid(allow_model_requests: None, gemini_api_key: str) -> None:
+    """Gemini 3 points on a 0-999 grid: told so in the tool description, its click lands on the square in pixels.
+
+    Without the grid hint, Gemini 3.5 to 3.8 Flash mostly missed in a live probe.
+    """
+    screen = _RedSquareScreen()
+    model = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    agent = Agent(model, capabilities=[screen.capability(), ComputerUse()])
+
+    result = await agent.run('Click the red square once, then stop.')
+
+    calls = [part for message in result.all_messages() for part in message.parts if isinstance(part, ComputerCallPart)]
+    assert {call.coordinate_grid for call in calls} == {1000}
+    clicks = [action for action in screen.actions if isinstance(action, Click)]
+    assert len(clicks) == 1
+    left, top, right, bottom = RED_SQUARE
+    assert clicks[0].x is not None and left <= clicks[0].x <= right
+    assert clicks[0].y is not None and top <= clicks[0].y <= bottom
