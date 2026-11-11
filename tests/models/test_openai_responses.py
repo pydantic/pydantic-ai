@@ -787,7 +787,7 @@ async def test_openrouter_responses_reasoning_mode(allow_model_requests: None) -
     assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro', 'context': 'all_turns'}
 
 
-def _azure_responses_model(*, opted_out: bool) -> tuple[OpenAIResponsesModel, AsyncOpenAI]:
+def _azure_responses_model(*, opted_out: bool) -> tuple['OpenAIResponsesModel', 'AsyncOpenAI']:
     """An Azure Responses model over a mock client that answers `OK`, optionally without the tool call ID limit."""
     client = MockOpenAIResponses.create_mock(
         response_message(
