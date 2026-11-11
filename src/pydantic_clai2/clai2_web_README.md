@@ -372,9 +372,10 @@ Sessions are named by their conversation ID, the `id` the sidebar lists.
   carry no `session`; every `snapshot` lists the open dialogs.
 - `live` lists the live sessions, sent on connect and whenever one opens, closes, switches
   conversation, or changes state:
-  `{"type": "live", "sessions": [{"id": "…", "state": "running" | "queued" | "asking" | "idle", "title": "…" | null, "workspace": "/abs/path"}]}`.
+  `{"type": "live", "sessions": [{"id": "…", "state": "running" | "queued" | "asking" | "idle", "busy": true | false, "title": "…" | null, "workspace": "/abs/path"}]}`.
   `queued` means input waits while that session's turn runs; `asking` means a question its turn
-  asked waits for the user.
+  asked waits for the user. `busy` is `LiveSession.busy`, true past the turn while its `TurnEnd`
+  hooks run: the page offers Edit and Retry only once it is false.
 - The page sends `{"type": "watch", "sessions": ["<id>", …]}` on the WebSocket to replace the set it
   watches. The server answers with a `snapshot` for each newly watched live session; the default session
   a connection got on connect counts as watched already, so naming it sends no second one. An ID that is not
