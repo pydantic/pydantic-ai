@@ -1008,6 +1008,22 @@ async def test_context_overflow_with_only_an_unloaded_deferred_hook_raises_the_o
     assert (deferred.calls, events.events) == ([], [])
 
 
+async def test_context_overflow_is_compacted_by_a_wrapper_with_its_own_hook():
+    """A wrapper overriding `compact_history` compacts an overflow even when what it wraps has no hook."""
+
+    @dataclass
+    class SummarizingWrapper(WrapperCapability[Any]):
+        async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+            messages, part = summary_window(request, 'wrapper summary')
+            return CompactionResult(messages=messages, part=part, handler='wrapper')
+
+    calls: list[str] = []
+    agent = Agent(overflows_until_compacted(calls), capabilities=[SummarizingWrapper(Decline('inner', []))])
+    result = await agent.run('hi')
+    assert result.output == 'fits now'
+    assert [record.handler for record in result.compactions] == ['wrapper']
+
+
 async def test_context_overflow_without_a_compaction_raises_the_overflow():
     calls: list[str] = []
     asked: list[str] = []
