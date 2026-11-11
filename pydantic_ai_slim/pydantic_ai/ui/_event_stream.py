@@ -173,7 +173,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         default_factory=list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta]
     )
     """Deltas used to bring `_open_part` up to date only if a synthetic end event is needed."""
-    _canonical_systems: dict[str, str | None] = field(default_factory=dict[str, str | None])
+    _canonical_systems: dict[str, str | None] = field(default_factory=dict[str, str | None], init=False)
     """The `canonical_system` that applies to each provider's parts, from the last part event from that provider.
 
     Kept after the part's end event, so the metadata a subclass emits for a part after it, such as a tool call's,
