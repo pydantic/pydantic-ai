@@ -787,6 +787,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     On unsupported models or clients, `anthropic_speed='fast'` is ignored with a `UserWarning`.
     Fast mode is only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
     see [Fast mode](../../models/anthropic.md#fast-mode) for each model's availability.
+    A response that ran in fast mode records `'speed': 'fast'` in `provider_details`, which prices it at fast mode rates.
     Note: switching between `'fast'` and `'standard'` invalidates the prompt cache.
     """
 

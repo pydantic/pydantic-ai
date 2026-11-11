@@ -151,6 +151,10 @@ class AnthropicStreamedResponse(StreamedResponse):
         if event.message.diagnostics is not None:
             self.provider_details = self.provider_details or {}
             self.provider_details['cache_diagnostics'] = event.message.diagnostics.model_dump(mode='json')
+        # See `response_provider_details`. Only the opening message's usage reports the speed.
+        if event.message.usage.speed == 'fast':
+            self.provider_details = self.provider_details or {}
+            self.provider_details['speed'] = 'fast'
         # Where the request ran is only reported on the opening message's usage.
         self.provider_details = report_inference_geo(
             self.provider_details, event.message.usage.inference_geo, report=self._report_inference_geo
