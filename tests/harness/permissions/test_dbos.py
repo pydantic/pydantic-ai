@@ -13,7 +13,7 @@ from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.permissions import PermissionDecision, PermissionRequest, Permissions, ask_permissions
-from tests.conftest import detach_dbos_logging, try_import
+from tests.conftest import detach_dbos_logging, try_import, without_admin_server
 
 with try_import() as imports_successful:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
@@ -35,9 +35,8 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'durable_permissions',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
-    instance = DBOS(config=config)
+    instance = DBOS(config=without_admin_server(config))
     DBOS.launch()
     try:
         yield instance
