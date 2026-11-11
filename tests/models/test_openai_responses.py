@@ -17874,7 +17874,11 @@ async def test_openai_responses_stateful_compaction_leaves_requested_compaction_
 async def test_openai_responses_stateless_compaction_drops_a_focus_it_cannot_send(
     instructions_mode: CompactionInstructionsMode | None,
 ):
-    """A focus merged in from elsewhere doesn't stop stateless `OpenAICompaction` compacting at its own trigger."""
+    """A focus merged in from elsewhere doesn't stop stateless `OpenAICompaction` compacting at its own trigger.
+
+    Not a VCR test: the claim is about which instructions the capability passes to the model's `compact_messages`,
+    which a stub records and a recorded provider response doesn't show.
+    """
     from pydantic_ai.models.openai import OpenAICompaction
 
     compacted: list[str | None] = []
@@ -17906,7 +17910,10 @@ async def test_openai_responses_stateless_compaction_drops_a_focus_it_cannot_sen
 
 
 async def test_openai_responses_stateless_compaction_leaves_another_model_to_the_next_capability():
-    """Stateless `OpenAICompaction` serves only an OpenAI Responses model, however it's wrapped."""
+    """Stateless `OpenAICompaction` serves only an OpenAI Responses model, however it's wrapped.
+
+    Not a VCR test: the claim is about capability routing for a non-OpenAI model, which makes no provider request.
+    """
     from pydantic_ai.models.openai import OpenAICompaction
 
     model = WrapperModel(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')])))
