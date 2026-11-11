@@ -15,7 +15,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Self, cast
+from typing import Any, Self, TypeVar, cast
 from unittest.mock import AsyncMock, patch
 
 import httpx2
@@ -32,6 +32,7 @@ from pydantic_ai.agent.spec import (
     _PROVIDER_CLASS_KEYS,  # pyright: ignore[reportPrivateUsage]
     AgentSpec,
     _builtin_provider_class,  # pyright: ignore[reportPrivateUsage]
+    _provider_client_types,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
@@ -1178,6 +1179,17 @@ def test_spec_provider_names() -> None:
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 def test_provider_takes_secret_str() -> None:
     assert OpenAIProvider(api_key=SecretStr('openai-key')).client.api_key == 'openai-key'
+
+
+def test_provider_client_types_unknown() -> None:
+    """A client type that isn't a class, like a custom provider's type variable, makes the provider/model check skip."""
+    # Unit (not VCR): no built-in provider declares such a client type.
+    client_t = TypeVar('client_t')
+
+    class GenericClientProvider(Provider[client_t]):
+        pass
+
+    assert _provider_client_types(GenericClientProvider) is None
 
 
 @pytest.mark.skipif(not groq_imports_successful(), reason='groq not installed')

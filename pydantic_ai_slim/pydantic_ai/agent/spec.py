@@ -656,9 +656,10 @@ def _get_custom_provider_registry(
 
 
 def _provider_client_types(provider_class: type[Provider[Any]]) -> tuple[type[Any], ...] | None:
-    """The client types in the `Provider[...]` base of a provider class, or `None` if it doesn't declare concrete ones.
+    """The client classes in the `Provider[...]` base of a provider class, or `None` if it doesn't declare classes.
 
-    A union of client types, like `AnthropicProvider`'s, gives each of its members.
+    A union of client types, like `AnthropicProvider`'s, gives each of its members. A type variable, a forward reference
+    or a parametrized type isn't a class to compare, so it makes the client types unknown.
     """
     client_type: Any = next(
         (
@@ -671,7 +672,8 @@ def _provider_client_types(provider_class: type[Provider[Any]]) -> tuple[type[An
     )
     if client_type is Any:
         return None
-    return get_args(client_type) or (client_type,)
+    client_types = get_args(client_type) or (client_type,)
+    return client_types if all(isinstance(member, type) for member in client_types) else None
 
 
 def _provider_spec_target(provider_class: type[Provider[Any]]) -> Callable[..., Any]:
