@@ -51,7 +51,7 @@ Four kinds of run end without a review:
 
 - A run that pauses for [deferred tools](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) and returns `DeferredToolRequests`.
 - A run that ends while the provider is still processing a model request, such as a batch or background response, and returns [`PendingModelResponse`](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits).
-- A run whose output did not come from a model request, such as the refusal of an [input guardrail](../guardrails/) that blocked the prompt. A review would send the model the prompt the guardrail kept from it.
+- A run whose output did not come from a model request, such as the refusal of an [input guardrail](../guardrails/) that blocked the prompt. A review would send the model the prompt the guardrail kept from it. `RefineOutput` recognizes such an output by a response with no `model_name`, so a custom `Model` should set `model_name` on the responses it returns, or its runs are not reviewed.
 - `Agent.run_stream()`, which ends at the first output it streams. To stream a run that is reviewed, use `Agent.run()` with an `event_stream_handler`, or `Agent.iter()`.
 
 ## Durable execution

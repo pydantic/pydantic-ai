@@ -64,7 +64,8 @@ class RefineOutput(AbstractCapability[AgentDepsT]):
         result: NodeResult[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
         # `Agent.run_stream()` ends through a node of its own, after which the run cannot continue.
-        # A response without a `model_name` came from no model, like an input guardrail's refusal.
+        # A response without a `model_name` came from no model, like an input guardrail's refusal;
+        # a custom `Model` that leaves `model_name` unset is therefore not reviewed either.
         if (
             self._rounds_started < self.rounds
             and isinstance(node, CallToolsNode)
