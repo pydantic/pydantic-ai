@@ -21,22 +21,24 @@ When a capture starts, it runs an agent over a streamed canary response and stop
 recorded, so a consumer that stops iterating through `__aiter__` fails loudly instead of recording nothing.
 
 Each request is one JSON line of kind `request`. A request an `httpx` or `httpx2` `AsyncClient` sends is recorded from
-`send`, once per attempt, and one a botocore client sends, like Bedrock's, from `Endpoint.make_request`, before it's
-signed and after a model's extra headers are added, once per call: botocore retries a call below `make_request`, so its
-retries aren't recorded. Either is recorded with its method and URL as the target, its headers and its body, parsed when
-it's JSON. Two kinds of header are left out: credentials (`authorization`, `proxy-authorization`, `x-api-key`,
-`api-key`, `x-goog-api-key`, `x-amz-security-token`, `cookie`), so a capture never writes a key to disk, and trace
-context (`traceparent`, `tracestate`, `baggage`), whose ids are random per run. Prefect's client retries a request by
-sending it again, and sends some of its own accord, the log batches of its background worker, checks of its server's
-version and fetches of a CSRF token, all at times the load on its test server decides, so each request it sends is
-recorded once and the ones it sends of its own accord aren't. A test that hands a model one of the SDK client mocks
-`SDK_MOCKS` lists sends no HTTP request, so each call the model makes on a listed method is recorded instead, with the
-method as the target and the arguments as passed, SDK sentinels for an omitted argument included. When a capture
-starts, it runs an agent over a Groq model on `httpx`, an Anthropic model on `httpx2` and a Bedrock model on botocore,
-and stops the run if any of those requests wasn't recorded, so an SDK that moves to an HTTP client the capture doesn't
-wrap fails loudly, as Anthropic's did moving from `httpx` to `httpx2`. Once collection has imported the tests, a listed
-mock method that's gone stops the run too. Client stand-ins a test hands a model, like the stub clients Bedrock's tests
-define, and client methods a test patches by hand, like the `generate_content` Google's tests patch on a model's
+`send`, once per attempt except for Prefect's client, below, and one a botocore client sends, like Bedrock's, from
+`Endpoint.make_request`, before it's signed and after a model's extra headers are added, once per call: botocore
+retries a call below `make_request`, so its retries aren't recorded. Either is recorded with its method and URL as the
+target, its headers and its body, parsed when it's JSON. Two kinds of header are left out: credentials
+(`authorization`, `proxy-authorization`, `x-api-key`, `api-key`, `x-goog-api-key`, `x-amz-security-token`, `cookie`),
+so a capture never writes a key to disk, and trace context (`traceparent`, `tracestate`, `baggage`), whose ids are
+random per run. Prefect's client, which marks each request it sends with its API version, retries a request by sending
+it again when its test server is busy, so each request it sends is recorded once. Its checks of the server's version and
+fetches of a CSRF token carry nothing from the code under test and are sent wherever the load puts them, so they aren't
+recorded. Neither are the log batches its background worker sends during whichever test is running: no node can claim
+them, so the task run names and failure messages they hold go uncompared. A test that hands a model one of the SDK
+client mocks `SDK_MOCKS` lists sends no HTTP request, so each call the model makes on a listed method is recorded
+instead, with the method as the target and the arguments as passed, SDK sentinels for an omitted argument included. When
+a capture starts, it runs an agent over a Groq model on `httpx`, an Anthropic model on `httpx2` and a Bedrock model on
+botocore, and stops the run if any of those requests wasn't recorded, so an SDK that moves to an HTTP client the capture
+doesn't wrap fails loudly, as Anthropic's did moving from `httpx` to `httpx2`. Once collection has imported the tests, a
+listed mock method that's gone stops the run too. Client stand-ins a test hands a model, like the stub clients Bedrock's
+tests define, and client methods a test patches by hand, like the `generate_content` Google's tests patch on a model's
 client, escape it.
 
 A test that drives `FunctionModel` or `TestModel` sends no request either, since the model answers in process, so each
@@ -174,8 +176,8 @@ GENERATED_VALUES = [
         'CUSTOM_ID',
     ),
 ]
-# Prefect's client marks each request it sends with its API version, and these paths are the requests it sends of its
-# own accord; the module docstring says why neither its retries nor these are recorded.
+# Prefect's client marks each request it sends with its API version. These paths are its log batches, version checks
+# and CSRF token fetches; the module docstring says why a capture leaves them and the client's retries out.
 PREFECT_API_VERSION_HEADER = 'x-prefect-api-version'
 PREFECT_OWN_PATHS = re.compile(r'/api/(?:logs/|admin/version|csrf-token)$')
 # The second form is ISO 8601's basic format, which SigV4 signs a request's `x-amz-date` header with.
