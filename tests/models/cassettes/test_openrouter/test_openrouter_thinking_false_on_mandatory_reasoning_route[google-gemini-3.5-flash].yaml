@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "143"
+      - "147"
       content-type:
       - application/json
       host:
@@ -25,14 +25,17 @@ interactions:
         - role: user
           content: "Reply with exactly: OK"
         reasoning:
-          effort: low
+          effort: minimal
   response:
     status: 200
     headers:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - >-
+        X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -48,13 +51,13 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793032219-0gi4tYPORUhBKRfZVqdS
+        id: gen-1794001740-vUkANyO3JtLtNmGn4bOF
         object: chat.completion
-        created: 1793032219
+        created: 1794001740
         model: google/gemini-3.5-flash
         provider: Google
         system_fingerprint: null
-        service_tier: default
+        service_tier: provisioned
         choices:
         - index: 0
           logprobs: null
@@ -68,14 +71,14 @@ interactions:
             reasoning_details:
             - type: reasoning.encrypted
               data: >-
-                AY89a188y/s0jpCDhuegKXm6gx1irdht79y33MVmXA9/IXDVSX0SxlWV20+hDjaA7GkAJq+NIaNWGir6FpLtQmqotUnwZ8X9MQ49lnjyb3zZ/TQGGsRrQnahyLfEHfVPTpzdGGU8dF6qoLHsRtSWLAR0PTN0XY2jSeGXtNH4ygRNbsgcKkn4wR7n4qH41jynpqW+m+tGCnM9Or5VgKPe3PRiF/LZAa6VaBdetB9TKLlmLy3vAV0/MLgRUAkfxewkepq+hiugLaFwLt23jjA=
+                AY89a1/Gmh64qKxPPNT+RTkNL6+RspTlxqjzFOo9AwC1+BK2neir/cQ2rb1D8o+/UJi9mJIy6Tmiq9a0UAIf2+dN4+czjszRVIpFC0hxm1BoFNgF
               format: google-gemini-v1
               index: 0
         usage:
           prompt_tokens: 5
-          completion_tokens: 21
-          total_tokens: 26
-          cost: 0.0001965
+          completion_tokens: 1
+          total_tokens: 6
+          cost: 0.0000165
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -83,11 +86,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.0001965
+            upstream_inference_cost: 0.0000165
             upstream_inference_prompt_cost: 7.5e-6
-            upstream_inference_completions_cost: 0.000189
+            upstream_inference_completions_cost: 9.0e-6
           completion_tokens_details:
-            reasoning_tokens: 20
+            reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-26T16:30:19.931733+00:00
+  recorded_at: 2026-11-06T21:49:00.955267+00:00

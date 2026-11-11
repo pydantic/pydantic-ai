@@ -9,7 +9,7 @@ import os
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
 from pathlib import Path
 from subprocess import DEVNULL
@@ -113,7 +113,7 @@ async def _run(
     except TimeoutError:
         raise GitError(f'{_label(args)} did not finish within {timeout:g} seconds.') from None
     except OSError as exc:
-        if not workspace.is_dir():
+        if not await to_thread.run_sync(workspace.is_dir):
             # Gone, or replaced by a file, since it was checked.
             raise LookupError(f'{workspace} no longer exists.') from None
         if isinstance(exc, FileNotFoundError):
@@ -209,7 +209,7 @@ async def _read(workspace: Path, *, pull_request: bool) -> tuple[Path, GitStatus
     Its paths are Git's own, with any byte that is not UTF-8 kept as a surrogate; `git_status` shows them.
     Without `pull_request`, whether one can be opened is not checked, which asks `gh`, and is `None`.
     """
-    _directory(workspace)
+    await to_thread.run_sync(_directory, workspace)
     top = await _try_git(workspace, 'rev-parse', '--show-toplevel')
     if not top:
         return None
@@ -398,22 +398,29 @@ async def _stage_and_commit(root: Path, chosen: list[ChangedFile], *, message: s
         await _git(root, 'add', '--all')
         await _git(root, 'commit', '--quiet', f'--message={message}', timeout=LONG_TIMEOUT)
     else:
-        # New files must be known to Git before `commit PATHS` takes them; a deleted or renamed-away one
-        # is known already, and `add` would refuse one no longer in the index.
-        present = [file.path for file in chosen if (root / file.path).is_symlink() or (root / file.path).exists()]
-        if present:
-            await _git(root, 'add', '--all', '--pathspec-from-file=-', '--pathspec-file-nul', input=_pathspecs(present))
-        paths = [path for file in chosen for path in (file.path, file.original) if path is not None]
-        await _git(
-            root,
-            'commit',
-            '--quiet',
-            f'--message={message}',
-            '--pathspec-from-file=-',
-            '--pathspec-file-nul',
-            timeout=LONG_TIMEOUT,
-            input=_pathspecs(paths),
-        )
+        await _commit_paths(root, chosen, message=message)
+
+
+async def _commit_paths(root: Path, chosen: list[ChangedFile], *, message: str) -> None:
+    """Commit only `chosen`, whatever else is staged."""
+    # New files must be known to Git before `commit PATHS` takes them; a deleted or renamed-away one
+    # is known already, and `add` would refuse one no longer in the index.
+    present = await to_thread.run_sync(
+        lambda: [file.path for file in chosen if (root / file.path).is_symlink() or (root / file.path).exists()]
+    )
+    if present:
+        await _git(root, 'add', '--all', '--pathspec-from-file=-', '--pathspec-file-nul', input=_pathspecs(present))
+    paths = [path for file in chosen for path in (file.path, file.original) if path is not None]
+    await _git(
+        root,
+        'commit',
+        '--quiet',
+        f'--message={message}',
+        '--pathspec-from-file=-',
+        '--pathspec-file-nul',
+        timeout=LONG_TIMEOUT,
+        input=_pathspecs(paths),
+    )
 
 
 async def push(workspace: Path, *, confirmed: bool = False) -> str:
@@ -587,21 +594,29 @@ async def _summary(workspace: Path) -> str:
     return summary(None if found is None else found[1])
 
 
-def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[Command, ...]:
-    """`/commit`, `/push`, and `/pr` for the session working in `workspace()`, drafting with `model`."""
+@dataclass(kw_only=True)
+class _GitCommands:
+    """The handlers of `/commit`, `/push`, and `/pr` for the session working in `workspace()`, drafting with `model`."""
 
-    async def commit_command(args: list[str]) -> str:
-        directory = workspace()
+    workspace: Callable[[], Path]
+    model: ModelSource
+    shown: list[tuple[Path, str | None, PullRequestDraft]] = field(
+        default_factory=list[tuple[Path, str | None, PullRequestDraft]]
+    )
+    """The draft bare `/pr` showed last, with the repository and branch it was for, which `/pr confirm` opens."""
+
+    async def commit_command(self, args: list[str]) -> str:
+        directory = self.workspace()
         message = args[0].strip() if args else ''
         if not message:
-            message = await draft_commit_message(directory, model=model)
+            message = await draft_commit_message(directory, model=self.model)
         done = await commit(directory, message=message)
         return f'{done}\n{await _summary(directory)}'
 
-    async def push_command(args: list[str]) -> str:
+    async def push_command(self, args: list[str]) -> str:
         if args not in ([], ['confirm']):
             raise ValueError('Usage: /push [confirm]; confirm pushes the default branch too.')
-        directory = workspace()
+        directory = self.workspace()
         confirmed = args == ['confirm']
         _, status = await _repository(directory)
         if not confirmed and status.push is None and status.default_branch:
@@ -609,34 +624,35 @@ def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[
         done = await push(directory, confirmed=confirmed)
         return f'{done}\n{await _summary(directory)}'
 
-    shown: list[tuple[Path, str | None, PullRequestDraft]] = []
-    """The draft bare `/pr` showed last, with the repository and branch it was for, which `/pr confirm` opens."""
-
-    async def pull_request_command(args: list[str]) -> str:
-        directory = workspace()
+    async def pull_request_command(self, args: list[str]) -> str:
+        directory = self.workspace()
         text = args[0].strip() if args else ''
         root, status = await _repository(directory)
         if not text:
-            draft = await draft_pull_request(directory, model=model)
-            shown[:] = [(root, status.branch, draft)]
+            draft = await draft_pull_request(directory, model=self.model)
+            self.shown[:] = [(root, status.branch, draft)]
             return f'{draft.title}\n\n{draft.body}\n\n/pr confirm opens this pull request; /pr TITLE opens it with another title.'
-        if not shown:
+        if not self.shown:
             raise ValueError('Run /pr first to see the drafted pull request.')
-        drafted_root, drafted_branch, draft = shown[0]
+        drafted_root, drafted_branch, draft = self.shown[0]
         if (drafted_root, drafted_branch) != (root, status.branch):
-            shown.clear()
+            self.shown.clear()
             raise ValueError('The branch changed since /pr drafted its pull request. Run /pr again.')
         if text != 'confirm':
             draft = PullRequestDraft(title=text, body=draft.body)
         url = await open_pull_request(directory, title=draft.title, body=draft.body)
-        shown.clear()
+        self.shown.clear()
         return f'Opened {url}'
 
+
+def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[Command, ...]:
+    """`/commit`, `/push`, and `/pr` for the session working in `workspace()`, drafting with `model`."""
+    handlers = _GitCommands(workspace=workspace, model=model)
     return (
         Command(
             name='commit',
             description='Commit every change in this workspace: /commit [MESSAGE]; the model drafts one without',
-            handler=commit_command,
+            handler=handlers.commit_command,
             raw=True,
             live=True,
             # A plugin's own command of this name takes over instead of failing to load.
@@ -645,7 +661,7 @@ def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[
         Command(
             name='push',
             description='Push this branch to origin: /push [confirm]; confirm pushes the default branch',
-            handler=push_command,
+            handler=handlers.push_command,
             complete=lambda args: ('confirm',) if len(args) <= 1 else (),
             live=True,
             # A plugin's own command of this name takes over instead of failing to load.
@@ -654,7 +670,7 @@ def git_commands(*, workspace: Callable[[], Path], model: ModelSource) -> tuple[
         Command(
             name='pr',
             description='Draft a GitHub pull request for this branch; /pr confirm (or /pr TITLE) pushes and opens it with gh',
-            handler=pull_request_command,
+            handler=handlers.pull_request_command,
             complete=lambda args: ('confirm',) if len(args) <= 1 else (),
             raw=True,
             live=True,

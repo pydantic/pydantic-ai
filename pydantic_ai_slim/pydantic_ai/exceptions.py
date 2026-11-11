@@ -656,7 +656,8 @@ class ModelAPIError(AgentRunError):
     retry_after: float | None
     """Seconds the provider asked you to wait before retrying, if it said.
 
-    An HTTP error reads it from the `retry-after-ms` or `Retry-After` response header.
+    An HTTP error reads it from the `retry-after-ms` or `Retry-After` response header, or, for Google, from the
+    `google.rpc.RetryInfo` in the error body when no such header carries it.
     """
 
     def __init__(
@@ -861,7 +862,7 @@ class ModelNotFoundError(ModelRequestRejectedError):
     """Raised when the provider couldn't find the model, deployment or other resource the request names.
 
     For example an HTTP 404, a gRPC `NOT_FOUND`, Bedrock's `ResourceNotFoundException`, or OpenAI's
-    `model_not_found` (which the Responses API sends as a 400). When the provider says the model name is unknown,
+    `model_not_found`. When the provider says the model name is unknown,
     [`suggested_model_id`][pydantic_ai.exceptions.ModelHTTPError.suggested_model_id] may suggest a close known one.
     A 404 can also mean that the provider's base URL is wrong. A subclass of
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
