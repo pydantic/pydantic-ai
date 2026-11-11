@@ -1,6 +1,7 @@
 """The `/set` menu, driven headless with scripted key presses."""
 
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -99,11 +100,21 @@ def test_flow_edits_resets_and_reports(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize('searchable', [True, False])
+@pytest.mark.parametrize('choices', [('true', 'false'), ('false', 'true')])
 def test_space_toggles_scrolled_setting_and_save_close_persists(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], searchable: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    searchable: bool,
+    choices: tuple[str, str],
 ) -> None:
     context, applied = make_context(tmp_path)
-    fields = FieldMenu(SettingsSource(context), searchable=searchable)
+    source = SettingsSource(context)
+    rows: list[FieldRow] = [
+        replace(row, choices=choices) if row.key == 'run.code_mode' else row for row in source.rows()
+    ]
+    monkeypatch.setattr(source, 'rows', lambda: rows)
+    fields = FieldMenu(source, searchable=searchable)
     index = next(i for i, row in enumerate(fields.rows) if row.key == 'run.code_mode')
 
     def keys() -> Iterator[str]:

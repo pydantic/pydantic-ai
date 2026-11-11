@@ -3354,7 +3354,7 @@ searching, printable characters, including Space and `R`, are query text. Enter
 ends search and keeps the matches, so hotkeys act on them; `/` resumes search.
 Esc clears the search or retained filter first; with no filter, Esc closes.
 
-Outside search, Space toggles rows whose choices are exactly `('true', 'false')`,
+Outside search, Space toggles rows with the two choices `true` and `false`, in either order,
 excluding rows with `SettingsMenu.actions` or `SettingsMenu.menus` that keep their
 Enter flow, and saves immediately, keeping the selection and scroll position. It does
 nothing on other rows. Enter opens the row's editor or choices. `R` resets the

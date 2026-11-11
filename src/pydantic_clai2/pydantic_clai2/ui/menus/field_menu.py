@@ -150,7 +150,7 @@ class FieldMenu:
 
     def toggleable(self, row: FieldRow) -> bool:
         """Only boolean value rows toggle; action and submenu rows keep their own flow."""
-        return row.choices == ('true', 'false') and row.key not in self.action_keys
+        return row.choices in (('true', 'false'), ('false', 'true')) and row.key not in self.action_keys
 
     def toggle(self, menu: Menu, item: MenuItem) -> None:
         """Space toggles a boolean through its source and redraws without reopening the list."""
