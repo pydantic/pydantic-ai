@@ -3296,7 +3296,7 @@ def test_vercel_openai_gpt():
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_vercel_vertex_gemini():
-    """Vercel routes `vertex/...` through `google_model_profile`."""
+    """Vercel routes `vertex/...` through `google_cloud_model_profile`, which adds the TIFF images Vertex AI reads."""
 
     profile = VercelProvider.model_profile('vertex/gemini-3.0-pro')
     assert _normalize(profile) == snapshot(
