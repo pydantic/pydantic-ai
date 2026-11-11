@@ -696,7 +696,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     )
     if reasoning.efforts is not None:
         profile['openai_reasoning_efforts'] = reasoning.efforts
-    if _is_computer_use_model(profile):
+    if _is_computer_use_model(model_name):
         # The computer use models. Measured live on gpt-5.5 with the native `computer` tool: clicks land exactly up to
         # 2560x1440 and miss by hundreds of pixels at 3840x2160, so a larger screen is sent scaled down to fit.
         profile['computer_use_screenshot_max_side'] = 2560
@@ -704,9 +704,17 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     return profile
 
 
-def _is_computer_use_model(profile: ModelProfile) -> bool:
-    """Whether OpenAI serves its native `computer` tool to the model: those with tool search do."""
-    return ToolSearchTool in profile.get('supported_native_tools', ())
+def _is_computer_use_model(model_name: str) -> bool:
+    """Whether OpenAI serves its native `computer` tool to the model.
+
+    The families whose model page lists `computer_use` among its supported tools: GPT-5.4 (also mini and pro), GPT-5.5,
+    GPT-5.6 and GPT-6. GPT-5.4 nano and GPT-5.5 pro leave it out:
+    https://developers.openai.com/api/docs/models/gpt-5.4-nano, https://developers.openai.com/api/docs/models/gpt-5.5-pro.
+    Known families only, like tool search above, so a new family gets the `computer` function tool until it is added.
+    """
+    return model_name.startswith(
+        ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
+    ) and not model_name.startswith(('gpt-5.4-nano', 'gpt-5.5-pro'))
 
 
 def is_openai_live_model(model_name: str) -> bool:
