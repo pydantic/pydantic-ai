@@ -673,7 +673,7 @@ assert loaded.result.all_messages() == result.all_messages()
 The round-trip preserves the output, messages and new-message boundary, output tool name, usage, run and
 conversation IDs, metadata, trace context, and the run's [`compactions`][pydantic_ai.agent.AgentRunResult.compactions].
 A compaction record's [`replaced`][pydantic_ai.messages.CompactionRecord.replaced] history, and so its `summarized`
-messages, is held in memory only and isn't stored, also when the result is pickled; see
+messages, is held in memory only and isn't stored, also when the result is pickled (copying a record on its own keeps it); see
 [storing the full conversation](capabilities/compaction.md#storing-the-full-conversation). Run-local state used only
 while the agent is executing is not stored.
 

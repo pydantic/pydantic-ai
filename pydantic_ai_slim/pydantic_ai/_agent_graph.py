@@ -3767,6 +3767,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # After the whole `prepare_model_request` chain, so it's for the model serving this attempt, after a sticky
         # or pinned redirect and as durability left it, and before the batch wrapper and token counting.
+        # For this attempt's model already, in case compacting fails and an error hook recovers without sending it:
+        # `_prepare_attempt` replaces them with the wrapped model when it is sent.
+        self._serving_model = prepared.model
+        self._serving_model_id = prepared.model_id or prepared.model.model_id
         compaction = _AttemptCompaction()
         await self._compact_attempt(ctx, run_context, request_context, prepared, compaction)
         if compaction.error is None:

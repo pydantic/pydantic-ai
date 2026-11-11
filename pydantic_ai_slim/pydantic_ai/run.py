@@ -995,6 +995,11 @@ class AgentRunResult(Generic[OutputDataT]):
         # means nothing in another process; its ref stays in the messages' `workspace_ref`.
         state = self.__dict__.copy()
         state.pop('_workspace', None)
+        if compactions := self._state.compactions:
+            # A compaction record's replaced history is held in memory only, as when the result is serialized.
+            state['_state'] = dataclasses.replace(
+                self._state, compactions=[dataclasses.replace(record, replaced=None) for record in compactions]
+            )
         return state
 
     @classmethod
