@@ -848,9 +848,14 @@ BBBB\
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Spill())], store=store)
         out = await _run(cap, ToolReturn(return_value=['A' * 300, _IMAGE], metadata={'k': 'v'}))
         assert isinstance(out, ToolReturn)
-        value: object = out.return_value
-        assert isinstance(value, list) and value[1] is _IMAGE
-        assert out.metadata['k'] == 'v'
+        assert out.return_value == [
+            snapshot("""\
+[Tool output too large (300 chars); stored to handle 'run-1/call-1.0'. Read it with read_tool_result(handle='run-1/call-1.0', offset=0, limit=200, from_end=False, pattern=None).]
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\
+"""),
+            _IMAGE,
+        ]
+        assert out.metadata == snapshot({'k': 'v', 'overflow_handle': 'run-1/call-1.0', 'overflow_bytes': 300})
         assert await store.read(out.metadata['overflow_handle']) == ('A' * 300).encode('utf-8')
 
     async def test_structured_item_beside_a_file_is_reduced_and_the_file_kept(self):
