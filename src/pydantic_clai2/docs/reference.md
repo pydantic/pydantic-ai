@@ -1282,8 +1282,6 @@ still queues the message like Enter, the terminal is sending a plain Enter:
 ### Interrupting a turn
 
 Press Esc or Ctrl-C to cancel the active agent turn without discarding your draft.
-For what cancelling does to delegated tasks, see
-[Managed tasks in the interactive stock CLI](#managed-tasks-in-the-interactive-stock-cli).
 Tool cleanup finishes before the next queued message starts. Esc does not request
 exit, even when pressed repeatedly. Arrow keys and Alt-key shortcuts keep their
 editing behavior. The active full-screen interface retains control of Esc rather
