@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from functools import partial
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, Any, overload
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from typing_extensions import TypeIs
@@ -25,6 +25,7 @@ from pydantic_ai_harness.ask_user._events import AskUserAnsweredEvent
 from pydantic_ai_harness.ask_user._toolset import (
     OWNER_METADATA_KEY,
     QUESTIONS_METADATA_KEY,
+    REQUEST_ID_METADATA_KEY,
     TIMED_OUT,
     AskUserToolset,
     ask_user_result,
@@ -172,7 +173,7 @@ class AskUser(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """The `ask_user_question` tool, which defers each call as a question this capability answers."""
-        return AskUserToolset[AgentDepsT](capability_id=self.id)
+        return AskUserToolset[AgentDepsT](capability_id=self.id, unique_request_ids=self.answerer is not None)
 
     async def handle_deferred_tool_calls(
         self, ctx: RunContext[AgentDepsT], *, requests: DeferredToolRequests
@@ -190,7 +191,7 @@ class AskUser(AbstractCapability[AgentDepsT]):
                     answerer,
                     ctx,
                     call,
-                    rebuild_request(call, questions=requests.metadata[call.tool_call_id].get(QUESTIONS_METADATA_KEY)),
+                    _request_for(call, requests.metadata[call.tool_call_id]),
                 )
                 for call in questions
             }
@@ -274,3 +275,10 @@ def _takes_token(answerer: AnyAnswerer[AgentDepsT]) -> TypeIs[TokenAnswerer[Agen
 
 def _takes_context(answerer: AnyAnswerer[AgentDepsT]) -> TypeIs[ContextAnswerer[AgentDepsT]]:
     return takes_context(answerer) is True
+
+
+def _request_for(call: ToolCallPart, metadata: dict[str, Any]) -> AskUserRequest:
+    """The request the tool asked, from the questions and ID its deferral recorded."""
+    return rebuild_request(
+        call, questions=metadata.get(QUESTIONS_METADATA_KEY), request_id=metadata.get(REQUEST_ID_METADATA_KEY)
+    )

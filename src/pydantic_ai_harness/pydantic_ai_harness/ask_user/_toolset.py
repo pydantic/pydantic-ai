@@ -78,14 +78,18 @@ OWNER_METADATA_KEY = 'ask_user'
 QUESTIONS_METADATA_KEY = 'questions'
 """Metadata key holding the questions as the tool received them, after any hook rewrote the call's arguments."""
 
+REQUEST_ID_METADATA_KEY = 'request_id'
+"""Metadata key holding the `AskUserRequest.id` the tool asked under, so `AskUser` answers under the same one."""
+
 
 class AskUserToolset(FunctionToolset[AgentDepsT]):
     """Registers `ask_user_question`, which defers every call as a question for `AskUser` or the host to answer."""
 
-    def __init__(self, *, capability_id: str | None = None) -> None:
+    def __init__(self, *, capability_id: str | None = None, unique_request_ids: bool = False) -> None:
         # The capability's ID names the toolset's durable units, so `AskUser` works under a durable engine.
         super().__init__(id=capability_id)
         self._capability_id = capability_id
+        self._unique_request_ids = unique_request_ids
         self.add_function(self.ask_user_question, name=TOOL_NAME)
 
     async def ask_user_question(self, ctx: RunContext[AgentDepsT], questions: Questions) -> AskUserResult:
@@ -101,12 +105,22 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
             questions: One to ten questions, each with a unique `header`, two to six options,
                 and `multi_select` when several answers are allowed.
         """
-        # Keyed by the call (always set inside a tool) so `AskUserRequest.from_tool_call` rebuilds the same request.
-        request = AskUserRequest(questions=tuple(questions), id=ctx.tool_call_id or '')
+        # Answered in the run, the ID is unique across runs, as an answerer serving several runs, such as a
+        # web UI, may hold questions from all of them, and two runs can repeat a tool call ID. Answered by the
+        # host, it is the call's ID (always set inside a tool), so `AskUserRequest.from_tool_call` rebuilds it.
+        if self._unique_request_ids:
+            request = AskUserRequest(questions=tuple(questions))
+        else:
+            request = AskUserRequest(questions=tuple(questions), id=ctx.tool_call_id or '')
         await ctx.emit(AskUserRequestedEvent(request=request))
         # The questions as the tool received them, so `AskUser` asks those even when a hook such as an
-        # argument guard rewrote the call's arguments.
+        # argument guard rewrote the call's arguments, and the request's ID, journaled with the deferral
+        # in a durable run so a replay asks under the same ID.
         raise CallDeferred(
-            metadata={OWNER_METADATA_KEY: self._capability_id, QUESTIONS_METADATA_KEY: to_jsonable_python(questions)},
+            metadata={
+                OWNER_METADATA_KEY: self._capability_id,
+                QUESTIONS_METADATA_KEY: to_jsonable_python(questions),
+                REQUEST_ID_METADATA_KEY: request.id,
+            },
             kind='question',
         )
