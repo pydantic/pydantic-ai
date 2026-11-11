@@ -82,7 +82,7 @@ class Conversation(Protocol):
         ...
 
     async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
-        """Switch to a saved conversation, as `/resume ID` does, and return the notice to show.
+        """Switch to a saved conversation and show its history, as `/resume ID` does, and return the notice to show.
 
         Only restores the saved history: nothing runs and no tool is replayed. Call it between
         turns, such as from `on_session_start` or a command. It raises `RuntimeError` during a run,

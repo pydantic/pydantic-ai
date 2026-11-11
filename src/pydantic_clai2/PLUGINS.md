@@ -419,7 +419,8 @@ CLAI2 exits; AoE removes the directory when it stops the session.
 **Conversation.** The current conversation ID goes to `session_id` beside the status
 file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
 `~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
-CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--resume`,
+CLAI2 starts empty, so the plugin resumes the conversation recorded there and shows its
+history, as `/resume ID` does; `--resume`,
 `--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
 (`SessionStart.conversation_chosen`). It is resumed also when it was saved in another
 directory, such as after AoE renamed or moved a worktree, and continues in the pane's
@@ -3511,11 +3512,12 @@ Logfire's `AgentControl`, can replace CLAI's default per request; `resolved_mode
 status row still name the selected one, and `/compact` and session naming (without a
 `sessions.naming_model`) run on it. `conversation_id` is the ID `--resume` restores it by, and
 `title` its saved title (`None` until the first prompt is saved); `on_conversation_changed` says
-when either changes. `await resume(conversation_id)` switches to a saved conversation as
-`/resume ID` does, returning the notice to show: it only restores history, never runs the
-model or replays a tool. Call it between turns, for example from `on_session_start`; it raises
-`RuntimeError` during a run, `LookupError` for an unknown ID, and `ValueError` for a
-conversation saved in another directory or when persistence is not configured.
+when either changes. `await resume(conversation_id)` switches to a saved conversation and
+shows its history, as `/resume ID` does, returning the notice to show: it only restores
+history, never runs the model or replays a tool. Call it between turns, for example from
+`on_session_start`; it raises `RuntimeError` during a run, `LookupError` for an unknown ID,
+and `ValueError` for a conversation saved in another directory or when persistence is not
+configured.
 `resume(conversation_id, allow_other_workspace=True)` continues a conversation saved in another
 directory in this one instead, as confirming it in the `/resume` browser does: tools then run
 in this directory, and the saved conversation keeps its original one. A conversation
@@ -3523,8 +3525,8 @@ still running in another process is not taken over: the newest unarchived copy C
 continue it that no other process runs is resumed, else a new copy, and the notice says which.
 When the conversation or its title changed, every loaded plugin, the caller included, then
 receives `on_conversation_changed`; when the ID changed, the status row starts afresh.
-Resuming the conversation already held changes nothing. An in-memory `Transcript` has nothing
-saved, so its `resume` raises `LookupError`.
+Resuming the conversation already held only shows its history again. An in-memory
+`Transcript` has nothing saved, so its `resume` raises `LookupError`.
 Local `!command` executions append a user message with the command, stdout, stderr, and
 completion status. A command that gets the terminal (a full-screen program such as `!vim`, or
 `!!command`) appends only the command and its completion status. They do not start an agent turn or fire turn hooks;
