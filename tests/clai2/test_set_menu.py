@@ -111,6 +111,7 @@ def test_space_toggles_scrolled_setting_and_save_close_persists(
         for expected in (False, True, False):
             assert context.settings.code_mode is expected
             assert running.highlighted is not None and running.highlighted.value == 'run.code_mode'
+            # Check the painted viewport too: a stable cursor alone does not prove stable scrolling.
             frame = capsys.readouterr().out.split('\x1b[H')[-1]
             assert '> run.code_mode' in frame
             assert '  model ' not in frame, 'the scrolled viewport must not jump to the top'
@@ -123,8 +124,8 @@ def test_space_toggles_scrolled_setting_and_save_close_persists(
 
     pressed = keys()
     monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    monkeypatch.setattr('termflow.tui.menu.terminal_size', lambda: (100, 10))
     running = fields.build()
-    monkeypatch.setattr(running, '_size', lambda: (100, 10))
     result = running.run()
     assert result.item is not None and is_save_and_close(result.item)
     assert context.store.load().code_mode is True
@@ -158,6 +159,48 @@ def test_space_on_nonboolean_keeps_enter_editing(
     assert context.store.load().request_limit == 42
     assert applied == ['run.request_limit']
     assert script.opened == ['text']
+
+
+@pytest.mark.parametrize('searchable', [True, False])
+@pytest.mark.parametrize('boolean', [True, False])
+def test_space_hint_requires_a_boolean_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], searchable: bool, boolean: bool
+) -> None:
+    context, _ = make_context(tmp_path)
+    fields = FieldMenu(
+        SettingsSource(context, keys=['display.thinking' if boolean else 'run.request_limit']), searchable=searchable
+    )
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: 'escape')
+    fields.build().run()
+    assert ('Space toggle' in capsys.readouterr().out) is boolean
+
+
+@pytest.mark.parametrize('asynchronous', [True, False])
+async def test_space_does_not_bypass_boolean_row_actions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], asynchronous: bool
+) -> None:
+    context, applied = make_context(tmp_path)
+    fields = FieldMenu(SettingsSource(context, keys=['run.code_mode']))
+    pressed = iter([' ', 'enter', 'end', 'enter'])
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    calls: list[str] = []
+
+    def action() -> list[str]:
+        calls.append('action')
+        return ['Action ran.']
+
+    async def async_action() -> list[str]:
+        return action()
+
+    if asynchronous:
+        messages = await run_flow_async(fields, submenus={'run.code_mode': async_action})
+    else:
+        messages = run_flow(fields, submenus={'run.code_mode': action})
+    assert messages == ['Action ran.']
+    assert calls == ['action']
+    assert applied == []
+    assert context.store.overrides() == {}
+    assert 'Space toggle' not in capsys.readouterr().out
 
 
 def test_flow_stops_on_cancel(tmp_path: Path) -> None:

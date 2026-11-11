@@ -1,7 +1,7 @@
 """A full-screen editor for a set of named, validated fields. `/set`, `/model add`, and plugin settings use it."""
 
 import json
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
 
@@ -24,7 +24,7 @@ CUSTOM = 'Type a value...'
 KEEP = 'Keep current'
 SAVE_AND_CLOSE = 'Save & close'
 SAVE_AND_CLOSE_DETAILS = 'Leave this menu. Each change was saved as you made it.'
-_LIST_HINT = 'Space toggle - Enter edit - R reset - Esc close'
+_LIST_HINT = 'Enter edit - R reset - Esc close'
 _PREVIEW_LIST_WIDTH = 30
 
 
@@ -84,6 +84,7 @@ class FieldMenu:
         self._source = source
         self.rows = list(source.rows())
         self.messages: list[str] = []
+        self.action_keys: Collection[str] = ()
 
     def items(self) -> list[MenuItem]:
         """One row per field with its current value, then Save & close."""
@@ -123,6 +124,7 @@ class FieldMenu:
     def build(self, initial: int = 0) -> Menu:
         """The field list: Space toggles booleans; `/` starts a search in searchable lists."""
         self.rows = list(self._source.rows())
+        toggle_hint = 'Space toggle - ' if any(self.toggleable(row) for row in self.rows) else ''
         builder = (
             MenuBuilder(self._source.title)
             .style(markdown_style())
@@ -132,21 +134,28 @@ class FieldMenu:
         )
         if self._searchable:
             return slash_search(
-                builder, footer=_LIST_HINT, key_source=menu_key, hotkeys={' ': self.toggle, 'R': self._reset_key}
+                builder,
+                footer=toggle_hint + _LIST_HINT,
+                key_source=menu_key,
+                hotkeys={' ': self.toggle, 'R': self._reset_key},
             )
         return (
             builder.list_width(46)
             .on_key(' ', self.toggle)
             .on_key('r', self._reset_key)
-            .footer_hint('Space toggle - Enter edit - r reset - Esc back')
+            .footer_hint(toggle_hint + 'Enter edit - r reset - Esc back')
             .key_source(menu_key)
             .build()
         )
 
+    def toggleable(self, row: FieldRow) -> bool:
+        """Only boolean value rows toggle; action and submenu rows keep their own flow."""
+        return row.choices == ('true', 'false') and row.key not in self.action_keys
+
     def toggle(self, menu: Menu, item: MenuItem) -> None:
         """Space toggles a boolean through its source and redraws without reopening the list."""
         row = self.row_for(item.value)
-        if row is not None and row.choices == ('true', 'false'):
+        if row is not None and self.toggleable(row):
             current = self._source.current(row)
             self.messages.append(self.apply(row, 'false' if current == 'true' else 'true'))
             self.rows = list(self._source.rows())
@@ -284,7 +293,7 @@ def run_flow(
     messages: list[str] = []
     cursor = 0
     while True:
-        step = _next_step(menu, runners, cursor, messages)
+        step = _next_step(menu, runners, cursor, messages, submenus or ())
         if step is None:
             return messages
         row, cursor = step
@@ -312,7 +321,7 @@ async def run_flow_async(
     messages: list[str] = []
     cursor = 0
     while True:
-        step = await run_worker(partial(_next_step, menu, runners, cursor, messages))
+        step = await run_worker(partial(_next_step, menu, runners, cursor, messages, submenus or ()))
         if step is None:
             return messages
         row, cursor = step
@@ -330,9 +339,10 @@ async def run_flow_async(
 
 
 def _next_step(
-    menu: FieldMenu, runners: Runners, cursor: int, messages: list[str]
+    menu: FieldMenu, runners: Runners, cursor: int, messages: list[str], action_keys: Collection[str]
 ) -> tuple[FieldRow | None, int] | None:
     """Show the list and act on the pick in one step, so sources that touch the keyring stay off the event loop."""
+    menu.action_keys = action_keys
     result = runners.run_list(menu.build(cursor))
     messages.extend(menu.messages)
     menu.messages.clear()

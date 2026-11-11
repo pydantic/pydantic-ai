@@ -310,7 +310,7 @@ def test_settings_search_does_not_reset_on_lowercase_r(tmp_path: Path, monkeypat
     context, _ = make_context(tmp_path)
     source = ModelSettingsSource(context.store, 'openai:gpt-5.6')
     menu = FieldMenu(source)
-    keys = iter([*'reasoning', 'enter', 'R'])
+    keys = iter(['/', *'reasoning', 'enter', 'enter', 'R'])
     monkeypatch.setattr('pydantic_clai2.ui.menus.field_menu.menu_key', lambda: next(keys))
     widget = menu.build()
     result = widget.run()
