@@ -213,8 +213,8 @@ def _check_sub_agents(merged: Any) -> None:
 
 
 def _check_computer_use(merged: ComputerUse[Any]) -> None:
-    # The later settings win, but approval, which restricts, survives.
-    assert (merged.requires_approval, merged.settle_seconds) == (True, 0)
+    # One display: the later configuration wins, defaults included.
+    assert (merged.settle_seconds, merged.native) == (0, True)
 
 
 def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
@@ -264,9 +264,9 @@ COMBINE_POLICY: dict[str, Policy] = {
         _check_summarizing,
     ),
     'ComputerUse': Combines(
-        'an agent has one display: the later configuration wins, but approval survives',
+        'an agent has one display: the later configuration wins',
         lambda: (
-            ComputerUse[Any](requires_approval=True),
+            ComputerUse[Any](native=False),
             ComputerUse[Any](settle_seconds=0),
         ),
         _check_computer_use,
