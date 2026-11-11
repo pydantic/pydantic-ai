@@ -1984,20 +1984,42 @@ async def test_google_image_generation_maps_non_http_api_error():
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
-async def test_google_image_generation_status_error():
-    """A Gemini 4xx surfaces as `ModelHTTPError` keeping the status, body, and `retry-after`.
+@pytest.mark.parametrize(
+    ('status_code', 'headers', 'error', 'expected_retry_after'),
+    [
+        pytest.param(
+            400,
+            {'retry-after': '12'},
+            {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'},
+            12,
+            id='retry-after-header',
+        ),
+        pytest.param(
+            429,
+            None,
+            {
+                'code': 429,
+                'message': 'Resource has been exhausted',
+                'status': 'RESOURCE_EXHAUSTED',
+                'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
+            },
+            14.0,
+            id='retry-info-body',
+        ),
+    ],
+)
+async def test_google_image_generation_status_error(
+    status_code: int, headers: dict[str, str] | None, error: dict[str, object], expected_retry_after: float
+):
+    """A Gemini 4xx surfaces as `ModelHTTPError` keeping the status, body, and the wait the provider reported.
 
-    Not a VCR test because a 400 is easy to provoke but its `retry-after` header and structured error
-    body are not: both depend on Google's live quota state, and a recording would pin whatever that
-    happened to be. The response here is fixed from Google's documented error format instead.
+    Not a VCR test because a 4xx is easy to provoke but its wait is not: a `retry-after` header and a structured
+    error body both depend on Google's live quota state, and a recording would pin whatever that happened to be.
+    The responses here are fixed from Google's documented error format instead.
     """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(
-            400,
-            headers={'retry-after': '12'},
-            json={'error': {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'}},
-        )
+        return httpx2.Response(status_code, headers=headers, json={'error': error})
 
     async with _mock_google_provider(handle_request) as provider:
         model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
@@ -2005,11 +2027,9 @@ async def test_google_image_generation_status_error():
         with pytest.raises(ModelHTTPError) as exc_info:
             await model.generate('tiny robot')
 
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.body == {
-        'error': {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'}
-    }
-    assert exc_info.value.retry_after == 12
+    assert exc_info.value.status_code == status_code
+    assert exc_info.value.body == {'error': error}
+    assert exc_info.value.retry_after == expected_retry_after
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
