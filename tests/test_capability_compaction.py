@@ -5,6 +5,8 @@ Every test runs `Agent`s on `FunctionModel`s: what's under test is core's attemp
 
 from __future__ import annotations
 
+import copy
+import pickle
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -369,6 +371,29 @@ async def test_compaction_failure_reaches_on_model_request_error():
     )
     result = await agent.run('hi')
     assert result.output == 'recovered from compaction rate limited'
+
+
+async def test_a_response_recovered_from_a_failed_compaction_is_stamped_with_its_model():
+    """The serving model is this attempt's before it compacts, so a recovered response names the right model."""
+
+    async def recover(ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception) -> ModelResponse:
+        # `ModelFallback` hands on the attempts it gave up on as a group.
+        if 'compaction rate limited' in repr(getattr(error, 'exceptions', error)):
+            return ModelResponse(parts=[TextPart('recovered')])
+        raise error
+
+    agent = Agent(
+        FunctionModel(failure, model_name='primary'),
+        capabilities=[
+            RequestOnce(),
+            FailFor('fallback'),
+            ModelFallback(seen_by([])),
+            Hooks(model_request_error=recover),
+        ],
+    )
+    result = await agent.run('hi')
+    assert result.output == 'recovered'
+    assert result.response.model_id == 'function:fallback'
 
 
 async def test_compaction_failure_without_fallback_fails_the_run():
@@ -1210,6 +1235,40 @@ async def test_records_locate_their_part_after_a_round_trip(
     messages = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
     for history in (loaded.all_messages(), messages):
         assert history[loaded_record.part_message_index].parts[loaded_record.part_index] == loaded_record.part
+
+
+async def test_a_pickled_result_leaves_out_what_a_compaction_replaced():
+    """DBOS pickles a run result: the record keeps everything but the history it replaced."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('the replaced history')]),
+        ModelResponse(parts=[TextPart('a')]),
+    ]
+    agent = Agent(TestModel(custom_output_text='done'), capabilities=[RequestOnce(), Summarize()])
+    result = await agent.run('hi', message_history=history)
+    [record] = result.compactions
+    assert record.replaced is not None
+
+    data = pickle.dumps(result)
+    assert b'the replaced history' not in data
+    [loaded] = pickle.loads(data).compactions
+    assert loaded == record and loaded.replaced is None
+    # The live record is untouched.
+    assert record.replaced is not None
+    # A copy of the record itself keeps it.
+    assert copy.deepcopy(record).replaced == record.replaced
+
+
+async def test_a_part_equal_to_but_not_the_one_in_the_history_is_refused():
+    def twice(request: CompactionRequest) -> CompactionResult:
+        return CompactionResult(
+            messages=[ModelRequest(parts=[CompactionPart(content='summary')]), request.messages[-1]],
+            part=CompactionPart(content='summary'),
+            handler='h',
+        )
+
+    agent = Agent(TestModel(), capabilities=[RequestOnce(), Returns(twice)])
+    with pytest.raises(UserError, match=r'must contain its `CompactionResult.part` object itself'):
+        await agent.run('hi')
 
 
 async def test_compactions_serialize_without_what_they_replaced():

@@ -960,10 +960,11 @@ def _check_compaction_result(result: CompactionResult, given: Sequence[_messages
         ),
         None,
     )
-    if latest is None or latest[1] != part:
+    # By identity: the record locates the part in the committed history by it.
+    if latest is None or latest[1] is not part:
         raise exceptions.UserError(
-            f'The history compacted by {handler!r} must contain its `CompactionResult.part`, as its latest '
-            '`CompactionPart`: that is where the compacted history starts.'
+            f'The history compacted by {handler!r} must contain its `CompactionResult.part` object itself, as its '
+            'latest `CompactionPart`: that is where the compacted history starts.'
         )
     if _is_empty_summary(part):
         raise exceptions.UnexpectedModelBehavior(
@@ -3761,6 +3762,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # After the whole `prepare_model_request` chain, so it's for the model serving this attempt, after a sticky
         # or pinned redirect and as durability left it, and before the batch wrapper and token counting.
+        # For this attempt's model already, in case compacting fails and an error hook recovers without sending it:
+        # `_prepare_attempt` replaces them with the wrapped model when it is sent.
+        self._serving_model = prepared.model
+        self._serving_model_id = prepared.model_id or prepared.model.model_id
         compaction = _AttemptCompaction()
         await self._compact_attempt(ctx, run_context, request_context, prepared, compaction)
         if compaction.error is None:
