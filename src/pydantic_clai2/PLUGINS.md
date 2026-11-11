@@ -283,9 +283,14 @@ details.
 uv run clai2
 ```
 
-Run `/login github-copilot`, then open `/model add` and choose `github-copilot`.
-The provider menu also starts login when no credentials exist. No application
-registration or client ID configuration is required. CLAI supplies the same
+Run `/login github-copilot`. Login adds every model your account's catalog lists
+to `/model` and, when you have not chosen a model, selects a recent strong one, such
+as Claude Opus 5.5 or Gemini 4 Argon; a model you chose stays selected. To switch,
+open `/model add` and choose `github-copilot`. The provider menu also starts login
+when no credentials exist. If listing the models fails, the login stays saved and
+CLAI reports why.
+
+No application registration or client ID configuration is required. CLAI supplies the same
 [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
 and requests `read:user` access to your GitHub profile. This identifies the existing
 Copilot OAuth application, not a separately registered CLAI application.
@@ -297,8 +302,8 @@ Login prints a code and `https://github.com/login/device`, then starts polling.
 Open the link on this or another device and approve only your own session's code.
 CLAI does not launch a browser, so a text browser cannot block login or take over
 an SSH terminal. Ctrl-C stops polling; GitHub controls expiry. There is no localhost callback.
-GitHub authorization does not establish Copilot access: the menu queries your
-account's catalog and keeps only picker-enabled `/chat/completions` models.
+GitHub authorization does not establish Copilot access: login and the menu query
+your account's catalog and keep only picker-enabled `/chat/completions` models.
 The shared model menu includes details and `Ctrl+S` settings. Subscription and
 organization policy still control inference access. A known ID also works with
 `/model github-copilot:claude-haiku-4.5`.
@@ -1546,7 +1551,7 @@ turn (`LiveSession.steer`), as at the terminal's prompt, and the input queued be
 above the composer from
 `LiveSession.queue`, which the terminal's own queue is: the page edits or removes an entry with
 `edit_queued` and `remove_queued`, and hears of every change through `host.live.subscribe`. Edit and Retry on a
-prompt rewind its conversation while it is not `LiveSession.busy`. A steered
+prompt rewind its conversation while it is not `LiveSession.busy`, which the `live` message tells the page. A steered
 message shows in the transcript once core delivers it (`EnqueuedMessagesEvent`). The process's working directory never changes: each session reads its own as
 `host.workspace`. `/resume ID` typed in a session still moves that session to the directory `ID`
 was saved in, and `/workspace DIRECTORY` (an existing absolute path) starts a new conversation
@@ -1573,7 +1578,8 @@ source, as in the terminal, which prints what each one saved. Any other bare com
 terminal menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead. When CLAI has no terminal, as for `clai2 --web` started from a script or
 service, a command that opens a terminal menu or prompt, such as `/model add`, fails with an error
-notice instead of closing as cancelled.
+notice instead of closing as cancelled; `/login openai-codex` and a plugin's `read_line` ask in the
+page instead.
 
 The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
 `host.tasks` and `on_task_progress`: each delegated task under the one that started it, with its
@@ -2609,7 +2615,7 @@ With `uv tool`, extra packages installed using `--with` must be added again afte
 `/update now`. See [Updating](docs/reference.md#updating) for how CLAI installs updates.
 
 ```text
-/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"max_results": 8}'
 ```
 
 The JSON is passed to the constructor, so any keyword `ExaSearch` accepts that
@@ -2632,7 +2638,7 @@ from pydantic_clai2.plugins import Plugin
 
 class Search(Plugin):
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (ExaSearch(num_results=8, text_summary=True),)
+        return (ExaSearch(max_results=8, text_summary=True),)
 ```
 
 A plugin is a subclass of `Plugin`, declared the way a Pydantic AI
@@ -2738,7 +2744,7 @@ the terminal; the shell has already printed them.
 `on_task_progress` receives a `TaskProgress` for everything a task the agent delegated does, and its
 descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the event
 from the task's own run (text, thinking, tool calls and results), its `DelegationStartedEvent` or
-`DelegationFinishedEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
+`DelegationFinishedEvent`, one of its `sub_agents` task events, such as `TaskQuestionAskedEvent` when it asks
 its parent, or `None` when only the task changed, such as when it started, finished, or began
 waiting for an answer. Its own run's events never reach the main run's hooks: they are the feed
 `/tasks` shows. Its `sub_agents` task events also go into the stream of the run that delegated it,
@@ -3839,7 +3845,10 @@ such as an authorization code. Cancelling the task that awaits it, because the
 browser's callback won the race, closes the prompt. A slash command or
 `/login` handler can call it directly; a tool or hook asking mid-run takes the
 screen first, inside `async with host.full_screen()`. Without the live editor it
-is a plain terminal prompt.
+is a plain terminal prompt. Where CLAI has no terminal and the web UI runs, it is
+a dialog in the page, titled with the prompt; what you printed is not shown there.
+Esc cancels that dialog too, so keep any other terminal-only key hint out of the
+prompt.
 
 Do not draw a prompt yourself from a `run_worker` operation. By default
 `run_worker` takes the live panel, and the transcript with your URL, off the

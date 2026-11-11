@@ -717,6 +717,8 @@ class LiveEntry:
 
     id: str
     state: LiveState
+    busy: bool = False
+    """Whether it handles input or has some queued, a turn's `TurnEnd` hooks included: Edit and Retry are refused."""
     title: str | None
     workspace: str
 

@@ -236,7 +236,7 @@ async def _wait_within_budget(awaitable: Awaitable[object], loop: asyncio.Abstra
 _agent_loop = _AgentLoop()
 
 _in_step_body: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    'pydantic_ai_harness_aws_lambda_in_step_body', default=False
+    'pydantic_ai_harness.aws_lambda.in_step_body', default=False
 )
 """Set in the context a step's operation runs under, so a nested step can be detected.
 
@@ -521,7 +521,7 @@ def _set_exception_if_pending(future: asyncio.Future[T], error: BaseException) -
 
 
 _active_bridge: contextvars.ContextVar[StepBridge | None] = contextvars.ContextVar(
-    'pydantic_ai_harness_aws_lambda_bridge', default=None
+    'pydantic_ai_harness.aws_lambda.active_bridge', default=None
 )
 _active_run = threading.Lock()
 

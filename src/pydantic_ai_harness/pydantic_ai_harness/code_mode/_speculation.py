@@ -48,6 +48,7 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai_harness._code_tools import NestedCallOutcome, run_nested_call, schema_arg_names
+from pydantic_ai_harness._warn import warn_callable_renamed
 from pydantic_ai_harness.code_mode._events import (
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,
@@ -890,7 +891,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             'wasted': len(evicted),
         }
 
-    async def close(self) -> None:
+    async def aclose(self) -> None:
         """Run-end cleanup: cancel every launch no snippet ever claimed.
 
         Shielded: a run cancelled through an anyio scope is level-triggered, so without the
@@ -903,6 +904,11 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         with anyio.CancelScope(shield=True):
             for watch in parts.values():
                 await self._cancel_watch(watch)
+
+    async def close(self) -> None:
+        """Deprecated: renamed to `aclose`."""
+        warn_callable_renamed('SpeculationCoordinator.close', 'SpeculationCoordinator.aclose')
+        await self.aclose()
 
     async def _evict(
         self, ctx: RunContext[AgentDepsT], watch: _PartWatch
