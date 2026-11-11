@@ -582,7 +582,7 @@ class Session(Generic[DepsT, OutputT]):
         self._base_agent = agent
         self._bound_plugins: tuple[AgentCapability[DepsT], ...] = ()
         self._bound_model: str | None = None
-        self._bound_selection: tuple[str, ...] = ()
+        self._bound_selection: tuple[bool, tuple[str, ...]] = (False, ())
         self.deps = deps
         self.plugins: Sequence[AgentCapability[DepsT]] = tuple(plugins)
         self.usage_limits = usage_limits
@@ -921,9 +921,11 @@ class Session(Generic[DepsT, OutputT]):
             agent_model = None if self.model_chosen else selected
             if agent_model is not None:
                 run_model = None
+            # What `selection` binds: `SessionModels` for any selection, and the chain behind its fallback.
+            bound_selection = (selected is not None, tuple(models) if len(models) > 1 else ())
             if (
                 agent_model != self._bound_model
-                or tuple(models) != self._bound_selection
+                or bound_selection != self._bound_selection
                 or len(self.plugins) != len(self._bound_plugins)
                 or any(new is not old for new, old in zip(self.plugins, self._bound_plugins))
             ):
@@ -931,7 +933,7 @@ class Session(Generic[DepsT, OutputT]):
                 self.agent = self._base_agent.with_plugins([*self.plugins, *selection, instructions], model=agent_model)
                 self._bound_plugins = tuple(self.plugins)
                 self._bound_model = agent_model
-                self._bound_selection = tuple(models)
+                self._bound_selection = bound_selection
             # Already bound to the stock agent, including delegation and guardrails.
             capabilities = []
         if self.model_defaults is not None:
