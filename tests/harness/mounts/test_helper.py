@@ -156,7 +156,9 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     return sandbox
 
 
-def wanted(sandbox: Sandbox, name: str = 'data', fingerprint: str = 'aaaa', expires_at: float = 2_000.0) -> Wanted:
+def wanted(
+    sandbox: Sandbox, name: str = 'data', fingerprint: str = 'aaaa', expires_at: float | None = 2_000.0
+) -> Wanted:
     return {
         'path': str(sandbox.root / 'workspace' / name),
         'fingerprint': fingerprint,
@@ -239,10 +241,11 @@ def test_the_same_bucket_only_gets_fresh_keys(sandbox: Sandbox) -> None:
     assert expiry(sandbox, 'aaaa') == '3000.0'
 
 
-def test_another_bucket_is_refused_while_the_keys_there_are_valid(sandbox: Sandbox) -> None:
+@pytest.mark.parametrize('expires_at', [1_500.0, None])
+def test_another_bucket_is_refused_while_the_keys_there_are_valid(sandbox: Sandbox, expires_at: float | None) -> None:
     mount = wanted(sandbox, fingerprint='bbbb')
     sandbox.mounted(mount['path'], 'aaaa')
-    helper.record_expiry('aaaa', 1_500.0)
+    helper.record_expiry('aaaa', expires_at)
 
     with pytest.raises(helper.MountFailed, match='already shows another bucket in this sandbox') as raised:
         ensure(sandbox, mount)
@@ -966,3 +969,10 @@ def test_a_cleanup_that_fails_reports_the_failure_that_started_it(
     with pytest.raises(helper.MountFailed, match='the first failure'):
         ensure(sandbox, mount)
     assert sandbox.alarms == []
+
+
+def test_keys_that_never_expire_are_recorded_as_never_expiring(sandbox: Sandbox) -> None:
+    ensure(sandbox, wanted(sandbox, expires_at=None))
+
+    assert expiry(sandbox, 'aaaa') == 'inf'
+    assert not helper.expired('aaaa')

@@ -457,14 +457,14 @@ Python up to 3.14.
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
 - `mounts=[S3Mount(path='data', url='s3://bucket/prefix/', access_key_id=..., secret_access_key=...,
-  session_token=..., expires_at=..., endpoint=None, region=None, read_only=False)]` (from `pydantic_ai_harness`)
+  session_token=..., expires_at=None, endpoint=None, region=None, read_only=False)]` (from `pydantic_ai_harness`)
   shows a bucket at `<working_dir>/data` from the first command or file operation, through rclone run as root;
   `endpoint=` for R2/MinIO. `mounts=` can be a function of `RunContext`, sync or async, returning the same mounts with
-  fresh keys (called again near expiry); a plain list's folder stops working once `expires_at` passes. Needs
+  fresh keys (called again near expiry); a plain list's folder stops working once `expires_at` passes; `expires_at=None` means long-lived keys (R2/MinIO), used until revoked. Needs
   `docker_args=['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`, else
-  `MountError`. A mount outlives the run; another bucket at the same folder is refused until the keys there expire.
-  Overlapping paths or a bad `S3Mount` raise `UserError`. Code in the sandbox can read the keys: pass short-lived
-  keys scoped to the bucket. Not in agent specs.
+  `MountError`. A mount outlives the run; another bucket at the same folder is refused until the keys there expire (never, without `expires_at`).
+  Overlapping paths or a bad `S3Mount` raise `UserError`. Code in the sandbox can read the keys: pass keys scoped
+  to the bucket, short-lived where possible. Not in agent specs.
   See `docs/harness/cloud-storage-mounts.md`.
 
 ### OpenSandbox
