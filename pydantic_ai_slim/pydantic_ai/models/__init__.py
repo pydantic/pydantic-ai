@@ -3779,6 +3779,22 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
     return count
 
 
+def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:  # pyright: ignore[reportUnusedFunction]
+    """The `SystemPromptPart`s that make up the standing system prompt of a history.
+
+    That's the opening parts of its first request, after the requests the history starts with are merged into one, as
+    they are before they're sent. A compaction keeps them ahead of its summary, so they're still sent as the system
+    prompt.
+    """
+    parts: list[ModelRequestPart] = []
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            break
+        parts.extend(message.parts)
+    request = ModelRequest(parts=parts)
+    return cast(list[SystemPromptPart], parts[: _standing_system_prompt_count(request)])
+
+
 def _trim_messages_before_compaction(
     messages: list[ModelMessage],
     accepts: _StatelessArtifactPredicate,
