@@ -70,6 +70,8 @@ with try_import() as imports_successful:
         ChatToolCallDeltaEventDeltaMessageToolCalls,
         ChatToolCallStartEventDelta,
         ChatToolCallStartEventDeltaMessage,
+        ChatToolPlanDeltaEventDelta,
+        ChatToolPlanDeltaEventDeltaMessage,
         ContentDeltaV2ChatStreamResponse,
         ContentStartV2ChatStreamResponse,
         MessageEndV2ChatStreamResponse,
@@ -79,6 +81,7 @@ with try_import() as imports_successful:
         ToolCallStartV2ChatStreamResponse,
         ToolCallV2,
         ToolCallV2Function,
+        ToolPlanDeltaV2ChatStreamResponse,
         Usage,
         UsageTokens,
         UserChatMessageV2,
@@ -1258,6 +1261,12 @@ async def test_stream_event_edge_cases(allow_model_requests: None):
             ),
         ),
         # MessageEnd with no delta: guard clause skips entirely.
+        # ToolPlanDelta with an empty delta: guard clause skips entirely.
+        ToolPlanDeltaV2ChatStreamResponse(delta=None),
+        ToolPlanDeltaV2ChatStreamResponse(delta=ChatToolPlanDeltaEventDelta(message=None)),
+        ToolPlanDeltaV2ChatStreamResponse(
+            delta=ChatToolPlanDeltaEventDelta(message=ChatToolPlanDeltaEventDeltaMessage(tool_plan=None))
+        ),
         MessageEndV2ChatStreamResponse(delta=None),
         # MessageEnd with a delta but no finish_reason and no usage.
         MessageEndV2ChatStreamResponse(delta=ChatMessageEndEventDelta(finish_reason=None, usage=None)),
@@ -1545,7 +1554,7 @@ async def test_tool_plan_captured_and_replayed_non_streamed(allow_model_requests
     ]
 
     # The plan is replayed as Cohere's `tool_plan` on the follow-up assistant turn.
-    assert mock_client.chat_kwargs[1]['messages'][1].tool_plan == (
+    assert cast(MockAsyncClientV2, mock_client).chat_kwargs[1]['messages'][1].tool_plan == (
         'I will use the get_temperature tool to find the temperature in Paris.'
     )
 
