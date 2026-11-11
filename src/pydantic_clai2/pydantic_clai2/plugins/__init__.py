@@ -348,6 +348,18 @@ class LiveSession(Protocol):
         """Whether the session handles input now (a turn, a command, or the terminal's rewind) or has input queued."""
         ...
 
+    @property
+    def waiting_for(self) -> str | None:
+        """The most recent active user wait, or `None` when none is open."""
+        ...
+
+    def wait_for_user(self, reason: str, /) -> Callable[[], None]:
+        """Report a user wait until the returned idempotent function is called; pair it in `finally`.
+
+        Raises `ValueError` for an empty reason. Overlapping waits keep their own lifetimes.
+        """
+        ...
+
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting in the session, as `PluginHost.setting` reads it."""
         ...
@@ -453,7 +465,7 @@ class LiveSessions(Protocol):
         ...
 
     def subscribe(self, listener: Callable[[], None]) -> Callable[[], None]:
-        """Call `listener` whenever a session opens or closes, or its running, queued, or watched state may change.
+        """Call `listener` whenever a session opens or closes, or its running, queued, user-wait, or watched state changes.
 
         It is called synchronously, so it must be quick and not raise. The returned function unsubscribes.
         """

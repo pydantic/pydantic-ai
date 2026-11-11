@@ -78,6 +78,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `--database PATH` | Use another settings database (and session folder) |
 | `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell |
 | `clai2 plugins ...` | Edit saved plugin declarations from your shell; they load on the next start |
+| `clai2 sessions` | On Unix, list live sessions by unique ID prefix, folder name, status, title, and workspace |
 
 ### Settings
 
@@ -2319,6 +2320,25 @@ instructions, now returns `ClaiDocs()` and uses the same deferred catalog entry.
 See [PLUGINS.md](../PLUGINS.md) for the plugin contract.
 
 ## Sessions
+
+On Unix, run `clai2 sessions` to see your live CLAI sessions across processes,
+including idle sessions and those waiting for an answer.
+
+| Column | Meaning |
+|---|---|
+| `ID` | A live-session ID prefix, extended until unique across the sessions listed |
+| `Name` | The workspace folder's name, for display only |
+| `Status` | `idle`, `running`, or `waiting` for user input |
+| `Title` | The saved conversation's title |
+| `Workspace` | The folder the session works in |
+
+The command never opens, resumes, messages, or controls a session, and never starts a turn.
+It prints `No live sessions.` when none are reachable. If a process has too much session
+data to list, it reports an error instead of omitting that process silently; close some idle
+sessions and try again. On Windows, it reports that Unix sockets are required and exits
+unsuccessfully.
+
+Saved conversations that are not open remain available through `/resume`.
 
 ### Saved sessions and `/resume`
 
