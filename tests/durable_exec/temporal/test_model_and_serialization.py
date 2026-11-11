@@ -4051,12 +4051,17 @@ def test_payload_converter_leaves_out_what_a_compaction_replaced():
         replaced=[ModelRequest(parts=[UserPromptPart('the replaced history')])],
     )
     converter = temporal_payload_converter.PydanticAIJSONPlainPayloadConverter()
-    for value, value_type in [(record, CompactionRecord), (CompactionEndEvent(record=record), AgentStreamEvent)]:
-        payload = converter.to_payload(value)
+
+    record_payload = converter.to_payload(record)
+    event_payload = converter.to_payload(CompactionEndEvent(record=record))
+    for payload in (record_payload, event_payload):
         assert payload is not None
         assert b'the replaced history' not in payload.data
         assert b'"replaced"' not in payload.data
-        loaded = converter.from_payload(payload, cast(type, value_type))
-        loaded_record = loaded if isinstance(loaded, CompactionRecord) else loaded.record
-        assert loaded_record == record
-        assert loaded_record.replaced is None
+    assert record_payload is not None and event_payload is not None
+
+    loaded_record = converter.from_payload(record_payload, CompactionRecord)
+    loaded_event = converter.from_payload(event_payload, CompactionEndEvent)
+    for loaded in (loaded_record, loaded_event.record):
+        assert loaded == record
+        assert loaded.replaced is None

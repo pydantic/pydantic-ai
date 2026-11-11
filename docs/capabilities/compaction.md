@@ -163,7 +163,7 @@ agent = Agent(
 @agent.tool
 def compact_conversation(ctx: RunContext[Any], focus: str | None = None) -> str:
     """Compact the conversation before your next turn."""
-    ctx.request_compaction(reason='manual', focus=focus)
+    ctx.request_compaction(reason='model_requested', focus=focus)
     return 'The conversation will be compacted before your next turn.'
 ```
 
