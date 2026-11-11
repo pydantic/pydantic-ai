@@ -3842,6 +3842,27 @@ def test_failure_metadata_classifies_anthropic_timeout_wrapped_by_model_api_erro
     assert details == {'kind': 'timeout'}
 
 
+def test_failure_metadata_does_not_read_the_awf_cache_miss_refusal_as_authentication():
+    """AWF's API proxy refuses a run at its consecutive cache-miss cap with a 403 that Z.ai never sent."""
+    # The 403 body in the agent log of https://github.com/pydantic/pydantic-ai/actions/runs/42546498160.
+    refusal: dict[str, object] = {
+        'error': {
+            'type': 'max_cache_misses_exceeded',
+            'message': 'Maximum consecutive cache misses exceeded (7 / 5).',
+            'consecutive_cache_misses': 7,
+            'max_cache_misses': 5,
+        }
+    }
+    transport = httpx2.MockTransport(lambda _request: httpx2.Response(403, json=refusal))
+    client = AsyncAnthropic(api_key='x', http_client=httpx2.AsyncClient(transport=transport))
+    agent = Agent(AnthropicModel('glm-5.3', provider=AnthropicProvider(anthropic_client=client)))
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        asyncio.run(agent.run('hi'))
+
+    assert shim.failure_details(exc_info.value) == {'kind': 'cache_miss_limit', 'http_status': 403}
+
+
 def test_run_preserves_partial_usage_on_failure_after_model_activity(monkeypatch: pytest.MonkeyPatch):
     emitted: list[dict[str, object]] = []
     monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
