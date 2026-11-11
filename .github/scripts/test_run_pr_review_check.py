@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -19,6 +20,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 import run_pr_review_check
+from douwebot_opencode_run import DEEPINFRA, OPENCODE_GO, Provider, run_with_fallback
 from pr_review_checks import CHECKS, GENERAL, ReviewCheck
 from run_pr_review_check import (
     Usage,
@@ -188,21 +190,14 @@ def _step(tokens: int) -> str:
     return json.dumps({'type': 'step_finish', 'part': part})
 
 
-def test_tokens_are_counted_and_never_stop_a_review(tmp_path: Path) -> None:
-    """Token totals are telemetry: the review keeps going however many it spends."""
-    lines = ' '.join(shlex.quote(_step(10**9)) for _ in range(2))
-    usage = run_opencode(
-        ['sh', '-c', f"printf '%s\\n' {lines}"], '', cwd=tmp_path, env={}, output=tmp_path / 'out', minutes=5
-    )
-    assert (usage.steps, usage.tokens, usage.stopped) == (2, 2 * (2 * 10**9 + 1), False)
-
-
-def test_time_budget_stops_the_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The wall-clock budget kills OpenCode and reports the stop instead of failing the job."""
+@pytest.fixture
+def expire_budget(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Make each time budget run out as soon as it starts, and return the budgets the runner set."""
+    budgets: list[float] = []
 
     class ImmediateTimer:
         def __init__(self, interval: float, function: object) -> None:
-            assert interval == 5 * 60
+            budgets.append(interval)
             self.function = function
 
         def start(self) -> None:
@@ -213,10 +208,88 @@ def test_time_budget_stops_the_review(tmp_path: Path, monkeypatch: pytest.Monkey
             pass
 
     monkeypatch.setattr(run_pr_review_check.threading, 'Timer', ImmediateTimer)
-    usage = run_opencode(['sh', '-c', 'sleep 30'], '', cwd=tmp_path, env={}, output=tmp_path / 'out', minutes=5)
-    assert usage.stopped
+    return budgets
+
+
+def test_tokens_are_counted_and_never_stop_a_review(tmp_path: Path) -> None:
+    """Token totals are telemetry: the review keeps going however many it spends."""
+    lines = ' '.join(shlex.quote(_step(10**9)) for _ in range(2))
+    with (tmp_path / 'out').open('w') as log:
+        usage = run_opencode(['sh', '-c', f"printf '%s\\n' {lines}"], '', cwd=tmp_path, env={}, log=log, seconds=300)
+    assert (usage.steps, usage.tokens, usage.stopped) == (2, 2 * (2 * 10**9 + 1), False)
+
+
+def test_time_budget_stops_the_review(tmp_path: Path, expire_budget: list[float]) -> None:
+    """The wall-clock budget kills OpenCode and reports the stop instead of failing the job."""
+    with (tmp_path / 'out').open('w') as log:
+        usage = run_opencode(['sh', '-c', 'sleep 30'], '', cwd=tmp_path, env={}, log=log, seconds=300)
+    assert (usage.stopped, expire_budget) == (True, [5 * 60])
     result, _ = check_result(CHECK, ['a.py'], tmp_path / 'out', usage, changed=CHANGED)
     assert (result.outcome, result.coverage) == ('INCOMPLETE', 'Review stopped at its time budget of 5 minutes.')
+
+
+def _fake_opencode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, go: str) -> Path:
+    """Put an `opencode` on `PATH` that runs `go` for OpenCode Go and finishes a step on DeepInfra.
+
+    Each launch appends its model and the keys it received to the returned file.
+    """
+    launches = tmp_path / 'launches'
+    script = tmp_path / 'bin' / 'opencode'
+    script.parent.mkdir()
+    script.write_text(
+        '#!/bin/sh\n'
+        f'echo "$4 ${{OPENCODE_API_KEY:-}} ${{DEEPINFRA_API_KEY:-}}" >> {shlex.quote(str(launches))}\n'
+        f'case "$4" in opencode-go/*) {go} ;; *) printf "%s\\n" {shlex.quote(_step(10))} ;; esac\n'
+    )
+    script.chmod(0o755)
+    runner_temp = tmp_path / 'runner-temp'
+    runner_temp.mkdir()
+    monkeypatch.setenv('PATH', f'{script.parent}:{os.environ["PATH"]}')
+    monkeypatch.setenv('RUNNER_TEMP', str(runner_temp))
+    monkeypatch.setenv('OPENCODE_API_KEY', 'go-key')
+    monkeypatch.setenv('DEEPINFRA_API_KEY', 'deepinfra-key')
+    return launches
+
+
+def _review(tmp_path: Path) -> tuple[Usage, Provider]:
+    """Review the way `main` does: on Go, then on DeepInfra."""
+    return run_with_fallback(
+        lambda command, env, log: run_opencode(command, '', cwd=tmp_path, env=env, log=log, seconds=300),
+        agent='reviewer',
+        output=tmp_path / 'out',
+        steps=CHECK.max_steps,
+    )
+
+
+def test_go_refusal_reruns_the_review_on_deepinfra(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A review Go refused before its first step did no work, so DeepInfra reviews with only its own key."""
+    error = json.dumps({'type': 'error', 'error': {'type': 'provider.go-limit', 'status': 429}})
+    launches = _fake_opencode(tmp_path, monkeypatch, f'printf "%s\\n" {shlex.quote(error)}; exit 1')
+    usage, provider = _review(tmp_path)
+    assert (provider, usage.steps, usage.tokens, usage.stopped) == (DEEPINFRA, 1, 21, False)
+    assert launches.read_text().splitlines() == [
+        'opencode-go/deepseek-v4.1-flash go-key ',
+        'deepinfra/deepseek-ai/DeepSeek-V4.1-Flash  deepinfra-key',
+    ]
+
+
+def test_go_failure_after_a_step_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run that finished a step did work on Go, so its failure fails the review as before."""
+    launches = _fake_opencode(tmp_path, monkeypatch, f'printf "%s\\n" {shlex.quote(_step(10))}; exit 1')
+    with pytest.raises(subprocess.CalledProcessError):
+        _review(tmp_path)
+    assert launches.read_text().splitlines() == ['opencode-go/deepseek-v4.1-flash go-key ']
+
+
+def test_time_budget_stop_is_not_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expire_budget: list[float]
+) -> None:
+    """A review the time budget stopped is incomplete on Go; it never starts again on DeepInfra."""
+    # `exec`, so the kill reaches the process that holds the stream open.
+    _fake_opencode(tmp_path, monkeypatch, 'exec sleep 30')
+    # The timer kills Go before its script can record the launch; one budget and Go's usage show DeepInfra never ran.
+    usage, provider = _review(tmp_path)
+    assert (provider, usage.stopped, expire_budget) == (OPENCODE_GO, True, [300])
 
 
 def test_complete_review_keeps_the_models_outcome(tmp_path: Path) -> None:
