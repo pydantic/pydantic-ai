@@ -610,7 +610,8 @@ the two texts.
 inside the child too and the delegation finishes. This per-capability forwarding is interim:
 a general hook for passing capabilities on to child runs is being designed in #13135. A
 delegation a durable engine runs as a tool activity (a named sub-agent under
-`TemporalDurability`) gets no forwarded instance: give that child its own `DenyUnanswered`.
+`TemporalDurability`) and a remote sub-agent run by a `SubAgentWorker` get no forwarded
+instance: give that child, or the worker's agent, its own `DenyUnanswered`.
 
 ## SystemReminders
 

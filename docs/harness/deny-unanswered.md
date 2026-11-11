@@ -23,7 +23,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import AskUser, DenyUnanswered
 
 agent = Agent(
-    '{{ anthropic:xlarge }}',
+    '{{ anthropic:medium }}',
     capabilities=[
         AskUser(answerer=None),  # no answerer: every question is deferred
         DenyUnanswered(),
@@ -48,7 +48,7 @@ deny = DenyUnanswered(
 
 This forwarding is specific to `DenyUnanswered` for now: a general way for capabilities to pass themselves on to child runs is being designed in [#13135](https://github.com/pydantic/pydantic-ai/issues/13135) and will replace it.
 
-A delegation that a durable engine runs as a tool activity, such as a named sub-agent under `TemporalDurability`, does not receive the parent run's capabilities, so nothing is forwarded there and the child keeps its own behavior. Give such a child its own `DenyUnanswered` when it should deny too.
+Two kinds of delegation do not receive the parent run's capabilities, so nothing is forwarded there and the child keeps its own behavior: one that a durable engine runs as a tool activity, such as a named sub-agent under `TemporalDurability`, and a remote sub-agent that a `SubAgentWorker` runs for `TaskControl(remote_agents=...)`. Give such a child, or the worker's agent, its own `DenyUnanswered` when it should deny too.
 
 ## Telemetry
 
