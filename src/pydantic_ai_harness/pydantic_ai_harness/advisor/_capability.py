@@ -151,7 +151,8 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                 carries its own configuration, so `max_uses`, `max_tokens` and `caching` don't
                 apply to it, and a later default `Advisor` in a merge restores the built one.
             local: The local fallback: `True` (the default) or `None` builds the `advisor` tool from
-                the fields, `False` disables it, and a `Tool` or function replaces it. A replacement
+                the fields, `False` disables it, and a `Tool` or function replaces it. Like the built
+                tool, a replacement is left out of requests where the native advisor applies. It
                 ignores `output_type` and `forward_history`, while `max_uses`, `max_tokens` and
                 `caching` still shape the native advisor. `None` is stored as `True`, so that, as
                 with the earlier `mode='auto'`, a later default `Advisor` in a merge restores the
@@ -286,14 +287,18 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                     'pass `native=False`, or drop `output_type`'
                 )
         if self.native is True and self.local is False:
-            native_provider, _ = self._parse_native_model(self.model)
-            if native_provider is None:
-                raise ValueError(
-                    "`Advisor(local=False)` requires an 'anthropic:<model>' or 'openrouter:<model>' model name"
-                )
-            if native_provider == 'openrouter' and self.max_uses is not None:
-                raise ValueError('`Advisor.max_uses` is not supported by OpenRouter with `local=False`')
+            self._check_built_native_only()
         super().__post_init__()
+
+    def _check_built_native_only(self) -> None:
+        """Reject a `local=False` advisor whose built native advisor could never apply."""
+        native_provider, _ = self._parse_native_model(self.model)
+        if native_provider is None:
+            raise ValueError(
+                "`Advisor(local=False)` requires an 'anthropic:<model>' or 'openrouter:<model>' model name"
+            )
+        if native_provider == 'openrouter' and self.max_uses is not None:
+            raise ValueError('`Advisor.max_uses` is not supported by OpenRouter with `local=False`')
 
     def _default_native(self) -> Callable[[RunContext[AgentDepsT]], AdvisorTool | None]:
         """Build the native advisor per run, since whether it applies depends on the executor."""

@@ -92,7 +92,7 @@ By default, a `Model` instance runs locally and keeps its own provider, client, 
 |---|---:|---|
 | `model` | required | Advisor model name or `Model` instance. |
 | `native` | `True` | The provider-native advisor. `False` disables it; an `AdvisorTool` instance or a function returning one replaces the one built from these options, which then don't apply to it. |
-| `local` | `True` | The local fallback. `True` builds the `advisor` tool; `False` disables it; a `Tool` or function replaces it and ignores `output_type` and `forward_history`, while `max_uses`, `max_tokens` and `caching` still shape the native advisor. |
+| `local` | `True` | The local fallback. `True` builds the `advisor` tool; `False` disables it; a `Tool` or function replaces it and, like the built tool, is left out of requests where the native advisor applies. A replacement ignores `output_type` and `forward_history`, while `max_uses`, `max_tokens` and `caching` still shape the native advisor. |
 | `output_type` | `str` | Local advisor output specification. Non-default values require local execution. |
 | `max_uses` | `None` | Maximum consultations in one executor model request. Must be at least `1`. |
 | `max_tokens` | `None` | Maximum output tokens for each consultation. Must be at least `1024`. |

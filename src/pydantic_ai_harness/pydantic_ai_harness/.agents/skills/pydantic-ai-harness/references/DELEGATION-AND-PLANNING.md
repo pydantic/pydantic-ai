@@ -325,7 +325,7 @@ typed = Agent('test', capabilities=[Advisor('openai:gpt-5.6-sol', output_type=De
 ```
 
 `Advisor(model, *, native=True, local=True, output_type=str, max_uses=None, max_tokens=None,
-caching=None, forward_history=False)`. By default it uses the provider tool where it applies
+caching=None, forward_history=False, id='advisor', defer_loading=False, description=None)`. By default it uses the provider tool where it applies
 (history gets provider-native parts) and the `advisor` function tool otherwise (history gets a
 `ToolCallPart` and `ToolReturnPart`). `local=False` requires the provider tool; `native=False` always
 uses the function tool. `mode=` is deprecated.

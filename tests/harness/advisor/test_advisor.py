@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -736,14 +736,6 @@ class TestAdvisor:
         assert result.usage.requests == 3
 
 
-_MODE_EQUIVALENTS: dict[Literal['auto', 'native', 'local'], Callable[[], Advisor[None]]] = {
-    'auto': lambda: Advisor('anthropic:claude-opus-4-8'),
-    'native': lambda: Advisor('anthropic:claude-opus-4-8', local=False),
-    'local': lambda: Advisor('anthropic:claude-opus-4-8', native=False),
-}
-"""The `native`/`local` spelling of each deprecated `mode`."""
-
-
 class TestAdvisorNativeOrLocal:
     """`native` and `local` follow the `NativeOrLocalTool` contract, and the deprecated `mode` maps onto them.
 
@@ -766,7 +758,11 @@ class TestAdvisorNativeOrLocal:
         ) as warned:
             deprecated = Advisor[None]('anthropic:claude-opus-4-8', mode=mode)
         assert warned[0].filename == __file__
-        current = _MODE_EQUIVALENTS[mode]()
+        current = {
+            'auto': lambda: Advisor[None]('anthropic:claude-opus-4-8'),
+            'native': lambda: Advisor[None]('anthropic:claude-opus-4-8', local=False),
+            'local': lambda: Advisor[None]('anthropic:claude-opus-4-8', native=False),
+        }[mode]()
 
         for advisor in (deprecated, current):
             assert (bool(advisor.get_native_tools()), advisor.get_toolset() is not None) == halves
@@ -879,6 +875,24 @@ class TestAdvisorNativeOrLocal:
 
         returns = [part.content for m in result.all_messages() for part in m.parts if isinstance(part, ToolReturnPart)]
         assert returns == ['Team says: ship it?']
+
+    async def test_a_custom_local_tool_is_left_out_where_the_native_advisor_applies(self) -> None:
+        seen: list[ModelRequestParameters] = []
+
+        def executor(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.model_request_parameters)
+            return ModelResponse(parts=[TextPart('done')])
+
+        def ask_the_team(prompt: str) -> str:
+            return prompt  # pragma: no cover
+
+        model = _ProviderFunctionModel('anthropic', executor, supports_advisor=True)
+        agent = Agent(model, capabilities=[Advisor('anthropic:claude-opus-4-8', local=Tool(ask_the_team))])
+
+        await agent.run('Plan the deployment.')
+
+        assert seen[0].function_tools == []
+        assert seen[0].native_tools == [AdvisorTool(model='claude-opus-4-8')]
 
     def test_rejects_unsupported_native_and_local_combinations(self) -> None:
         with pytest.raises(UserError, match=r'both `native` and `local` cannot be False'):
