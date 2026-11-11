@@ -18,17 +18,20 @@ from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.github_copilot import (
     GitHubCopilotCredentials,
     GitHubCopilotDeviceAuthorization,
     GitHubCopilotOAuthFlow,
 )
 from pydantic_clai2 import chat
+from pydantic_clai2.auth import CodexAuth, login_command
 from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import github_copilot
 from pydantic_clai2.models.model_catalog import github_copilot_models
 from pydantic_clai2.ui.menus.model_menu import ModelMenu, open_add_model_menu
+from tests.clai2.dialog_script import Back, ScriptedDialogs
 from tests.clai2.menu_script import QUIET, Script, make_context, pick, typed
 from tests.clai2.test_app_edges import inputs
 
@@ -301,7 +304,9 @@ async def test_login_command(
         store.set('model', current)
     inputs(monkeypatch, [f'/login {target}', '/login unknown', '/exit'])
     output = io.StringIO()
-    await chat(Agent(), deps=None, console=Console(file=output, width=500), settings=store.load(), store=store)
+    await chat(
+        Agent(TestModel()), deps=None, console=Console(file=output, width=500), settings=store.load(), store=store
+    )
     assert github_copilot.token(target) == 'fake-access'
     assert [(request.url.path, request.headers['authorization']) for request in requests] == [
         ('/models', 'Bearer fake-access')
@@ -322,13 +327,34 @@ async def test_login_survives_failed_discovery(
     store.add_model(name='openai:gpt-5.4')
     inputs(monkeypatch, ['/login github-copilot', '/exit'])
     output = io.StringIO()
-    await chat(Agent(), deps=None, console=Console(file=output, width=500), settings=store.load(), store=store)
+    await chat(
+        Agent(TestModel()), deps=None, console=Console(file=output, width=500), settings=store.load(), store=store
+    )
     assert github_copilot.token() == 'fake-access'
     assert 'openai:gpt-5.4' in store.models()
     assert not [name for name in store.models() if name.startswith('github-copilot')]
     assert 'model' not in store.overrides()
     assert 'GitHub login saved.' in output.getvalue()
-    assert 'Its models were not added: Copilot model discovery failed' in output.getvalue()
+    assert 'GitHub Copilot models were not added: Copilot model discovery failed' in output.getvalue()
+
+
+async def test_cancelled_login_adds_no_models(
+    device_flow: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def never_approved(self: GitHubCopilotOAuthFlow) -> GitHubCopilotCredentials:
+        await anyio.sleep_forever()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    monkeypatch.setattr(GitHubCopilotOAuthFlow, 'wait_for_authorization', never_approved)
+    requests = serve_models(monkeypatch)
+    save_codex_credentials(account='github-copilot', value='previous')
+    store = SettingsStore(tmp_path / 'config.db')
+    message = await login_command(
+        ['github-copilot'], codex=CodexAuth(QUIET), store=store, dialogs=ScriptedDialogs([Back()])
+    )
+    assert message == github_copilot.CANCELLED
+    assert requests == []
+    assert store.models() == []
 
 
 @pytest.mark.parametrize(
@@ -338,6 +364,7 @@ async def test_login_survives_failed_discovery(
         (['claude-opus-4.8', 'gemini-4-argon', 'gpt-6-sol'], 'gemini-4-argon'),
         (['claude-opus-4.7', 'claude-opus-4.8', 'gemini-4.1-pro', 'gpt-6-sol'], 'claude-opus-4.8'),
         (['gemini-3.8-flash', 'gemini-4.1-pro', 'gpt-6-sol'], 'gemini-4.1-pro'),
+        (['gemini-3.1-pro', 'gpt-5.5', 'gpt-6-sol'], 'gpt-6-sol'),
         (['gpt-4o', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5', 'claude-sonnet-5'], 'gpt-5.5'),
         (['claude-haiku-4.5', 'claude-sonnet-4.5', 'claude-sonnet-5'], 'claude-sonnet-5'),
         (['claude-haiku-4.5', 'grok-4.7', 'mai-code-1.1-flash'], 'grok-4.7'),

@@ -61,9 +61,10 @@ async def login_command(
 
     `@PROFILE` signs in another account, used by models named `PROVIDER@PROFILE:MODEL`. Providers that
     take an API key or a connection (`openrouter`, `vllm`, `openai`, ...) sign in to a profile too.
-    A plugin sign-in that succeeds saves its `models` to `store`, and a GitHub Copilot one the models it serves,
-    offering its preferred one to `select_default`, which selects it when no model is chosen. `dialogs` asks wherever a menu was
-    opened, such as the web UI: subscriptions wait on their waiting screen and API keys come from `/keys`;
+    A plugin sign-in that succeeds saves its `models` to `store`. So does a GitHub Copilot sign-in, with every
+    model the account serves, and `select_default` decides whether its preferred one becomes current.
+    `dialogs` asks wherever a menu was opened, such as the web UI: subscriptions wait on their waiting
+    screen and API keys come from `/keys`;
     connections and plugin sign-ins, which ask in the terminal, raise `ValueError` saying so.
     """
     plugins = plugins or {}
@@ -85,7 +86,7 @@ async def login_command(
     # A plugin keeps its own tokens; for the rest, a saved login is what tells success from a cancelled prompt.
     if store is not None and (plugin is not None or has_credentials(account=account(name, profile))):
         remember(store, login=name, profile=profile, plugin=plugin)
-        if name == github_copilot.ACCOUNT:
+        if name == github_copilot.ACCOUNT and message != github_copilot.CANCELLED:
             message += ' ' + await _add_copilot_models(store, profile=profile, select_default=select_default)
     return message
 
@@ -97,7 +98,7 @@ async def _add_copilot_models(
     try:
         names = await github_copilot.discover(account=account(github_copilot.ACCOUNT, profile))
     except UserError as exc:
-        return f'Its models were not added: {exc}'
+        return f'GitHub Copilot models were not added: {exc}'
     models = {name: with_profile(f'{github_copilot.ACCOUNT}:{name}', profile) for name in names}
     for model in models.values():
         store.add_model(name=model)

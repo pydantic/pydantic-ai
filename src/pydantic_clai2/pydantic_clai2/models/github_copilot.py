@@ -20,7 +20,15 @@ from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.plugins.menus import Dialogs
 
 ACCOUNT = 'github-copilot'
-_PREFERRED = ('claude-opus-5.5', 'gemini-4-argon', 'claude-opus-', 'gemini-', 'gpt-', 'claude-sonnet-')
+CANCELLED = 'GitHub Copilot sign-in cancelled.'
+_PREFERRED = (
+    r'claude-opus-5\.5',
+    r'gemini-4-argon',
+    r'claude-opus-',
+    r'gemini-(?:[4-9]|\d\d)',
+    r'gpt-',
+    r'claude-sonnet-',
+)
 _SMALL = re.compile(r'\b(?:mini|nano|flash|lite|haiku|turbo|codex)\b')
 
 
@@ -55,7 +63,7 @@ async def login(*, console: Console, account: str = ACCOUNT, dialogs: Dialogs | 
 
         description = 'Approve only the code shown here. You can open the link on another device.'
         if not await dialogs.wait(title='Signing in to GitHub Copilot', description=description, task=authorize):
-            return 'GitHub Copilot sign-in cancelled.'
+            return CANCELLED
         credentials = authorized[0]
     connection = Connection(credentials=credentials, issued_at=time.time())
     await to_thread.run_sync(lambda: save_codex_credentials(account=account, value=connection.model_dump_json()))
@@ -67,7 +75,7 @@ async def login(*, console: Console, account: str = ACCOUNT, dialogs: Dialogs | 
     )
     if account != ACCOUNT:
         return f'GitHub login saved as {account}. {storage} Use {account}:MODEL.'
-    return f'GitHub login saved. {storage} Use /model add > github-copilot to check Copilot access and choose a model.'
+    return f'GitHub login saved. {storage}'
 
 
 def token(account: str = ACCOUNT) -> str:
@@ -140,8 +148,8 @@ async def discover(*, account: str = ACCOUNT, transport: httpx2.AsyncBaseTranspo
 def default_model(names: list[str]) -> str:
     """The newest of the first `_PREFERRED` family Copilot serves, passing over small models when it serves others."""
     large = [name for name in names if not _SMALL.search(name)] or names
-    for prefix in _PREFERRED:
-        if matches := [name for name in large if name.startswith(prefix)]:
+    for family in _PREFERRED:
+        if matches := [name for name in large if re.match(family, name)]:
             return max(matches, key=_version)
     return max(large, key=_version)
 
