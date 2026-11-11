@@ -13,7 +13,7 @@ import pytest
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
 pytest.importorskip('dbos')
@@ -31,6 +31,7 @@ from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkfl
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
+from tests.conftest import without_admin_server
 from tests.harness._temporal import skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -57,7 +58,7 @@ def _agent(root: Path, engine: str, capability: str, vetoes: list[str]) -> Agent
     script = scripts[capability]
 
     def model(messages: list[ModelMessage], info: object) -> ModelResponse:
-        returns = [p for m in messages for p in m.parts if isinstance(p, (ToolReturnPart, RetryPromptPart))]
+        returns = [p for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
         # Past the script's end, a shell job still running gets checked again.
         if len(returns) >= len(script) and '[status: running]' not in str(returns[-1].content):
             return ModelResponse(parts=[TextPart('done')])
@@ -132,8 +133,8 @@ async def test_dbos_workspace_capabilities(tmp_path: Path, capability: str) -> N
         return [str(p.content) for m in result.all_messages() for p in m.parts if p.part_kind == 'tool-return']
 
     DBOS(
-        config=DBOSConfig(
-            name='harness_matrix', system_database_url=f'sqlite:///{tmp_path / "db.sqlite"}', run_admin_server=False
+        config=without_admin_server(
+            DBOSConfig(name='harness_matrix', system_database_url=f'sqlite:///{tmp_path / "db.sqlite"}')
         )
     )
     DBOS.launch()

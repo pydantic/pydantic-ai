@@ -46,7 +46,9 @@ pins are separate: the ref decides which definition compiles, and `engine.versio
 inside it decides which harness release runs. A workflow's own `engine: version:`
 overrides the package version the definition pins, because gh-aw applies the
 imported definition's version only when the workflow left it empty
-(`applyEngineImportDefaults` in `pkg/workflow/compiler_orchestrator_engine.go`).
+(`applyEngineImportDefaults` in `pkg/workflow/compiler_orchestrator_engine.go`). The
+override has to be 0.59.0 or newer: each harness release pins its own
+`pydantic-ai-slim`, and the definition installs `pydantic-ai-slim>=2.59.0` alongside it.
 
 `model` is required and must be `provider/model`. gh-aw accepts `copilot`,
 `anthropic`, `openai` and `codex` as the provider segment; it selects which backend
@@ -54,35 +56,62 @@ of the AWF api-proxy serves the request. The proxy holds the credentials, so a
 workflow supplies none. `anthropic/` is served over the Anthropic Messages API,
 because that backend forwards the request path to `api.anthropic.com` unchanged and
 does not translate Chat Completions into Messages; the other three are
-OpenAI-shaped and use Chat Completions.
+OpenAI-shaped and use Chat Completions. `copilot/` runs on Pydantic AI's
+`github-copilot:` model, which applies Copilot's per-family model profiles and reads
+the thinking Copilot's Claude and Gemini models return in `reasoning_text`. The
+engine points it at the proxy with `GITHUB_COPILOT_BASE_URL` and a placeholder
+`GITHUB_COPILOT_API_KEY`, and sets `GITHUB_COPILOT_INTEGRATION_ID` to
+`agentic-workflows`, the id the proxy adds to requests that carry none.
 
 ## What actually runs
+
+The engine first reads the safe-outputs file gh-aw names in `GH_AW_SAFE_OUTPUTS`. If a
+`steps:` or `pre-agent-steps:` entry already wrote a `noop` there, the engine exits with
+status 0 without starting CLAI 2, as gh-aw's built-in engines do; gh-aw's
+[cost management reference](https://github.github.com/gh-aw/reference/cost-management/#skip-the-agent-when-it-is-not-needed)
+documents the pattern. A missing or unreadable file, and lines that are not JSON, do not
+count as a `noop`.
 
 The engine creates a generated module with a private wrapper around either the harness's
 `Coder` composition or the agent selected by `PAI_AGENT`. It resolves an import target or
 JSON/YAML spec once, retaining import tracebacks. CLAI 2 runs the wrapper with `-a`,
 `engine.model` as `-m <provider:model>`, and the prompt with `-p`. The engine installs
-`pydantic-clai2==0.55.0`, `pydantic-ai-harness==0.55.0`, and
-`pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0`; the explicit provider extras keep
+`pydantic-clai2` and `pydantic-ai-harness` at the release `engine.version` pins, plus
+`pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0`; the explicit provider extras keep
 Anthropic and OpenAI model support available. Gateway MCP tools are attached
 through Pydantic AI's public dynamic toolset interface, preserving the agent's existing
 tools. gh-aw writes the MCP server configuration outside the checkout and mounts it
 read-only inside the sandbox; repository-controlled files cannot select an MCP server
 that runs with the gateway's credentials.
 
-The headless runner streams model responses so it can record assistant messages, reasoning,
-tool calls and results (including native tools), and usage in the canonical session. The
-engine subscribes to typed core events through the public `Agent.on_event` API. The inline
-parser selects their framed JSONL records from captured engine stdio. The gh-aw runtime
-bootstrap writes the canonical stream to `agent-session.jsonl`: `session.init`,
-`user.message`, `assistant.message`, `assistant.reasoning`, `tool.execution_start`,
+The engine records assistant messages, reasoning, tool calls and results, and usage
+from a host-protected capture. Ordinary terminal output and files written by agent tools
+cannot supply canonical session records.
+
+A recording is published only after its authenticity, sequence, and terminal result are
+verified. A missing `session.result`, authenticated sequence gap, or authenticated event
+after the terminal leaves the authenticated prefix in separate parser diagnostics,
+without canonical status or usage. Complete failure recordings retain observed partial
+content and their failure result. An abrupt `SIGTERM` or `SIGKILL` can prevent a terminal
+result; such recordings remain diagnostic-only, including timeout or cancellation cases.
+
+`PAI_AGENT` and any caller-supplied `PYTHONPATH` are trusted engine configuration.
+Python can import from `PYTHONPATH` before the recorder starts, and `PAI_AGENT` runs in
+the recorder interpreter. Point either setting only at code you trust.
+
+gh-aw redacts configured secrets and MCP gateway bearer tokens from session artifacts.
+The engine parser treats runtime `::add-mask::` commands as data. gh-aw applies masks
+from captured output when publishing artifacts, rejecting masks that would change
+event structure, status, or usage.
+
+The canonical stream in `agent-session.jsonl` includes `session.init`, `user.message`,
+`assistant.message`, `assistant.reasoning`, `tool.execution_start`,
 `tool.execution_complete`, and `session.result`. The result includes reported usage when
-available; startup failures still record status without usage when none is available. Errors
-and tool calls still pending at interruption are represented as observed. If finalizing the
-recording fails, the launcher reports the error on stderr, preserves the CLI exit status,
-and attempts a status-only result. The engine does not synthesize tool IDs, completions,
-or turn counts. A compatible gh-aw conclusion also collects usage and `aw_session.jsonl`,
-including gateway and safe-output activity.
+available; startup failures still record status without usage when none is available.
+If finalizing the recording fails, the launcher reports the error as terminal output,
+preserves the CLI exit status, and attempts a status-only result.
+No tool IDs, completions, or turns are inferred. The gh-aw conclusion also collects usage
+and `aw_session.jsonl`, including gateway and safe-output activity.
 
 ## Running your own agent
 
@@ -125,9 +154,12 @@ agent = Agent(name='triage', instructions='Answer briefly.')
 Some details to know.
 
 - **A private wrapper module resolves the agent.** The engine writes it in every mode: the
-  default composition, an imported `PAI_AGENT`, or a spec. For an imported target, the
-  framework packages load before the wrapper adds the checkout to `sys.path` while
-  resolving `PAI_AGENT`. Gateway tools and recording apply in every mode.
+  default composition, an imported `PAI_AGENT`, or a spec. The wrapper appends the
+  checkout to `sys.path`, after installed packages, only for an imported target whose
+  top-level name nothing installed has, such as `my_agent:agent` above. A checkout target
+  whose top-level name is also installed resolves against the installed package instead,
+  so it usually fails with `ModuleNotFoundError`. Gateway tools and recording apply in
+  every mode.
 - **Dependencies go in a workflow-level `steps:` block.** Those steps run on the
   host runner, after gh-aw's `Setup Python` and before both the engine's install
   step and the agent, so a `--user` install lands in the same `$HOME/.local` the
@@ -160,99 +192,87 @@ name a harness capability or define a Python function tool; use a module for eit
 
 ## Observability
 
-The engine instruments the agent whenever gh-aw supplies an OTLP endpoint. A workflow
-turns that on with `observability.otlp`, plus an allowlist entry for the backend's host,
-because the egress firewall otherwise drops the export:
+gh-aw keeps OTLP endpoints and authorization headers on the host, so the agent sandbox
+receives no telemetry credentials. Host and proxy telemetry use gh-aw's own exporters,
+configured with `observability.otlp`.
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` reaches the launcher, it instruments Pydantic AI and
+exports spans directly, with `send_to_logfire='if-token-present'`. gh-aw excludes that
+variable from the agent container, so this direct export does not run under gh-aw. The
+launcher attaches `TRACEPARENT` and preserves `OTEL_RESOURCE_ATTRIBUTES`, so exported
+spans keep their workflow parentage and identity.
+
+When it configures Logfire, the launcher uses private mode-0700 configuration and data
+directories under `/tmp`, ignoring checkout settings and credentials. `console=False`
+prevents span content entering captured engine stdio.
+
+A `PAI_AGENT` module can add HTTP or MCP instrumentation after the launcher configures
+Logfire. Calling `logfire.configure()` again replaces that configuration. Preserve the
+private directories, disabled console output and distributed tracing if the agent replaces it.
+
+### Authenticated terminal metadata
+
+Set `PAI_RESULT_METADATA` to `MODULE:ATTRIBUTE` to include a trusted agent module's
+dictionary in `session.result.data.metadata`. The dictionary must have string keys
+and JSON-serializable values. Update the same dictionary during the run; the recorder
+serializes it when the process finishes, including handled failures. A target that is
+not such a dictionary fails the run. Metadata that cannot be serialized is left out,
+and the result still records the run's outcome.
+
+The engine signs this metadata with the terminal result. Ordinary stdout and
+sandbox-written files cannot substitute for it. Consumers should read the verified
+`agent-session.jsonl` artifact and validate their metadata schema and run identity.
+Like `PAI_AGENT`, this import target is trusted engine configuration.
+
+## Threat detection
+
+When a workflow declares safe outputs, gh-aw runs a threat-detection job over the
+agent's output before applying them. That job runs only on gh-aw's built-in engines,
+so this definition sets `detection-engine: copilot`: detection runs on the Copilot
+engine and reads `COPILOT_GITHUB_TOKEN`, or the run's `github.token` under
+`permissions: copilot-requests: write`, whatever provider the agent itself uses.
+
+A workflow with neither credential overrides the choice. Point detection at
+the built-in engine whose key the workflow already has, `codex` for an `openai/` or
+`codex/` model and `claude` for an `anthropic/` one, or set `false` to skip the AI
+analysis:
 
 ```yaml
-network:
-  allowed:
-    - logfire-us.pydantic.dev
-observability:
-  otlp:
-    endpoint:
-      - url: https://logfire-us.pydantic.dev
-        headers:
-          Authorization: ${{ secrets.LOGFIRE_TOKEN }}
+safe-outputs:
+  add-comment:
+  threat-detection:
+    engine: codex
 ```
 
-gh-aw injects `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`,
-`OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `TRACEPARENT` into the workflow
-environment when, and only when, an endpoint is configured, and workflow-level environment
-reaches both the pre-agent step and the agent container. The endpoint variable is what the
-engine keys on: with it set, the install step adds `logfire` and the launcher calls
-`logfire.configure()` and `logfire.instrument_pydantic_ai()` before importing the agent
-target, then attaches the W3C context from `TRACEPARENT`. With it unset, neither happens
-and the install costs nothing.
-
-These choices are not defaults, and each is load-bearing.
-
-- **`send_to_logfire="if-token-present"`.** The default requires a `LOGFIRE_TOKEN` in the
-  environment and raises without one. The credential here is a header value gh-aw holds,
-  not an environment variable, so the export is driven by the endpoint alone and works
-  against any backend. A token that does reach the agent's environment adds Logfire as a
-  second destination rather than replacing the endpoint, prompts and completions included;
-  gh-aw strips `${{ secrets.* }}` out of `engine.env`, so that takes a workflow putting one
-  in its own `env:` or a `steps:` block.
-- **Private `config_dir` and `data_dir`.** Both point to a mode-0700 temporary directory
-  under `/tmp`, outside the checkout even if `TMPDIR` points into it. This prevents
-  checkout `pyproject.toml` settings and `.logfire/logfire_credentials.json` from selecting
-  a telemetry destination. Explicit directory arguments also override `LOGFIRE_CONFIG_DIR`
-  and `LOGFIRE_CREDENTIALS_DIR`; `LOGFIRE_TOKEN` in the environment remains supported.
-  The directory stays alive through the process and is removed at interpreter shutdown,
-  after exporter shutdown handlers run.
-- **`console=False`.** logfire's console exporter writes every span to stderr. Keeping it
-  off prevents spans and their content from entering captured engine stdio.
-- **The `TRACEPARENT` attach, with `distributed_tracing=True`.** gh-aw sets the variable for
-  behavior-defined engines (`applyTraceContextEnvToMap` in
-  `pkg/workflow/behavior_defined_engine.go`) so that an engine can nest its spans under the
-  workflow run's span, but neither logfire nor the OpenTelemetry SDK reads it from the
-  environment. Without the attach each run produces a second, unrelated trace. The flag is
-  what marks the propagated context as deliberate; logfire warns on every run without it,
-  because extracting incoming context is usually accidental.
-- **`OTEL_METRICS_EXPORTER` and `OTEL_LOGS_EXPORTER` default to `none`.** logfire's OTLP
-  setup is per signal, so an endpoint alone also builds metrics and logs exporters that POST
-  to `/v1/metrics` and `/v1/logs`. A traces-only backend answers `404`, and the step log then
-  carries `Failed to export metrics batch code: 404` once per export while the run still
-  succeeds. These are the standard OpenTelemetry switches rather than a logfire argument, so
-  a workflow that has a backend for those signals can set either one back to `otlp`.
-
-The engine contributes no resource attributes of its own. `OTEL_RESOURCE_ATTRIBUTES`
-already carries `gh-aw.engine.id` (`pydantic-ai`), `gh-aw.workflow.name`,
-`gh-aw.repository`, `gh-aw.run.id` and `github.run_id`, and `logfire.configure()` merges
-the variable into the resource, so `gh-aw.engine.id` is the filter that finds runs of this
-engine in a backend. The configuration line the engine logs gains an `otlp=` segment while
-this is active, carrying the endpoint's origin only: userinfo and query parameters are
-credentials, and a run log is not a private place to put one.
-
-A `PAI_AGENT` module that calls `logfire.configure()` itself runs after the engine's call
-and replaces it, whole rather than argument by argument, so it has to restate the three
-settings above: `send_to_logfire="if-token-present"` or it raises, `console=False` or spans
-appear in captured engine stdio, and `distributed_tracing=True` or it warns on every run.
-The context attached from `TRACEPARENT` survives the reconfiguration. Reconfiguration must also
-supply private `config_dir` and `data_dir` values with process-lifetime cleanup; omitting
-these re-enables checkout configuration and credentials. Such a module also has
-to install `logfire` through the workflow's own `steps:` if it imports it on runs that
-configure no endpoint.
+gh-aw's [threat detection reference](https://github.github.com/gh-aw/reference/threat-detection/)
+covers the rest of the job's configuration.
 
 ## gh-aw compatibility
 
-This definition requires gh-aw [v0.91.1](https://github.com/github/gh-aw/releases/tag/v0.91.1)
-or a newer compatible release for canonical session records and merged usage that match
-the unified-session schema. Install the pinned extension with:
+This definition requires [gh-aw v1.0.1](https://github.com/github/gh-aw/releases/tag/v1.0.1)
+or newer with AWF v0.29.0 or newer. That compiler release defaults to AWF v0.29.0.
+Existing workflows must install a compatible release, recompile, and commit their
+generated lockfile; installing a newer `gh aw` CLI does
+not alter an already committed lockfile or the runtime it selects.
+
+Install the current stable compiler, check that it is at least v1.0.1, then compile:
 
 ```bash
-gh extension install github/gh-aw --pin v0.91.1
+gh extension install github/gh-aw
+gh aw version
+gh aw compile
 ```
 
-The default stable release is below this runtime floor. Existing workflows must be
-recompiled with a compatible gh-aw pin and have their generated lockfile committed.
-Installing a newer `gh aw` CLI locally does not alter an already committed lockfile or
-the runtime it selects.
+For an existing installation, use `gh extension upgrade gh-aw` before compiling.
+For a fresh installation of the exact tested compiler, use
+`gh extension install github/gh-aw --pin v1.0.1`. To upgrade an explicitly pinned
+installation, use `gh extension upgrade gh-aw --force`.
 
-The workflow summary is the canonical success/failure report. Categorical summary labels
-for specific MCP failures and maximum-turn outcomes are removed; MCP startup and
-request-limit errors retain their CLAI 2 diagnostics and nonzero exit status.
+The protected-capture runtime rejects workflows with `evals`, whose secondary engine invocation
+reads `evals.log`. Omit `evals` when using this engine.
+
+The workflow summary is the canonical success/failure report. MCP startup and
+request-limit errors keep their CLAI 2 diagnostics and nonzero exit status.
 
 ## Pointing the engine at your own endpoint
 
@@ -280,9 +300,9 @@ Three things to get right:
 - **Keep the `provider/` prefix on `model`.** gh-aw requires it and only accepts its
   four known providers, but the engine strips it before calling the endpoint. Write
   `openai/<model-id>`, and `<model-id>` is what goes upstream. `openai` here means
-  "OpenAI-compatible", not OpenAI the company. `PAI_BASE_URL` keeps Chat Completions
-  whichever prefix is written, `anthropic/` included: it names an endpoint of that
-  shape by definition.
+  "OpenAI-compatible", not OpenAI the company. `PAI_BASE_URL` keeps the generic
+  Chat Completions client whichever prefix is written, `anthropic/` and `copilot/`
+  included: it names an endpoint of that shape by definition.
 
 `PAI_BASE_URL` is a variable of this engine's own rather than `OPENAI_BASE_URL`,
 because gh-aw sets `OPENAI_BASE_URL` itself, pointing at the proxy. It is always

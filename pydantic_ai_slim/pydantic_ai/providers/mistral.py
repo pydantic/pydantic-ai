@@ -25,6 +25,10 @@ except ImportError as e:
 # sync with the supported model ids reporting `capabilities.reasoning` on the Mistral `/v1/models`
 # API. The alias ids (`-latest`, `mistral-medium`, `mistral-medium-3`) resolve to a reasoning model
 # on the public API; on private deployments they may point to an older non-reasoning snapshot.
+# `magistral-medium-latest` and `magistral-small-latest` point at Medium 3.5 and Small 4 too: verified
+# live 2026-10-22, they reason only with `reasoning_effort='high'`, not at all without it or with
+# `'none'`, and reject `'low'`. The dated `magistral-*` ids they replaced are gone ("Invalid model"), so
+# `mistral_model_profile` still marks them always-on.
 # See https://docs.mistral.ai/capabilities/reasoning/.
 #
 # This lives on the provider, not the shared `mistral_model_profile`, because the set is validated
@@ -43,6 +47,8 @@ _ADJUSTABLE_REASONING_MODELS = frozenset(
         'mistral-medium-3-5',
         'mistral-medium-3.5',
         'mistral-medium-2604',
+        'magistral-medium-latest',
+        'magistral-small-latest',
     }
 )
 
@@ -65,8 +71,8 @@ class MistralProvider(Provider[Mistral]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile:
         profile = mistral_model_profile(model_name)
-        if profile is None and model_name in _ADJUSTABLE_REASONING_MODELS:
-            profile = ModelProfile(supports_thinking=True, thinking_always_enabled=False)
+        if model_name in _ADJUSTABLE_REASONING_MODELS:
+            profile = merge_profile(profile, ModelProfile(supports_thinking=True, thinking_always_enabled=False))
         return merge_profile(profile, ModelProfile(supports_inline_system_prompts=True))
 
     @overload
@@ -115,7 +121,7 @@ class MistralProvider(Provider[Mistral]):
                 # 2 frames up from the helper: this `__init__` and the user's `MistralProvider(...)` call.
                 warn_if_legacy_httpx_client(http_client, consumer='the Mistral provider', stacklevel=2)
 
-            # Mistral's runtime-checkable client protocol accepts httpx2, but its annotations name legacy httpx types.
+            # `AsyncHTTPClient` also admits a deprecated legacy `httpx.AsyncClient`, which Mistral's `httpx2` annotations don't name.
             self._client = Mistral(
                 api_key=api_key,
                 async_client=http_client,  # pyright: ignore[reportArgumentType]

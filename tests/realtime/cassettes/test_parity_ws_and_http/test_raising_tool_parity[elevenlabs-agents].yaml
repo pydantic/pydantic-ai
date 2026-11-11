@@ -1,0 +1,201 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: conversation_initiation_client_data
+    source_info:
+      source: unknown
+      version: pydantic-ai/<version>
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: Always call get_weather for a weather question, then answer in one
+            short sentence.
+      conversation:
+        text_only: true
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_4201m5jx28xne73tcjccjmqnmyzw
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  at: 0.001
+  data:
+    type: user_message
+    text: What is the weather in London?
+    id: pydantic_ai_input_0
+- kind: message
+  direction: received
+  at: 0.609
+  data:
+    client_tool_call:
+      tool_name: get_weather
+      tool_call_id: get_weather_70ab0b63739542d9ac2c5ea90c762b35
+      parameters:
+        city: London
+      event_id: 1
+      expects_response: true
+    type: client_tool_call
+- kind: message
+  direction: received
+  at: 0.61
+  data:
+    text_response_part:
+      text: ''
+      type: start
+      event_id: 1
+      response_id: c03bff69-e0f2-48c6-9549-2e736653d415
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 0.61
+  data:
+    text_response_part:
+      text: ''
+      type: stop
+      event_id: 1
+      response_id: c03bff69-e0f2-48c6-9549-2e736653d415
+    type: agent_chat_response_part
+- kind: message
+  direction: sent
+  at: 0.611
+  data:
+    type: client_tool_result
+    tool_call_id: get_weather_70ab0b63739542d9ac2c5ea90c762b35
+    result: '{"error":"The tool raised an unhandled error."}'
+    is_error: true
+- kind: message
+  direction: received
+  at: 0.659
+  data:
+    agent_tool_response:
+      tool_name: get_weather
+      tool_call_id: get_weather_70ab0b63739542d9ac2c5ea90c762b35
+      tool_type: client
+      is_error: true
+      is_blocked: false
+      event_id: 1
+      is_called: true
+      status: error
+    type: agent_tool_response
+- kind: message
+  direction: received
+  at: 0.961
+  data:
+    text_response_part:
+      text: ''
+      type: start
+      event_id: 1
+      response_id: 88950321-6b46-4d50-9e46-9d430c6c82bf
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 0.961
+  data:
+    text_response_part:
+      text: I am sorry, I cannot
+      type: delta
+      event_id: 1
+      response_id: 88950321-6b46-4d50-9e46-9d430c6c82bf
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 0.999
+  data:
+    text_response_part:
+      text: ' get the weather for London.'
+      type: delta
+      event_id: 1
+      response_id: 88950321-6b46-4d50-9e46-9d430c6c82bf
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.046
+  data:
+    text_response_part:
+      text: ''
+      type: stop
+      event_id: 1
+      response_id: 88950321-6b46-4d50-9e46-9d430c6c82bf
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.047
+  data:
+    agent_response_event:
+      agent_response: I am sorry, I cannot get the weather for London.
+      event_id: 1
+      response_id: 88950321-6b46-4d50-9e46-9d430c6c82bf
+      in_response_to_ids:
+      - pydantic_ai_input_0
+      response_type: text
+      attachments: []
+    type: agent_response
+- kind: message
+  direction: sent
+  at: 1.047
+  data:
+    type: user_message
+    text: What is two plus two? Answer with just the number.
+    id: pydantic_ai_input_2
+- kind: message
+  direction: received
+  at: 1.049
+  data:
+    context_usage_event:
+      event_id: 1
+      model: gemini-2.5-flash
+      context_tokens: 352
+      context_limit_tokens: 1048576
+    type: context_usage
+- kind: message
+  direction: received
+  at: 1.447
+  data:
+    text_response_part:
+      text: ''
+      type: start
+      event_id: 2
+      response_id: 4a095926-a9e3-4c79-a301-22f28d952696
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.447
+  data:
+    text_response_part:
+      text: '4'
+      type: delta
+      event_id: 2
+      response_id: 4a095926-a9e3-4c79-a301-22f28d952696
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.447
+  data:
+    text_response_part:
+      text: ''
+      type: stop
+      event_id: 2
+      response_id: 4a095926-a9e3-4c79-a301-22f28d952696
+    type: agent_chat_response_part
+- kind: message
+  direction: received
+  at: 1.447
+  data:
+    agent_response_event:
+      agent_response: '4'
+      event_id: 2
+      response_id: 4a095926-a9e3-4c79-a301-22f28d952696
+      in_response_to_ids:
+      - pydantic_ai_input_2
+      response_type: text
+      attachments: []
+    type: agent_response

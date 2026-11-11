@@ -11,7 +11,9 @@ from pydantic import BaseModel
 
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.durable_exec import BaseDurabilityCapability
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.framing import register_tag, wrap
+from pydantic_ai.messages import ToolReturn
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolFuncContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai_harness.planning._events import (
     PlanCompletedEvent,
@@ -82,8 +84,7 @@ when dependencies are involved.\
 """
 
 CORE_TOOL_NAMES = ('write_plan', 'read_plan', 'add_task', 'update_task_status', 'update_task_statuses', 'remove_task')
-"""Tools registered in every mode. `write_plan` alone was the capability's whole surface before
-the granular tools landed, so `tools=['write_plan']` restores it."""
+"""Tools registered in every mode."""
 
 SUBTASK_TOOL_NAMES = ('add_subtask', 'set_dependency', 'get_available_tasks')
 """Tools registered only when `enable_subtasks` is set."""
@@ -124,6 +125,10 @@ def status_icon(status: TaskStatus) -> str:
     return _ICONS[status]
 
 
+def _item_line(number: int, item: PlanItem) -> str:
+    return f'{number}. {status_icon(item.status)} [{item.id}] {item.content}'
+
+
 def render_plan(items: list[PlanItem]) -> str:
     """Render the compact classic checklist with a one-line progress summary."""
     if not items:
@@ -132,6 +137,39 @@ def render_plan(items: list[PlanItem]) -> str:
     completed = sum(1 for item in items if item.status is TaskStatus.completed)
     lines.append(f'({completed}/{len(items)} completed)')
     return '\n'.join(lines)
+
+
+PLAN_ORIGIN = 'pydantic-ai-harness.planning.plan_reminder.v1'
+"""The `origin` in the `metadata` of a plan the planning tools returned or `Planning` recorded.
+
+A plan tool's `ToolReturnPart` carries `{'origin': PLAN_ORIGIN, 'plan': <framed plan>}`, and a plan `Planning`
+records on the user channel is a `TextContent` with `{'origin': PLAN_ORIGIN}`. `Planning` finds the latest plan in
+the conversation by this metadata, never by text.
+"""
+
+_PLAN_REMINDER_TAG = register_tag('plan_reminder')
+"""The frame the plan is shown in. Registered, so core's own data frames escape it too."""
+
+
+def framed_plan(items: list[PlanItem]) -> str:
+    """The plan rendered in its `<plan_reminder>` frame.
+
+    The steps are written by the model, so the `<` of every opening or closing `plan_reminder` tag and of every other
+    framing tag is escaped as `&lt;`.
+    """
+    return wrap(_PLAN_REMINDER_TAG, f'\n{render_plan(items)}\n')
+
+
+class _PlanReply(str):
+    """A plan tool's reply that ends with the plan it left, so `call_tool` can mark that plan in the tool return."""
+
+    plan: str
+
+    def __new__(cls, message: str, items: list[PlanItem], suffix: str = '') -> _PlanReply:
+        plan = framed_plan(items)
+        reply = super().__new__(cls, f'{message}\n\n{plan}{suffix}')
+        reply.plan = plan
+        return reply
 
 
 def find_item(items: list[PlanItem], item_id: str) -> PlanItem | None:
@@ -196,20 +234,37 @@ def dependency_block_transitions(items: list[PlanItem]) -> Iterator[tuple[PlanIt
             yield item, TaskStatus.pending
 
 
-def validate_hierarchy(items: list[PlanItem]) -> str | None:
-    """Return an error if the plan has duplicate ids, broken/cyclic parents, or bad dependencies, else `None`."""
+def _duplicate_ids_error(items: list[PlanItem]) -> str | None:
     ids = [item.id for item in items]
     duplicates = sorted({id_ for id_ in ids if ids.count(id_) > 1})
     if duplicates:
         return f'Duplicate step ids: {", ".join(duplicates)}. Every step needs a unique id.'
-    known = set(ids)
+    return None
+
+
+def validate_hierarchy(items: list[PlanItem]) -> str | None:
+    """Return an error if the plan has duplicate ids, broken/cyclic parents, or bad dependencies, else `None`."""
+    if error := _duplicate_ids_error(items):
+        return error
     by_id = {item.id: item for item in items}
+    return (
+        _unknown_reference_error(items, by_id)
+        or _parent_cycle_error(items, by_id)
+        or _dependency_cycle_error(items, by_id)
+    )
+
+
+def _unknown_reference_error(items: list[PlanItem], by_id: dict[str, PlanItem]) -> str | None:
     for item in items:
-        if item.parent_id is not None and item.parent_id not in known:
+        if item.parent_id is not None and item.parent_id not in by_id:
             return f"Step '{item.id}' has parent_id '{item.parent_id}', which is not in the plan."
         for dep_id in item.depends_on:
-            if dep_id not in known:
+            if dep_id not in by_id:
                 return f"Step '{item.id}' depends on '{dep_id}', which is not in the plan."
+    return None
+
+
+def _parent_cycle_error(items: list[PlanItem], by_id: dict[str, PlanItem]) -> str | None:
     for item in items:
         seen: set[str] = set()
         parent_id = item.parent_id
@@ -219,28 +274,32 @@ def validate_hierarchy(items: list[PlanItem]) -> str | None:
             seen.add(parent_id)
             parent = by_id.get(parent_id)
             parent_id = parent.parent_id if parent is not None else None
+    return None
+
+
+def _dependency_cycle_error(items: list[PlanItem], by_id: dict[str, PlanItem]) -> str | None:
     color: dict[str, int] = {}
-
-    def has_dependency_cycle(node_id: str) -> bool:
-        color[node_id] = 1
-        for dep_id in by_id[node_id].depends_on:
-            state = color.get(dep_id, 0)
-            if state == 1 or (state == 0 and has_dependency_cycle(dep_id)):
-                return True
-        color[node_id] = 2
-        return False
-
     for item in items:
-        if color.get(item.id, 0) == 0 and has_dependency_cycle(item.id):
+        if color.get(item.id, 0) == 0 and _has_dependency_cycle(by_id, color, item.id):
             return 'Plan has a dependency cycle.'
     return None
+
+
+def _has_dependency_cycle(by_id: dict[str, PlanItem], color: dict[str, int], node_id: str) -> bool:
+    color[node_id] = 1
+    for dep_id in by_id[node_id].depends_on:
+        state = color.get(dep_id, 0)
+        if state == 1 or (state == 0 and _has_dependency_cycle(by_id, color, dep_id)):
+            return True
+    color[node_id] = 2
+    return False
 
 
 def render_flat(items: list[PlanItem], *, subtasks: bool) -> str:
     """Render the detailed numbered list with ids, annotating parents/dependencies."""
     lines = ['Current plan:']
     for index, item in enumerate(items, 1):
-        lines.append(f'{index}. {status_icon(item.status)} [{item.id}] {item.content}')
+        lines.append(_item_line(index, item))
         if subtasks and item.parent_id:
             lines.append(f'   (subtask of: {item.parent_id})')
         if subtasks and item.depends_on:
@@ -264,7 +323,7 @@ def render_tree(items: list[PlanItem]) -> str:
             seen.add(item.id)
             counter[0] += 1
             indent = '  ' * depth
-            lines.append(f'{indent}{counter[0]}. {status_icon(item.status)} [{item.id}] {item.content}')
+            lines.append(f'{indent}{_item_line(counter[0], item)}')
             if item.depends_on:
                 lines.append(f'{indent}   depends on: {", ".join(item.depends_on)}')
             walk(item.id, depth + 1)
@@ -448,59 +507,20 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         reject_unknown_tool_names(descriptions, offered, field='descriptions')
         selected = offered if capability.tools is None else set(capability.tools)
 
-        def wanted(name: str) -> bool:
-            return name in selected
+        def register(name: str, function: ToolFuncContext[AgentDepsT, ...], default_description: str) -> None:
+            if name in selected:
+                self.add_function(function, name=name, description=descriptions.get(name, default_description))
 
-        if wanted('write_plan'):
-            self.add_function(
-                self.write_plan, name='write_plan', description=descriptions.get('write_plan', WRITE_PLAN_DESCRIPTION)
-            )
-        if wanted('read_plan'):
-            self.add_function(
-                self.read_plan_tree if self._subtasks else self.read_plan,
-                name='read_plan',
-                description=descriptions.get('read_plan', READ_PLAN_DESCRIPTION),
-            )
-        if wanted('add_task'):
-            self.add_function(
-                self.add_task, name='add_task', description=descriptions.get('add_task', ADD_TASK_DESCRIPTION)
-            )
-        if wanted('update_task_status'):
-            self.add_function(
-                self.update_task_status,
-                name='update_task_status',
-                description=descriptions.get('update_task_status', UPDATE_TASK_STATUS_DESCRIPTION),
-            )
-        if wanted('update_task_statuses'):
-            self.add_function(
-                self.update_task_statuses,
-                name='update_task_statuses',
-                description=descriptions.get('update_task_statuses', UPDATE_TASK_STATUSES_DESCRIPTION),
-            )
-        if wanted('remove_task'):
-            self.add_function(
-                self.remove_task,
-                name='remove_task',
-                description=descriptions.get('remove_task', REMOVE_TASK_DESCRIPTION),
-            )
-        if wanted('add_subtask'):
-            self.add_function(
-                self.add_subtask,
-                name='add_subtask',
-                description=descriptions.get('add_subtask', ADD_SUBTASK_DESCRIPTION),
-            )
-        if wanted('set_dependency'):
-            self.add_function(
-                self.set_dependency,
-                name='set_dependency',
-                description=descriptions.get('set_dependency', SET_DEPENDENCY_DESCRIPTION),
-            )
-        if wanted('get_available_tasks'):
-            self.add_function(
-                self.get_available_tasks,
-                name='get_available_tasks',
-                description=descriptions.get('get_available_tasks', GET_AVAILABLE_TASKS_DESCRIPTION),
-            )
+        # Registration order is the order the model sees the tools in.
+        register('write_plan', self.write_plan, WRITE_PLAN_DESCRIPTION)
+        register('read_plan', self.read_plan_tree if self._subtasks else self.read_plan, READ_PLAN_DESCRIPTION)
+        register('add_task', self.add_task, ADD_TASK_DESCRIPTION)
+        register('update_task_status', self.update_task_status, UPDATE_TASK_STATUS_DESCRIPTION)
+        register('update_task_statuses', self.update_task_statuses, UPDATE_TASK_STATUSES_DESCRIPTION)
+        register('remove_task', self.remove_task, REMOVE_TASK_DESCRIPTION)
+        register('add_subtask', self.add_subtask, ADD_SUBTASK_DESCRIPTION)
+        register('set_dependency', self.set_dependency, SET_DEPENDENCY_DESCRIPTION)
+        register('get_available_tasks', self.get_available_tasks, GET_AVAILABLE_TASKS_DESCRIPTION)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Run each plan tool call alone when the engine runs function tools in workflow code, as DBOS does.
@@ -518,14 +538,34 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        """Resolve the run's store once for the call, so each durable operation it makes uses that store."""
+        """Run the tool, marking the plan a plan-changing tool returns so `Planning` can find it in the history.
+
+        With durable operations, the run's store is resolved once for the call, so each durable operation it
+        makes uses that store.
+        """
         if self._operations is None:
-            return await super().call_tool(name, tool_args, ctx, tool)
-        token = _TOOL_CALL_STORE.set(await resolve_run_store(ctx, self._capability, self))
-        try:
-            return await super().call_tool(name, tool_args, ctx, tool)
-        finally:
-            _TOOL_CALL_STORE.reset(token)
+            result = await super().call_tool(name, tool_args, ctx, tool)
+        else:
+            token = _TOOL_CALL_STORE.set(await resolve_run_store(ctx, self._capability, self))
+            try:
+                result = await super().call_tool(name, tool_args, ctx, tool)
+            finally:
+                _TOOL_CALL_STORE.reset(token)
+        if isinstance(result, _PlanReply):
+            return ToolReturn(str(result), metadata={'origin': PLAN_ORIGIN, 'plan': result.plan})
+        return result
+
+    def _plan_reply(self, message: str, items: list[PlanItem], suffix: str = '', *, bare_plan: bool = False) -> str:
+        """A plan-changing tool's reply: ending with the framed plan when `Planning` shows the model its plan.
+
+        With `inject=False`, the reply doesn't carry the plan: it's the message, with the bare checklist after it for
+        `write_plan` (`bare_plan`).
+        """
+        if self._capability.inject:
+            return _PlanReply(message, items, suffix)
+        if bare_plan:
+            return f'{message}\n\n{render_plan(items)}{suffix}'
+        return f'{message}{suffix}'
 
     async def _resolve(self, ctx: RunContext[AgentDepsT]) -> PlanStore:
         """The store for this call: through the capability's durable operations inside a tool call.
@@ -541,19 +581,28 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         return self._subtasks or status is not TaskStatus.blocked
 
     async def _emit_changes(self, ctx: RunContext[AgentDepsT], before: list[PlanItem], after: list[PlanItem]) -> None:
-        """Emit typed run events for the difference between two store snapshots."""
+        """Emit typed run events for the difference between two store snapshots.
+
+        Each plan tool that changes the plan calls this after its last store call. Under an engine
+        that runs function tools in workflow code, like DBOS, the event stream handler's steps for
+        these events start while the tool is still running and share its step counter, so store
+        calls made after emitting could replay in a different order than they were recorded.
+        """
         old = {item.id: item for item in before}
         new = {item.id: item for item in after}
         for item in after:
             previous = old.get(item.id)
             if previous is None:
                 await ctx.emit(PlanCreatedEvent(item=item))
-            elif item != previous:
-                await ctx.emit(PlanUpdatedEvent(item=item, previous_state=previous))
-                if item.status != previous.status:
-                    await ctx.emit(PlanStatusChangedEvent(item=item, previous_state=previous))
-                    if item.status is TaskStatus.completed:
-                        await ctx.emit(PlanCompletedEvent(item=item, previous_state=previous))
+                continue
+            if item == previous:
+                continue
+            await ctx.emit(PlanUpdatedEvent(item=item, previous_state=previous))
+            if item.status == previous.status:
+                continue
+            await ctx.emit(PlanStatusChangedEvent(item=item, previous_state=previous))
+            if item.status is TaskStatus.completed:
+                await ctx.emit(PlanCompletedEvent(item=item, previous_state=previous))
         for item in before:
             if item.id not in new:
                 await ctx.emit(PlanDeletedEvent(item=item))
@@ -566,24 +615,11 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             items: The complete ordered list of plan steps.
         """
         new_items = [item.model_copy(deep=True) for item in items]
-        ids = [item.id for item in new_items]
-        duplicates = sorted({item_id for item_id in ids if ids.count(item_id) > 1})
-        if duplicates:
-            return f'Plan not updated: Duplicate step ids: {", ".join(duplicates)}. Every step needs a unique id.'
+        if error := _duplicate_ids_error(new_items):
+            return f'Plan not updated: {error}'
         for item in new_items:
-            if not self._valid_status(item.status):
-                return f"Plan not updated: status '{item.status.value}' is only valid with subtasks enabled."
-            if not self._subtasks and (item.parent_id is not None or item.depends_on):
-                # Storing them would be a write the plan does not reflect: nothing reconciles
-                # dependencies without the subtask tools, and no view renders the hierarchy.
-                return (
-                    f"Plan not updated: step '{item.content}' sets parent_id/depends_on, which are "
-                    'only valid with subtasks enabled.'
-                )
-            if item.status is TaskStatus.blocked and not item.depends_on:
-                # Nothing would ever free it: reconciliation only touches steps that have
-                # dependencies, and `get_available_tasks` excludes `blocked`.
-                return f"Plan not updated: step '{item.content}' is blocked but depends on nothing."
+            if error := self._step_error(item):
+                return error
         if self._subtasks:
             error = validate_hierarchy(new_items)
             if error is not None:
@@ -601,7 +637,24 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         await self._emit_changes(ctx, before, after)
         in_progress = sum(1 for item in after if item.status is TaskStatus.in_progress)
         note = '' if in_progress <= 1 else _MULTI_IN_PROGRESS_NOTE
-        return f'Plan updated: {len(after)} step(s).\n\n{render_plan(after)}{note}'
+        return self._plan_reply(f'Plan updated: {len(after)} step(s).', after, note, bare_plan=True)
+
+    def _step_error(self, item: PlanItem) -> str | None:
+        """Why `write_plan` refuses `item` under this toolset's subtask setting, or `None`."""
+        if not self._valid_status(item.status):
+            return f"Plan not updated: status '{item.status.value}' is only valid with subtasks enabled."
+        if not self._subtasks and (item.parent_id is not None or item.depends_on):
+            # Storing them would be a write the plan does not reflect: nothing reconciles
+            # dependencies without the subtask tools, and no view renders the hierarchy.
+            return (
+                f"Plan not updated: step '{item.content}' sets parent_id/depends_on, which are "
+                'only valid with subtasks enabled.'
+            )
+        if item.status is TaskStatus.blocked and not item.depends_on:
+            # Nothing would ever free it: reconciliation only touches steps that have
+            # dependencies, and `get_available_tasks` excludes `blocked`.
+            return f"Plan not updated: step '{item.content}' is blocked but depends on nothing."
+        return None
 
     async def read_plan(self, ctx: RunContext[AgentDepsT]) -> str:
         """Read the current plan."""
@@ -636,8 +689,9 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         store = await self._resolve(ctx)
         before = await store.get_items()
         item = await store.add_item(PlanItem(content=content, active_form=active_form))
-        await self._emit_changes(ctx, before, await store.get_items())
-        return f"Added step '{content}' with id: {item.id}"
+        after = await store.get_items()
+        await self._emit_changes(ctx, before, after)
+        return self._plan_reply(f"Added step '{content}' with id: {item.id}", after)
 
     async def _sync_dependency_blocks(self, store: PlanStore) -> None:
         """Keep dependency-driven `blocked` status in sync after a status change.
@@ -696,8 +750,10 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             return refusal
         await store.update_item(task_id, status=status)
         await self._sync_dependency_blocks(store)
-        await self._emit_changes(ctx, items, await store.get_items())
-        return f"Updated step '{item.content}' status to '{await self._stored_status(store, task_id, status)}'."
+        after = await store.get_items()
+        stored = await self._stored_status(store, task_id, status)
+        await self._emit_changes(ctx, items, after)
+        return self._plan_reply(f"Updated step '{item.content}' status to '{stored}'.", after)
 
     async def update_task_statuses(self, ctx: RunContext[AgentDepsT], updates: list[PlanStatusUpdate]) -> str:
         """Update several steps' statuses in one call.
@@ -740,12 +796,13 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         for item, status in resolved:
             await store.update_item(item.id, status=status)
         await self._sync_dependency_blocks(store)
-        await self._emit_changes(ctx, before, await store.get_items())
+        after = await store.get_items()
         lines = [
             f'- [{item.id}] {item.content} -> {await self._stored_status(store, item.id, status)}'
             for item, status in resolved
         ]
-        return f'Updated {len(resolved)} step(s):\n' + '\n'.join(lines)
+        await self._emit_changes(ctx, before, after)
+        return self._plan_reply(f'Updated {len(resolved)} step(s):\n' + '\n'.join(lines), after)
 
     async def remove_task(self, ctx: RunContext[AgentDepsT], task_id: str) -> str:
         """Remove a step by id.
@@ -761,9 +818,10 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             return f"Step with id '{task_id}' not found."
         await store.remove_item(task_id)
         subtasks_removed = await self._cleanup_after_removal(store, task_id) if self._subtasks else 0
-        await self._emit_changes(ctx, before, await store.get_items())
+        after = await store.get_items()
+        await self._emit_changes(ctx, before, after)
         extra = f' and {subtasks_removed} subtask(s)' if subtasks_removed else ''
-        return f"Removed step '{item.content}' (id: {task_id}){extra}."
+        return self._plan_reply(f"Removed step '{item.content}' (id: {task_id}){extra}.", after)
 
     async def _cleanup_after_removal(self, store: PlanStore, removed_id: str) -> int:
         """Cascade-remove the deleted step's descendants and drop dangling `depends_on` refs.
@@ -815,8 +873,9 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         if parent is None:
             return f"Parent step with id '{parent_id}' not found."
         item = await store.add_item(PlanItem(content=content, active_form=active_form, parent_id=parent_id))
-        await self._emit_changes(ctx, before, await store.get_items())
-        return f"Added subtask '{content}' with id: {item.id} (parent: {parent_id})"
+        after = await store.get_items()
+        await self._emit_changes(ctx, before, after)
+        return self._plan_reply(f"Added subtask '{content}' with id: {item.id} (parent: {parent_id})", after)
 
     async def set_dependency(self, ctx: RunContext[AgentDepsT], task_id: str, depends_on_id: str) -> str:
         """Make one step depend on another.
@@ -847,17 +906,20 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             and item.status is not TaskStatus.blocked
         ):
             await store.update_item(task_id, depends_on=new_depends_on, status=TaskStatus.blocked)
-            await self._emit_changes(ctx, items, await store.get_items())
-            return (
-                f"Added dependency: '{item.content}' now depends on '{dependency.content}'. Step automatically blocked."
+            after = await store.get_items()
+            await self._emit_changes(ctx, items, after)
+            return self._plan_reply(
+                f"Added dependency: '{item.content}' now depends on '{dependency.content}'. Step automatically blocked.",
+                after,
             )
         await store.update_item(task_id, depends_on=new_depends_on)
         # A step already `blocked` keeps its status above, which leaves it blocked on a
         # prerequisite that may be terminal -- and so excluded from `get_available_tasks`
         # with nothing left to free it. Every other write reconciles; so does this one.
         await self._sync_dependency_blocks(store)
-        await self._emit_changes(ctx, items, await store.get_items())
-        return f"Added dependency: '{item.content}' now depends on '{dependency.content}'."
+        after = await store.get_items()
+        await self._emit_changes(ctx, items, after)
+        return self._plan_reply(f"Added dependency: '{item.content}' now depends on '{dependency.content}'.", after)
 
     async def get_available_tasks(self, ctx: RunContext[AgentDepsT]) -> str:
         """List steps that can be worked on now (no incomplete dependencies)."""
@@ -872,6 +934,5 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         if not available:
             return 'No available steps. All steps are either completed, cancelled, or blocked.'
         lines = ['Available steps (no blocking dependencies):']
-        for index, item in enumerate(available, 1):
-            lines.append(f'{index}. {status_icon(item.status)} [{item.id}] {item.content}')
+        lines.extend(_item_line(index, item) for index, item in enumerate(available, 1))
         return '\n'.join(lines)

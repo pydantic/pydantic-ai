@@ -77,7 +77,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     """
 
     text_summary: bool | str = False
-    """Have `web_search` also return a synthesized text summary above the results. Off by default.
+    """Have `web_search` also return a synthesized text summary above the results.
 
     When enabled, each `web_search` call requests Exa's plain-text output
     schema, so the response carries a short summary synthesized from the
@@ -88,11 +88,11 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     """
 
     include_deep_search: bool = False
-    """Also expose the `deep_search` tool. Off by default.
+    """Also expose the `deep_search` tool.
 
     Deep search (Exa search `type='deep'`) runs a multi-step agentic search
     and synthesizes a cited answer in one call. Each call invests more time
-    and search depth than `web_search` (Exa's research-grade mode), and the
+    and search depth than `web_search`, and the
     model decides when to invoke tools, so that investment is opt-in rather
     than the default.
     """
@@ -100,15 +100,15 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     include_domains: Sequence[str] = field(default_factory=list[str])
     """If non-empty, search results only come from these domains (allowlist).
 
-    Applies to `web_search` and `deep_search`. Mutually exclusive with
-    `exclude_domains`.
+    Applies to `web_search` and `deep_search`, not `get_page`, which reads any
+    URL the model passes. Mutually exclusive with `exclude_domains`.
     """
 
     exclude_domains: Sequence[str] = field(default_factory=list[str])
     """Search results never come from these domains (denylist).
 
-    Applies to `web_search` and `deep_search`. Mutually exclusive with
-    `include_domains`.
+    Applies to `web_search` and `deep_search`, not `get_page`. Mutually
+    exclusive with `include_domains`.
     """
 
     guidance: str | None = None
@@ -119,21 +119,22 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     """
 
     client: ExaClient | None = None
-    """Exa client to use; when `None`, an `exa_py.AsyncExa` is built from `EXA_API_KEY`.
+    """Exa client to use; when `None`, a default client wrapping `exa_py.AsyncExa` is built from `EXA_API_KEY`.
 
     Any object satisfying the `ExaClient` protocol works: use it to pass an API
     key explicitly, point at a different base URL, or substitute a fake in tests.
     """
 
     native: bool = False
-    """Use the model's native web search where it has one, with Exa's `web_search` as the fallback. Off by default.
+    """Use the model's native web search where it has one, with Exa's `web_search` as the fallback.
 
     When enabled, the capability also adds the provider's native web search
     tool, and Exa's `web_search` is only sent to models that do not support it,
     so the two never share a request. `get_page` and `deep_search` stay Exa's
     on every model. `include_domains` and `exclude_domains` are passed to the
-    native tool as `allowed_domains` and `blocked_domains`; `num_results` and
-    `text_summary` only apply to Exa's search.
+    native tool as `allowed_domains` and `blocked_domains`, and a model whose
+    native search can't apply them (such as Gemini) gets Exa's `web_search`
+    instead. `num_results` and `text_summary` only apply to Exa's search.
 
     To use Exa as the fallback of a core `WebSearch` instead, with its native
     options and no `get_page`, pass `WebSearch(local=ExaSearch().web_search_tool())`.
@@ -240,11 +241,13 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
         guidance: str | None = None,
         native: bool = False,
         id: str | None = 'exa_search',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> ExaSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
         The `client` field is not spec-serializable, so spec-loaded instances
-        always build the default `exa_py.AsyncExa` from `EXA_API_KEY`.
+        always build the default client, which wraps `exa_py.AsyncExa`, from `EXA_API_KEY`.
         """
         return cls(
             num_results=num_results,
@@ -256,4 +259,6 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
             guidance=guidance,
             native=native,
             id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

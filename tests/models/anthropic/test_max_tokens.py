@@ -43,13 +43,13 @@ MAX_TOKENS_CASES = {
     # Thinks by default, and adaptive thinking has no budget.
     'default-thinking': MaxTokensCase('claude-opus-5', {}, None, 128_000, streamed=True),
     'unified-adaptive': MaxTokensCase(
-        'claude-sonnet-4-6', {'thinking': 'high'}, {'type': 'adaptive'}, 128_000, streamed=True
+        'claude-sonnet-5-5', {'thinking': 'high'}, {'type': 'adaptive'}, 128_000, streamed=True
     ),
     'unified-extended': MaxTokensCase(
         'claude-sonnet-4-5', {'thinking': 'high'}, {'type': 'enabled', 'budget_tokens': 16384}, 64_000, streamed=True
     ),
     # With a custom timeout the SDK doesn't require streaming, so `AnthropicModel` streams the default itself.
-    'custom-timeout': MaxTokensCase('claude-sonnet-4-5', {'timeout': 120}, None, 64_000, streamed=True),
+    'custom-timeout': MaxTokensCase('claude-sonnet-5-5', {'timeout': 120}, None, 128_000, streamed=True),
     'explicit-max-tokens': MaxTokensCase(
         'claude-sonnet-4-5',
         {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 4096}, 'max_tokens': 15000},

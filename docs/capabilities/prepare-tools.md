@@ -15,7 +15,7 @@ async def hide_dangerous(ctx: RunContext, tool_defs: list[ToolDefinition]) -> li
     return [td for td in tool_defs if not td.name.startswith('delete_')]
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[PrepareTools(hide_dangerous)])
+agent = Agent('{{ openai:medium }}', capabilities=[PrepareTools(hide_dangerous)])
 
 
 @agent.tool_plain

@@ -1,0 +1,95 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.fireworks.ai/inference/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "357"
+      content-type:
+      - application/json
+      host:
+      - api.fireworks.ai
+    body:
+      type: json
+      content:
+        model: accounts/fireworks/models/qwen3p8-max
+        stream: false
+        messages:
+        - role: user
+          content: Where is the Eiffel Tower?
+        response_format:
+          type: json_schema
+          json_schema:
+            name: City
+            schema:
+              properties:
+                city:
+                  type: string
+                country:
+                  type: string
+              required:
+              - city
+              - country
+              title: City
+              type: object
+            strict: true
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "723"
+      content-type:
+      - application/json
+      fireworks-cached-prompt-tokens:
+      - "0"
+      fireworks-conversation-options:
+      - "{\"conversation_style\": \"qwen3p8-max\", \"reasoning_effort\": \"xhigh\", \"reasoning_history\": \"preserved\", \"thinking_mode\": null, \"thinking_budget_tokens\": 131072, \"tool_choice\": \"auto\", \"parallel_tool_calls\": true, \"response_format\": \"json_object\", \"grammar\": true, \"safe_tokenization\": true}"
+      fireworks-prompt-tokens:
+      - "59"
+      fireworks-sampling-options:
+      - "{\"max_tokens\": 65536, \"temperature\": 1.0, \"top_k\": 20, \"top_p\": 0.95, \"min_p\": 0.0, \"typical_p\": 1.0, \"frequency_penalty\": 0.0, \"presence_penalty\": 0.0, \"repetition_penalty\": 1.0, \"mirostat_target\": null, \"mirostat_lr\": 0.1, \"cycle_multiplier\": 0.0, \"cycle_base\": 0.0, \"cycle_allowed_length\": 0, \"cycle_sequence_breakers\": []}"
+      fireworks-server-processing-time:
+      - "1.390"
+      fireworks-server-time-to-first-token:
+      - "0.538"
+      fireworks-speculation-prompt-matched-tokens:
+      - "0"
+      vary:
+      - Origin
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-c40dc9aa1c7b4338bd14414e92a40a99
+        object: chat.completion
+        created: 1792721357
+        model: Qwen 3.8 Max
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "{\"country\": \"France\", \"city\": \"Paris\"}"
+            reasoning_content: |
+              We need answer user's simple question. Need final concise. User asks Where is Eiffel Tower? Answer: Paris, France, on Champ de Mars by Seine, 7th arrondissement. Ensure final.
+            tools: null
+          finish_reason: stop
+        usage:
+          prompt_tokens: 59
+          total_tokens: 117
+          completion_tokens: 58
+          prompt_tokens_details:
+            cached_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 43
+          output_tokens_details:
+            reasoning_tokens: 43
+  recorded_at: 2026-10-23T02:09:18.078220+00:00

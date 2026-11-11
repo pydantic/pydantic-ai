@@ -9,23 +9,29 @@ from pydantic_ai import (
     BinaryContent,
     ModelRequest,
     ModelResponse,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     UserPromptPart,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     FilePart,
+    InstructionDeltaPart,
+    InstructionId,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
 )
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import RunContext
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
@@ -54,6 +60,19 @@ def test_mcp_sampling_model():
     assert model.system == 'MCP'
 
 
+@pytest.mark.anyio
+async def test_unprojected_instruction_delta_raises():
+    create_message = AsyncMock()
+    model = MCPSamplingModel(fake_session(create_message))
+    with pytest.raises(UserError, match='prepare_messages'):
+        await model.request(
+            [ModelRequest(parts=[InstructionDeltaPart(id=InstructionId(AgentInstructionSource()), content='State')])],
+            None,
+            ModelRequestParameters(),
+        )
+    create_message.assert_not_called()
+
+
 def test_assistant_text():
     result = CreateMessageResult(
         role='assistant', content=TextContent(type='text', text='text content'), model='test-model'
@@ -79,6 +98,7 @@ def test_assistant_text():
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
+                model_id='MCP:mcp-sampling',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -120,6 +140,7 @@ def test_assistant_text_history():
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
+                model_id='MCP:mcp-sampling',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -134,6 +155,7 @@ def test_assistant_text_history():
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
+                model_id='MCP:mcp-sampling',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -210,7 +232,7 @@ def test_tool_history(outcome: Literal['success', 'failed']):
         ModelRequest(
             parts=[
                 ToolReturnPart('weather', {'temperature': 20}, tool_call_id='one', outcome=outcome),
-                RetryPromptPart('Unavailable', tool_name='weather', tool_call_id='two'),
+                ToolReturnPart('weather', 'Unavailable', tool_call_id='two', outcome='retried'),
             ]
         ),
     ]
@@ -242,7 +264,7 @@ def test_tool_history(outcome: Literal['success', 'failed']):
                 {
                     'type': 'tool_result',
                     'toolUseId': 'two',
-                    'content': [{'type': 'text', 'text': 'Unavailable\n\nFix the errors and try again.'}],
+                    'content': [{'type': 'text', 'text': 'Unavailable'}],
                     'isError': True,
                 },
             ],
@@ -261,7 +283,7 @@ def test_output_retry_history():
         message_history=[
             ModelRequest(parts=[UserPromptPart('Hello')]),
             ModelResponse(parts=[TextPart('One'), ThinkingPart('Hidden'), TextPart('Two')]),
-            ModelRequest(parts=[RetryPromptPart('Try again')]),
+            ModelRequest(parts=[RetryFeedbackPart('Try again', retry=RetryInfo(cause='model_retry'))]),
         ]
     )
     assert [msg.model_dump(by_alias=True, exclude_none=True) for msg in create_message.call_args.args[0]] == snapshot(
@@ -270,7 +292,15 @@ def test_output_retry_history():
             {'role': 'assistant', 'content': {'type': 'text', 'text': 'OneTwo'}},
             {
                 'role': 'user',
-                'content': {'type': 'text', 'text': 'Validation feedback:\nTry again\n\nFix the errors and try again.'},
+                'content': {
+                    'type': 'text',
+                    'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Try again
+</retry_feedback>\
+""",
+                },
             },
         ]
     )
@@ -323,6 +353,17 @@ def test_framework_tool_history():
                 ],
             },
             {'role': 'user', 'content': {'type': 'text', 'text': 'Continue'}},
+            {
+                'role': 'user',
+                'content': {
+                    'type': 'text',
+                    'text': """\
+<system><context id="capability:forecast">
+This context has been withdrawn, and the withdrawal stays in effect until replaced again.
+</context></system>\
+""",
+                },
+            },
         ]
     )
 
@@ -344,3 +385,28 @@ def test_unsupported_tool_history(file_in_result: bool):
     else:
         with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: FilePart'):
             agent.run_sync('Continue', message_history=history)
+
+
+@pytest.mark.anyio
+async def test_append_instruction_baseline_is_tagged_like_its_updates():
+    """MCP sampling reads the prefix from each request's `instructions`, so it must carry the same tags as the updates."""
+    create_message = AsyncMock(
+        return_value=CreateMessageResult(role='assistant', content=TextContent(type='text', text='ok'), model='test')
+    )
+    agent = Agent(MCPSamplingModel(fake_session(create_message)), deps_type=str)
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[str]) -> str:
+        return ctx.deps
+
+    first = await agent.run('Continue.', deps='A')
+    await agent.run('Continue.', deps='B', message_history=first.all_messages())
+    assert create_message.call_args.kwargs['system_prompt'] == snapshot("""\
+<context id="agent:state">
+A
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.<context id="agent:state">
+A
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")

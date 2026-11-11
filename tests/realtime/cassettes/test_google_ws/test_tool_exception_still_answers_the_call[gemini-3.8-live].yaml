@@ -1,0 +1,448 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-3.8-live
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Use the get_vault_code tool when asked for the vault code. Answer
+            in one short sentence.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Return the current vault code.
+          name: get_vault_code
+          parameters:
+            properties: {}
+            type: OBJECT
+          behavior: BLOCKING
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.115
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.116
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Please tell me the vault code.
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.118
+  data:
+    sessionResumptionUpdate:
+      newHandle: 40d54ab0-aade-4133-acc6-4f2034dec969
+      resumable: true
+- kind: message
+  direction: received
+  at: 0.607
+  data: {}
+- kind: message
+  direction: received
+  at: 0.607
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 0.625
+  data: {}
+- kind: message
+  direction: received
+  at: 0.625
+  data:
+    toolCall:
+      functionCalls:
+      - name: get_vault_code
+        args: {}
+        id: fc_7705577269373952538
+- kind: message
+  direction: sent
+  at: 0.626
+  data:
+    tool_response:
+      functionResponses:
+      - id: fc_7705577269373952538
+        name: get_vault_code
+        response:
+          output: '{"error":"The tool raised an unhandled error."}'
+- kind: message
+  direction: received
+  at: 0.9
+  data: {}
+- kind: message
+  direction: received
+  at: 1.016
+  data: {}
+- kind: message
+  direction: received
+  at: 1.017
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AAA=
+        role: model
+      outputTranscription:
+        text: 'I am unable to '
+- kind: message
+  direction: received
+  at: 1.041
+  data: {}
+- kind: message
+  direction: received
+  at: 1.057
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AgD///v/AgADAPv/+//7//j/+P/7/wQA/f/7//n////7
+        role: model
+- kind: message
+  direction: received
+  at: 1.058
+  data: {}
+- kind: message
+  direction: received
+  at: 1.07
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 6PzI/LH6nPa79FvyDe3/6AXk/uAl3rbczNzz3DzelOF0
+        role: model
+- kind: message
+  direction: received
+  at: 1.074
+  data: {}
+- kind: message
+  direction: received
+  at: 1.083
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: MAGU/tX6vPhP99v27fcu+pH8Wf+iA3wGOwh2CXcIVwcM
+        role: model
+- kind: message
+  direction: received
+  at: 1.107
+  data: {}
+- kind: message
+  direction: received
+  at: 1.111
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: BwAEAAEAAQACAAIAAQAAAP7//v///wAA///8//v//P/9
+        role: model
+- kind: message
+  direction: received
+  at: 1.164
+  data: {}
+- kind: message
+  direction: received
+  at: 1.172
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Xf55/qL+z/75/ij/Vv+F/7L/3////zMAaACDAKYA0ADy
+        role: model
+      outputTranscription:
+        text: retrieve the vault code
+- kind: message
+  direction: received
+  at: 1.173
+  data: {}
+- kind: message
+  direction: received
+  at: 1.181
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Pfnm+XP6ivtR/JP9U/7Y/uP/3wAmAsICqAN8BB0FigY2
+        role: model
+- kind: message
+  direction: received
+  at: 1.222
+  data: {}
+- kind: message
+  direction: received
+  at: 1.23
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: jvYL+CH50/kM+nv6R/ww/u3/FQFCAqsDHQU5BqgGqwYp
+        role: model
+- kind: message
+  direction: received
+  at: 1.256
+  data: {}
+- kind: message
+  direction: received
+  at: 1.262
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: JeJe56PsgPBq8in1Xfm6/ocEngjbCUkJCQifB2UIUgmd
+        role: model
+- kind: message
+  direction: received
+  at: 1.311
+  data: {}
+- kind: message
+  direction: received
+  at: 1.315
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Ee6x6mjmGOLc3EPcQtwv2YfUdtVB1xjaeN2I39fhwuR7
+        role: model
+      outputTranscription:
+        text: ' at this time.'
+- kind: message
+  direction: received
+  at: 1.321
+  data: {}
+- kind: message
+  direction: received
+  at: 1.329
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: xeST4WblR+8Q+Az/3wf6CDgGFgXoBAADcAYkD1wVwhjq
+        role: model
+- kind: message
+  direction: received
+  at: 1.403
+  data: {}
+- kind: message
+  direction: received
+  at: 1.419
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 7+9k8a3wgu/v7Mzqn+ic6Tzq5eri6S/quurr68Tv0PIP
+        role: model
+- kind: message
+  direction: received
+  at: 1.422
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 4.017
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 1287
+      responseTokenCount: 88
+      totalTokenCount: 1375
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 747
+      - modality: AUDIO
+        tokenCount: 444
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 80
+      thoughtsTokenCount: 78
+- kind: message
+  direction: sent
+  at: 4.017
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is two plus two?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 4.35
+  data: {}
+- kind: message
+  direction: received
+  at: 4.351
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 4.529
+  data: {}
+- kind: message
+  direction: received
+  at: 4.529
+  data: {}
+- kind: message
+  direction: received
+  at: 4.533
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: BAAAAAMAAQAGAAAAAgAAAAQA//8DAAAAAwD+/wMA/v8B
+        role: model
+      outputTranscription:
+        text: 'Two plus two '
+- kind: message
+  direction: received
+  at: 4.536
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: w/pb+tr5bvlO+Sf5S/lM+fH4CPkI+Sn5b/k9+Tn5IfkM
+        role: model
+- kind: message
+  direction: received
+  at: 4.536
+  data: {}
+- kind: message
+  direction: received
+  at: 4.542
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: p/u8+8b6lfmx97D1ePTW8Zru1+uL59rjo97T2PrTOtB4
+        role: model
+- kind: message
+  direction: received
+  at: 4.565
+  data: {}
+- kind: message
+  direction: received
+  at: 4.571
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: a/9sDo0CZuveBX0Snd+1+UIkcO/90/YdlRgG4vv0IQ3s
+        role: model
+- kind: message
+  direction: received
+  at: 4.647
+  data: {}
+- kind: message
+  direction: received
+  at: 4.647
+  data: {}
+- kind: message
+  direction: received
+  at: 4.654
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: wPjF+oX8R/2s/p0AFgMbBhoJkgsgDuoQ5RJfFEgV7RWy
+        role: model
+      outputTranscription:
+        text: is four.
+- kind: message
+  direction: received
+  at: 4.659
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: KBpwFwMTWw7MCq0IVgaqA0oADP1p+uP3Afbf9F30SvNY
+        role: model
+- kind: message
+  direction: received
+  at: 4.681
+  data: {}
+- kind: message
+  direction: received
+  at: 4.692
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: avM97GLnseUC5zrqKe5M8l724/lL/ET9Bv07/FL7AftZ
+        role: model
+- kind: message
+  direction: received
+  at: 4.701
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 6.113
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 755
+      responseTokenCount: 46
+      totalTokenCount: 801
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 384
+      - modality: AUDIO
+        tokenCount: 302
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 46
+      thoughtsTokenCount: 64

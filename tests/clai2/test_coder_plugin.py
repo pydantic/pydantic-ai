@@ -1,13 +1,13 @@
 """Named folder selection and compatibility for CLAI's Coder wrapper."""
 
 import io
-from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
 import pytest
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
+from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
@@ -15,7 +15,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -24,13 +23,15 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.subagents import SubAgents
-from pydantic_clai2.builtin_plugins import coder as coder_plugin
 from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost, SessionStart, load_plugin
+from pydantic_clai2.plugins import PluginHost, SessionStart, collect
 from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.ui.menus import dialogs
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, run_flow
+from tests.clai2.menu_script import Script, pick, typed
 
 
 def test_named_folders_and_explicit_paths_preserve_precedence() -> None:
@@ -69,7 +70,8 @@ def coder_host(*, terminal: bool = False, **settings: JsonValue) -> PluginHost[o
 def test_settings_source_validates_saves_and_resets() -> None:
     host = coder_host(sub_agents=False, instructions='Keep this guidance.')
     source = CoderSource(host)
-    unrestricted, sub_agents, folders = source.rows()
+    unrestricted, sub_agents, folders, _skill_folders, skills, _delegate_models, _review_agent = source.rows()
+    assert (source.current(skills), skills.display(source.current(skills))) == ('[]', 'All on')
     assert source.current(unrestricted) == 'false'
     assert source.apply(unrestricted, 'true') == 'Saved Unrestricted filesystem.'
     assert host.settings(CoderSettings).unrestricted_filesystem is True
@@ -104,24 +106,61 @@ def test_menu_edits_save_only_chosen_settings() -> None:
     assert saved[-1] == {'unrestricted_filesystem': True}
 
 
+def test_enter_on_skill_folders_turned_off_keeps_them_off() -> None:
+    """The editor opens holding `[]`, so Enter keeps skills off."""
+    saved: list[dict[str, JsonValue]] = []
+    host = PluginHost[object](
+        name='coder', console=Console(file=io.StringIO()), settings={'skill_folders': []}, save_settings=saved.append
+    )
+    menu = FieldMenu(CoderSource(host))
+    skill_folders = menu.row_for('skill_folders')
+    assert skill_folders is not None
+    editor = menu.build_editor(skill_folders)
+    assert (editor.text, editor._placeholder) == (  # pyright: ignore[reportPrivateUsage]
+        '[]',
+        'empty resets to [".agents/skills", ".claude/skills", "~/.agents/skills", "~/.claude/skills"]',
+    )
+    script = Script(
+        lists=[pick('skill_folders'), pick('skill_folders'), MenuResult(cancelled=True)],
+        choices=[],
+        texts=[typed('[]'), typed('')],
+    )
+    assert run_flow(menu, script.runners) == ['Reset Skill folders.']
+    assert saved == [{}]
+    assert menu.initial(skill_folders) == '', 'a setting at its default opens empty'
+
+
 async def test_configure_outside_a_terminal_explains_how(monkeypatch: pytest.MonkeyPatch) -> None:
     assert 'from a terminal' in await CoderPlugin[object].from_host(coder_host()).configure()
 
 
-@pytest.mark.parametrize('messages', [['Saved Agent folders.'], []])
-async def test_configure_runs_the_field_menu(monkeypatch: pytest.MonkeyPatch, messages: list[str]) -> None:
-    plugin = CoderPlugin[object].from_host(coder_host(terminal=True))
-
-    async def run_worker(work: Callable[[], list[str]]) -> list[str]:
-        return work()
-
-    def run_flow(source: CoderSource[object]) -> list[str]:
-        assert source.host is plugin.host
-        return messages
-
-    monkeypatch.setattr(coder_plugin, 'run_coder_flow', run_flow)
-    monkeypatch.setattr(coder_plugin, 'run_worker', run_worker)
-    assert await plugin.configure() == ('\n'.join(messages) or 'No Coder settings changed.')
+@pytest.mark.parametrize(
+    ('script', 'shown', 'saves'),
+    [
+        (
+            Script(
+                [pick('agent_folders'), pick('sub_agents'), MenuResult(cancelled=True)],
+                [pick('name'), pick('close'), pick('false')],
+                [typed('agents')],
+            ),
+            'Agent folder saved.\nSaved Sub-agents.',
+            [{'agent_folders': ['agents']}, {'agent_folders': ['agents'], 'sub_agents': False}],
+        ),
+        (Script([MenuResult(cancelled=True)], [], []), 'Coder settings: nothing changed.', []),
+    ],
+)
+async def test_configure_shows_the_declared_menu_in_the_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: Script, shown: str, saves: list[dict[str, JsonValue]]
+) -> None:
+    """The **Agent folders** row opens the folder list through the terminal's dialogs; other rows edit a value."""
+    monkeypatch.chdir(tmp_path)
+    saved: list[dict[str, JsonValue]] = []
+    host = PluginHost[object](
+        name='coder', console=Console(file=io.StringIO(), force_terminal=True), settings={}, save_settings=saved.append
+    )
+    monkeypatch.setattr(dialogs, 'RUNNERS', script.runners)
+    assert await CoderPlugin[object].from_host(host).configure() == shown
+    assert saved == saves
 
 
 @pytest.mark.parametrize('unrestricted', [False, True])
@@ -137,7 +176,9 @@ async def test_unrestricted_filesystem_setting_controls_paths_outside_the_projec
         'sub_agents': False,
     }
     host = PluginHost[None](name='coder', console=Console(file=io.StringIO()), settings=settings)
-    loaded = load_plugin(CoderPlugin, host)
+    plugin = CoderPlugin[None].from_host(host)
+    await plugin.prepare()
+    loaded = collect(plugin)
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -151,7 +192,7 @@ async def test_unrestricted_filesystem_setting_controls_paths_outside_the_projec
         for message in result.all_messages()
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, (ToolReturnPart, RetryPromptPart))
+        if isinstance(part, ToolReturnPart)
     ]
     assert any('reachable-content' in content for content in returns) is unrestricted
 
@@ -174,7 +215,7 @@ async def test_old_coder_declarations_load_without_rewriting_preferences(
         session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
     )
     await loader.load_all()
-    (coder,) = loader.capabilities()
+    coder, *_skills = loader.capabilities()
     assert isinstance(coder, Coder)
     (delegation,) = [
         capability for capability in cast(Coder[None], coder).capabilities if isinstance(capability, SubAgents)

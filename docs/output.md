@@ -8,7 +8,7 @@ The output is wrapped in [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] or
 
 Both `AgentRunResult` and `StreamedRunResult` are generic in the data they wrap, so typing information about the data returned by the agent is preserved.
 
-A run ends when the model responds with one of the output types, or, if no output type is specified or `str` is one of the allowed options, when a plain text response is received. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agent.md#usage-limits).
+A run ends when the model responds with one of the output types, or, if no output type is specified or `str` is one of the allowed options, when a plain text response is received. A run can also be cancelled if usage limits are exceeded, see [Usage Limits](agent.md#usage-limits). With [`DeferredToolRequests`](deferred-tools.md) or [`PendingModelResponse`](batch.md#ending-a-run-while-it-waits) in the output type, a run can also end early, so you can approve its tools or wait for a model request the provider is still processing, like a batch request, and resume it later.
 
 Here's an example using a Pydantic model as the `output_type`, forcing the model to respond with data matching our specification:
 
@@ -23,12 +23,12 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google:gemini-3-flash-preview', output_type=CityLocation)
+agent = Agent('{{ google:medium }}', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
 print(result.usage)
-#> RunUsage(cost=Decimal('0.0000525'), input_tokens=57, output_tokens=8, requests=1)
+#> RunUsage(cost=Decimal('0.00007275'), input_tokens=57, output_tokens=8, requests=1)
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -74,7 +74,7 @@ class Box(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5-mini',
+    '{{ openai:small }}',
     output_type=[Box, str], # (1)!
     instructions=(
         "Extract me the dimensions of a box, "
@@ -101,7 +101,7 @@ Here's an example of using a union return type, which will register multiple out
 from pydantic_ai import Agent
 
 agent = Agent[object, list[str] | list[int]](
-    'openai:gpt-5-mini',
+    '{{ openai:small }}',
     output_type=list[str] | list[int],  # (1)!
     instructions='Extract either colors or sizes from the shapes provided.',
 )
@@ -182,7 +182,7 @@ def run_sql_query(query: str) -> list[Row]:
 
 
 sql_agent = Agent[object, list[Row] | SQLFailure](
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=[run_sql_query, SQLFailure],
     instructions='You are a SQL agent that can run SQL queries on a database.',
 )
@@ -214,7 +214,7 @@ class RouterFailure(BaseModel):
 
 
 router_agent = Agent[object, list[Row] | RouterFailure](
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=[hand_off_to_sql_agent, RouterFailure],
     instructions='You are a router to other agents. Never try to solve a problem yourself, just pass it on.',
 )
@@ -263,7 +263,7 @@ def split_into_words(text: str) -> list[str]:
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=TextOutput(split_into_words),
 )
 result = agent.run_sync('Who was Albert Einstein?')
@@ -305,7 +305,7 @@ def save_to_database(ctx: RunContext, record: DatabaseRecord) -> DatabaseRecord:
     return record
 
 
-agent = Agent('openai:gpt-5.2', output_type=save_to_database)
+agent = Agent('{{ openai:medium }}', output_type=save_to_database)
 
 
 async def main():
@@ -355,7 +355,7 @@ class Vehicle(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=[ # (1)!
         ToolOutput(Fruit, name='return_fruit'),
         ToolOutput(Vehicle, name='return_vehicle'),
@@ -372,7 +372,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Native Output
 
-Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools.
+Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools. On [Anthropic](models/anthropic.md#schema-complexity-limits), the schema is compiled into a grammar with complexity limits that a large schema can exceed, and on a request that thinks, a structured `output_type` uses Native Output even without the marker class, unless its schema is over those limits. On [OpenAI](models/openai.md#structured-output-schemas), a schema over the strict-mode size limits is sent without strict mode.
 
 To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydantic_ai.output.NativeOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
 
@@ -382,7 +382,7 @@ from pydantic_ai import Agent, NativeOutput
 from tool_output import Fruit, Vehicle
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=NativeOutput(
         [Fruit, Vehicle], # (1)!
         name='Fruit_or_vehicle',
@@ -422,7 +422,7 @@ class Device(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=PromptedOutput(
         [Vehicle, Device], # (1)!
         name='Vehicle or device',
@@ -434,7 +434,7 @@ print(repr(result.output))
 #> Device(name='MacBook', kind='laptop')
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=PromptedOutput(
         [Vehicle, Device],
         template='Gimme some JSON: {schema}'
@@ -456,7 +456,7 @@ A run ends when the model produces a final result. That result usually comes fro
 !!! warning "Priority of output and deferred tools in streaming methods"
     The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
 
-    This means that if the model calls deferred tools before output tools when using these methods, the deferred tool calls determine the agent run's final output, while the other [run methods](agent.md#running-agents) would have prioritized the tool output. Regardless of `end_strategy`, these methods commit the first matching output the instant it streams, so they behave like `'early'`: that result is locked in, and the [retry-after-tool-failure](#retrying-after-a-tool-failure) behavior below does not apply.
+    This means that if the model streams text (with an output type like `str | Foo`, see [Streamed Results](#streamed-results)) or calls deferred tools before output tools when using these methods, that text or those deferred tool calls determine the agent run's final output, while the other [run methods](agent.md#running-agents) would have prioritized the tool output. Regardless of `end_strategy`, these methods commit the first matching output the instant it streams, so they behave like `'early'`: that result is locked in, and the [retry-after-tool-failure](#retrying-after-a-tool-failure) behavior below does not apply.
 
 | Strategy | Output tools | Function tools — output succeeded | Function tools — every output failed |
 |---|---|---|---|
@@ -513,7 +513,7 @@ HumanDict = StructuredDict(
     description='A human with a name and age',
 )
 
-agent = Agent('openai:gpt-5.2', output_type=HumanDict)
+agent = Agent('{{ openai:medium }}', output_type=HumanDict)
 result = agent.run_sync('Create a person')
 #> {'name': 'John Doe', 'age': 30}
 ```
@@ -535,7 +535,7 @@ Intent = Choices(
     description='What the customer is asking for.',
 )
 
-agent = Agent('openai:gpt-5.2', output_type=Intent)
+agent = Agent('{{ openai:medium }}', output_type=Intent)
 result = agent.run_sync('The blender arrived smashed. Just send me another one.')
 print(result.output)
 #> replace
@@ -566,7 +566,7 @@ class Triage(BaseModel):
     summary: str
 
 
-agent = Agent('openai:gpt-5.2', output_type=Triage)
+agent = Agent('{{ openai:medium }}', output_type=Triage)
 
 
 @agent.tool_plain
@@ -601,7 +601,7 @@ docs = [
     Doc(id='rfc-9110', title='HTTP Semantics'),
 ]
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 result = agent.run_sync(
     'Which one covers cookies?',
     output_type=Choices({doc.id: Choice(doc.title, value=doc) for doc in docs}),
@@ -637,7 +637,7 @@ actions = {
 }
 actions['reobserve'] = Choice('Look again before deciding.', value=screen.observe)
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 result = agent.run_sync(
     'Sign in as the admin.',
     output_type=Choices(actions, description='Which action to take on the screen.'),
@@ -685,7 +685,7 @@ class Value(BaseModel):
 
 
 agent = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     output_type=Value,
     validation_context=10,
 )
@@ -700,7 +700,7 @@ class Deps:
 
 
 agent = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     output_type=Value,
     deps_type=Deps,
     validation_context=lambda ctx: ctx.deps.increment,
@@ -742,7 +742,7 @@ class InvalidRequest(BaseModel):
 
 Output = Success | InvalidRequest
 agent = Agent[DatabaseConn, Output](
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     output_type=Output,
     deps_type=DatabaseConn,
     instructions='Generate PostgreSQL flavored SQL queries based on user input.',
@@ -782,7 +782,7 @@ For all [other run methods](agent.md#running-agents), `partial_output` is always
 ```python {title="partial_validation_streaming.py" line_length="120"}
 from pydantic_ai import Agent, ModelRetry, RunContext
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 @agent.output_validator
@@ -819,7 +819,7 @@ To use the generated image as the output of the agent run, you can set `output_t
 ```py {title="image_output.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('openai-responses:gpt-5.2', output_type=BinaryImage)
+agent = Agent('openai-responses:{{ openai:medium.name }}', output_type=BinaryImage)
 
 result = agent.run_sync('Generate an image of an axolotl.')
 assert isinstance(result.output, BinaryImage)
@@ -832,7 +832,7 @@ If an agent does not need to always generate an image, you can use a union of `B
 ```py {title="image_output_union.py"}
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('openai-responses:gpt-5.2', output_type=BinaryImage | str)
+agent = Agent('openai-responses:{{ openai:medium.name }}', output_type=BinaryImage | str)
 
 result = agent.run_sync('Tell me a two-sentence story about an axolotl, no image please.')
 print(result.output)
@@ -857,7 +857,7 @@ Include `None` in the `output_type` when finishing without a final message is a 
 ```python {title="optional_output.py"}
 from pydantic_ai import Agent
 
-agent = Agent('anthropic:claude-opus-4-6', output_type=str | None)
+agent = Agent('{{ anthropic:large }}', output_type=str | None)
 
 
 @agent.tool_plain
@@ -886,6 +886,41 @@ When the model returns an empty response and `None` is an allowed output type, t
 !!! note
     When using [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] with an optional output type, an empty model response has no intermediate values to yield, so [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] produces an empty iterator in this case. Use [`get_output()`][pydantic_ai.result.StreamedRunResult.get_output] to retrieve the final `None` value instead.
 
+## Output cut off by the token limit {#truncated-output}
+
+A response that reaches the [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] model setting, or the model's own output limit, is cut off by the provider, and its [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] is `'length'`.
+
+Text output, such as `str` or a [`TextOutput`](#text-output) function, has no shape to check, so text that was cut off is the run's output like any other. When a complete answer matters, check the finish reason of the response it came from:
+
+```python {title="truncated_text_output.py"}
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def cut_off(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # A deterministic stand-in for a model that reaches `max_tokens` mid-sentence.
+    return ModelResponse(
+        parts=[TextPart('The three largest cities are Tokyo, Delhi and')], finish_reason='length'
+    )
+
+
+agent = Agent(FunctionModel(cut_off))
+result = agent.run_sync('Name the three largest cities.', model_settings={'max_tokens': 10})
+print(result.output)
+#> The three largest cities are Tokyo, Delhi and
+if result.response.finish_reason == 'length':
+    print('The answer was cut off.')
+    #> The answer was cut off.
+```
+
+Structured output is validated, so output that was cut off is usually caught:
+
+- With [`NativeOutput`](#native-output) or [`PromptedOutput`](#prompted-output), text that was cut off into JSON that doesn't parse raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with a message naming the token limit, in [`run()`][pydantic_ai.agent.AbstractAgent.run] and [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] alike. The model isn't asked to try again, as it would run into the same limit. Text that was cut off but still parses is validated as usual, so it's the output when it's valid, and is retried when the schema or an [output validator](#output-validator-functions) rejects it.
+- With [tool output](#tool-output), an output tool call whose arguments were cut off is sent back to the model like any other invalid arguments, and raises [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] once the [output retries](retries.md#output-retries) are used up.
+- A response that was cut off before it produced any output, say while the model was [thinking](capabilities/thinking.md), raises `UnexpectedModelBehavior`.
+
+To get the whole answer, raise `max_tokens` or ask for a shorter one.
+
 ## Streamed Results
 
 There two main challenges with streamed results:
@@ -897,6 +932,10 @@ There two main challenges with streamed results:
     As the `run_stream()` method will consider the first output matching the `output_type` to be the final output,
     it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
 
+    That first output can be text. With an output type that allows both text and [tool output](#tool-output), like `output_type=str | Foo`,
+    text the model streams before it calls the output tool becomes the run's output, and the output tool call is not used.
+    [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], `run_stream_events()` and `iter()` return the output tool's result.
+
     If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
     use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] ([docs](agent.md#streaming-all-events)) or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] ([docs](agent.md#streaming-all-events-and-output)) instead.
 
@@ -907,7 +946,7 @@ Example of streamed text output:
 ```python {title="streamed_hello_world.py" line_length="120"}
 from pydantic_ai import Agent
 
-agent = Agent('google:gemini-3-flash-preview')  # (1)!
+agent = Agent('{{ google:medium }}')  # (1)!
 
 
 async def main():
@@ -935,7 +974,7 @@ We can also stream text as deltas rather than the entire text in each item:
 ```python {title="streamed_delta_hello_world.py"}
 from pydantic_ai import Agent
 
-agent = Agent('google:gemini-3-flash-preview')
+agent = Agent('{{ google:medium }}')
 
 
 async def main():
@@ -981,7 +1020,7 @@ class UserProfile(TypedDict):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=UserProfile,
     instructions='Extract a user profile from the input',
 )
@@ -1021,7 +1060,7 @@ class Client(BaseModel):
 
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=list[str | Client],
     instructions='Find the requested clients and explain each match.',
 )
@@ -1083,7 +1122,7 @@ class UserProfile(TypedDict, total=False):
     bio: str
 
 
-agent = Agent('openai:gpt-5.2', output_type=UserProfile)
+agent = Agent('{{ openai:medium }}', output_type=UserProfile)
 
 
 async def main():
@@ -1127,7 +1166,7 @@ Sometimes you need to stop a streaming response before it completes: a user clic
 ```python {title="stream_cancel_stream_events.py"}
 from pydantic_ai import Agent, FinalResultEvent, PartStartEvent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 async def main():
@@ -1153,7 +1192,7 @@ Call `cancel()` on the [`StreamedRunResult`][pydantic_ai.result.StreamedRunResul
 ```python {title="stream_cancel_stream.py"}
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 async def main():
@@ -1189,7 +1228,7 @@ When using [`agent.iter()`][pydantic_ai.agent.Agent.iter] for fine-grained contr
 ```python {title="stream_cancel_iter.py"}
 from pydantic_ai import Agent, FinalResultEvent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 async def main():

@@ -30,6 +30,7 @@ CURATED = {
     'persistence',
     'observability',
     'notifications',
+    'hooks',
     'herdr',
     'aoe',
     'mcp',
@@ -44,9 +45,10 @@ CURATED = {
     'posthog',
     'grain',
     'linear',
+    'web',
+    'workspaces',
 }
 OPT_IN = {
-    'herdr',
     'aoe',
     'day_ai',
     'github',
@@ -59,6 +61,8 @@ OPT_IN = {
     'posthog',
     'pylon',
     'slack',
+    'web',
+    'workspaces',
 }
 
 

@@ -23,10 +23,11 @@ import pytest
 from opentelemetry.trace import StatusCode
 from pytest_mock import MockerFixture
 
-import pydantic_ai.models
 from pydantic_ai._utils import BaseExceptionGroup
+from pydantic_ai._warnings import CostCalculationFailedWarning
 from pydantic_ai.embeddings import (
     Embedder,
+    EmbeddingModel,
     EmbeddingResult,
     EmbeddingSettings,
     EmbedInputType,
@@ -36,7 +37,8 @@ from pydantic_ai.embeddings import (
     WrapperEmbeddingModel,
     infer_embedding_model,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelConnectionError, ModelHTTPError, UserError
+from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -83,6 +85,9 @@ with try_import() as bedrock_imports_successful:
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as google_imports_successful:
+    from google.genai.types import ContentEmbedding, ContentEmbeddingStatistics, EmbedContentResponse
+
+    from pydantic_ai.embeddings import google as google_embeddings
     from pydantic_ai.embeddings.google import (
         GoogleEmbeddingModel,
         GoogleEmbeddingSettings,
@@ -115,7 +120,7 @@ def sentence_transformers_imported() -> None:
 async def test_openai_embedding_model_blocks_requests_when_disabled():
     model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -124,7 +129,7 @@ async def test_openai_embedding_model_blocks_requests_when_disabled():
 async def test_cohere_embedding_model_blocks_requests_when_disabled():
     model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -133,7 +138,7 @@ async def test_cohere_embedding_model_blocks_requests_when_disabled():
 async def test_google_embedding_model_blocks_requests_when_disabled():
     model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -142,7 +147,7 @@ async def test_google_embedding_model_blocks_requests_when_disabled():
 async def test_bedrock_embedding_model_blocks_requests_when_disabled():
     model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=BedrockProvider(bedrock_client=MagicMock()))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -155,7 +160,7 @@ async def test_voyageai_embedding_model_blocks_requests_when_disabled():
 
     model = VoyageAIEmbeddingModel('voyage-4', provider=VoyageAIProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.embed('hello', input_type='query')
 
@@ -164,7 +169,7 @@ async def test_voyageai_embedding_model_blocks_requests_when_disabled():
 async def test_google_embedding_model_blocks_count_tokens_when_disabled():
     model = GoogleEmbeddingModel('gemini-embedding-001', provider=GoogleProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.count_tokens('hello')
 
@@ -173,7 +178,7 @@ async def test_google_embedding_model_blocks_count_tokens_when_disabled():
 async def test_cohere_embedding_model_blocks_count_tokens_when_disabled():
     model = CohereEmbeddingModel('embed-v4.0', provider=CohereProvider(api_key='test-key'))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await model.count_tokens('hello')
 
@@ -189,7 +194,7 @@ async def test_embedder_blocks_requests_when_disabled():
     """
     embedder = Embedder(OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(api_key='test-key')))
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
             await embedder.embed_query('hello')
 
@@ -203,7 +208,7 @@ async def test_test_embedding_model_is_exempt_from_request_guard():
     """
     embedder = Embedder(TestEmbeddingModel())
 
-    with pydantic_ai.models.override_allow_model_requests(False):
+    with override_allow_model_requests(False):
         result = await embedder.embed_query('hello')
 
     assert result.embeddings == snapshot([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]])
@@ -482,6 +487,7 @@ class TestOpenAI:
                     'operation.cost': 8e-08,
                     'gen_ai.response.model': 'text-embedding-3-small',
                     'gen_ai.embeddings.dimension.count': 128,
+                    'embeddings': IsList(IsList(IsFloat(), length=128), length=1),
                 },
             }
         )
@@ -653,7 +659,8 @@ class TestCohere:
             with pytest.raises(ModelAPIError) as exc_info:
                 await embedder.embed_query('Hello, world!')
 
-        assert type(exc_info.value) is ModelAPIError
+        assert type(exc_info.value) is ModelConnectionError
+        assert exc_info.value.phase == 'connect'
         assert exc_info.value.message == 'connection refused'
         assert isinstance(exc_info.value.__cause__, httpx.ConnectError)
 
@@ -1585,8 +1592,9 @@ class TestBedrock:
                     'logfire.msg': 'embeddings amazon.titan-embed-text-v2:0',
                     'gen_ai.usage.input_tokens': 5,
                     'gen_ai.response.model': 'amazon.titan-embed-text-v2:0',
-                    'operation.cost': 5e-07,
+                    'operation.cost': 1e-07,
                     'gen_ai.embeddings.dimension.count': 256,
+                    'embeddings': IsList(IsList(IsFloat(), length=256), length=1),
                 },
             }
         )
@@ -1792,6 +1800,19 @@ async def test_google_task_prefix_vertex(
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
+@pytest.mark.parametrize('provider', ['google', 'google-cloud'])
+@pytest.mark.parametrize('token_count', [None, 0, 5])
+def test_google_embedding_usage_presence(provider: str, token_count: int | None):
+    """Pin the SDK statistics mapping, including reported zero which current Gemini recordings omit."""
+    statistics = None if token_count is None else ContentEmbeddingStatistics(token_count=token_count)
+    response = EmbedContentResponse(embeddings=[ContentEmbedding(values=[1.0], statistics=statistics)])
+    usage = google_embeddings._map_usage(response, provider, 'unused', 'unused')  # pyright: ignore[reportPrivateUsage]
+
+    assert usage.input_tokens == (token_count or 0)
+    assert usage.unmeasured_requests == int(provider == 'google' and token_count is None)
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google not installed')
 @pytest.mark.vcr
 class TestGoogle:
     @pytest.fixture
@@ -1836,7 +1857,7 @@ class TestGoogle:
                 embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
                 inputs=['Hello, world!'],
                 input_type='query',
-                usage=RequestUsage(),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
@@ -1850,7 +1871,7 @@ class TestGoogle:
                 embeddings=IsList(IsList(IsFloat(), length=3072), length=2),
                 inputs=['hello', 'world'],
                 input_type='document',
-                usage=RequestUsage(),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
@@ -1864,7 +1885,7 @@ class TestGoogle:
                 embeddings=IsList(IsList(IsFloat(), length=768), length=1),
                 inputs=['Hello, world!'],
                 input_type='query',
-                usage=RequestUsage(),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
@@ -1897,7 +1918,8 @@ class TestGoogle:
             with pytest.raises(ModelAPIError) as exc_info:
                 await embedder.embed_query('Hello, world!')
 
-        assert type(exc_info.value) is ModelAPIError
+        assert type(exc_info.value) is ModelConnectionError
+        assert exc_info.value.phase == 'connect'
         assert exc_info.value.message == 'connection refused'
         assert isinstance(exc_info.value.__cause__, httpx2.ConnectError)
 
@@ -2007,7 +2029,7 @@ class TestGoogle:
                 embeddings=IsList(IsList(IsFloat(), length=3072), length=1),
                 inputs=['Hello, world!'],
                 input_type='query',
-                usage=RequestUsage(),
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='gemini-embedding-2-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
@@ -2075,6 +2097,7 @@ class TestGoogle:
                     'logfire.msg': 'embeddings gemini-embedding-2-preview',
                     'gen_ai.response.model': 'gemini-embedding-2-preview',
                     'gen_ai.embeddings.dimension.count': 768,
+                    'embeddings': IsList(IsList(IsFloat(), length=768), length=1),
                 },
             }
         )
@@ -2134,7 +2157,7 @@ class TestSentenceTransformers:
 
         Inference is local, so there's no provider call to block and no recording to make.
         """
-        with pydantic_ai.models.override_allow_model_requests(False):
+        with override_allow_model_requests(False):
             result = await embedder.embed_query('hello')
 
         assert result.embeddings
@@ -2399,6 +2422,84 @@ async def test_instrumented_embedding_model_server_attributes(
     assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == expected_server_attributes
 
 
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumented_embedding_reported_cost_wins(capfire: CaptureLogfire):
+    """A cost already on the usage (e.g. gateway-reported) is what embeddings telemetry records.
+
+    `TestEmbeddingModel` is unpriceable by genai-prices, so telemetry would previously record
+    no cost at all. Unit test: no cassette can put a reported cost on an unpriceable model.
+    """
+
+    class ReportedCostEmbeddingModel(TestEmbeddingModel):
+        async def embed(
+            self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        ) -> EmbeddingResult:
+            result = await super().embed(inputs, input_type=input_type, settings=settings)
+            result.usage.cost = Decimal('0.125')
+            return result
+
+    model = InstrumentedEmbeddingModel(ReportedCostEmbeddingModel(), InstrumentationSettings())
+    await model.embed('Hello, world!', input_type='query')
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert span['attributes']['operation.cost'] == 0.125
+
+    [cost_metric] = [m for m in capfire.get_collected_metrics() if m['name'] == 'operation.cost']
+    assert cost_metric['data']['data_points'][0]['sum'] == 0.125
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize(
+    'usage, expected_cost',
+    [
+        pytest.param(RequestUsage(unmeasured_requests=1), None, id='omitted'),
+        pytest.param(RequestUsage(), 0.0, id='measured-zero'),
+        pytest.param(RequestUsage(input_tokens=10), 'positive', id='measured-positive'),
+        pytest.param(RequestUsage(unmeasured_requests=1, cost=Decimal(0)), 0.0, id='reported-zero'),
+        pytest.param(RequestUsage(unmeasured_requests=1, cost=Decimal('0.125')), 0.125, id='reported-positive'),
+        pytest.param(RequestUsage(input_tokens=10, unmeasured_requests=1), 'positive', id='known-subtotal'),
+    ],
+)
+async def test_instrumented_embedding_usage_cost(
+    usage: RequestUsage, expected_cost: float | Literal['positive'] | None, capfire: CaptureLogfire
+):
+    """Exercise automatic pricing independently of recordings' fixed token counts and reported costs."""
+
+    class UsageEmbeddingModel(TestEmbeddingModel):
+        async def embed(
+            self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        ) -> EmbeddingResult:
+            result = await super().embed(inputs, input_type=input_type, settings=settings)
+            result.usage = deepcopy(usage)
+            return result
+
+    model = InstrumentedEmbeddingModel(
+        UsageEmbeddingModel('text-embedding-3-small', provider_name='openai'), InstrumentationSettings()
+    )
+    result = await model.embed('Hello, world!', input_type='query')
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    automatic_cost = span['attributes'].get('operation.cost')
+    if expected_cost == 'positive':
+        assert automatic_cost > 0
+        assert result.cost().total_price > 0
+    else:
+        assert automatic_cost == expected_cost
+        # Explicit pricing retains its existing calculation even when automatic pricing is unknown.
+        assert result.cost().total_price == 0
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumented_embedding_invalid_usage_warns(capfire: CaptureLogfire, mocker: MockerFixture):
+    """An unpriceable usage calculation is not a provider response that a cassette can reproduce."""
+    mocker.patch.object(EmbeddingResult, 'cost', side_effect=ValueError('unpriceable usage'))
+    model = InstrumentedEmbeddingModel(TestEmbeddingModel(), InstrumentationSettings())
+    with pytest.warns(CostCalculationFailedWarning, match='ValueError: unpriceable usage'):
+        await model.embed('Hello, world!', input_type='query')
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert 'operation.cost' not in span['attributes']
+
+
 def test_override():
     model = TestEmbeddingModel()
     embedder = Embedder(model)
@@ -2542,6 +2643,41 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumentation_records_settings_without_extra_headers_and_extra_body(capfire: CaptureLogfire):
+    """`embedding_settings` leaves out the request header and body overrides, as image generation spans do."""
+    embedder = Embedder(TestEmbeddingModel(), instrument=InstrumentationSettings())
+    await embedder.embed_query(
+        'Hello, world!',
+        settings={
+            'dimensions': 8,
+            'extra_headers': {'X-Custom': 'header-value'},
+            'extra_body': {'custom': 'body-value'},
+        },
+    )
+    await embedder.embed_query('Hello, world!', settings={'extra_headers': {'X-Custom': 'header-value'}})
+
+    with_dimensions, only_extra_headers = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    assert with_dimensions['attributes']['embedding_settings'] == {'dimensions': 8}
+    assert 'embedding_settings' not in only_extra_headers['attributes']
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_instrumentation_embeddings_honor_include_content(capfire: CaptureLogfire, include_content: bool):
+    """The embedding span carries the returned vectors only when content capture is on."""
+    embedder = Embedder(
+        TestEmbeddingModel(dimensions=3), instrument=InstrumentationSettings(include_content=include_content)
+    )
+    result = await embedder.embed_query('hello')
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    if include_content:
+        assert span['attributes']['embeddings'] == json.dumps(result.embeddings)
+    else:
+        assert 'embeddings' not in span['attributes']
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 @pytest.mark.parametrize('include_content', [True, False])
 async def test_instrumentation_exception_honors_include_content(capfire: CaptureLogfire, include_content: bool):
     """A failing embedding request follows `include_content` like the agent's spans do.
@@ -2651,3 +2787,41 @@ async def test_bedrock_embedding_non_json_response_body_raises_model_api_error(b
 
     assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+class _PlainEmbeddingModel(EmbeddingModel):
+    """A subclass that isn't a dataclass, so it has no fields to compare."""
+
+    @property
+    def model_name(self) -> str:
+        raise NotImplementedError
+
+    @property
+    def system(self) -> str:
+        raise NotImplementedError
+
+    async def embed(
+        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> EmbeddingResult:
+        raise NotImplementedError
+
+
+class _OwnEqualityEmbeddingModel(_PlainEmbeddingModel):
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _OwnEqualityEmbeddingModel)
+
+
+def test_embedding_models_that_differ_only_in_settings_are_not_equal():
+    """`settings` live on the `EmbeddingModel` base, outside the fields a dataclass subclass compares.
+
+    Not a VCR test: equality makes no request.
+    """
+    assert TestEmbeddingModel(settings={'dimensions': 1}) != TestEmbeddingModel(settings={'dimensions': 2})
+    assert TestEmbeddingModel(settings={'dimensions': 1}) == TestEmbeddingModel(settings={'dimensions': 1})
+    assert TestEmbeddingModel() != object()
+
+    model = _PlainEmbeddingModel()
+    assert model == model
+    assert model != _PlainEmbeddingModel()
+    assert {model: 'kept'}[model] == 'kept'
+    assert _OwnEqualityEmbeddingModel() == _OwnEqualityEmbeddingModel(), "a subclass's own `__eq__` is kept"
