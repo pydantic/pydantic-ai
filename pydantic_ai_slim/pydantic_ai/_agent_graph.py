@@ -93,7 +93,7 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
-from ._capability_loads import keep_loaded_state
+from ._capability_loads import deferred_capability_ids, keep_loaded_state
 from ._compaction_requests import CompactionRequests, RequestedCompaction
 from ._compaction_view import CompactionView
 from ._context_size import (
@@ -1060,10 +1060,9 @@ def _keep_capability_loads(
     now: the records go ahead of them, or, after a provider's compaction response and the requests following it, into
     them, which ends the kept tail after them.
     """
-    deferred_ids = {
-        capability_id for capability_id, capability in run_context.capabilities.items() if capability.defer_loading
-    }
-    messages = keep_loaded_state(original, compacted, kept_from=kept_from, deferred_ids=deferred_ids)
+    messages = keep_loaded_state(
+        original, compacted, kept_from=kept_from, deferred_ids=deferred_capability_ids(run_context)
+    )
     if messages is compacted:
         return compacted, kept_from
     inserted = len(messages) - len(compacted)
