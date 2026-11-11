@@ -359,6 +359,7 @@ try:
         may_use_thread,
         thread_continuation,
         thread_fingerprint,
+        thread_unsupported,
         with_thread,
     )
 except ImportError as _import_error:
@@ -698,7 +699,9 @@ class AnthropicModelSettings(ModelSettings, total=False):
     response also records its [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest], covering
     its parts and the history it was created from, so a history processor that trims or redacts either starts a
     new thread instead of continuing from the unchanged copy Anthropic holds. A request
-    using something threads don't support, like context management, is sent without a thread.
+    using something threads don't support, like context management, is sent without a thread, with a warning. Its
+    response records `'thread_unsupported': True` beside its `'thread_fingerprint'`, so later requests with the same
+    fixed fields are sent without one straight away.
 
     Threads aren't eligible for Zero Data Retention. Defaults to `False`.
     """
@@ -1713,7 +1716,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             try:
                 return await self._first_attempt(
-                    messages, model_settings, model_request_parameters, prepared, create, thread_record, compaction
+                    messages,
+                    model_settings,
+                    model_request_parameters,
+                    prepared,
+                    lambda thread: create(
+                        prepared.container, initial_thinking, initial_betas, initial_thinking_override, thread
+                    ),
+                    thread_record,
+                    compaction,
                 )
             except APIStatusError as error:
                 if (
@@ -1751,7 +1762,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
         prepared: _PreparedMessagesCreate,
-        create: Callable[..., Awaitable[BetaMessage | AnthropicEventStream]],
+        send: Callable[[Thread | None], Awaitable[BetaMessage | AnthropicEventStream]],
         thread_record: ThreadRecord | None,
         compaction: BetaCompactionConfigParam | None,
     ) -> BetaMessage | AnthropicEventStream:
@@ -1762,23 +1773,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         request that the API can't serve is replayed as a create request with the full conversation. The recovery
         retries in `_messages_create` send no thread, as they change fixed fields, so a response is only stamped with
         the fingerprint of a thread request that succeeded. A compaction request samples no reply, so it never uses
-        a thread.
+        a thread. A create request that threads don't support is sent again without one, and the response records
+        that, so the next request with the same fingerprint is sent without a thread straight away.
         """
-        initial = (
+        if thread_record is None or not may_use_thread(model_settings, compaction):
+            return await send(None)
+        params = self._messages_create_params(
+            messages,
+            model_settings,
+            prepared,
             prepared.container,
             prepared.initial_thinking,
-            prepared.initial_betas,
             prepared.initial_thinking_override,
         )
-        if thread_record is None or not may_use_thread(model_settings, compaction):
-            return await create(*initial)
-        params = self._messages_create_params(messages, model_settings, prepared, *initial[:2], initial[3])
         fingerprint = thread_fingerprint(params, prepared.initial_betas | {MESSAGE_THREADS_BETA})
+        if thread_unsupported(messages, fingerprint):
+            thread_record.fingerprint = fingerprint
+            return await send(None)
         if (
             thread := await self._continue_thread(messages, model_settings, model_request_parameters, fingerprint)
         ) is not None:
             try:
-                response = await create(*initial, thread)
+                response = await send(thread)
             except APIStatusError as error:
                 if not is_thread_replay_error(error):
                     raise
@@ -1787,12 +1803,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 thread_record.history = history_hasher(messages, self._history_digest_key)
                 return response
         try:
-            response = await create(*initial, Thread(cache_breakpoints=prepared.cache_breakpoints))
+            response = await send(Thread(cache_breakpoints=prepared.cache_breakpoints))
         except APIStatusError as error:
             if not is_thread_unsupported_error(error):
                 raise
             # The request uses something threads don't support, like context management: send it without one.
-            return await create(*initial)
+            warnings.warn(
+                f"Threads don't support this request to {self.model_name!r}, so it's sent without `anthropic_thread`, "
+                'and so are later requests in this conversation with the same instructions, tools and other fixed '
+                f'fields: {error.message}',
+                UserWarning,
+                stacklevel=2,
+            )
+            thread_record.fingerprint = fingerprint
+            return await send(None)
         thread_record.fingerprint = fingerprint
         thread_record.history = history_hasher(messages, self._history_digest_key)
         return response

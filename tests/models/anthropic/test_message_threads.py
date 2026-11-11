@@ -440,20 +440,34 @@ async def test_removed_messages_override_starts_a_new_thread(allow_model_request
 
 
 async def test_unsupported_request_is_sent_without_a_thread(allow_model_requests: None):
-    """A request using something threads don't support is sent again without `thread`, and isn't continued from."""
+    """A request using something threads don't support is sent again without `thread`, with a warning.
+
+    The response records that with its fingerprint, so the next request with the same fixed fields is sent without
+    `thread` straight away, and warns no more (any other warning fails the test). Changing a fixed field tries a
+    thread again.
+    """
     api = _Api(replies=[_thread_error(400, 'thread_unsupported_request')])
     async with _model(api) as model:
-        agent = Agent(model, model_settings=_SETTINGS)
-        first = await agent.run('Hi')
-        await agent.run('Again', message_history=first.all_messages())
+        agent = Agent(model, instructions='Be brief.', model_settings=_SETTINGS)
+        with pytest.warns(UserWarning, match="Threads don't support this request"):
+            first = await agent.run('Hi')
+        second = await agent.run('Again', message_history=first.all_messages())
+        await Agent(model, instructions='Be verbose.', model_settings=_SETTINGS).run(
+            'Once more', message_history=second.all_messages()
+        )
 
-    rejected, unthreaded, second = api.bodies
+    rejected, unthreaded, skipped, changed = api.bodies
     assert rejected['thread'] == {'type': 'create'}
     assert 'thread' not in unthreaded
-    assert second['thread'] == {'type': 'create'}
-    response = first.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
-    assert 'thread_fingerprint' not in (response.provider_details or {})
+    assert 'thread' not in skipped
+    assert _BETA not in api.betas[2]
+    assert changed['thread'] == {'type': 'create'}
+    first_details = first.response.provider_details or {}
+    second_details = second.response.provider_details or {}
+    assert first_details['thread_unsupported'] is True
+    assert second_details['thread_unsupported'] is True
+    assert second_details['thread_fingerprint'] == first_details['thread_fingerprint']
+    assert first.response.history_digest is None
 
 
 def weather_with_metadata(city: str) -> ToolReturn:

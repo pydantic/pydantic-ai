@@ -119,26 +119,50 @@ def with_thread(
 
 @dataclass
 class ThreadRecord:
-    """Set by `_messages_create` when its request was sent in a thread: the thread's fingerprint and the history.
+    """Set by `_first_attempt` when its request was sent in a thread, or without one that threads don't support.
 
-    The response is stamped with both: the fingerprint in its `provider_details`, and the digest of the history
-    with the response's own parts as its `history_digest`.
+    The response is stamped with the thread's fingerprint in its `provider_details`. Sent in the thread, it also gets
+    the digest of the history with its own parts as its `history_digest`. Sent without it, it's marked
+    `'thread_unsupported'`, so the next request with the same fingerprint doesn't try the thread again.
     """
 
     fingerprint: str | None = None
     history: Hasher | None = None
+    """The history the request was sent in the thread with, or `None` when threads don't support the request."""
 
     def stamp(self, response: ModelResponse) -> ModelResponse:
-        """`response` with its thread recorded, if its request was sent in one."""
-        if self.fingerprint is None or self.history is None:
+        """`response` with its thread recorded, if its request was sent in one or threads don't support it."""
+        if self.fingerprint is None:
             return response
         details = {**(response.provider_details or {}), _THREAD_FINGERPRINT_KEY: self.fingerprint}
+        if self.history is None:
+            return replace(response, provider_details={**details, _THREAD_UNSUPPORTED_KEY: True})
         return replace(
             response, provider_details=details, history_digest=continuation_digest(self.history, response.parts)
         )
 
 
 _THREAD_FINGERPRINT_KEY = 'thread_fingerprint'
+_THREAD_UNSUPPORTED_KEY = 'thread_unsupported'
+
+
+def latest_response(messages: list[ModelMessage]) -> tuple[int, ModelResponse] | None:
+    """The most recent response in `messages`, with its index."""
+    return next(
+        (
+            (index, message)
+            for index, message in reversed(list(enumerate(messages)))
+            if isinstance(message, ModelResponse)
+        ),
+        None,
+    )
+
+
+def thread_unsupported(messages: list[ModelMessage], fingerprint: str) -> bool:
+    """Whether the most recent response records that threads don't support a request with `fingerprint`."""
+    latest = latest_response(messages)
+    details = (latest[1].provider_details or {}) if latest is not None else {}
+    return details.get(_THREAD_UNSUPPORTED_KEY) is True and details.get(_THREAD_FINGERPRINT_KEY) == fingerprint
 
 
 def thread_continuation(
@@ -155,23 +179,22 @@ def thread_continuation(
     new thread is started with the history as it is now. A response with no digest isn't continued: unlike
     `OpenAIResponsesModel`, there are no responses from before digests were recorded to stay compatible with.
     """
-    for index in range(len(messages) - 1, -1, -1):
-        response = messages[index]
-        if not isinstance(response, ModelResponse):
-            continue
-        details = response.provider_details or {}
-        new_messages = messages[index + 1 :]
-        if (
-            model.accepts_server_state(response)
-            and response.provider_response_id
-            and details.get(_THREAD_FINGERPRINT_KEY) == fingerprint
-            and response.history_digest is not None
-            and response.history_digest
-            == continuation_digest(history_hasher(messages[:index], history_digest_key), response.parts)
-            and response.finish_reason != 'content_filter'
-            and response.state == 'complete'
-            and new_messages
-        ):
-            return response.provider_response_id, new_messages
+    latest = latest_response(messages)
+    if latest is None:
         return None
+    index, response = latest
+    details = response.provider_details or {}
+    new_messages = messages[index + 1 :]
+    if (
+        model.accepts_server_state(response)
+        and response.provider_response_id
+        and details.get(_THREAD_FINGERPRINT_KEY) == fingerprint
+        and response.history_digest is not None
+        and response.history_digest
+        == continuation_digest(history_hasher(messages[:index], history_digest_key), response.parts)
+        and response.finish_reason != 'content_filter'
+        and response.state == 'complete'
+        and new_messages
+    ):
+        return response.provider_response_id, new_messages
     return None
