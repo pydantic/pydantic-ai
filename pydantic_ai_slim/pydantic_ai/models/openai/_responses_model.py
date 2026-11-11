@@ -194,6 +194,7 @@ from ._reasoning import (
     map_reasoning_item,
     reasoning_active,
     resolve_openai_thinking_effort,
+    set_reasoning_context,
 )
 from ._response_fields import (
     RESPONSES_FINISH_REASON_MAP,
@@ -2097,32 +2098,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             reasoning['effort'] = reasoning_effort
         if reasoning_mode and self.profile.get('openai_responses_supports_reasoning_mode', False):
             reasoning['mode'] = reasoning_mode
-        self._set_reasoning_context(reasoning, reasoning_context)
+        set_reasoning_context(reasoning, reasoning_context, self.profile)
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
         return reasoning or OMIT
-
-    def _set_reasoning_context(
-        self, reasoning: Reasoning, reasoning_context: Literal['auto', 'current_turn', 'all_turns'] | None
-    ) -> None:
-        if reasoning_context is None:
-            # Default to `all_turns` on models that support it, so earlier-turn reasoning stays
-            # available without opting in — consistent with sending prior thinking (including
-            # "foreign" thinking parts from another model) back to every other model. Models
-            # without `all_turns` support get no `context` at all, never `auto`.
-            if self.profile.get('openai_responses_supports_reasoning_context', False):
-                reasoning['context'] = 'all_turns'
-        else:
-            # Support is per-value, not per-field: every reasoning model accepts `auto` and
-            # `current_turn`, while `all_turns` is limited to the families that persist reasoning
-            # across turns. Gating the whole field on the narrower fact would silently discard a
-            # value the user explicitly set.
-            if reasoning_context == 'all_turns':
-                supports_reasoning_context = self.profile.get('openai_responses_supports_reasoning_context', False)
-            else:
-                supports_reasoning_context = self.profile.get('openai_supports_reasoning', False)
-            if supports_reasoning_context:
-                reasoning['context'] = reasoning_context
 
     def _request_thinks(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
