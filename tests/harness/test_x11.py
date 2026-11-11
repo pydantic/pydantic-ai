@@ -23,12 +23,12 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.workspaces import CommandResult, WorkspaceCommand, WorkspaceError
-from pydantic_ai_harness.computer_use import ComputerAction, UnsupportedActionError
-from pydantic_ai_harness.docker_sandbox._x11 import (
+from pydantic_ai_harness._x11 import (
     X11Computer,
 )
+from pydantic_ai_harness.computer_use import ComputerAction, UnsupportedActionError
 
-from ..display_fakes import FAKE_SCREENSHOT
+from .display_fakes import FAKE_SCREENSHOT
 
 INPUT = 'echo $$ > /tmp/.pydantic-ai-input-1; exec "$@"'
 """How an input command runs: recording its process id, so a cancel can stop it."""
