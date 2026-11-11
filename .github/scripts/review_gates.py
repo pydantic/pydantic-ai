@@ -187,7 +187,7 @@ def douwebot_approval(
     GitHub can move a review's and a comment's `commit_id` after a push. Use the parent's
     marker head, or `original_commit_id` when the parent is unavailable or unmarked.
 
-    An optional inline finding on a marked approval stops blocking once its review thread
+    An optional inline finding on a verified approval stops blocking once its review thread
     is resolved, given by the thread root ids in `resolved`. Every other finding blocks.
     """
     verdict = Verdict()
@@ -226,7 +226,7 @@ def douwebot_approval(
         if reviewed_head != pull.head.sha:
             continue
         if comment.pull_request_review_id in marked_ids:
-            if settled_optional_finding(comment, parent, resolved):
+            if parent in own_reviews and settled_optional_finding(comment, parent, resolved):
                 continue
             verdict.failures.append('Douwebot has blocking or unresolved optional inline findings on this head.')
         else:

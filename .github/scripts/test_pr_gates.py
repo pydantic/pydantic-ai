@@ -641,6 +641,7 @@ def test_findings_before_a_clean_retry_still_make_the_head_unclean(state: str, l
     ('state', 'body', 'discussion', 'resolved', 'fails'),
     [
         pytest.param('APPROVED', 'Optional: consider this', '', True, False, id='resolved-optional'),
+        pytest.param('UNVERIFIED', 'Optional: consider this', '', True, True, id='unverified-approval'),
         pytest.param('APPROVED', 'Optional: consider this', '', False, True, id='unresolved-optional'),
         pytest.param('APPROVED', 'Fix this', '', True, True, id='resolved-blocking'),
         pytest.param('APPROVED', 'Note: Optional: consider this', '', True, True, id='prefix-not-leading'),
@@ -651,17 +652,23 @@ def test_findings_before_a_clean_retry_still_make_the_head_unclean(state: str, l
 def test_only_resolved_optional_findings_on_an_approval_stay_clean(
     state: str, body: str, discussion: str, resolved: bool, fails: bool
 ):
-    verdict = 'APPROVE' if state == 'APPROVED' else 'REQUEST_CHANGES'
+    class OnlyRun20(ReviewGitHub):
+        def verified_review_run(self, run_id: int, head: str) -> bool:
+            return run_id == 20
+
+    verdict = 'REQUEST_CHANGES' if state == 'CHANGES_REQUESTED' else 'APPROVE'
     finding = Finding(path='a.py', line=3, side='RIGHT', body=body)
     result = ReviewResult(verdict=verdict, comments=[finding], discussion=discussion)
-    payload = json.loads(publication(result, HEAD, 20, engine='claude'))
-    parent = review(9, state=state, body=payload['body'])
+    # An unverified review carries a marker for a run that is not a successful PR Bots publication.
+    run = 21 if state == 'UNVERIFIED' else 20
+    payload = json.loads(publication(result, HEAD, run, engine='claude'))
+    parent = review(9, state='APPROVED' if state == 'UNVERIFIED' else state, body=payload['body'])
     comment = review_gates.ReviewComment(
         id=30, pull_request_review_id=parent.id, user=BOT, original_commit_id=HEAD, body=payload['comments'][0]['body']
     )
-    # A changes-requested parent is followed by a clean retry, so only its finding can fail the head.
+    # Other parents are followed by a clean verified approval, so only their finding can fail the head.
     reviews = [parent] if state == 'APPROVED' else [parent, review()]
-    github = ReviewGitHub(current_reviews=reviews, comments=[comment], resolved={30} if resolved else set[int]())
+    github = OnlyRun20(current_reviews=reviews, comments=[comment], resolved={30} if resolved else set[int]())
     assert bool(verdicts(github)['douwebot'].failures) is fails
 
 
