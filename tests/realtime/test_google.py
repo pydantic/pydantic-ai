@@ -4974,6 +4974,8 @@ async def test_a_turn_that_ends_silently_after_a_tool_result_completes(separate_
                 yield _turn_complete_message()
             yield genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(generation_complete=True))
             yield _turn_complete_message()
+            # Nothing follows: the session goes on listening.
+            await asyncio.Event().wait()
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
         return 'saved'
