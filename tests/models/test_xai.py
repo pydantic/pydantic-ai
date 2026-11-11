@@ -17,7 +17,6 @@ Across these tests, we verify:
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Callable
 from datetime import UTC
 from decimal import Decimal
 from typing import Any, Literal
@@ -82,6 +81,7 @@ from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
+from .conftest import mock_downloads
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
@@ -2261,23 +2261,6 @@ async def test_xai_image_url_no_force_download(allow_model_requests: None) -> No
     )
 
 
-def _mock_downloads(
-    monkeypatch: pytest.MonkeyPatch, handle_request: Callable[[httpx2.Request], httpx2.Response]
-) -> None:
-    """Route media downloads through a local mock transport so the real download path runs.
-
-    Tests using this mark the mocked host with `@pytest.mark.vcr(ignore_hosts=[...])` so the module's
-    cassette interception lets the request through to the mock transport instead of a recording.
-    Same approach as `_mock_downloads` in `tests/models/test_download_item.py`, whose module has no cassettes.
-    """
-
-    def create_http_client(*, timeout: int) -> httpx2.AsyncClient:
-        # A fresh client per download: each download closes the client it was given.
-        return httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
-
-    monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
-
-
 @pytest.mark.vcr(ignore_hosts=['93.184.215.14'])
 async def test_xai_document_url_with_data_type_adds_extension(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
@@ -2296,7 +2279,7 @@ async def test_xai_document_url_with_data_type_adds_extension(
             request=request,
         )
 
-    _mock_downloads(monkeypatch, handle_request)
+    mock_downloads(monkeypatch, handle_request)
 
     # Provide an explicit identifier so we can assert the uploaded filename deterministically.
     document_url = DocumentUrl(url='https://93.184.215.14/report', identifier='mydoc')
@@ -2340,7 +2323,7 @@ async def test_xai_document_url_unknown_media_type_uploads_without_extension(
             request=request,
         )
 
-    _mock_downloads(monkeypatch, handle_request)
+    mock_downloads(monkeypatch, handle_request)
 
     response = create_response(content='Document processed')
     mock_client = MockXai.create_mock([response])
@@ -2389,7 +2372,7 @@ async def test_xai_document_url_extensionless_url_uploads_with_downloaded_extens
             request=request,
         )
 
-    _mock_downloads(monkeypatch, handle_request)
+    mock_downloads(monkeypatch, handle_request)
 
     response = create_response(content='Document processed')
     mock_client = MockXai.create_mock([response])
