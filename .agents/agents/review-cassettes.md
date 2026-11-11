@@ -36,7 +36,7 @@ Expect the dispatch prompt to name:
 - `wave_state_path` — typically `.agents/skills/review-branch/review-state.json`. Read it; if wave 1's `gate_status` (`.waves[0].gate_status`) is not `"closed"`, exit with the deferral line below.
 - `worktree_root` — repo root for cassette path resolution.
 
-If `cassettes_list_path` is missing or empty, you still run **Check 7** below when the `code_diff` touches provider request/response mapping (`pydantic_ai_slim/pydantic_ai/models/<provider>.py`, or a realtime codec: `pydantic_ai_slim/pydantic_ai/realtime/<provider>.py`, `realtime/_openai_protocol.py`) — a behavior change shipped with *no* cassette is exactly what Check 7 exists to catch. Only if there are no cassette changes AND no provider-mapping change do you output `Cassette Review: no cassette changes in this branch.` and exit.
+If `cassettes_list_path` is missing or empty, you still run **Check 7** below when the `code_diff` touches provider request/response mapping (`pydantic_ai_slim/pydantic_ai/models/<provider>.py` or a module of a provider package `pydantic_ai_slim/pydantic_ai/models/<provider>/`, or a realtime codec: `pydantic_ai_slim/pydantic_ai/realtime/<provider>.py`, `realtime/_openai_protocol.py`) — a behavior change shipped with *no* cassette is exactly what Check 7 exists to catch. Only if there are no cassette changes AND no provider-mapping change do you output `Cassette Review: no cassette changes in this branch.` and exit.
 
 ## Wave gate
 
@@ -118,7 +118,7 @@ For cassettes > 5000 lines, also note whether `truncate_base64` from the parser 
 
 ### Check 6 — Request-body drift against current code
 
-Fires only when the cassette is **modified** (status `M` in `cassettes_list_path`) AND the same diff touches the provider's request-mapping code under `pydantic_ai_slim/pydantic_ai/models/<provider>.py`. Pure cassette modifications (re-recording without an adjacent code change) and pure-added cassettes are out of scope — there's no prior body to drift from.
+Fires only when the cassette is **modified** (status `M` in `cassettes_list_path`) AND the same diff touches the provider's request-mapping code under `pydantic_ai_slim/pydantic_ai/models/<provider>.py` or `pydantic_ai_slim/pydantic_ai/models/<provider>/`. Pure cassette modifications (re-recording without an adjacent code change) and pure-added cassettes are out of scope — there's no prior body to drift from.
 
 The pathology: cassetter matches on `method` and `uri` by default — **no `body`**. `body` / `json_body` apply only when the test opts in with `@pytest.mark.vcr(additional_matchers=[...])` or a `match_on` override in a `vcr_config`. So a cassette recorded before the code change keeps replaying green even though the code now emits a different request body. When the owning test opts into body matching, drift fails replay instead, and this check does not apply. The cassette becomes a frozen lie about the wire format. The fix in PR #5674 hit this exact case: changing `BedrockConverseModel._map_tool_config` altered the request body for the `none_with_output-bedrock` matrix scenario, but the cassette was only re-recorded for the `list_single` scenario the author thought about; the `none_with_output` cassette kept showing the pre-fix `tools=[final_result]` shape while the live code now emitted `tools=[get_weather, final_result]`.
 
@@ -130,11 +130,11 @@ Method:
 
 **BLOCKING** when predicted body differs from recorded body. Action: re-record the affected cassette(s) with `--record-mode=rewrite` for that single test, not the full file.
 
-This check is bounded by design: it does not parse / interpret the entire diff, only the specific mapping function(s) touched. Heuristic for "did the diff touch mapping code" is a `git diff --name-only` against `pydantic_ai_slim/pydantic_ai/models/*.py`.
+This check is bounded by design: it does not parse / interpret the entire diff, only the specific mapping function(s) touched. Heuristic for "did the diff touch mapping code" is a `git diff --name-only` against `pydantic_ai_slim/pydantic_ai/models/**/*.py`, provider packages included.
 
 ### Check 7 — behavior changed but never live-verified
 
-Fires when the diff **changes the wire contract** — adds/renames an outgoing request field, forwards a new parameter to the provider, or changes response parsing — in `pydantic_ai_slim/pydantic_ai/models/<provider>.py` (or the sibling `native_tools/` mapping), or in a realtime codec (`realtime/<provider>.py`, `realtime/_openai_protocol.py`), **and no cassette in the branch carries that new field on the wire**. This is the gap Check 6 does *not* cover: Check 6 assumes a cassette exists and asks "is it stale"; Check 7 fires when there is **no live recording at all** — the new behavior ships covered only by a mock client, a snapshotted payload, or a direct private-method call.
+Fires when the diff **changes the wire contract** — adds/renames an outgoing request field, forwards a new parameter to the provider, or changes response parsing — in `pydantic_ai_slim/pydantic_ai/models/<provider>.py` or a module of `pydantic_ai_slim/pydantic_ai/models/<provider>/` (or the sibling `native_tools/` mapping), or in a realtime codec (`realtime/<provider>.py`, `realtime/_openai_protocol.py`), **and no cassette in the branch carries that new field on the wire**. This is the gap Check 6 does *not* cover: Check 6 assumes a cassette exists and asks "is it stale"; Check 7 fires when there is **no live recording at all** — the new behavior ships covered only by a mock client, a snapshotted payload, or a direct private-method call.
 
 The pathology: a contributor adds `WebSearchTool(user_location=...)` → new `user_location_country/_city/_region/_timezone` fields on the outgoing request, and "tests" it with a `MockXai`/`MockOpenAI` client that snapshots the payload the mapping code just built. That assertion is **tautological** — it proves the code emits the field it was written to emit, never that the provider *accepts* it. If the field name is wrong, the type is wrong, or the provider rejects it with a 4xx, every test stays green and the bug ships. Only a real recorded request/response proves the provider accepted the new contract.
 
@@ -209,7 +209,7 @@ Wave gate: closed (gating lanes at 0 blocking)
 - Verdict: [PASS / REVIEW BEFORE PUSHING]
 ```
 
-If `cassettes_list_path` is empty **and** the diff touches no provider request/response mapping, output only the no-changes line and exit. If it is empty but the diff touches `models/<provider>.py`, still run Check 7.
+If `cassettes_list_path` is empty **and** the diff touches no provider request/response mapping, output only the no-changes line and exit. If it is empty but the diff touches `models/<provider>.py` or `models/<provider>/`, still run Check 7.
 
 ## Rules
 

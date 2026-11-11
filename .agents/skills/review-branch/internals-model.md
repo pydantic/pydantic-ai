@@ -14,7 +14,7 @@ Primary source entry points:
 - Run context: `pydantic_ai_slim/pydantic_ai/_run_context.py`
 - Run/result wrappers: `pydantic_ai_slim/pydantic_ai/run.py`, `pydantic_ai_slim/pydantic_ai/result.py`
 - Messages: `pydantic_ai_slim/pydantic_ai/messages.py`
-- Models: `pydantic_ai_slim/pydantic_ai/models/__init__.py`, `pydantic_ai_slim/pydantic_ai/models/_abstract.py`, `pydantic_ai_slim/pydantic_ai/models/*.py`
+- Models: `pydantic_ai_slim/pydantic_ai/models/__init__.py`, `pydantic_ai_slim/pydantic_ai/models/_abstract.py`, `pydantic_ai_slim/pydantic_ai/models/*.py`, and provider packages such as `pydantic_ai_slim/pydantic_ai/models/anthropic/`
 - Providers: `pydantic_ai_slim/pydantic_ai/providers/*.py`
 - Profiles: `pydantic_ai_slim/pydantic_ai/profiles/*.py`
 - Tools: `pydantic_ai_slim/pydantic_ai/tools.py`

@@ -79,7 +79,8 @@ STREAMING_STATE = re.compile(
     r'StreamedResponse|allow_partial|partial_json|_parts_manager|handle_text_delta|handle_thinking_delta'
     r'|handle_tool_call_delta|from_json\('
 )
-SLIM_MODEL_FILE = re.compile(r'^pydantic_ai_slim/pydantic_ai/models/[^/]+\.py$')
+# A provider model is a module of `models/` or of a provider package under it (`models/openai/`).
+SLIM_MODEL_FILE = re.compile(r'^pydantic_ai_slim/pydantic_ai/models/([^/]+|[^_/][^/]*/[^/]+)\.py$')
 # Realtime codecs map the provider wire protocol the way `models/<provider>.py` maps HTTP.
 REALTIME_CODEC_FILE = re.compile(
     r'^pydantic_ai_slim/pydantic_ai/realtime/(openai|azure|google|xai|openai_live|elevenlabs|elevenlabs_agents'
@@ -109,10 +110,10 @@ AMBIENT_STREAM = re.compile(
 
 WRAPPED_CLASS_FILES = re.compile(
     r'^pydantic_ai_slim/pydantic_ai/(mcp\.py|agent/[^/]+\.py|toolsets/[^_/][^/]*\.py'
-    r'|models/[^_/][^/]*\.py|capabilities/[^_/][^/]*\.py)$'
+    r'|models/[^_/][^/]*(?:/[^/]+)?\.py|capabilities/[^_/][^/]*\.py)$'
 )
 SIBLING_FAMILY = re.compile(
-    r'^(pydantic_ai_slim/pydantic_ai/(models/[^_/][^/]*\.py|providers/[^_/][^/]*\.py|profiles/[^_/][^/]*\.py'
+    r'^(pydantic_ai_slim/pydantic_ai/(models/[^_/][^/]*(?:/[^/]+)?\.py|providers/[^_/][^/]*\.py|profiles/[^_/][^/]*\.py'
     r'|ui/[^/]+/|durable_exec/[^/]+/|toolsets/[^_/][^/]*\.py|native_tools/[^/]+\.py|capabilities/[^/]+\.py'
     r'|embeddings/[^_/][^/]*\.py|images/[^_/][^/]*\.py'
     r'|realtime/(openai|azure|google|xai|openai_live|elevenlabs|elevenlabs_agents|_openai_protocol)\.py)'

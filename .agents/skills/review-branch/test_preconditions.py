@@ -371,6 +371,21 @@ def test_realtime_and_harness_family_members(repo: GitRepo) -> None:
     assert 'review-cassettes' in report.dispatched
 
 
+def test_provider_package_module_counts_as_a_model_module(repo: GitRepo) -> None:
+    package = SLIM + 'models/anthropic/'
+    repo.write(package + '__init__.py', 'class AnthropicModel:\n    pass\n')
+    repo.write(package + '_streaming.py', 'def accumulate(response):\n    return response\n')
+    repo.commit('provider package')
+    repo.git('branch', '-f', 'main')
+    repo.write(package + '_streaming.py', 'def accumulate(response):\n    return response._parts_manager\n')
+    repo.commit('streaming change')
+    report = repo.run_preconditions()
+    assert report.pre.sibling_family_files == [package + '_streaming.py']
+    assert report.pre.wrapped_class_files == [package + '_streaming.py']
+    assert 'models-streaming-state-match' in report.pre.suspend_resume
+    assert {'review-sibling-consistency', 'review-integration-impact', 'review-suspend-resume'} <= report.dispatched
+
+
 def test_missing_agent_file_stops_before_dispatch(repo: GitRepo, capsys: pytest.CaptureFixture[str]) -> None:
     repo.write('README.md', 'docs\n')
     repo.commit('docs')

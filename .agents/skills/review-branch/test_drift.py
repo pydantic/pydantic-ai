@@ -386,6 +386,37 @@ def test_family_lists_name_every_member(checkout: Checkout, family_members: dict
     )
 
 
+# Files that define a family member but open no sibling lane on purpose, each with its reason.
+NOT_SIBLING_TRIGGERS = {
+    SLIM + 'models/_batch_model.py': 'private batch wrapper around a provider model, not a provider',
+    SLIM + 'models/_in_memory_batch.py': 'private in-memory batch model for tests and local use, not a provider',
+    SLIM + 'durable_exec/_utils.py': 'shared durable-exec helpers; the engines live in `durable_exec/<engine>/`',
+    SLIM + 'durable_exec/_operation_backend.py': 'defines the durability base and its built-in backends',
+}
+
+
+def test_family_member_changes_dispatch_the_sibling_lane(
+    checkout: Checkout, family_members: dict[str, set[ClassKey]]
+) -> None:
+    """A change to the file that defines a family member opens the sibling lane of every family that names it."""
+    members: defaultdict[str, list[str]] = defaultdict(list)
+    for family_name, family in FAMILIES.items():
+        if SIBLING in family.reviewers:
+            for path, name in family_members[family_name]:
+                members[path].append(name)
+    silent = {path for path in members if SIBLING not in lanes(path)}
+    unexpected = [
+        f'{path}: {", ".join(sorted(members[path]))}' for path in sorted(silent - NOT_SIBLING_TRIGGERS.keys())
+    ]
+    # An entry is stale once its file defines no member or opens the lane.
+    stale = [path for path in NOT_SIBLING_TRIGGERS if path not in silent]
+    assert unexpected == [], (
+        f'family members whose file opens no {SIBLING}; widen `SIBLING_FAMILY` in preconditions.py '
+        f'at {REF} {checkout.sha[:10]}:\n' + '\n'.join(unexpected)
+    )
+    assert stale == [], f'NOT_SIBLING_TRIGGERS entries that define no member, or now open {SIBLING}: {stale}'
+
+
 # ---------------------------------------------------------------------------------------------
 # Surface ownership
 # ---------------------------------------------------------------------------------------------
