@@ -358,16 +358,21 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
         if isinstance(return_value, BaseException):
             return original
-        # Structured media must not be serialized and reduced as text.
+        bands = self._per_tool.get(call.tool_name, self._bands)
+        new_value: object | None
         multimodal_value: object = return_value
         if _contains_multi_modal_content(multimodal_value):
-            return original
-        bands = self._per_tool.get(call.tool_name, self._bands)
-        value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
-        value_text, value_handle = await self._reduce(ctx, call, bands, value_unit)
+            # Files reach the model as files, so only the text beside them is reduced.
+            new_value, value_handle, value_bytes = await self._reduce_text_beside_files(
+                ctx, call, bands, multimodal_value
+            )
+        else:
+            value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
+            new_value, value_handle = await self._reduce(ctx, call, bands, value_unit)
+            value_bytes = len(value_unit.data)
         content_text, content_handle = await self._reduce_content(ctx, call, bands, content)
 
-        if value_text is None and content_text is None:
+        if new_value is None and content_text is None:
             return original
 
         return self._assemble(
@@ -375,12 +380,41 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return_value=return_value,
             content=content,
             metadata=metadata,
-            value_unit=value_unit,
-            value_text=value_text,
+            new_value=new_value,
             value_handle=value_handle,
+            value_bytes=value_bytes,
             content_text=content_text,
             content_handle=content_handle,
         )
+
+    async def _reduce_text_beside_files(
+        self,
+        ctx: RunContext[AgentDepsT],
+        call: ToolCallPart,
+        bands: Sequence[Band],
+        value: object,
+    ) -> tuple[list[object] | None, str | None, int]:
+        """Reduce the text items of a return value that holds files, keeping every file as it is.
+
+        The text items are measured and reduced as one unit, which takes the place of the first of them.
+        Returns `(new_items, handle, text_bytes)`, with `new_items` None when nothing was reduced.
+        """
+        items: list[object] = list(value) if isinstance(value, list) else [value]  # pyright: ignore[reportUnknownArgumentType]
+        text_indexes = [index for index, item in enumerate(items) if isinstance(item, str)]
+        if not text_indexes:
+            return None, None, 0
+        text = '\n'.join(str(items[index]) for index in text_indexes)
+        unit = self._make_unit(text, tool_name=call.tool_name, suffix='')
+        reduced, handle = await self._reduce(ctx, call, bands, unit)
+        if reduced is None:
+            return None, None, 0
+        first = text_indexes[0]
+        new_items = [
+            reduced if index == first else item
+            for index, item in enumerate(items)
+            if index == first or not isinstance(item, str)
+        ]
+        return new_items, handle, len(unit.data)
 
     def _assemble(
         self,
@@ -389,9 +423,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         return_value: ToolReturnContent,
         content: str | Sequence[UserContent] | None,
         metadata: object,
-        value_unit: _Unit,
-        value_text: str | None,
+        new_value: object | None,
         value_handle: str | None,
+        value_bytes: int,
         content_text: str | None,
         content_handle: str | None,
     ) -> object:
@@ -399,9 +433,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if wrapped:
             new_metadata = metadata
             if value_handle is not None or content_handle is not None:
-                new_metadata = _with_handles(metadata, value_handle, len(value_unit.data), content_handle)
+                new_metadata = _with_handles(metadata, value_handle, value_bytes, content_handle)
             wrapped_out: ToolReturn[object] = ToolReturn(
-                return_value=value_text if value_text is not None else return_value,
+                return_value=new_value if new_value is not None else return_value,
                 content=content_text if content_text is not None else content,
                 metadata=new_metadata,
             )
@@ -410,10 +444,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         # A plain (non-`ToolReturn`) result has no separate content part.
         if value_handle is not None:
             spilled_out: ToolReturn[object] = ToolReturn(
-                return_value=value_text, metadata=_with_handles(None, value_handle, len(value_unit.data))
+                return_value=new_value, metadata=_with_handles(None, value_handle, value_bytes)
             )
             return spilled_out
-        return value_text
+        return new_value
 
     def _make_unit(self, value: ToolReturnContent, *, tool_name: str, suffix: str) -> _Unit:
         """Pre-render a value into the text / bytes the reduction pipeline needs."""

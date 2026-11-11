@@ -31,9 +31,15 @@ history to know which on-demand capabilities are loaded and which tools are reve
 
 ### Return-value and content handling
 
-Text return values and text content use the configured bands. Multimodal return values,
-including mixed text/media lists, pass through unchanged as structured content. Non-text
-`content` that overflows remains unreduced with the existing warning.
+A `ToolReturn` carries a `return_value` and an optional `content` that core renders as a
+separate, model-visible part which also persists in history. This capability measures and
+reduces both with the same bands, and they spill to distinct handles.
+
+A return value that holds files, such as the `[header, BinaryContent]` that `read_file` returns
+for an image or PDF, reaches the model with its files as they are: only its text items are
+measured, as one piece, and when a band applies, the reduced text takes the place of the first
+of them. Text `content` is reduced the same way whatever the return value holds. Non-text
+`content` that overflows is left unreduced with a `warnings.warn`.
 
 ### `ToolReturn.metadata` is preserved
 

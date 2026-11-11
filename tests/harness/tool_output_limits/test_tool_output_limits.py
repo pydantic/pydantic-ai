@@ -816,6 +816,45 @@ class _BrokenStore:
 # ---------------------------------------------------------------------------
 
 
+_IMAGE = BinaryContent(data=b'\x89PNG\r\n\x1a\n' + b'x' * 100_000, media_type='image/png')
+
+
+class TestFilesInReturnValue:
+    async def test_file_alone_passes_through(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        assert await _run(cap, _IMAGE) is _IMAGE
+
+    async def test_short_text_beside_a_file_passes_through(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10_000, action=Truncate(max_chars=95))])
+        value = ['header', _IMAGE]
+        assert await _run(cap, value) is value
+
+    async def test_text_beside_a_file_is_reduced_and_the_file_kept(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        out = await _run(cap, ['A' * 300, _IMAGE, 'B' * 300])
+        assert isinstance(out, list)
+        text, image = out  # pyright: ignore[reportUnknownVariableType]
+        assert isinstance(text, str) and 'truncated' in text
+        assert image is _IMAGE
+
+    async def test_text_beside_a_file_spills_to_the_value_handle(self, tmp_path: Path):
+        store = LocalFileStore(base_dir=tmp_path)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Spill())], store=store)
+        out = await _run(cap, ToolReturn(return_value=['A' * 300, _IMAGE], metadata={'k': 'v'}))
+        assert isinstance(out, ToolReturn)
+        value: object = out.return_value
+        assert isinstance(value, list) and value[1] is _IMAGE
+        assert out.metadata['k'] == 'v'
+        assert await store.read(out.metadata['overflow_handle']) == ('A' * 300).encode('utf-8')
+
+    async def test_content_beside_a_file_is_still_reduced(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
+        out = await _run(cap, ToolReturn(return_value=['image', _IMAGE], content='C' * 5_000))
+        assert isinstance(out, ToolReturn)
+        assert out.return_value == ['image', _IMAGE]
+        assert isinstance(out.content, str) and 'truncated' in out.content
+
+
 class TestContentReduction:
     async def test_large_content_spilled(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
