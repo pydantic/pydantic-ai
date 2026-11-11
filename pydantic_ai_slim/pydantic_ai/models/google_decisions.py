@@ -235,7 +235,8 @@ def _sums_to_one(answer: DecisionAnswer) -> bool:
     """Whether a pick-one's or a rubric's probabilities sum to one within float error.
 
     The API sends its probabilities unrounded, so the allowance `_answer_fits` makes for a backend that rounds each
-    one would let through a distribution that sums to far less than one.
+    one would let through a distribution that sums to far less than one. Unrounded float64 probabilities sum to one
+    within about 1e-15, even over 255 options, well inside `_FLOAT_TOLERANCE`.
     """
     return isinstance(answer, NoulAnswer) or abs(sum(answer.probabilities.values()) - 1) <= float(_FLOAT_TOLERANCE)
 
