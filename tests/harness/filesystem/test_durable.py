@@ -24,7 +24,7 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxR
 
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
+from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileSystem
 from tests.harness._temporal import skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -64,8 +64,8 @@ _default_agent = Agent(
 )
 
 
-@_default_agent.on_event(FileChangeRequestEvent)
-async def _default_veto(ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
+@_default_agent.on_event(FileChangeRequestedEvent)
+async def _default_veto(ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
     event.cancel('denied')
 
 
@@ -139,8 +139,8 @@ async def test_temporal_vetoes_before_mutation(
         capabilities=[LocalWorkspace(tmp_path), capability, TemporalDurability()],
     )
 
-    @agent.on_event(FileChangeRequestEvent)
-    async def veto(ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
+    @agent.on_event(FileChangeRequestedEvent)
+    async def veto(ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
         requests.append(event.operation)
         event.cancel('denied')
 

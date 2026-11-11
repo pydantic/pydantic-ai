@@ -5898,7 +5898,6 @@ async def test_a_question_is_marked_in_the_requests(end_strategy: Any) -> None:
 
     requests = result.output
     assert isinstance(requests, DeferredToolRequests)
-    assert requests.kinds == {'question': 'question'}
     assert [call.tool_call_id for call in requests.calls] == ['question', 'external'], (
         'in the order the model made them'
     )
@@ -5911,6 +5910,21 @@ async def test_a_question_is_marked_in_the_requests(end_strategy: Any) -> None:
     with pytest.raises(ValueError, match="No pending deferred tool call has ID 'missing'"):
         requests.kind('missing')
     assert result.conversation.deferred_tool_requests == requests
+
+
+def test_a_questions_kind_survives_serialization() -> None:
+    """The kinds are internal, but a stored or journaled `DeferredToolRequests` keeps them; one without questions serializes as before."""
+    adapter = TypeAdapter(DeferredToolRequests)
+    requests = DeferredToolRequests(
+        calls=[ToolCallPart('ask', {}, tool_call_id='question'), ToolCallPart('look_up', {}, tool_call_id='external')],
+        _kinds={'question': 'question'},
+    )
+
+    restored = adapter.validate_json(adapter.dump_json(requests))
+
+    assert restored == requests
+    assert (restored.kind('question'), restored.kind('external')) == ('question', 'external')
+    assert '_kinds' not in adapter.dump_python(DeferredToolRequests(calls=requests.calls))
 
 
 async def test_answered_calls_leave_the_kinds_and_answerers_reach_the_results_event() -> None:
@@ -5928,7 +5942,7 @@ async def test_answered_calls_leave_the_kinds_and_answerers_reach_the_results_ev
     result = await agent.run('go', event_stream_handler=record)
 
     assert isinstance(result.output, DeferredToolRequests)
-    assert result.output.kinds == {}
+    assert result.output.kind('external') == 'external'
     assert [call.tool_call_id for call in result.output.calls] == ['external']
     [results_event] = [event for event in events if isinstance(event, DeferredToolResultsEvent)]
     assert results_event.results.answered_by == {'question': 'alice'}
@@ -5999,4 +6013,4 @@ async def test_an_approved_call_that_asks_a_question_stays_pending_as_one() -> N
 
     assert isinstance(result.output, DeferredToolRequests)
     assert [call.tool_call_id for call in result.output.calls] == ['external', 'approval']
-    assert result.output.kinds == {'approval': 'question'}
+    assert result.output.kind('approval') == 'question'

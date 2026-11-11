@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable, MutableSet, Sequence
-from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, Literal, NamedTuple
+from dataclasses import KW_ONLY, dataclass, field, replace
+from typing import Any, Literal, NamedTuple, cast
 
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ApprovalRequired, UserError
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturn, ToolReturnPart
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolApprovalResult,
@@ -72,6 +72,17 @@ class _AnsweredMetadata(BaseModel):
     """What `ask_permissions` attaches to an approved call, read back by `Permissions`."""
 
     permissions: _Answered
+
+
+class _Remembered(BaseModel):
+    conversation_id: str | None
+    subject: str
+
+
+class _RememberedMetadata(BaseModel):
+    """What `Permissions` attaches to the return of a call remembered inside a durable run, read back from history."""
+
+    permissions: _Remembered
 
 
 class RememberedApproval(NamedTuple):
@@ -155,7 +166,8 @@ class Permissions(AbstractCapability[AgentDepsT]):
     """Calls approved with `remember=True`, which run without asking.
 
     The caller owns it: pass one to share it, bound it, or drop it with the conversation it is for. It is
-    in-process memory, so inside a durable workflow or flow it is neither read nor written: every call asks.
+    in-process memory, so inside a durable workflow or flow it is not used: approvals are remembered in the
+    message history instead, in the metadata of the approved call's `ToolReturnPart`.
     """
 
     _patterns: tuple[re.Pattern[str], ...] = field(init=False, repr=False, compare=False)
@@ -188,17 +200,43 @@ class Permissions(AbstractCapability[AgentDepsT]):
         asked = self._asks(ctx, tool_def=tool_def, args=args)
         if asked is None:
             return args
-        # In-process memory would not survive a replay or a move to another worker.
-        key = (
-            None if in_durable_context(ctx) else RememberedApproval(ctx.conversation_id, call.tool_name, asked.subject)
-        )
         if ctx.tool_call_approved:
-            if key is not None and _remember(ctx.tool_call_metadata):
-                self.remembered.add(key)
+            if not in_durable_context(ctx) and _remember(ctx.tool_call_metadata):
+                self.remembered.add(RememberedApproval(ctx.conversation_id, call.tool_name, asked.subject))
             return args
-        if key is not None and key in self.remembered:
+        if in_durable_context(ctx):
+            # In-process memory would not survive a replay or a move to another worker; history does.
+            if _remembered_in(
+                ctx.messages, _Remembered(conversation_id=ctx.conversation_id, subject=asked.subject), call.tool_name
+            ):
+                return args
+        elif RememberedApproval(ctx.conversation_id, call.tool_name, asked.subject) in self.remembered:
             return args
         raise ApprovalRequired(metadata=_AskedMetadata(permissions=asked).model_dump())
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        result: Any,
+    ) -> Any:
+        """Inside a durable run, record a call approved with `remember=True` in its `ToolReturnPart`'s metadata."""
+        if not (ctx.tool_call_approved and in_durable_context(ctx) and _remember(ctx.tool_call_metadata)):
+            return result
+        asked = self._asks(ctx, tool_def=tool_def, args=args)
+        if asked is None or _nests_tool_return(result):
+            return result
+        tool_return = cast(ToolReturn[Any], result) if isinstance(result, ToolReturn) else ToolReturn[Any](result)
+        existing: object = {} if tool_return.metadata is None else tool_return.metadata
+        if not isinstance(existing, dict) or 'permissions' in existing:
+            return tool_return
+        remembered = _RememberedMetadata(
+            permissions=_Remembered(conversation_id=ctx.conversation_id, subject=asked.subject)
+        )
+        return replace(tool_return, metadata={**existing, **remembered.model_dump()})
 
     def _asks(self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]) -> _Asked | None:
         """What to ask about this call in the current mode, or `None` to run it."""
@@ -233,6 +271,23 @@ def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
         return None
     command = args.get(name)
     return command if isinstance(command, str) else None
+
+
+def _nests_tool_return(result: object) -> bool:
+    """Whether `result` is a list holding a `ToolReturn`, which core rejects with a clear error."""
+    return isinstance(result, list) and any(isinstance(item, ToolReturn) for item in cast(list[object], result))
+
+
+def _remembered_in(messages: Sequence[ModelMessage], remembered: _Remembered, tool_name: str) -> bool:
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolReturnPart) and part.tool_name == tool_name:
+                try:
+                    if _RememberedMetadata.model_validate(part.metadata).permissions == remembered:
+                        return True
+                except ValidationError:
+                    continue
+    return False
 
 
 def _remember(metadata: object) -> bool:

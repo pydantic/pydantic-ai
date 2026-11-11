@@ -678,7 +678,7 @@ async def test_deferred_output_json_schema():
                             'title': 'Metadata',
                             'type': 'object',
                         },
-                        'kinds': {
+                        '_kinds': {
                             'additionalProperties': {'enum': ['approval', 'question', 'external'], 'type': 'string'},
                             'title': 'Kinds',
                             'type': 'object',
@@ -801,7 +801,7 @@ async def test_deferred_output_json_schema():
                             'title': 'Metadata',
                             'type': 'object',
                         },
-                        'kinds': {
+                        '_kinds': {
                             'additionalProperties': {'enum': ['approval', 'question', 'external'], 'type': 'string'},
                             'title': 'Kinds',
                             'type': 'object',

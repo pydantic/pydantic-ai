@@ -774,7 +774,7 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
 def test_thinking_part_delta_callable_provider_details_serializable():
     # Reproduce the real streaming path: OpenAI's gpt-oss raw-CoT handler passes a callable
     # `provider_details` to `handle_thinking_delta`, which emits it verbatim inside a `PartDeltaEvent`
-    # (see `_make_raw_content_updater` in models/openai.py). Such an event must still serialize, e.g.
+    # (see `make_raw_content_updater` in models/openai/_responses_streaming.py). Such an event must still serialize, e.g.
     # when crossing a Temporal activity boundary in durable execution.
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     list(manager.handle_thinking_delta(vendor_part_id='t', content='reasoning', provider_details={'raw_content': ['']}))
@@ -1354,7 +1354,6 @@ def test_deferred_tool_events_serialization_roundtrip():
                     }
                 ],
                 'metadata': {'call_1': {'foo': 'bar'}},
-                'kinds': {},
             },
             'event_kind': 'deferred_tool_requests',
         }

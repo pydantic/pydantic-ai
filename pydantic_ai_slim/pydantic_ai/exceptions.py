@@ -178,7 +178,7 @@ class CallDeferred(Exception):
         metadata: Optional dictionary of metadata to attach to the deferred tool call.
             This metadata will be available in `DeferredToolRequests.metadata` keyed by `tool_call_id`.
         kind: `'question'` when the call asks for content, such as an answer from the user, rather than
-            standing for work done outside the agent. Available in `DeferredToolRequests.kinds`.
+            standing for work done outside the agent. Read back with `DeferredToolRequests.kind()`.
     """
 
     def __init__(self, metadata: dict[str, Any] | None = None, *, kind: Literal['external', 'question'] = 'external'):

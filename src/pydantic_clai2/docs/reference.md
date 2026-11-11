@@ -41,6 +41,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/plugins [...]` | Manage plugins; no arguments opens the menu |
 | `/mcp [...]` | Manage MCP servers (from the built-in `mcp` plugin) |
 | `/compact [FOCUS]` | Summarise older messages now (from the built-in `compaction` plugin) |
+| `/refine [FOCUS]` | Have the model review and revise its last answer (from the built-in `refinement` plugin) |
 | `/usage` | Tokens and cost per turn |
 | `/cost` | The retained history's total cost and tokens |
 | `/resume [ID\|claude\|codex]` | Browse or restore a saved session, or import one from Claude Code or Codex |
@@ -78,6 +79,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `--database PATH` | Use another settings database (and session folder) |
 | `clai2 config show\|get\|set\|reset` | Read or write saved settings from your shell |
 | `clai2 plugins ...` | Edit saved plugin declarations from your shell; they load on the next start |
+| `clai2 sessions` | On Unix, list live sessions by unique ID prefix, folder name, status, title, and workspace |
 
 ### Settings
 
@@ -343,13 +345,24 @@ values for known settings and unsupported database schema versions still cause a
 
 `/set` on its own opens a full-screen menu, the same kind Code Puppy uses: the
 settings on the left, details for the highlighted one on the right (current
-value, default, what it does). Type to filter. Enter edits: booleans and the
-model get a picker (the model list is searchable, with "Type a value..." for
-anything not listed), everything else a typed input that validates as you go.
+value, default, what it does). Press `/` to search. While searching, printable
+characters, including Space and `R`, are query text, not actions. Enter ends the
+search and keeps the matches; `/` resumes it. Esc clears the search or retained
+filter first; with no filter, Esc closes.
+
+Outside search, Space cycles the highlighted setting through its declared
+choices in order, wrapping from the last to the first, and saves immediately
+without moving the selection or scroll position. If the current value is unset
+or not listed, Space selects the first choice. This includes booleans, model,
+theme, spinner, and other settings with multiple choices; Space does nothing on
+free-text or single-choice rows. Enter still opens a picker for fields with
+choices (the model list is searchable, with "Type a value..." for anything not
+listed), or a typed input that validates as you go for other fields.
 The input opens holding the current value unless it is the default or not
 set: Enter without changes saves nothing, and an empty input resets.
-`R` resets the highlighted setting. Esc closes. Every
-edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
+`R` resets the highlighted setting outside search. Every edit saves and applies
+immediately, the same as `/set KEY VALUE`; **Save & close** only leaves the menu
+with those edits already saved. `/settings` is
 an alias of `/set` and accepts the same arguments.
 
 While a turn is running, `/set`, `/settings`, `/system_prompt`, `/model`, `/model add`, `/model settings`,
@@ -485,7 +498,7 @@ from the project file, reads instruction files automatically: one per directory,
 it. Under your home the walk-up stops at `~`;
 elsewhere it stops at the repository root (see
 [Repository instructions](#repository-instructions)). A subdirectory's file is added the first time
-the agent reads or lists something in it. `/plugins disable repo_context` turns it off, for this and
+the agent reads, lists, writes or edits something in it. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
 
@@ -530,7 +543,7 @@ repository symlinks can select any readable file beneath it. See
 for symlink loading, scope, and backend requirements.
 
 Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
-`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
+`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, `/compact` from the built-in `compaction` plugin, and `/refine` from the built-in `refinement` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. While
 you type a command name, the best match comes first and is highlighted without
@@ -662,9 +675,12 @@ model without changing the active model. Esc returns from settings to this list;
 Esc again closes it. `/model settings PROVIDER:NAME` opens that model directly.
 Tab completes added models.
 `Ctrl+S` in `/model add` opens the same editor. Edits save immediately and apply
-from the model's next request, even in a running turn. `r` resets a field; Esc
-or Ctrl-C goes back. Fixed choices
-open a picker; numeric fields accept typed values, and empty input resets.
+from the model's next request, even in a running turn. Space cycles fields with
+multiple declared choices in order and wraps to the first; an unset or unlisted
+value starts at the first choice. Action and submenu rows, free-text fields, and
+single-choice fields do not cycle. `r` resets a field. This field list is not
+searchable. Esc, Ctrl-C, or **Save & close** goes back. Enter opens a picker for
+fixed choices; numeric fields accept typed values, and empty input resets.
 
 CLAI2 enables prompt caching by default for every model, with the unified `Prompt Caching`
 setting (`cache`). It covers Claude on the Anthropic API, `claude-code:`, Amazon Bedrock and
@@ -1003,10 +1019,16 @@ picker, under **Fallback chains** below your models (`/model chains` opens it th
   it, after asking. The model you are using, or your saved default, cannot be renamed
   or deleted.
 
-A chain uses its first model's
-`/model settings` controls and defaults, and saves overrides under
-`chain:NAME`, so `/fast` works for a chain that starts with Codex, as it does for
-`openai-codex@*`. A chain cannot contain another chain, but it can contain `@*`. A model whose profile is not signed in fails the turn
+Outside a turn, such as when compacting a conversation or naming a session, a chain or
+`@*` also moves on when a model refuses a request. A turn streams its responses, and so
+does a delegated task. A refusal is only known once it has streamed, so it still ends
+the turn ([#13175](https://github.com/pydantic/pydantic-ai/issues/13175) tracks
+falling back from a streamed refusal). A delegated task on the session's model falls
+back through its chain; a task on a delegate's own model does not. A chain shows its
+first model's `/model settings` controls and saves overrides under `chain:NAME`; the
+overrides apply to every model in the chain, so `/fast` works for a chain that starts
+with Codex, as it does for `openai-codex@*`. Each model otherwise gets CLAI's defaults
+for its own family, such as the reasoning defaults for a GPT model. A chain cannot contain another chain, but it can contain `@*`. A model whose profile is not signed in fails the turn
 instead of falling back, so a missing login is not hidden. Older CLAI builds keep
 the rest of your settings, but cannot run a profile, `@*`, `@default`, or chain
 model, and run a model without an account on the default account only.
@@ -1553,7 +1575,7 @@ uses. The default appearance keeps CLAI's existing addition and deletion
 backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
 Code uses the terminal foreground and ANSI syntax colours on the terminal
 background. Successful file writes also show the proposed diff from their matching
-`FileChangeRequestEvent`: new files show additions, overwrites show before/after
+`FileChangeRequestedEvent`: new files show additions, overwrites show before/after
 changes. Without a matching request event, only the written path is shown. Failed
 or cancelled writes do not display a success diff. Large diffs retain the
 filesystem's truncation notice. Coder shell events show the command, attached
@@ -1660,7 +1682,11 @@ these names. The `/set` theme row also lets you reset immediately;
 `/config reset display.theme` removes the saved override for the next startup.
 
 For a bundled palette, Markdown and newly opened menus use Termflow's
-`to_render_style()`, and shell roles use its colours. Termflow changes the terminal
+`to_render_style()`, and shell roles use its colours. Where a role or code colour
+would be hard to read on the palette's background, CLAI darkens or lightens it to
+4.5:1 contrast (WCAG AA), or to the palette's own text contrast if that is lower,
+except where a 16-colour terminal paints the palette's own ANSI slots. Diff additions and deletions differ in lightness
+as well as hue, so readers who cannot tell red from green can still tell them apart. Termflow changes the terminal
 foreground, background, and 16 ANSI slots via OSC escape sequences. Supported
 terminals may also recolour existing ANSI-styled scrollback. CLAI resets terminal
 colours when you return to `default` or exit a selected palette, including failure
@@ -2144,13 +2170,19 @@ The stock CLI starts with `["agents"]`, so existing `.claude/agents` and
 `.codex/agents` definitions work without setup. If you saved Coder settings
 before this existed, disk agents stay off until you set **Agent folders**.
 Definition files are read as data and never executed.
-- **`/tasks`** opens the live picker during a turn or between turns. Enter opens
-  a full-width transcript with in-flight text; Esc returns to the picker, then
-  closes it. Arrow keys scroll the transcript; End follows its tail. Completing
-  a task does not close its detail view.
-- **`b` / `/tasks background ID`** backgrounds the selected child.
-- **`x` / `/tasks stop ID`** stops that child and its descendants, leaving siblings
+- **`/tasks`** opens the live view during a turn or between turns. A sidebar lists the
+  conversation's tasks as a tree, and Up and Down select one; the view opens on the newest
+  running task. Its transcript streams beside the sidebar, in-flight text included; PgUp
+  and PgDn scroll it. Esc clears the typed message, then closes the view.
+- **Typing a message and pressing Enter** steers the selected running child: it reads the
+  message as user input at its next model request. On a finished child that can resume,
+  Enter prompts it again from its saved history, apart from the conversation. Explore, Plan
+  and Review take no messages once they finish. A pasted block's line breaks become spaces,
+  so a paste is never sent until you press Enter.
+- **Ctrl+B / `/tasks background ID`** backgrounds the selected child.
+- **Ctrl+X / `/tasks stop ID`** stops that child and its descendants, leaving siblings
   running. Stopping a child prevents automatic model resume.
+- **Ctrl+R** on a finished child does what `/tasks resume ID` does, and closes the view.
 - **`/tasks resume ID`** explicitly authorizes resume and queues a request to the
   parent to continue the saved child. Explore and Plan cannot resume. The parent
   uses `delegate_task` with the same ID and agent name; it remains responsible
@@ -2165,7 +2197,7 @@ start rows immediately without the model name instead.
 The editor panel shows the task tree, activity, elapsed time, and descendant
 counts. The footer shows the context of the newest foreground child; see
 [Status line](#status-line). Successful rows disappear on completion; failed
-and stopped rows remain for 30 seconds. The `/tasks` hint also remains for 30 seconds. The picker retains
+and stopped rows remain for 30 seconds. The `/tasks` hint also remains for 30 seconds. The view retains
 completed tasks for inspection. Live previews retain the latest 65,536 characters
 of an unfinished text part; settled responses retain their full history.
 Questions asked by children use the main
@@ -2303,6 +2335,25 @@ instructions, now returns `ClaiDocs()` and uses the same deferred catalog entry.
 See [PLUGINS.md](../PLUGINS.md) for the plugin contract.
 
 ## Sessions
+
+On Unix, run `clai2 sessions` to see your live CLAI sessions across processes,
+including idle sessions and those waiting for an answer.
+
+| Column | Meaning |
+|---|---|
+| `ID` | A live-session ID prefix, extended until unique across the sessions listed |
+| `Name` | The workspace folder's name, for display only |
+| `Status` | `idle`, `running`, or `waiting` for user input |
+| `Title` | The saved conversation's title |
+| `Workspace` | The folder the session works in |
+
+The command never opens, resumes, messages, or controls a session, and never starts a turn.
+It prints `No live sessions.` when none are reachable. If a process has too much session
+data to list, it reports an error instead of omitting that process silently; close some idle
+sessions and try again. On Windows, it reports that Unix sockets are required and exits
+unsuccessfully.
+
+Saved conversations that are not open remain available through `/resume`.
 
 ### Saved sessions and `/resume`
 
@@ -2618,18 +2669,29 @@ On normal interactive exit, CLAI checks the linked worktree for changes:
 uncommitted or untracked files, or a different commit checked out than at launch.
 Ignored files do not count. If nothing changed in a worktree this launch created,
 CLAI removes it without asking, and deletes its `clai-NAME` branch too when this
-launch created that branch and Git agrees it is merged (`git branch -d`). This
-still applies after `/update now` restarts CLAI in the worktree. An
-unchanged worktree that CLAI reopened, or one you launched inside, is kept without
-asking.
+launch created that branch and Git agrees it is merged (`git branch -d`).
 
-If the worktree changed, CLAI asks **Remove this worktree?** with an inline picker:
+CLAI also removes, without asking, a worktree opened with `--worktree`, created or
+reopened, that has no uncommitted or untracked files and whose commits are all on
+a remote-tracking branch, even if a different commit is checked out than at launch.
+It keeps the branch and prints the
+removed path. Pushed commits are judged from the local remote-tracking branches;
+CLAI does not fetch. Ignored files are deleted with the worktree. To keep a
+worktree anyway, lock it with `git worktree lock PATH`, which makes Git refuse the
+removal. Both rules still apply after `/update now` restarts CLAI in the worktree.
+
+A linked worktree you launched CLAI inside without `--worktree` is never removed
+without asking. If it is unchanged, CLAI keeps it without asking, as it does a
+reopened worktree that is unchanged and has unpushed commits.
+
+Otherwise, if the worktree changed, CLAI asks **Remove this worktree?** with an inline picker:
 **Yes**, **No** (selected by default), or **No, don't ask again for this worktree**.
 The path and removal details appear dimmed below the question. The complete
 details are also available in the transcript before you choose; use PageUp and
 PageDown to inspect long commands. Enter on **No**,
 Esc, Ctrl-C, or EOF keeps it; select **Yes** to confirm removal. The third choice
-keeps it and saves the preference in your settings database for this checkout.
+keeps it and saves the preference in your settings database for this checkout,
+which also keeps it once its commits are pushed.
 There is no command to undo this choice for the same checkout.
 A new checkout at the same path is asked again. By default, removal keeps
 the branch and uses Git without `--force`, so dirty or locked worktrees are kept
@@ -2684,7 +2746,7 @@ does not fall back to Git. If the saved configuration cannot be read or validate
 on exit, CLAI warns and offers the existing Git cleanup prompt instead. If Git
 metadata cannot be read to prepare a registered command, CLAI keeps the checkout
 and reports the error. `.clai/settings.json` cannot set `worktree_remove_commands`;
-CLAI refuses to start if it does. Automatic removal of unchanged worktrees and
+CLAI refuses to start if it does. Automatic removal and
 `/workspaces destroy` continue to use Git.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
@@ -2888,6 +2950,12 @@ On Windows, CLAI does not provide an agent workspace or repository context yet.
 `coder` clears old tool results as the context fills. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
 it summarises older messages before the context runs out and adds `/compact`.
+The built-in `refinement` plugin adds `/refine`: the model reviews its last answer and gives it
+again, revised, as a turn of its own. Add words to say what to look at, such as
+`/refine check the error handling`. To have every answer reviewed without asking, add harness
+[Refine Output](../../../docs/harness/refine-output.md):
+`/plugins add refine_output pydantic_ai_harness.refine_output:RefineOutput`. Each turn then shows
+the first answer followed by the revised one.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](../PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
@@ -3390,6 +3458,8 @@ including `pydantic_ai_harness`. `/reload` refreshes CLAI only, not Harness or c
 even when their source has changed in the same checkout. If new CLAI code imports
 a symbol the running dependency does not have, restart with the same launch options
 and `--resume` to continue the saved session. Keep the worktree if asked to remove it.
+Exit removes a clean `--worktree` checkout with no unpushed commits without asking;
+run `git worktree lock .` in it first to keep it.
 `/reload` does not rerun the CLI or recursively reload third-party packages. Import-time side effects
 still cannot be undone. Use `/plugins reload NAME` when you only want to reload one
 plugin.
