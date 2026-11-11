@@ -95,8 +95,17 @@ def continue_cache_breakpoints(
 
 
 def may_use_thread(model_settings: AnthropicModelSettings, compaction: BetaCompactionConfigParam | None) -> bool:
-    """Whether `anthropic_thread` applies to a request. A compaction request samples no reply, so it never uses one."""
-    return bool(model_settings.get('anthropic_thread')) and compaction is None
+    """Whether `anthropic_thread` applies to a request.
+
+    A compaction request samples no reply, so it never uses one. Nor does a request whose `extra_body` sets `messages`:
+    that replaces the history the thread would be built from.
+    """
+    extra_body = model_settings.get('extra_body')
+    return (
+        bool(model_settings.get('anthropic_thread'))
+        and compaction is None
+        and not (is_str_mapping(extra_body) and 'messages' in extra_body)
+    )
 
 
 def with_thread(

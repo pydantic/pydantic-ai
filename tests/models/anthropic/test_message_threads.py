@@ -409,6 +409,36 @@ async def test_dropped_fallbacks_start_a_new_thread(allow_model_requests: None):
     assert [body['thread']['type'] for body in api.bodies] == ['create', 'continue', 'create']
 
 
+_OVERRIDE_MESSAGES: list[dict[str, str]] = [{'role': 'user', 'content': 'The PIN is 1234.'}]
+
+
+async def test_messages_override_is_sent_without_a_thread(allow_model_requests: None):
+    """`messages` passed through `extra_body` replaces the history a thread is built from, so no thread is used."""
+    api = _Api()
+    with_override: AnthropicModelSettings = {**_SETTINGS, 'extra_body': {'messages': _OVERRIDE_MESSAGES}}
+    async with _model(api) as model:
+        result = await Agent(model, model_settings=with_override).run('Hi')
+
+    assert 'thread' not in api.bodies[0]
+    assert _BETA not in api.betas[0]
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert 'thread_fingerprint' not in (response.provider_details or {})
+
+
+async def test_removed_messages_override_starts_a_new_thread(allow_model_requests: None):
+    """A response to a request whose `extra_body` set `messages` isn't continued once the override is removed."""
+    api = _Api()
+    with_override: AnthropicModelSettings = {**_SETTINGS, 'extra_body': {'messages': _OVERRIDE_MESSAGES}}
+    async with _model(api) as model:
+        agent = Agent(model)
+        first = await agent.run('Hi', model_settings=with_override)
+        await agent.run('Again', message_history=first.all_messages(), model_settings=_SETTINGS)
+
+    assert api.bodies[1]['thread'] == {'type': 'create'}
+    assert _user_texts(api.bodies[1]) == ['Hi', 'OK', 'Again']
+
+
 async def test_unsupported_request_is_sent_without_a_thread(allow_model_requests: None):
     """A request using something threads don't support is sent again without `thread`, and isn't continued from."""
     api = _Api(replies=[_thread_error(400, 'thread_unsupported_request')])
