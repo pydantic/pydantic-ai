@@ -41,6 +41,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/plugins [...]` | Manage plugins; no arguments opens the menu |
 | `/mcp [...]` | Manage MCP servers (from the built-in `mcp` plugin) |
 | `/compact [FOCUS]` | Summarise older messages now (from the built-in `compaction` plugin) |
+| `/refine [FOCUS]` | Have the model review and revise its last answer (from the built-in `refinement` plugin) |
 | `/usage` | Tokens and cost per turn |
 | `/cost` | The retained history's total cost and tokens |
 | `/resume [ID\|claude\|codex]` | Browse or restore a saved session, or import one from Claude Code or Codex |
@@ -542,7 +543,7 @@ repository symlinks can select any readable file beneath it. See
 for symlink loading, scope, and backend requirements.
 
 Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/model add`, `/model settings`, `/model chains`, `/help`, `/clear` (alias `/new`), `/resume`, `/exit`, `/config`,
-`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
+`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, `/compact` from the built-in `compaction` plugin, and `/refine` from the built-in `refinement` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. While
 you type a command name, the best match comes first and is highlighted without
@@ -2949,6 +2950,12 @@ On Windows, CLAI does not provide an agent workspace or repository context yet.
 `coder` clears old tool results as the context fills. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
 it summarises older messages before the context runs out and adds `/compact`.
+The built-in `refinement` plugin adds `/refine`: the model reviews its last answer and gives it
+again, revised, as a turn of its own. Add words to say what to look at, such as
+`/refine check the error handling`. To have every answer reviewed without asking, add harness
+[Refine Output](../../../docs/harness/refine-output.md):
+`/plugins add refine_output pydantic_ai_harness.refine_output:RefineOutput`. Each turn then shows
+the first answer followed by the revised one.
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](../PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
