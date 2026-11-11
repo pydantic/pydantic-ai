@@ -33,7 +33,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import DeferredCapabilityEntry, ModelRequestParameters
 from pydantic_ai.models.decision import (
     ChoiceAnswer,
     ChoiceQuestion,
@@ -3073,9 +3073,9 @@ async def test_a_capability_route_label_collision_renames_the_capability(allow_m
 
 
 async def test_a_load_capability_tool_without_its_catalog_hands_off(allow_model_requests: None):
-    """Without the ids it can load, `load_capability` is offered as it is, and its free-form `id` hands off.
+    """Without a catalog of what it can load, `load_capability` is offered as it is, and its free-form `id` hands off.
 
-    Not a VCR test: no agent run builds a `load_capability` without its metadata, so it is passed to `request` directly.
+    Not a VCR test: an agent run always sends the catalog with the loader, so the request is built by hand.
     """
     load_capability = ToolDefinition(
         name='load_capability',
@@ -3097,19 +3097,27 @@ async def test_a_load_capability_tool_without_its_catalog_hands_off(allow_model_
 async def test_a_lone_capability_is_loaded_without_a_question(allow_model_requests: None):
     """With no output type and one capability to load, loading it is the only route, taken without a request.
 
+    An active capability is in the catalog but isn't a route.
+
     Not a VCR test: the point is that no request is made, and an agent run always has an output route beside it.
     """
     load_capability = ToolDefinition(
         name='load_capability',
         parameters_json_schema={'type': 'object', 'properties': {'id': {'type': 'string'}}, 'required': ['id']},
         tool_kind='capability-load',
-        metadata={'capabilities': {'refunds': 'Use for refund eligibility or status.'}},
     )
     model = InMemoryDecisionModel()
     response = await model.request(
         [ModelRequest(parts=[UserPromptPart('Has my refund gone through?')])],
         None,
-        ModelRequestParameters(function_tools=[load_capability], allow_text_output=False),
+        ModelRequestParameters(
+            function_tools=[load_capability],
+            allow_text_output=False,
+            deferred_capabilities=[
+                DeferredCapabilityEntry(id='refunds', description='Use for refund eligibility or status.'),
+                DeferredCapabilityEntry(id='shipping', description='Use for where an order is.', active=True),
+            ],
+        ),
     )
 
     assert [(part.tool_name, part.args) for part in response.parts if isinstance(part, ToolCallPart)] == [

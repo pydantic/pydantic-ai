@@ -6,6 +6,7 @@ Split out of `test_capabilities.py` per #7304.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
@@ -74,6 +75,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import (
+    DeferredCapabilityEntry,
     ModelRequestContext,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -102,6 +104,7 @@ from .capability_models import (
     noop_greet as _noop_greet,
 )
 from .conftest import IsDatetime, IsStr, iter_message_parts
+from .function_model_prefix import RecordedRequest, render_anthropic_bodies
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -4174,8 +4177,60 @@ async def test_load_capability_after_the_run_ended_raises() -> None:
         stored[0].load_capability('refunds')
 
 
+async def test_the_catalog_reaches_models_in_the_request_parameters_and_the_wire_is_unchanged():
+    """The step's catalog is on `ModelRequestParameters.deferred_capabilities`, with whether each one is active.
+
+    The `load_capability` definition carries none of it, so the tools block and the prefix a language model is
+    sent are byte-identical before and after a capability loads.
+
+    Not a VCR test: the promise is about every request body being identical, which is checked by rendering each
+    request as `AnthropicModel` would send it, without a provider round trip.
+    """
+    refunds = Capability[object](id='refunds', description='Refund things.', defer_loading=True)
+
+    @refunds.tool_plain
+    def refund_status() -> str:
+        return 'Refunded.'  # pragma: no cover
+
+    shipping = Capability[object](id='shipping', defer_loading=True)
+    model: FunctionModel
+    recorded: list[RecordedRequest] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        recorded.append(RecordedRequest(model, list(messages), info.model_settings, info.model_request_parameters))
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'refunds'})])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    model = FunctionModel(respond)
+    await Agent(model, capabilities=[refunds, shipping]).run('Refund me.')
+
+    assert [request.model_request_parameters.deferred_capabilities for request in recorded] == snapshot(
+        [
+            [
+                DeferredCapabilityEntry(id='refunds', description='Refund things.'),
+                DeferredCapabilityEntry(id='shipping'),
+            ],
+            [
+                DeferredCapabilityEntry(id='refunds', description='Refund things.', active=True),
+                DeferredCapabilityEntry(id='shipping'),
+            ],
+        ]
+    )
+    load_tools = [
+        next(tool for tool in request.model_request_parameters.function_tools if tool.tool_kind == 'capability-load')
+        for request in recorded
+    ]
+    assert all(tool.metadata is None for tool in load_tools)
+    first, second = render_anthropic_bodies(recorded)
+    assert first is not None and second is not None
+    assert json.dumps(first['tools'], sort_keys=True) == json.dumps(second['tools'], sort_keys=True)
+    assert json.dumps(first['system'], sort_keys=True) == json.dumps(second['system'], sort_keys=True)
+    assert second['messages'][: len(first['messages'])] == first['messages']
+
+
 async def test_a_callable_description_is_resolved_once_per_step():
-    """The catalog in the instructions and the one on the `load_capability` tool are the same resolution, made once
+    """The catalog in the instructions and the one in the request parameters are the same resolution, made once
     per step after the step's tools are prepared.
 
     Not a VCR test: a recording can't show how many times the description callable ran, or that it ran after the

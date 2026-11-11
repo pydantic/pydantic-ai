@@ -347,6 +347,27 @@ InstructionVisibility = Literal['prefix', 'via_history']
 Resolved per part id into [`ModelRequestParameters.instruction_visibility`][pydantic_ai.models.ModelRequestParameters.instruction_visibility]."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class DeferredCapabilityEntry:
+    """A [deferred capability](../../capabilities/on-demand.md) as this step's catalog lists it.
+
+    See [`ModelRequestParameters.deferred_capabilities`][pydantic_ai.models.ModelRequestParameters.deferred_capabilities].
+    """
+
+    id: str
+    """The id the capability is loaded by."""
+
+    description: str | None = None
+    """What the capability is for, resolved for this step, as the catalog in the instructions states it."""
+
+    active: bool = False
+    """Whether the capability is active on this step: loaded by the model or from code.
+
+    The catalog in the instructions keeps listing a capability once it's active, so the cached prompt doesn't
+    change; this says whether loading it would do anything.
+    """
+
+
 @dataclass(repr=False, kw_only=True)
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
@@ -416,6 +437,19 @@ class ModelRequestParameters:
     Used to answer "may this tool be revealed yet?": a tool whose `capability_id` is in this set is
     gated on that capability being loaded, while one whose owner is absent here is gated only on its
     own discovery.
+    """
+
+    deferred_capabilities: list[DeferredCapabilityEntry] = field(
+        default_factory=list[DeferredCapabilityEntry], repr=False
+    )
+    """The catalog of [deferred capabilities](../../capabilities/on-demand.md) for this step, in catalog order.
+
+    The same resolution the catalog in the instructions is rendered from, so a callable `description` is called
+    once per step. Empty when the run has no deferred capabilities. Never sent to a model as it is: a language
+    model reads the catalog in the instructions and calls the `load_capability` tool, whose schema doesn't depend
+    on what can be loaded, so the cached prompt doesn't either. A model that builds its own request from these
+    parameters, as a [decision model](../../models/decision.md#on-demand-capabilities) does, reads which
+    capabilities it can load from here.
     """
 
     output_mode: OutputMode = 'text'

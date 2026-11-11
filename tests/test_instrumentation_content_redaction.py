@@ -842,7 +842,7 @@ async def test_no_content_reaches_telemetry_on_a_successful_run(include_content:
 
 @pytest.mark.parametrize('include_content', [True, False])
 async def test_no_content_reaches_telemetry_from_a_deferred_capability_catalog(include_content: bool) -> None:
-    """A deferred capability's description, in the catalog instructions and on the `load_capability` tool."""
+    """A deferred capability's description, in the catalog instructions and in the request parameters' catalog."""
     settings, exporter = redacted_setup(include_content)
 
     def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:

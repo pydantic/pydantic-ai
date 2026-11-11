@@ -606,11 +606,12 @@ def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, An
     """Drop the prompt text the user wrote, or `None` when the shape cannot be redacted.
 
     Three fields here are that text: the instructions, whose dynamic parts can be built from deps, the
-    prompted-output template, and the `load_capability` tool's `metadata`, which repeats the capability
-    catalog in the instructions. Instruction parts keep their origin and ids, so what the parts are and
-    how they cache stays visible. Tool and output *schemas* stay too -- they are the request's
-    structure rather than message content, and `include_model_request_parameters=False` drops the
-    whole attribute for anyone who wants them gone as well.
+    prompted-output template, and the descriptions in the deferred capability catalog, which the catalog
+    in the instructions repeats. Instruction parts keep their origin and ids, and catalog entries their
+    ids and whether they're active, so what the parts are and how they cache stays visible. Tool and
+    output *schemas* stay too -- they are the request's structure rather than message content, and
+    `include_model_request_parameters=False` drops the whole attribute for anyone who wants them gone
+    as well.
 
     `_serialize_model_request_parameters` falls back to inferring a shape, which for a value it cannot
     walk -- a tool whose `metadata` holds an arbitrary object, say -- is the request's string
@@ -627,11 +628,9 @@ def _redact_model_request_parameters(serialized_parameters: Any) -> dict[str, An
             part.pop('content', None)
     if parameters.get('prompted_output_template') is not None:
         parameters['prompted_output_template'] = None
-    for tool in cast('list[dict[str, Any]]', parameters.get('function_tools', [])):
-        # The `load_capability` tool's `metadata` is the capability catalog, the same text as the
-        # instruction part redacted above, carried for decision models to offer each capability.
-        if tool.get('tool_kind') == 'capability-load':
-            tool.pop('metadata', None)
+    for entry in cast('list[dict[str, Any]]', parameters.get('deferred_capabilities', [])):
+        # The deferred capability catalog's descriptions, the same text as the catalog instruction part.
+        entry.pop('description', None)
     return parameters
 
 

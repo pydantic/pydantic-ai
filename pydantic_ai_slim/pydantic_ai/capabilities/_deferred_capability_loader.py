@@ -5,12 +5,11 @@ from dataclasses import dataclass, field
 from pydantic_ai._deferred_capabilities import DEFERRED_CAPABILITY_CATALOG_ID
 from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, append_on_change_by_default
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._system_prompt import SystemPromptRunner
+from pydantic_ai.models import DeferredCapabilityEntry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai.toolsets._deferred_capability_loader import (
-    DeferredCapabilityCatalog,
-    DeferredCapabilityLoaderToolset,
-)
+from pydantic_ai.toolsets._deferred_capability_loader import DeferredCapabilityLoaderToolset
 
 from .abstract import (
     AbstractCapability,
@@ -28,7 +27,9 @@ DEFERRED_CAPABILITY_CATALOG_PREFIX_WITH_SEARCH = (
 )
 
 
-async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT], catalog: dict[str, str | None]) -> str:
+async def _render_deferred_capability_catalog(
+    ctx: RunContext[AgentDepsT], catalog: list[DeferredCapabilityEntry]
+) -> str:
     # Deliberately lists EVERY deferred capability on every turn, including ones the model
     # has already loaded — do not filter by load state here.
     #
@@ -46,7 +47,7 @@ async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT], catal
     # redundant call with an "already active" ModelRetry. One occasional wasted retry is
     # far cheaper than busting the prefix cache on every load.
     entries = '\n'.join(
-        f'- {cap_id}: {description}' if description else f'- {cap_id}' for cap_id, description in catalog.items()
+        f'- {entry.id}: {entry.description}' if entry.description else f'- {entry.id}' for entry in catalog
     )
     # Steer the model away from tool search only when a search surface actually exists in the
     # run — mentioning searching in a run that has none invites hallucinated search calls. Two
@@ -71,13 +72,42 @@ async def _render_deferred_capability_catalog(ctx: RunContext[AgentDepsT], catal
 class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
     """Internal capability that installs deferred capability catalog and loading support."""
 
-    _catalog: DeferredCapabilityCatalog = field(default_factory=DeferredCapabilityCatalog, init=False, repr=False)
+    _step: tuple[str | None, int] | None = field(default=None, init=False, repr=False)
+    _catalog: list[DeferredCapabilityEntry] = field(
+        default_factory=list[DeferredCapabilityEntry], init=False, repr=False
+    )
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         return self._render_catalog
 
     async def _render_catalog(self, ctx: RunContext[AgentDepsT]) -> str:
-        return await _render_deferred_capability_catalog(ctx, await self._catalog.resolve(ctx))
+        return await _render_deferred_capability_catalog(ctx, await self.catalog(ctx))
+
+    async def catalog(self, ctx: RunContext[AgentDepsT]) -> list[DeferredCapabilityEntry]:
+        """Every deferred capability, with its description and whether it's active, for the current run step.
+
+        The one source for the catalog: the instructions are rendered from it, and the step's
+        [`ModelRequestParameters.deferred_capabilities`][pydantic_ai.models.ModelRequestParameters.deferred_capabilities]
+        is it. Resolved once per step, the first time it's asked for. That's when the instructions are rendered,
+        after the step's tools are prepared, so a callable `description` sees them in `ctx.tools`; the request
+        parameters are built after that. A request resumed without rendering instructions resolves it then.
+        """
+        step = (ctx.run_id, ctx.run_step)
+        if step == self._step:
+            return self._catalog
+        active = ctx.active_capability_ids
+        catalog: list[DeferredCapabilityEntry] = []
+        for capability_id, capability in ctx.capabilities.items():
+            if capability.defer_loading is not True:
+                continue
+            description = capability.get_description()
+            if description is not None and not isinstance(description, str):
+                description = await SystemPromptRunner[AgentDepsT](description).run(ctx)
+            catalog.append(
+                DeferredCapabilityEntry(id=capability_id, description=description, active=capability_id in active)
+            )
+        self._step, self._catalog = step, catalog
+        return catalog
 
     def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         # The catalog gets a key of its own, though this capability has no `id`, so a catalog that changes
@@ -89,4 +119,4 @@ class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
         return CapabilityOrdering(position='outermost', wrapped_by=[Instrumentation])
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
-        return DeferredCapabilityLoaderToolset(wrapped=toolset, catalog=self._catalog)
+        return DeferredCapabilityLoaderToolset(wrapped=toolset)

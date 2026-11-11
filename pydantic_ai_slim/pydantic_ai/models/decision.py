@@ -64,9 +64,9 @@ from ..profiles.decision import DecisionModelProfile
 from ..providers import InterfaceClient
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from ..toolsets._deferred_capability_loader import LOAD_CAPABILITY_CATALOG_METADATA_KEY
 from ..usage import RequestUsage
 from . import (
+    DeferredCapabilityEntry,
     Model,
     ModelRequestParameters,
     StreamedResponse,
@@ -710,7 +710,8 @@ class DecisionModel(Model[InterfaceClient]):
                 tool
                 for tool in model_request_parameters.function_tools
                 if model_request_parameters.visibility_of(tool.name) != 'withheld'
-            ]
+            ],
+            model_request_parameters.deferred_capabilities,
         )
         offered = [*hand_offs, *function_tools]
         tools, done = _tools_left(messages, offered)
@@ -1632,37 +1633,39 @@ def _route_args(tool: ToolDefinition) -> dict[str, Any]:
     return {name: None for name in _properties(tool.parameters_json_schema)} if _none_route(tool) else {}
 
 
-def _capability_routes(tools: list[ToolDefinition]) -> list[ToolDefinition]:
+def _capability_routes(tools: list[ToolDefinition], catalog: list[DeferredCapabilityEntry]) -> list[ToolDefinition]:
     """The tools on offer, with `load_capability` as one route per capability it can still load.
 
     `load_capability` takes a plain string `id`, which a decision model cannot fill, so offered as it is the tool
-    could only hand off. Its `metadata` carries the ids it can load and what each is for, and each becomes a route
-    of its own, described by the capability's description and taken on the pick alone. The route question then
-    weighs each capability against the tools and output types directly, instead of a generic "load a capability"
-    followed by a second request asking which. A capability already active, whether the model or code loaded it, is
-    left out of the `metadata` and so not offered again, since loading it twice is refused. A language model's
-    `load_capability` is unchanged: the ids stay out of its schema so the tools it is sent, and the prompt cache behind
-    them, do not depend on what can be loaded.
+    could only hand off. The step's catalog, in
+    [`ModelRequestParameters.deferred_capabilities`][pydantic_ai.models.ModelRequestParameters.deferred_capabilities],
+    says which ids it can load and what each is for, and each becomes a route of its own, described by the
+    capability's description and taken on the pick alone. The route question then weighs each capability against
+    the tools and output types directly, instead of a generic "load a capability" followed by a second request
+    asking which. A capability already active, whether the model or code loaded it, is not offered again, since
+    loading it twice is refused. The loader is found by its `tool_kind`, whatever it is called. A language model's
+    `load_capability` is unchanged: the ids stay out of its schema so the tools it is sent, and the prompt cache
+    behind them, do not depend on what can be loaded.
     """
-    if not any(tool.tool_kind == 'capability-load' for tool in tools):
+    if not catalog:
         return tools
     routes: list[ToolDefinition] = []
     for tool in tools:
-        catalog = (tool.metadata or {}).get(LOAD_CAPABILITY_CATALOG_METADATA_KEY)
-        if tool.tool_kind != 'capability-load' or not isinstance(catalog, dict):
+        if tool.tool_kind != 'capability-load':
             routes.append(tool)
             continue
         routes.extend(
             replace(
                 tool,
-                description=description,
+                description=entry.description,
                 parameters_json_schema={
                     'type': 'object',
-                    'properties': {'id': {'const': capability_id}},
+                    'properties': {'id': {'const': entry.id}},
                     'required': ['id'],
                 },
             )
-            for capability_id, description in cast('dict[str, str | None]', catalog).items()
+            for entry in catalog
+            if not entry.active
         )
     return routes
 
