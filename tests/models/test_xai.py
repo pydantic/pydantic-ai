@@ -6797,6 +6797,13 @@ async def test_binary_content_document_uploaded_once_per_instance(allow_model_re
     assert counting_client.upload_calls == [(document_content.data, document_content.identifier)]
     assert _sent_file_ids(mock_client) == [['file-1'], ['file-1'], ['file-1']]
 
+    # Another model instance (possibly another xAI account) does not reuse this instance's file ID.
+    other_client = CountingMockXai(responses=[response])
+    other_model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=cast(AsyncClient, other_client)))
+    result = await Agent(other_model).run('Summarize it again.', message_history=result.all_messages())
+    assert result.output == 'ok'
+    assert other_client.upload_calls == [(document_content.data, document_content.identifier)]
+
 
 @pytest.mark.vcr(ignore_hosts=['93.184.215.14'])
 async def test_document_url_uploaded_once_per_instance(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
