@@ -54,14 +54,20 @@ class TestOpenAIChatAudio:
         with pytest.raises(UserError, match="takes WAV and MP3 audio only, not 'audio/flac'"):
             Agent(self._model(mock_client)).run_sync(['Listen.', BinaryContent(b'fLaC', media_type='audio/flac')])
 
-    async def test_other_format_url_in_a_user_prompt_is_refused(self, allow_model_requests: None):
-        """The adapter refuses after downloading the URL, before any request is built."""
+    @pytest.mark.parametrize(
+        ('url', 'media_type'),
+        [('https://example.com/audio.flac', 'audio/flac'), ('https://example.com/audio.m4a', 'audio/mp4')],
+    )
+    async def test_other_format_url_in_a_user_prompt_is_refused_without_downloading(
+        self, allow_model_requests: None, url: str, media_type: str
+    ):
+        """The adapter refuses by the URL's media type, before downloading it or building a request."""
         mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
 
         with patch('pydantic_ai.models.openai._chat_model.download_item') as mock_download:
-            mock_download.return_value = {'data': 'ZkxhQw==', 'data_type': 'flac'}
-            with pytest.raises(UserError, match="takes WAV and MP3 audio only, not 'audio/flac'"):
-                await Agent(self._model(mock_client)).run(['Listen.', AudioUrl('https://example.com/audio.flac')])
+            with pytest.raises(UserError, match=f"takes WAV and MP3 audio only, not '{media_type}'"):
+                await Agent(self._model(mock_client)).run(['Listen.', AudioUrl(url)])
+        mock_download.assert_not_called()
 
     def test_other_format_from_a_tool_is_noted(self, allow_model_requests: None):
         """The note replaces the file in the request body, which is what this asserts."""

@@ -1384,13 +1384,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     async def _map_audio_url_item(self, item: AudioUrl) -> ChatCompletionContentPartInputAudioParam:
         """Map an AudioUrl to a chat completion audio content part."""
+        # Checked before downloading, by the same table as binary audio, so a format the API won't take is refused
+        # without fetching it.
+        audio_format = _CHAT_AUDIO_FORMATS.get(item.media_type)
+        if audio_format is None:
+            raise UserError(_chat_audio_format_error(item.media_type))
         profile = self.profile
         data_format = 'base64_uri' if profile.get('openai_chat_audio_input_encoding', 'base64') == 'uri' else 'base64'
         downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
-        data_type = downloaded_item['data_type']
-        if data_type not in ('wav', 'mp3'):
-            raise UserError(_chat_audio_format_error(item.media_type))
-        audio = InputAudio(data=downloaded_item['data'], format=data_type)
+        audio = InputAudio(data=downloaded_item['data'], format=audio_format)
         return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
 
     async def _map_document_url_item(self, item: DocumentUrl) -> ChatCompletionContentPartParam:
