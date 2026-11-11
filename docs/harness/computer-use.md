@@ -76,7 +76,7 @@ Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `settle_seconds` | `0.5` | Wait this long after acting before the screenshot, so pages can load. |
+| `settle_seconds` | `0` | Wait this long after acting before the screenshot. Set it when screenshots show pages still loading or animating. |
 | `native` | `True` | Use the model's own computer use tool where it has one, by adding a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] that this tool runs. `False` gives every model this tool and all its actions; on GPT that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
 
 `ComputerUse` turns on [prompt caching](../capabilities/caching.md), since every request resends the screenshots. Set
