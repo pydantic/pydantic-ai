@@ -8,8 +8,8 @@ one or two test nodes that reach each changed line rather than whole test files:
 
 It extracts the base commit's copy of every workspace package with `git archive`, into a temporary directory it reaches
 through no symlink, runs pytest over the nodes once with those sources ahead of the installed ones on `PYTHONPATH` and
-once without, each into its own new capture directory, then compares the two. The tests, this plugin and the environment come from the working tree both times, so the
-library code is the only difference.
+once without, each into its own new capture directory, then compares the two. The tests, this plugin and the
+environment come from the working tree both times, so the library code is the only difference.
 
 Each stream is one JSON line of kind `stream`: the events its `__aiter__` hands the consumer, `PartEndEvent`s and
 `FinalResultEvent`s included, the error iteration raised if any, and the response `get()` builds once the test ends.
@@ -29,13 +29,13 @@ it's JSON. Two kinds of header are left out: credentials (`authorization`, `prox
 context (`traceparent`, `tracestate`, `baggage`), whose ids are random per run. Prefect's client retries a request by
 sending it again, and sends some of its own accord, the log batches of its background worker and checks of its server's
 version, all at times the load on its test server decides, so each request it sends is recorded once and the ones it
-sends of its own accord aren't. A test that hands a model one of the SDK
-client mocks `SDK_MOCKS` lists sends no HTTP request, so each call the model makes on a listed method is recorded
-instead, with the method as the target and the arguments as passed, SDK sentinels for an omitted argument included. When
-a capture starts, it runs an agent over a Groq model on `httpx`, an Anthropic model on `httpx2` and a Bedrock model on
-botocore, and stops the run if any of those requests wasn't recorded, so an SDK that moves to an HTTP client the capture
-doesn't wrap fails loudly, as Anthropic's did moving from `httpx` to `httpx2`. Once collection has imported the tests, a
-listed mock method that's gone stops the run too. Client stand-ins a test hands a model, like the stub clients Bedrock's
+sends of its own accord aren't. A test that hands a model one of the SDK client mocks `SDK_MOCKS` lists sends no HTTP
+request, so each call the model makes on a listed method is recorded instead, with the method as the target and the
+arguments as passed, SDK sentinels for an omitted argument included. When a capture starts, it runs an agent over a Groq
+model on `httpx`, an Anthropic model on `httpx2` and a Bedrock model on botocore, and stops the run if any of those
+requests wasn't recorded, so an SDK that moves to an HTTP client the capture doesn't wrap fails loudly, as Anthropic's
+did moving from `httpx` to `httpx2`. Once collection has imported the tests, a listed mock method that's gone stops the
+run too. Client stand-ins a test hands a model, like the stub clients Bedrock's
 tests define, and client methods a test patches by hand, like the `generate_content` Google's tests patch on a model's
 client, escape it.
 
@@ -58,10 +58,10 @@ multipart boundaries, pytest's numbered temporary directories, the random suffix
 gets, `PromptInjectionDefender`'s measured `latency_ms`, `Planning`'s step ids where its plan and its reply to an added
 step render them, the code hash a Prefect `task_key` ends in, which hashes the file the task function was compiled from,
 and the `custom_id` of each batch request `InMemoryBatchModel` encodes, which hashes a random token, are normalized, so
-two runs of the same code compare equal. A step id a model echoes back isn't,
-in a tool call's arguments or where `Planning` renders it from them, as a subtask's parent or a dependency. Cassette
-playback hands a response's headers back in a different order each run, so the `HTTPHeaders` botocore copies into an
-error response's `ResponseMetadata` are sorted where an error message renders them.
+two runs of the same code compare equal. A step id a model echoes back isn't, in a tool call's arguments or where
+`Planning` renders it from them, as a subtask's parent or a dependency. Cassette playback hands a response's headers
+back in a different order each run, so the `HTTPHeaders` botocore copies into an error response's `ResponseMetadata` are
+sorted where an error message renders them.
 
 The comparison lists the test nodes whose records differ or that only one capture has, and exits non-zero if there
 are any. It refuses two captures that imported `pydantic_ai` from the same file, since the base run then didn't load
@@ -174,8 +174,8 @@ GENERATED_VALUES = [
         'CUSTOM_ID',
     ),
 ]
-# Prefect's client marks each request it sends with its API version, and these paths are the requests it sends of its own
-# accord; the module docstring says why neither its retries nor these are recorded.
+# Prefect's client marks each request it sends with its API version, and these paths are the requests it sends of its
+# own accord; the module docstring says why neither its retries nor these are recorded.
 PREFECT_API_VERSION_HEADER = 'x-prefect-api-version'
 PREFECT_OWN_PATHS = re.compile(r'/api/(?:logs/|admin/version)$')
 # The second form is ISO 8601's basic format, which SigV4 signs a request's `x-amz-date` header with.
