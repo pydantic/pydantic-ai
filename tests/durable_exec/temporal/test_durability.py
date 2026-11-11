@@ -6260,7 +6260,7 @@ async def test_durability_runtime_function_toolset_opt_out(allow_model_requests:
         with workflow_raises(
             UserError,
             snapshot(
-                "FunctionToolset 'runtime' cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                "FunctionToolset 'runtime' cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'durable': False} to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(
@@ -6294,7 +6294,7 @@ async def test_durability_rejects_runtime_executing_toolsets_in_workflow(allow_m
         with workflow_raises(
             UserError,
             snapshot(
-                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'durable': False} to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(
@@ -6333,7 +6333,7 @@ async def test_durability_rejects_overridden_executing_toolsets_in_workflow(clie
             'for durable execution when the agent is constructed. Pass them to the agent constructor instead -- '
             'not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction '
             '`@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async '
-            "tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be "
+            "tools that don't need durable wrapping can opt out with metadata={'durable': False} to be "
             'allowed at runtime.'
         )
         with workflow_raises(UserError, message):
@@ -6430,7 +6430,7 @@ async def test_durability_rejects_decorator_toolset_in_workflow(client: Client):
             'agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or '
             '`override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing '
             "toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable "
-            "wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+            "wrapping can opt out with metadata={'durable': False} to be allowed at runtime."
         )
         with workflow_raises(UserError, message):
             await client.execute_workflow(

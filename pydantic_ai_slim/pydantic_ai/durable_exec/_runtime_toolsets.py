@@ -124,26 +124,28 @@ def reject_unsupported_runtime_toolsets(
     for toolset in toolsets:
         toolset.apply(collect)
 
-    if bad_toolsets:
-        offenders: list[str] = []
-        for kind in sorted(bad_toolsets):
-            for toolset in bad_toolsets[kind]:
-                label = toolset.label
-                if kind == 'mcp' and not toolset.id and label == repr(toolset):
-                    label = 'MCPToolset'
-                offenders.append(label)
-        offenders_text = ', '.join(offenders)
-        opt_out = (
-            f" Async tools that don't need durable wrapping can opt out with "
-            f'metadata={{{tool_config_key!r}: False}} to be allowed at runtime.'
-            if tool_config_key is not None
-            else ''
-        )
-        raise UserError(
-            f'{offenders_text} cannot be added at runtime with {engine}, because toolsets '
-            'that execute their own tools or resolve dynamically must be registered for durable execution '
-            'when the agent is constructed. Pass them to the agent constructor instead -- not to '
-            '`run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. '
-            'Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
-            f'{opt_out}'
-        )
+    if not bad_toolsets:
+        return
+
+    offenders: list[str] = []
+    for kind in sorted(bad_toolsets):
+        for toolset in bad_toolsets[kind]:
+            label = toolset.label
+            if kind == 'mcp' and not toolset.id and label == repr(toolset):
+                label = 'MCPToolset'
+            offenders.append(label)
+    offenders_text = ', '.join(offenders)
+    opt_out = (
+        " Async tools that don't need durable wrapping can opt out with "
+        "metadata={'durable': False} to be allowed at runtime."
+        if tool_config_key is not None or 'function' in unsupported_kinds
+        else ''
+    )
+    raise UserError(
+        f'{offenders_text} cannot be added at runtime with {engine}, because toolsets '
+        'that execute their own tools or resolve dynamically must be registered for durable execution '
+        'when the agent is constructed. Pass them to the agent constructor instead -- not to '
+        '`run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. '
+        'Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
+        f'{opt_out}'
+    )

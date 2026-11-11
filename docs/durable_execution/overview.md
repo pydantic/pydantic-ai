@@ -60,24 +60,29 @@ async def next_step(steps: list[str]) -> str:
     return steps[0]
 
 
+@toolset.tool_plain
+async def first_step(steps: list[str]) -> str:
+    return steps[0]
+
+
 agent = Agent(
     '{{ openai:medium }}',
     name='planner',
     toolsets=[toolset],
     capabilities=[
-        SetToolMetadata(tools=['summarize_steps'], durable=False),  # (2)!
+        SetToolMetadata(tools=['first_step'], durable=False),  # (2)!
         TemporalDurability(),  # (3)!
     ],
 )
 ```
 
 1. The same metadata keeps the tool out of its durable unit on every engine.
-2. [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] sets it on tools you don't define, such as a capability's. `durable=True` puts back the default.
-3. Swap in any other engine's durability capability; the tool's metadata stays the same.
+2. [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] sets the metadata on selected tools, including ones you don't define yourself, such as a capability's. `durable=True` puts back the default.
+3. Swap in any other engine's durability capability; the tools' metadata stays the same.
 
 Only async function tools can leave their durable unit this way. On a sync tool, an [MCP](../mcp/client.md) tool or a dynamic toolset's tool, `{'durable': False}` raises a [`UserError`][pydantic_ai.exceptions.UserError], because those run in a thread or perform I/O.
 
-An engine's own metadata key wins when a tool sets it, so `metadata={'temporal': ActivityConfig(...), 'durable': False}` still runs the tool in a Temporal activity. Engine keys also accept the engine's unit config, and some allow tools the engine-neutral key refuses:
+An engine's own metadata key wins when a tool sets it, so `metadata={'temporal': ActivityConfig(...), 'durable': False}` still runs the tool in a Temporal activity. Engine keys also accept the engine's unit config, and some allow tools the engine-neutral key refuses. `{'durable': False}` in turn wins over per-tool config set in code, such as Azure Durable Task's and Render Workflows' `resolve_tool_options`:
 
 | Engine | Where `{'durable': False}` runs the tool | Engine's own key |
 |---|---|---|
@@ -88,6 +93,6 @@ An engine's own metadata key wins when a tool sets it, so `metadata={'temporal':
 | [Azure Durable Task](../harness/azure-durable-task.md) | orchestrator code | `'azure_durable_task'` |
 | [Absurd](../harness/absurd.md) | task handler code, outside any step | none |
 | [pgtask](../harness/pgtask.md) | task code, outside any step | none |
-| [Render Workflows](../harness/render-workflows.md) | the parent task run | none; use `resolve_tool_options` |
+| [Render Workflows](../harness/render-workflows.md) | the parent task run | none; `resolve_tool_options` can return `False` |
 
 Restate and Apache Airflow ship their own integrations; see their pages for how they wrap tools.

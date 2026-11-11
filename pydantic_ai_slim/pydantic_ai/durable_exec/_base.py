@@ -1158,12 +1158,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _runs_outside_durable_unit(self, tool: ToolsetTool[Any] | None, tool_name: str, kind: ToolsetKind) -> bool:
         """Whether the tool's engine-neutral `{'durable': False}` metadata runs it outside the durable unit.
 
-        The engine's own `tool_config_key`, when set on the tool, wins. The same rules hold on every engine, so the
-        metadata means the same thing whichever engine runs the agent: only async function tools can opt out.
+        The engine's own `tool_config_key`, when set on the tool, wins, and so does the metadata over the engine
+        backend's per-tool config. Every engine built on this base applies the same rule to the tools it wraps, so
+        the metadata means the same thing whichever of them runs the agent: only async function tools can opt out.
         """
-        if tool is None:
-            return False
-        metadata = tool.tool_def.metadata
+        metadata = tool.tool_def.metadata if tool is not None else None
         engine_key = self.engine_spec.tool_config_key
         if engine_key is not None and metadata is not None and metadata.get(engine_key) is not None:
             return False

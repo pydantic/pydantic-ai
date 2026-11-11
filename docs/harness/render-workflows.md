@@ -368,6 +368,9 @@ At registration, the resolver receives `tool=None` and `tool_name=''` for the to
 Returning `False` for a function tool runs it inside the calling task run instead of starting a chained task run. The
 shared toolset definitions remain registered. `False` is rejected for MCP and dynamic tools.
 
+An async function tool with the engine-neutral [`metadata={'durable': False}`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) also
+runs inside the calling task run, whatever the resolver returns for it.
+
 ## Execution limits
 
 - **JSON inputs and results:** Dependencies, messages, model settings, metadata, tool arguments, events, and
