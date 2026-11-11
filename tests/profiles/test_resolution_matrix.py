@@ -3150,6 +3150,7 @@ def test_together_qwen():
             snapshot(
                 {
                     'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
                     'supports_thinking': True,
