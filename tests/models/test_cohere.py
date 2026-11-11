@@ -1438,11 +1438,12 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
             ),
             ModelResponse(
                 parts=[
+                    ThinkingPart(content='I will use the get_temperature tool to find the temperature in Paris.'),
                     ToolCallPart(
                         tool_name='get_temperature',
                         args='{"city": "Paris"}',
                         tool_call_id=IsStr(),
-                    )
+                    ),
                 ],
                 usage=RequestUsage(
                     details={'input_tokens': 50, 'output_tokens': 23},
@@ -1507,6 +1508,45 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
             requests=2,
             tool_calls=1,
         )
+    )
+
+
+async def test_tool_plan_captured_and_replayed_non_streamed(allow_model_requests: None):
+    async def get_temperature(city: str) -> str:
+        return '20'
+
+    c = completion_message(
+        AssistantMessageResponse(
+            tool_plan='I will use the get_temperature tool to find the temperature in Paris.',
+            tool_calls=[
+                ToolCallV2(
+                    id='get_temperature_vmzdrvzpt',
+                    function=ToolCallV2Function(name='get_temperature', arguments='{"city": "Paris"}'),
+                    type='function',
+                )
+            ],
+        )
+    )
+    text_response = completion_message(
+        AssistantMessageResponse(
+            content=[TextAssistantMessageResponseContentItem(text='The temperature in Paris is 20 degrees.')],
+        )
+    )
+    mock_client = MockAsyncClientV2.create_mock([c, text_response])
+    model = CohereModel('command-a-03-2025', provider=CohereProvider(cohere_client=mock_client))
+    agent = Agent(model, tools=[get_temperature])
+
+    result = await agent.run('What is the temperature in Paris?')
+
+    # The plan is captured in message history alongside the tool call.
+    response_message = result.all_messages()[1]
+    assert [p.content for p in response_message.parts if isinstance(p, ThinkingPart)] == [
+        'I will use the get_temperature tool to find the temperature in Paris.'
+    ]
+
+    # The plan is replayed as Cohere's `tool_plan` on the follow-up assistant turn.
+    assert mock_client.chat_kwargs[1]['messages'][1].tool_plan == (
+        'I will use the get_temperature tool to find the temperature in Paris.'
     )
 
 
