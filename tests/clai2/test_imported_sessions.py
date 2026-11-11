@@ -20,7 +20,7 @@ from termflow.tui.completion import CompleteEvent, Document
 from termflow.tui.keys import Key
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Hooks
 from pydantic_ai.messages import (
     BinaryContent,
     CompactionPart,
@@ -44,7 +44,9 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
+from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.compaction._summary import is_summary_part, summary_request
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, is_task_report
@@ -634,8 +636,27 @@ async def test_claude_code_import_keeps_the_history_compaction_replaced(tmp_path
     assert result.all_messages()[:3] == messages[:3]
 
 
-@pytest.mark.parametrize('plugins', [0, 1])
-async def test_stock_sessions_send_only_what_follows_an_imported_summary(plugins: int) -> None:
+class _SandboxGroup(CombinedCapability[None]):
+    """A plugin group that supplies the workspace itself."""
+
+    def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+        return LocalWorkspaceBackend(Path(__file__).parent)
+
+
+@pytest.mark.parametrize(
+    ('stock', 'plugins', 'sent_from'),
+    [
+        # Rebound with the session's plugins, or, without any, never rebound, as it keeps its own model.
+        (True, [Hooks[None]()], 'Theirs'),
+        (True, [], 'Theirs'),
+        (False, [Hooks[None]()], 'Theirs'),
+        # The window would split a group that supplies the workspace, so the whole history is sent.
+        (False, [_SandboxGroup([Hooks[None]()])], 'Start'),
+    ],
+)
+async def test_sessions_send_only_what_follows_an_imported_summary(
+    stock: bool, plugins: list[AbstractCapability[None]], sent_from: str
+) -> None:
     at = timestamp(AT)
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Start')]),
@@ -655,11 +676,16 @@ async def test_stock_sessions_send_only_what_follows_an_imported_summary(plugins
         )
         yield 'ok'
 
-    # Rebound with the session's plugins, or, without any, never rebound, as it keeps its own model.
-    agent = StockAgent(FunctionModel(stream_function=respond), deps_type=type(None), output_type=str, capabilities=[])
-    session = Session(agent, deps=None, plugins=[Hooks[None]()] * plugins, message_history=history)
+    model = FunctionModel(stream_function=respond)
+    agent: Agent[None, str] = (
+        StockAgent(model, deps_type=type(None), output_type=str, capabilities=[])
+        if stock
+        else Agent(model, deps_type=type(None))
+    )
+    session = Session(agent, deps=None, plugins=plugins, message_history=history)
     await session.prompt('More')
-    assert sent == ['Theirs', 'Next', 'More']
+    expected = ['Start', 'Theirs', 'Next', 'More']
+    assert sent == expected[expected.index(sent_from) :]
     assert session.messages[:4] == history
 
 

@@ -2455,7 +2455,9 @@ CLAI keeps too: you can scroll back through it, but only prompts after the
 summary can be rewound to, and the model is sent the summary and what follows
 it, as the other agent's model was. CLAI's compaction later builds on that
 summary rather than summarizing it again, though its first compaction of an
-imported session still reads the history from before the summary once.
+imported session still reads the history from before the summary once. An agent
+passed with `--agent` beside a plugin group that supplies its own workspace is
+sent the whole history instead.
 
 Codex encrypts some of what its models see so that only OpenAI's models can
 read it: reasoning, its compaction summaries, and messages between its agents.

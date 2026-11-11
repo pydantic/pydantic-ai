@@ -147,10 +147,7 @@ def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]], *, include_dy
         if isinstance(plugin, AbstractCapability):
             capability = cast('AbstractCapability[DepsT]', plugin)
             # `apply` visits a group's members, not a group subclass that supplies the workspace itself.
-            if (
-                isinstance(capability, CombinedCapability)
-                and type(capability).get_workspace is not CombinedCapability.get_workspace
-            ):
+            if _group_supplies_workspace(capability):
                 return True
             capability.apply(leaves.append)
         elif include_dynamic:
@@ -158,6 +155,14 @@ def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]], *, include_dy
     return any(
         not leaf.defer_loading and _overrides_get_workspace(leaf, include_dynamic=include_dynamic) for leaf in leaves
     )
+
+
+def _group_supplies_workspace(plugin: AgentCapability[DepsT]) -> bool:
+    """Whether `plugin` is a group that supplies the workspace itself, which composing it with another splits up."""
+    if not isinstance(plugin, CombinedCapability):
+        return False
+    group = cast('CombinedCapability[DepsT]', plugin)
+    return type(group).get_workspace is not CombinedCapability.get_workspace
 
 
 def _overrides_get_workspace(leaf: AbstractCapability[DepsT], *, include_dynamic: bool) -> bool:
@@ -848,6 +853,10 @@ class Session(Generic[DepsT, OutputT]):
                 self._bound_model = agent_model
             # Already bound to the stock agent, including delegation and guardrails; one never rebound lacks the window.
             capabilities = [window] if self.agent is self._base_agent else []
+        elif not any(_group_supplies_workspace(plugin) for plugin in self.plugins):
+            # Not beside a group that supplies the workspace: composed with it, the group would split into its
+            # members, as for the run's `instructions` in `prompt`. Such a session sends the whole imported history.
+            capabilities.append(ImportedSummaryWindow[DepsT]())
         if self.model is not None:
             capabilities.append(SessionModels[DepsT](self._resolve_model_id))
         if self.model_defaults is not None:

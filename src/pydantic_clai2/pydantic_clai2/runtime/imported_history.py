@@ -215,6 +215,10 @@ class ImportedSummaryWindow(AbstractCapability[AgentDepsT]):
     Only the request is trimmed, so the conversation keeps the history ahead of the summary, to show and
     rewind through. Harness compaction works from that whole conversation, so the first compaction of an
     imported session reads that history once more, then replaces it, as it does any history it compacts.
+
+    A session binds it to its agent, or for an agent it was given, to each run. It doesn't bind it beside a
+    plugin group that supplies the workspace itself, which composing one more run capability splits into its
+    members; such a session sends the whole imported history.
     """
 
     async def before_model_request(
