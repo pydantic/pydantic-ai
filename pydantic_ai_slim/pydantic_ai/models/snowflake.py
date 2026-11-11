@@ -23,13 +23,8 @@ try:
 
     from ..providers.snowflake import SnowflakeModelProfile
     from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
-    from .openai import (
-        OpenAIChatModel,
-        OpenAIChatModelSettings,
-        OpenAIStreamedResponse,
-        _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
-        _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
-    )
+    from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
+    from .openai._chat_completions import LenientChatCompletion, LenientChatCompletionChunk
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Snowflake model, '
@@ -115,7 +110,7 @@ class _SnowflakeChoice(chat_completion.Choice):
     message: _SnowflakeCompletionMessage  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
-class _SnowflakeChatCompletion(_ChatCompletion):
+class _SnowflakeChatCompletion(LenientChatCompletion):
     choices: list[_SnowflakeChoice]  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
@@ -134,7 +129,7 @@ class _SnowflakeChunkChoice(chat_completion_chunk.Choice):
         return value or None
 
 
-class _SnowflakeChatCompletionChunk(_ChatCompletionChunk):
+class _SnowflakeChatCompletionChunk(LenientChatCompletionChunk):
     choices: list[_SnowflakeChunkChoice]  # pyright: ignore[reportIncompatibleVariableOverride]
 
 

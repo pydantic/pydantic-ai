@@ -62,15 +62,10 @@ try:
     from openai.types.chat.completion_create_params import WebSearchOptions
     from openai.types.shared import ReasoningEffort
 
-    from .openai import (
-        OpenAIChatModel,
-        OpenAIChatModelSettings,
-        OpenAIStreamedResponse,
-        _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
-        _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
-        _flags_input,  # pyright: ignore[reportPrivateUsage]
-        _map_usage as _map_openai_usage,  # pyright: ignore[reportPrivateUsage]
-    )
+    from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
+    from .openai._chat_completions import LenientChatCompletion, LenientChatCompletionChunk
+    from .openai._errors import flags_input
+    from .openai._response_fields import map_usage as _map_openai_usage
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenRouter model, '
@@ -468,7 +463,7 @@ def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream
     the response's own status was 200.
     """
     category = _model_errors.openai_compatible_category(error.code, None, None, error.message)
-    if error.code == 403 and _flags_input(error.metadata):
+    if error.code == 403 and flags_input(error.metadata):
         # A 403 for flagged input is a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
     return ModelHTTPError.for_category(
@@ -601,7 +596,7 @@ class _OpenRouterUsage(completion_usage.CompletionUsage):
     completion_tokens_details: _OpenRouterCompletionTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
 
 
-class _OpenRouterChatCompletion(_ChatCompletion):
+class _OpenRouterChatCompletion(LenientChatCompletion):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
     provider: str
@@ -1040,7 +1035,7 @@ class OpenRouterModel(OpenAIChatModel):
         `CachePoint` is its message's only content: dropping that message would leave the assistant turn
         last, which Anthropic reads as a prefill.
 
-        `_move_leading_cache_breakpoints` in `openai.py` handles the same shape for OpenAI's
+        `move_leading_cache_breakpoints` in `openai/_caching.py` handles the same shape for OpenAI's
         `prompt_cache_breakpoint`. It isn't shared because the rules differ in every step: here only user
         messages carry the marker, a longer TTL already on the target wins, a missing target drops the
         marker instead of raising, a `CachePoint`-only message raises instead of being deleted, and the
@@ -1593,7 +1588,7 @@ class _OpenRouterChunkChoice(chat_completion_chunk.Choice):
     """A wrapped chat completion delta with OpenRouter specific attributes."""
 
 
-class _OpenRouterChatCompletionChunk(_ChatCompletionChunk):
+class _OpenRouterChatCompletionChunk(LenientChatCompletionChunk):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
     provider: str | None = None

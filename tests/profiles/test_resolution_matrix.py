@@ -936,9 +936,20 @@ def test_gateway_zai_glm_5_3_inline_defs():
 
 @pytest.mark.skipif(not openai_imports() or not huggingface_imports(), reason='openai or huggingface not installed')
 def test_gateway_gpt_oss_inline_defs():
-    """Gateways that don't route gpt-oss through `openai_model_profile` add only its inline-defs schema transformer."""
+    """Every gateway gives gpt-oss the inline-defs schema transformer: Together through the shared family map, the rest on their own."""
     assert _normalize(TogetherProvider.model_profile('openai/gpt-oss-120b')) == snapshot(
-        {'json_schema_transformer': _GptOssJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+        {
+            'json_schema_transformer': _GptOssJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'supports_forced_tool_choice': False,
+            'ignore_streamed_leading_whitespace': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
     )
     assert _normalize(FireworksProvider.model_profile('accounts/fireworks/models/gpt-oss-120b')) == snapshot(
         {'json_schema_transformer': _GptOssJsonSchemaTransformer, 'supports_json_schema_output': True}
@@ -955,7 +966,10 @@ def test_gateway_gpt_oss_inline_defs():
 
     # Other OpenAI ids keep each gateway's defaults.
     assert _normalize(TogetherProvider.model_profile('openai/whisper-large-v3')) == snapshot(
-        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'may_tokenize_special_tokens_in_content': True,
+        }
     )
     assert HuggingFaceProvider.model_profile('openai/whisper-large-v3') == snapshot(
         {'may_tokenize_special_tokens_in_content': True}
@@ -1479,6 +1493,43 @@ def test_bedrock_zai_glm():
             'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
+            'bedrock_thinking_variant': 'zai',
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_zai_glm_5_3():
+    """Z.AI GLM-5.3 via Bedrock: always reasons, and Bedrock accepts every effort level from `low` to `max`."""
+    profile = BedrockProvider.model_profile('us.zai.glm-5.3')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'zai_supports_reasoning_effort': True,
+            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
+            'supported_native_tools': frozenset(),
+            'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_leading_assistant_message': True,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'bedrock_thinking_variant': 'zai_effort',
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_deepseek_v3_2():
+    """DeepSeek V3.2 via Bedrock: Bedrock-specific thinking override on top of upstream `deepseek_model_profile`."""
+    profile = BedrockProvider.model_profile('deepseek.v3.2')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'bedrock_thinking_variant': 'deepseek',
+            'supported_native_tools': frozenset(),
             'supports_video_input': False,
         }
     )
@@ -2709,6 +2760,256 @@ def test_together_qwen():
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        (
+            'Qwen/Qwen3.8-27B',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'ignore_streamed_leading_whitespace': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'alibaba/qwen3.6-plus',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'ignore_streamed_leading_whitespace': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'deepseek-ai/DeepSeek-V4-Pro',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'z-ai/glm-5.3',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'zai/glm-5.3',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'openai/gpt-oss-120b',
+            snapshot(
+                {
+                    'json_schema_transformer': _GptOssJsonSchemaTransformer,
+                    'supports_json_schema_output': True,
+                    'supports_json_object_output': True,
+                    'supports_inline_system_prompts': True,
+                    'supported_native_tools': frozenset(
+                        {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                    ),
+                    'supports_forced_tool_choice': False,
+                    'ignore_streamed_leading_whitespace': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'OpenAI/gpt-oss-20b',
+            snapshot(
+                {
+                    'json_schema_transformer': _GptOssJsonSchemaTransformer,
+                    'supports_json_schema_output': True,
+                    'supports_json_object_output': True,
+                    'supports_inline_system_prompts': True,
+                    'supported_native_tools': frozenset(
+                        {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                    ),
+                    'supports_forced_tool_choice': False,
+                    'ignore_streamed_leading_whitespace': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'openai/gpt-5.4',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_json_schema_output': True,
+                    'supports_json_object_output': True,
+                    'supports_image_output': True,
+                    'supports_inline_system_prompts': True,
+                    'supports_thinking': True,
+                    'openai_supports_encrypted_reasoning_content': True,
+                    'openai_supports_reasoning': True,
+                    'openai_supports_reasoning_effort_none': True,
+                    'openai_responses_supports_reasoning_context': True,
+                    'openai_supports_phase': True,
+                    'supported_native_tools': frozenset(
+                        {
+                            CodeExecutionTool,
+                            FileSearchTool,
+                            ImageGenerationTool,
+                            MCPServerTool,
+                            ToolSearchTool,
+                            WebSearchTool,
+                        }
+                    ),
+                    'may_tokenize_special_tokens_in_content': False,
+                }
+            ),
+        ),
+        (
+            'meta-models/muse-spark-open',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'may_tokenize_special_tokens_in_content': False,
+                }
+            ),
+        ),
+        (
+            'meta-llama/Llama-4-Maverick',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'xai/grok-4.7',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_json_schema_output': True,
+                    'supports_json_object_output': True,
+                    'supports_thinking': True,
+                    'thinking_always_enabled': True,
+                    'grok_supports_builtin_tools': True,
+                    'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                    'grok_default_effort_omitted': True,
+                    'may_tokenize_special_tokens_in_content': False,
+                }
+            ),
+        ),
+        (
+            'MiniMaxAI/MiniMax-M3',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_json_schema_output': True,
+                    'supports_json_object_output': True,
+                    'supports_inline_system_prompts': True,
+                    'supported_native_tools': frozenset(
+                        {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                    ),
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+    ],
+)
+def test_openai_compatible_vendor_family(model_name: str, expected: dict[str, Any]):
+    """A `vendor/model` id gets the family its vendor or Hugging Face org names, whatever the case.
+
+    `LiteLLMProvider` shares this resolution; an org without a family profile keeps the generic default.
+    """
+    profile = OpenAICompatibleProvider.model_profile(model_name)
+    assert _normalize(profile) == expected
+    assert LiteLLMProvider.model_profile(model_name) == profile
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        (
+            'openai/gpt-oss-120b',
+            snapshot(
+                {
+                    'json_schema_transformer': _GptOssJsonSchemaTransformer,
+                    'supports_json_schema_output': True,
+                    'supports_json_object_output': True,
+                    'supports_inline_system_prompts': True,
+                    'supported_native_tools': frozenset(
+                        {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+                    ),
+                    'supports_forced_tool_choice': False,
+                    'ignore_streamed_leading_whitespace': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'moonshotai/Kimi-K3',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'ignore_streamed_leading_whitespace': True,
+                    'supports_thinking': True,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'meta-models/Muse-Spark-Open',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8',
+            snapshot(
+                {
+                    'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'deepseek-ai/DeepSeek-V4-Pro',
+            snapshot(
+                {
+                    'json_schema_transformer': OpenAIJsonSchemaTransformer,
+                    'supports_thinking': True,
+                    'supports_forced_tool_choice': False,
+                    'may_tokenize_special_tokens_in_content': True,
+                }
+            ),
+        ),
+        (
+            'MiniMaxAI/MiniMax-M3',
+            snapshot(
+                {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'may_tokenize_special_tokens_in_content': True}
+            ),
+        ),
+    ],
+)
+def test_together_vendor_family(model_name: str, expected: dict[str, Any]):
+    """Together resolves Hugging Face org names through the same family map as other gateways."""
+    assert _normalize(TogetherProvider.model_profile(model_name)) == expected
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_sambanova_llama():
     profile = SambaNovaProvider.model_profile('Meta-Llama-3.3-70B-Instruct')
     assert _normalize(profile) == snapshot(
@@ -3532,7 +3833,6 @@ _GPT_OSS: tuple[_RouteProvider, str] = ('cerebras', 'gpt-oss-120b')
             _GPT_OSS,
             ('together', 'openai/gpt-oss-120b'),
             id='gpt-oss-together',
-            marks=_diverges('#12101', 'Together has no family profile for `openai/gpt-oss-*`'),
         ),
     ],
 )

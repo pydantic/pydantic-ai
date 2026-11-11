@@ -707,14 +707,12 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     return profile
 
 
-def _gpt_oss_schema_profile(model_name: str) -> ModelProfile | None:  # pyright: ignore[reportUnusedFunction]
+def _gpt_oss_schema_profile(model_name: str) -> ModelProfile:  # pyright: ignore[reportUnusedFunction]
     """The gpt-oss schema fix alone, for providers that serve gpt-oss without `openai_model_profile`.
 
-    Returns `None` for every other model, so they keep the provider's defaults.
+    Callers only pass gpt-oss model names.
     """
-    if model_name.startswith('gpt-oss'):
-        return OpenAIModelProfile(json_schema_transformer=_GptOssJsonSchemaTransformer)
-    return None
+    return OpenAIModelProfile(json_schema_transformer=_GptOssJsonSchemaTransformer)
 
 
 def is_openai_live_model(model_name: str) -> bool:
