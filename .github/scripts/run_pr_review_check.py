@@ -8,7 +8,6 @@ import re
 import secrets
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 import urllib.request
@@ -20,7 +19,7 @@ from typing import Literal
 from urllib.parse import quote
 
 from douwebot_opencode_result import final_text
-from douwebot_opencode_run import MODEL, check_symlinks, read_only_config
+from douwebot_opencode_run import check_symlinks, run_with_fallback
 from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
@@ -176,7 +175,7 @@ def step_tokens(line: str) -> int | None:
 
 
 def run_opencode(
-    command: list[str], prompt: str, *, cwd: Path, env: dict[str, str], output: Path, minutes: int
+    command: list[str], prompt: str, *, cwd: Path, env: dict[str, str], output: Path, seconds: float
 ) -> Usage:
     """Stream the event log to `output`, counting steps and tokens, and stop the run at its time budget."""
     usage = Usage()
@@ -189,7 +188,7 @@ def run_opencode(
             usage.stopped = True
             process.kill()
 
-        timer = threading.Timer(minutes * 60, stop)
+        timer = threading.Timer(seconds, stop)
         timer.start()
         try:
             assert process.stdin is not None and process.stdout is not None
@@ -330,9 +329,6 @@ def main() -> None:
     check_symlinks(head)
     context = write_context(check.name, files, workspace, base=env['BASE_SHA'], head=env['HEAD_SHA'])
     prompt = build_prompt(check, context, workspace, pr_number=pr_number, repository=repository)
-    api_key = env['OPENCODE_API_KEY']
-    if not api_key:
-        raise ValueError('OPENCODE_API_KEY is empty')
     token = env.get('LOGFIRE_TOKEN', '')
     endpoint = (env.get('LOGFIRE_URL') or LOGFIRE_URL).rstrip('/')
     attributes = {
@@ -344,31 +340,28 @@ def main() -> None:
     }
     started = time.time_ns()
     stream = runner_temp / f'pr-review-checks-{check.name}.ndjson'
-    with tempfile.TemporaryDirectory(dir=runner_temp, prefix='pr-review-checks-opencode-') as temp:
-        temp_root = Path(temp)
-        config_dir = temp_root / 'config' / 'opencode'
-        config_dir.mkdir(parents=True)
-        (config_dir / 'opencode.json').write_text(
-            json.dumps(read_only_config(agent='reviewer', steps=check.max_steps)), encoding='utf-8'
-        )
-        opencode_env = {
-            'HOME': str(temp_root),
-            'PATH': env['PATH'],
-            'XDG_CONFIG_HOME': str(temp_root / 'config'),
-            'XDG_DATA_HOME': str(temp_root / 'data'),
-            'XDG_CACHE_HOME': str(temp_root / 'cache'),
-            'OPENCODE_API_KEY': api_key,
+    # OpenCode exports its spans and logs over OTLP/HTTP when the endpoint is set. They carry no prompt
+    # or completion text, so these attributes tie them to this review.
+    telemetry = (
+        {
+            'OTEL_EXPORTER_OTLP_ENDPOINT': endpoint,
+            'OTEL_EXPORTER_OTLP_HEADERS': f'Authorization={token}',
+            'OTEL_RESOURCE_ATTRIBUTES': ','.join(f'{key}={quote(value)}' for key, value in attributes.items()),
         }
-        if token:
-            # OpenCode exports its spans and logs over OTLP/HTTP when the endpoint is set. They carry no prompt
-            # or completion text, so these attributes tie them to this review.
-            opencode_env |= {
-                'OTEL_EXPORTER_OTLP_ENDPOINT': endpoint,
-                'OTEL_EXPORTER_OTLP_HEADERS': f'Authorization={token}',
-                'OTEL_RESOURCE_ATTRIBUTES': ','.join(f'{key}={quote(value)}' for key, value in attributes.items()),
-            }
-        command = ['opencode', 'run', '--standalone', '--model', MODEL, '--agent', 'reviewer', '--format', 'json']
-        usage = run_opencode(command, prompt, cwd=workspace, env=opencode_env, output=stream, minutes=check.max_minutes)
+        if token
+        else {}
+    )
+    # A run on the fallback provider gets only what is left of the time budget.
+    deadline = time.monotonic() + check.max_minutes * 60
+    usage, _ = run_with_fallback(
+        lambda command, opencode_env: run_opencode(
+            command, prompt, cwd=workspace, env=opencode_env, output=stream, seconds=deadline - time.monotonic()
+        ),
+        agent='reviewer',
+        output=stream,
+        steps=check.max_steps,
+        extra_env=telemetry,
+    )
     changed = {change.path: change.positions for change in changes}
     result, private_report = check_result(check, files, stream, usage, changed=changed)
     if token:

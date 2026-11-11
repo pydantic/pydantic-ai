@@ -8,10 +8,10 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 | Name | Where | Runs when |
 |------|-------|-----------|
 | `CI Review` | `pydantic-ai-pr-review.md` | when a user with write access or higher **approves** the PR's current head, on applying the **`final-review` label**, or on dispatch, once `CI` has passed on that head. Never in the merge queue. Z.AI Coding Plan engine, submits formal `REQUEST_CHANGES` for verified HIGH or CRITICAL findings, `COMMENT` for incomplete coverage without those findings, and `APPROVE` after complete coverage without them. Same-repo PRs only. |
-| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`). Claude Opus 5.5 reviews. A rejected Claude subscription window reruns the review with `opencode-go/deepseek-v4.1-flash`. Deletes the label when it finishes. A trusted publisher posts structured findings as one formal `APPROVE`, `REQUEST_CHANGES`, or incomplete `COMMENT` review. |
+| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`). Claude Opus 5.5 reviews. A rejected Claude subscription window reruns the review with `opencode-go/deepseek-v4.1-flash` and its [DeepInfra fallback](#opencode-falls-back-from-opencode-go-to-deepinfra). Deletes the label when it finishes. A trusted publisher posts structured findings as one formal `APPROVE`, `REQUEST_CHANGES`, or incomplete `COMMENT` review. |
 | `douwebot:review-agent-config` | `bots.yml` | one explicit review request for one PR head; the labeling sender must be a `User` with current `write` or `admin` permission. The label is not standing approval. |
 
-`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It returns `REQUEST_CHANGES` while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It returns `APPROVE` after a complete review with no outstanding blocking findings; optional findings may remain. Incomplete coverage returns `INCOMPLETE`, which the publisher records as `COMMENT`. A host-verified closed PR or moved head needs no publication and ends successfully. A head that already has douwebot findings cannot get a clean approval, so a later request for that head skips the review and comments with a link to the review that left them; a head with a clean approval, an incomplete review or a failed run is reviewed again, an incomplete one to complete its coverage even when its findings already block the head. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review. Both review labels use the OpenCode fallback. It has read, grep and glob tools, but no live GitHub or Git commands. It uses the prefetched review context and returns `INCOMPLETE` if missing information prevents a complete review. The `OPENCODE_API_KEY` secret must be a Console key for the Go workspace.
+`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It returns `REQUEST_CHANGES` while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It returns `APPROVE` after a complete review with no outstanding blocking findings; optional findings may remain. Incomplete coverage returns `INCOMPLETE`, which the publisher records as `COMMENT`. A host-verified closed PR or moved head needs no publication and ends successfully. A head that already has douwebot findings cannot get a clean approval, so a later request for that head skips the review and comments with a link to the review that left them; a head with a clean approval, an incomplete review or a failed run is reviewed again, an incomplete one to complete its coverage even when its findings already block the head. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review. Both review labels use the OpenCode fallback. It has read, grep and glob tools, but no live GitHub or Git commands. It uses the prefetched review context and returns `INCOMPLETE` if missing information prevents a complete review.
 
 If GitHub rejects inline publication with HTTP 422, retry once with the findings in the review body.
 Recheck the live head before that retry. Preserve the verdict; body findings still prevent a clean approval.
@@ -215,7 +215,7 @@ supersede an empty incomplete review, but cannot erase earlier findings. PR Bots
 reviewer and a trusted publisher that binds the result to its run and head. The gate verifies that
 receipt, so `CI Review` cannot stand in for douwebot even though both can use the same bot account.
 Maintainer-authorized protected-configuration reviews satisfy the same rule.
-A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine.
+A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine and, for OpenCode, its provider.
 
 `pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews and
 inline-comment changes with a read-only token, including on forks. Its completion wakes
@@ -258,7 +258,7 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   head. A change only to the documentation `is_content` lists selects nothing and passes. Files
   under `.github/` always get a review, a generated `*.lock.yml` included: Actions runs the lock,
   and nothing checks that it matches its `.md` source.
-- Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash` and only read, grep and glob,
+- Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash`, its [DeepInfra fallback](#opencode-falls-back-from-opencode-go-to-deepinfra), and only read, grep and glob,
   in the douwebot layout: the head is confined to `pr-head/` and its agent instruction files are
   deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts
   and the gathered PR context, so the model can trace callers. The check's `max_steps` and
@@ -290,6 +290,29 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
 To add a check, add a `SpecialistCheck` entry in `pr_review_checks.py` and its prompt
 fragment in `.github/pr-review-checks/prompts/`. The workflow needs no change. Like `bots.yml`, a
 PR cannot test its own change to this workflow or its scripts.
+
+# OpenCode falls back from OpenCode Go to DeepInfra
+
+Every CI OpenCode run starts on `opencode-go/deepseek-v4.1-flash` with `OPENCODE_API_KEY`, a Console key for the Go
+workspace: douwebot's OpenCode fallback, each `PR Review Checks` review and OpenCode threat detection.
+`run_with_fallback` in `.github/scripts/douwebot_opencode_run.py` reruns it on
+`deepinfra/deepseek-ai/DeepSeek-V4.1-Flash` with `DEEPINFRA_API_KEY` only when all of these hold:
+
+- OpenCode exited non-zero, and its event stream has no `step_finish` event.
+- The stream's last `error` event has type `provider.go-limit` or `provider.quota`. OpenCode 2.2.5 gives a spent
+  quota these types and does not retry it; see `toSessionError` in
+  [`to-session-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts).
+- `DEEPINFRA_API_KEY` is set.
+
+Every other failure fails as it does on Go alone, including a rejected key, a provider outage, a time-budget stop, a
+timeout and an invalid answer. The DeepInfra run gets only the rest of the time budget. Each run's config allows
+only its provider and pins the `title` and `compaction` agents to its model. Its environment holds only that
+provider's key. The job log names the model that served the run, and on a fallback the error type. It never prints
+the error message, which can repeat the provider's response. A DeepInfra run sends DeepInfra the same content a
+Go run sends Go, fork pull request content included.
+
+Douwebot's receipt and attribution name the serving provider: `engine=opencode` for Go and
+`engine=opencode-deepinfra` for DeepInfra. Start any new CI OpenCode run through `run_with_fallback`.
 
 # Code owners review dependency, CI config and durable runtime changes
 
@@ -347,7 +370,7 @@ such source with a comment naming that set. Every other workflow gets an unrestr
 
 gh-aw runs threat detection only on its Copilot, Claude and Codex engines.
 `shared/engine-zai.md` sets `safe-outputs.threat-detection.engine: false` and runs our own detector as detection post-steps.
-`.github/scripts/gh_aw_opencode_detect.py` runs OpenCode with `opencode-go/deepseek-v4.1-flash` and `OPENCODE_API_KEY`.
+`.github/scripts/gh_aw_opencode_detect.py` runs OpenCode with `opencode-go/deepseek-v4.1-flash` and its [DeepInfra fallback](#opencode-falls-back-from-opencode-go-to-deepinfra).
 The post-steps check the script out at `github.workflow_sha` and install OpenCode with `setup-douwebot-tools`.
 
 - Keep the detector step's id `detection_agentic_execution`. gh-aw's conclusion step reads that step's outcome.
@@ -355,7 +378,8 @@ The post-steps check the script out at `github.workflow_sha` and install OpenCod
 - OpenCode runs with douwebot's read-only lockdown in `/tmp/gh-aw/threat-detection`. It cannot read the repository workspace.
 - A valid verdict writes `detection_result.json` without reasons and `detection_result_full.json` with them.
 - An invalid verdict writes `THREAT_DETECTION_STATUS: reason=invalid_report_exhausted` to `detection.log`, which concludes as `parse_error`.
-  An OpenCode failure is retried `GH_AW_HARNESS_MAX_RETRIES` times. It then writes `reason=engine_error`, which concludes as `agent_failure`.
+  An OpenCode failure is retried `GH_AW_HARNESS_MAX_RETRIES` times. A DeepInfra fallback runs inside its attempt and does not count as a retry.
+  After the last retry fails, the detector writes `reason=engine_error`, which concludes as `agent_failure`.
   An invalid verdict is not retried.
   A run that reaches the script's deadline, two minutes before the step's 15, writes `reason=engine_timeout`, which concludes as `agent_failure`, and stops.
   Warn mode turns each of these three into a `warning` and a comment on the `[aw] Detection Runs` tracker.

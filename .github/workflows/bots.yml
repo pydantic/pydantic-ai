@@ -265,11 +265,12 @@ jobs:
             | [$reviews[0][][]
                 | select(.user.login == "github-actions[bot]" and .user.type == "Bot" and .commit_id == $head)
                 | (.body // "") as $body
-                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + "( engine=(claude|opencode))? -->\\z"))
-                | (($body | capture(" engine=(?<engine>claude|opencode) -->\\z") | .engine) // "") as $engine
-                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40}( engine=(claude|opencode))? -->\\z"; "")) as $marked
+                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + "( engine=(claude|opencode|opencode-deepinfra))? -->\\z"))
+                | (($body | capture(" engine=(?<engine>claude|opencode|opencode-deepinfra) -->\\z") | .engine) // "") as $engine
+                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40}( engine=(claude|opencode|opencode-deepinfra))? -->\\z"; "")) as $marked
                 | (if $engine == "claude" then "\n\nReviewer: Claude Code (claude-opus-5-5)"
                    elif $engine == "opencode" then "\n\nReviewer: OpenCode (opencode-go/deepseek-v4.1-flash)"
+                   elif $engine == "opencode-deepinfra" then "\n\nReviewer: OpenCode (deepinfra/deepseek-ai/DeepSeek-V4.1-Flash)"
                    else "" end) as $attribution
                 | (if $attribution == "" then $marked
                    elif $marked | endswith($attribution) then $marked | rtrimstr($attribution)
@@ -665,6 +666,7 @@ jobs:
       actions: read
     outputs:
       result: ${{ steps.result.outputs.result }}
+      engine: ${{ steps.opencode.outputs.engine }}
     steps:
       - name: Checkout base ref
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -698,12 +700,15 @@ jobs:
       - name: Set up OpenCode and review tools
         uses: ./.github/actions/setup-douwebot-tools
 
-      - name: Review with OpenCode Go
+      - name: Review with OpenCode
+        id: opencode
         run: |
           export PATH="$RUNNER_TEMP/douwebot-tools/bin:$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin:$PATH"
           python3 .github/scripts/douwebot_opencode_run.py
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          # Serves the review when OpenCode Go refuses it before its first step.
+          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
           REVIEW_PROMPT: *douwebot-prompt
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
 
@@ -731,7 +736,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TRUSTED_REF: ${{ github.event.repository.default_branch }}
           REVIEW_RESULT: ${{ needs.review.outputs.fallback == 'true' && needs.douwebot-opencode.outputs.result || needs.review.outputs.result }}
-          REVIEW_ENGINE: ${{ needs.review.outputs.fallback == 'true' && 'opencode' || 'claude' }}
+          # An empty fallback engine reaches the publisher, which rejects it, rather than becoming `claude`.
+          REVIEW_ENGINE: ${{ needs.review.outputs.fallback != 'true' && 'claude' || needs.douwebot-opencode.outputs.engine }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
