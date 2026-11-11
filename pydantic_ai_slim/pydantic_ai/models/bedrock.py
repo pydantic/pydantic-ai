@@ -434,8 +434,8 @@ _HIGH_ONLY_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
 }
 """Maps unified thinking values to `reasoning_effort` for models where only `high` reasons on Converse.
 
-Used for Z.AI GLM-4.7/GLM-5 and DeepSeek V3.2: Converse accepts `none`, `low`, `medium`, and `high`, but in live checks
-only `high` produced reasoning, so every enabled level folds up to it.
+Used for Z.AI GLM-4.7/GLM-4.7-flash/GLM-5 and DeepSeek V3.2: Converse accepts `none`, `low`, `medium`, and `high`,
+but in live checks only `high` produced reasoning, so every enabled level folds up to it.
 """
 
 _GLM_EFFORT_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
@@ -452,6 +452,14 @@ _GLM_EFFORT_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     'max': 'max',
 }
 """Maps unified thinking values to `reasoning_effort` for Z.AI GLM models with effort levels on Converse (GLM-5.3)."""
+
+_REASONING_EFFORT_MAPS: dict[str, dict[ThinkingLevel, str]] = {
+    'openai': _GPT_OSS_REASONING_EFFORT_MAP,
+    'deepseek': _HIGH_ONLY_REASONING_EFFORT_MAP,
+    'zai': _HIGH_ONLY_REASONING_EFFORT_MAP,
+    'zai_effort': _GLM_EFFORT_REASONING_EFFORT_MAP,
+}
+"""The `reasoning_effort` table for each thinking variant that takes that field on Converse."""
 
 _GROK_REASONING_EFFORT_MAP: dict[ThinkingLevel, str] = {
     # Grok always reasons on Converse and accepts `low`/`medium`/`high`/`xhigh`, so `thinking=False` and `minimal`
@@ -1009,7 +1017,7 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         if (
             (variant == 'anthropic' and ('thinking' in fields or effort_replaced))
-            or (variant in ('openai', 'deepseek', 'zai', 'zai_effort') and 'reasoning_effort' in fields)
+            or (variant in _REASONING_EFFORT_MAPS and 'reasoning_effort' in fields)
             or (variant == 'openai_responses' and 'reasoning' in fields)
             or (variant == 'qwen' and 'reasoning_config' in fields)
             or (variant == 'xai' and 'reasoning' in fields)
@@ -2721,18 +2729,12 @@ def _add_thinking_fields(existing: dict[str, Any], thinking: ThinkingLevel, prof
         case 'anthropic':
             if 'thinking' not in existing:
                 _add_anthropic_thinking_fields(existing, thinking, profile)
-        case 'openai':
+        case 'openai' | 'deepseek' | 'zai' | 'zai_effort':
             if 'reasoning_effort' not in existing:
-                existing['reasoning_effort'] = _GPT_OSS_REASONING_EFFORT_MAP[thinking]
+                existing['reasoning_effort'] = _REASONING_EFFORT_MAPS[variant][thinking]
         case 'openai_responses':
             if 'reasoning' not in existing:
                 existing['reasoning'] = {'effort': _openai_responses_reasoning_effort(thinking, profile)}
-        case 'deepseek' | 'zai':
-            if 'reasoning_effort' not in existing:
-                existing['reasoning_effort'] = _HIGH_ONLY_REASONING_EFFORT_MAP[thinking]
-        case 'zai_effort':
-            if 'reasoning_effort' not in existing:
-                existing['reasoning_effort'] = _GLM_EFFORT_REASONING_EFFORT_MAP[thinking]
         case 'qwen':
             if 'reasoning_config' not in existing:
                 existing['reasoning_config'] = _QWEN_REASONING_CONFIG_MAP[thinking]
