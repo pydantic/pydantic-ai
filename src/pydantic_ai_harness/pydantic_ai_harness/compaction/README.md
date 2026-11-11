@@ -715,7 +715,7 @@ Content a harness capability added on the user channel and tagged with an `origi
 rendered as a `<harness_data origin="...">` element, capped like a tool return, rather than as
 `role="user"`. When the transcript holds such content, the summary request also tells the summarizer not to
 treat it as the user's requests or standing constraints; that guidance is the only conditional part of
-the summary request.
+the transcript rendering, while `max_summary_tokens` adds a length instruction of its own.
 `max_tokens` and `keep_tokens` control when compaction runs and which history messages are retained; they
 do not cap the summary-request payload.
 
