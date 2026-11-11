@@ -403,7 +403,7 @@ class TestClearToolResultsTargeting:
         ('kwargs', 'expected'),
         [
             pytest.param({'keep_turns': 0}, {'a': CLEARED, 'b': 'b result'}, id='keep_turns'),
-            pytest.param({'tools': ['fetch']}, {'a': 'a result', 'b': 'b result'}, id='tools'),
+            pytest.param({'tools': ['fetch'], 'keep_pairs': 0}, {'a': 'a result', 'b': CLEARED}, id='tools'),
         ],
     )
     async def test_loads_from_an_agent_spec(self, kwargs: dict[str, object], expected: dict[str, str]):
@@ -412,7 +412,7 @@ class TestClearToolResultsTargeting:
             custom_capability_types=[ClearToolResults],
         )
         [cap] = [c for c in agent.root_capability.capabilities if isinstance(c, ClearToolResults)]
-        messages = [*_turn('one', 'a'), *_turn('two', 'b')]
+        messages = [*_turn('one', 'a'), *_turn('two', 'b', tool_name='fetch')]
         assert _contents(await cap.compact(messages, _ctx())) == expected
 
     def test_agent_spec_accepts_only_a_string_placeholder(self):

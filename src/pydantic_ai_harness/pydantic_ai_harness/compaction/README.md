@@ -599,7 +599,8 @@ results again on a later request. Keep it deterministic: a
 history cleared again from its original messages, as on a resumed or replayed run, has to come out the
 same, or the provider's prompt cache misses from the first result that differs. A cleared result is
 recognized by a mark in its `metadata`, so with a function, a result whose `metadata` is something
-other than `None` or a `dict` is left uncleared. An
+other than `None` or a `dict` is left uncleared. With `clear_tool_inputs=True`, the call's arguments
+are cleared even then, as inputs are cleared independently of results. An
 [agent spec](https://pydantic.dev/docs/ai/core-concepts/agent-spec/) can only set `placeholder` to a
 string, because a function has no spec form.
 

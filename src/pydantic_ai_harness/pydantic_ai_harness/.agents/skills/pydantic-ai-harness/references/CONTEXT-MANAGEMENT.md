@@ -119,7 +119,8 @@ messages, receipts, other harness-added prompts, or a `ToolReturn`'s `content` s
 `exclude_tools` never clears them. Setting `tools` with `exclude_tools`, or a non-default
 `keep_pairs` with `keep_turns`, raises `UserError`. `placeholder` can be a function of the
 `ToolReturnPart` (e.g. `lambda part: part.model_response_str().partition('\n')[0]` keeps the first
-line, so ids survive). It runs once per result, when it is cleared, must be deterministic so the
+line, so ids survive). It runs when a result is cleared (again on a later request when
+`min_clear_tokens` drops a clear that reclaims too little), must be deterministic so the
 cache prefix stays stable, skips results whose `metadata` isn't `None` or a `dict`, and can't be set
 from an agent spec (strings only). `min_clear_tokens` skips clears too small to be worth a cache
 bust. Core `search_tools` / `load_capability` returns are never cleared. `max_messages` counts from
