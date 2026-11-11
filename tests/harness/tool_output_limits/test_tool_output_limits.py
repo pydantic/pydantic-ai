@@ -1129,17 +1129,22 @@ class TestActionsAndSelection:
 # ---------------------------------------------------------------------------
 
 
+# `ToolOutputLimits._handle_key` is private, but its output is the documented on-disk handle layout, so the
+# tests below pin it directly.
+_handle_key = ToolOutputLimits._handle_key  # pyright: ignore[reportPrivateUsage]
+
+
 class TestInternals:
     def test_handle_key_defaults(self):
         limits: ToolOutputLimits[object] = ToolOutputLimits()
         ctx = _make_ctx(run_id=None, retry=2)
         ctx.tool_call_id = None
-        key = limits._handle_key(ctx, ToolCallPart(tool_name='t', args='{}', tool_call_id=''))
+        key = _handle_key(limits, ctx, ToolCallPart(tool_name='t', args='{}', tool_call_id=''))
         assert key == 'run/call.2'
 
     def test_handle_key_suffix(self):
         limits: ToolOutputLimits[object] = ToolOutputLimits()
-        key = limits._handle_key(_make_ctx(), ToolCallPart(tool_name='t', args='{}', tool_call_id='c'), '.content')
+        key = _handle_key(limits, _make_ctx(), ToolCallPart(tool_name='t', args='{}', tool_call_id='c'), '.content')
         assert key.endswith('.content')
 
     def test_handle_key_keeps_a_reused_call_id_apart(self):
@@ -1149,18 +1154,18 @@ class TestInternals:
         second = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
         last = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_1')
         # The first call keeps the documented handle; only the repeated id is parked a level down.
-        assert limits._handle_key(_make_ctx(run_step=1), first) == 'run-1/call_0.0'
-        assert limits._handle_key(_make_ctx(run_step=2), second) == 'run-1/2/call_0.0'
-        assert limits._handle_key(_make_ctx(run_step=2), last) == 'run-1/call_1.0'
+        assert _handle_key(limits, _make_ctx(run_step=1), first) == 'run-1/call_0.0'
+        assert _handle_key(limits, _make_ctx(run_step=2), second) == 'run-1/2/call_0.0'
+        assert _handle_key(limits, _make_ctx(run_step=2), last) == 'run-1/call_1.0'
 
     def test_handle_key_does_not_read_the_history(self):
         """A capability may rewrite `ctx.messages` mid-run, so the key must not be derived from it."""
         limits: ToolOutputLimits[object] = ToolOutputLimits()
         call = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
-        first = limits._handle_key(_make_ctx(messages=[ModelResponse(parts=[call])], run_step=1), call)
+        first = _handle_key(limits, _make_ctx(messages=[ModelResponse(parts=[call])], run_step=1), call)
         # A compaction replaced every earlier message between the two responses.
-        after_compaction = limits._handle_key(
-            _make_ctx(messages=[ModelResponse(parts=[TextPart('summary')])], run_step=2), call
+        after_compaction = _handle_key(
+            limits, _make_ctx(messages=[ModelResponse(parts=[TextPart('summary')])], run_step=2), call
         )
         assert (first, after_compaction) == ('run-1/call_0.0', 'run-1/2/call_0.0')
 
@@ -1168,8 +1173,8 @@ class TestInternals:
         """A retry of the same call keeps `run_id/tool_call_id.retry`, so only reused ids move."""
         limits: ToolOutputLimits[object] = ToolOutputLimits()
         call = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
-        assert limits._handle_key(_make_ctx(run_step=1), call) == 'run-1/call_0.0'
-        assert limits._handle_key(_make_ctx(run_step=2, retry=1), call) == 'run-1/call_0.1'
+        assert _handle_key(limits, _make_ctx(run_step=1), call) == 'run-1/call_0.0'
+        assert _handle_key(limits, _make_ctx(run_step=2, retry=1), call) == 'run-1/call_0.1'
 
     def test_with_handles_non_mapping(self):
         meta = _with_handles('not-a-mapping', 'h/1.0', 42)
@@ -1495,4 +1500,4 @@ class TestAgentIntegration:
         with pytest.raises(RuntimeError, match='boom'):
             await agent.run('go')
 
-        assert cap._spilled_calls == {}
+        assert cap._spilled_calls == {}  # pyright: ignore[reportPrivateUsage] -- the run's names are released
