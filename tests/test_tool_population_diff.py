@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool, WebSearchTool, XSearchTool
 from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode
@@ -664,19 +664,6 @@ class _RestrictToLater(AbstractCapability[Any]):
         return request_context
 
 
-def _restricted_to_newcomer_agent(model: Model, native_tools: list[AbstractNativeTool]) -> Agent[None, str]:
-    """An agent whose `unlock` tool adds `later`, with a `tool_choice` naming only `later` once it is present."""
-    toolset = FunctionToolset[Any]()
-
-    @toolset.tool_plain
-    def unlock() -> str:
-        toolset.add_function(_later, name='later')
-        return 'unlocked'
-
-    capabilities: list[AbstractCapability[Any]] = [_RestrictToLater(), *(NativeTool(tool) for tool in native_tools)]
-    return Agent(model, toolsets=[toolset], capabilities=capabilities)
-
-
 @pytest.mark.parametrize(
     'native_tools',
     [
@@ -703,7 +690,9 @@ async def test_anthropic_tool_choice_restricted_to_a_newcomer_declares_it_plainl
     )
     model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=client))
 
-    result = await _restricted_to_newcomer_agent(model, native_tools).run('go')
+    result = await _add_function_agent(model, _RestrictToLater(), *(NativeTool(tool) for tool in native_tools)).run(
+        'go'
+    )
 
     assert result.output == 'done'
     assert [
@@ -712,23 +701,41 @@ async def test_anthropic_tool_choice_restricted_to_a_newcomer_declares_it_plainl
     ] == [[('unlock', False)], [('later', False)], [('later', False)]]
 
 
+_NO_BETAS: list[list[str]] = [[], [], []]
+# The request before `unlock` runs has no newcomer to reveal.
+_TOOL_ADDITION_BETAS: list[list[str]] = [
+    [],
+    ['mid-conversation-tool-changes-2026-07-01'],
+    ['mid-conversation-tool-changes-2026-07-01'],
+]
+
+
 @pytest.mark.parametrize(
-    ('native_tools', 'request_betas'),
+    ('restrict', 'native_tools', 'count_betas', 'request_betas'),
     [
-        pytest.param([], [], id='no-native-tools'),
+        pytest.param(False, [], _TOOL_ADDITION_BETAS, _TOOL_ADDITION_BETAS, id='newcomer-deferred'),
+        pytest.param(True, [], _NO_BETAS, _NO_BETAS, id='newcomer-declared-plainly'),
         pytest.param(
+            True,
             [MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')],
-            ['mcp-client-2025-04-04'],
-            id='native-mcp-server',
+            _NO_BETAS,
+            [['mcp-client-2025-04-04']] * 3,
+            id='newcomer-declared-plainly-native-mcp-server',
         ),
     ],
 )
-async def test_anthropic_count_tokens_for_a_newcomer_declared_plainly_sends_no_tool_addition_beta(
-    allow_model_requests: None, native_tools: list[AbstractNativeTool], request_betas: list[str]
+async def test_anthropic_count_tokens_sends_the_tool_addition_beta_its_request_sends(
+    allow_model_requests: None,
+    restrict: bool,
+    native_tools: list[AbstractNativeTool],
+    count_betas: list[list[str]],
+    request_betas: list[list[str]],
 ):
-    """`count_tokens` declares the newcomer plainly too, so it sends no beta for a `tool_addition` the request lacks.
+    """`count_tokens` sends the `tool_addition` beta exactly when the request it precedes does.
 
-    The count leaves out `mcp_servers`, which the endpoint rejects, so it leaves out the MCP beta as well.
+    A deferred newcomer is revealed through a `tool_addition`, which needs the beta on both. A `tool_choice` naming
+    only the newcomer declares it plainly instead, so neither sends it. The count leaves out `mcp_servers`, which the
+    endpoint rejects, so it leaves out the MCP beta as well.
     """
     usage = BetaUsage(input_tokens=1, output_tokens=1)
     client = MockAnthropic.create_mock(
@@ -739,8 +746,11 @@ async def test_anthropic_count_tokens_for_a_newcomer_declared_plainly_sends_no_t
         ]
     )
     model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=client))
+    capabilities: list[AbstractCapability[Any]] = [NativeTool(tool) for tool in native_tools]
+    if restrict:
+        capabilities.append(_RestrictToLater())
 
-    result = await _restricted_to_newcomer_agent(model, native_tools).run(
+    result = await _add_function_agent(model, *capabilities).run(
         'go', usage_limits=UsageLimits(count_tokens_before_request=True)
     )
 
@@ -749,8 +759,8 @@ async def test_anthropic_count_tokens_for_a_newcomer_declared_plainly_sends_no_t
     counts, creates = requests[::2], requests[1::2]
     assert [kwargs['tools'] for kwargs in counts] == [kwargs['tools'] for kwargs in creates]
     # An empty `betas` list goes out as `omit`.
-    assert [kwargs['betas'] or [] for kwargs in creates] == [request_betas] * 3
-    assert [kwargs['betas'] or [] for kwargs in counts] == [[]] * 3
+    assert [kwargs['betas'] or [] for kwargs in creates] == request_betas
+    assert [kwargs['betas'] or [] for kwargs in counts] == count_betas
 
 
 async def test_anthropic_tool_choice_excluding_a_newcomer_does_not_reveal_it(allow_model_requests: None):
