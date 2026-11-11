@@ -171,7 +171,8 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             id: The capability id.
             defer_loading: Whether to make this an on-demand capability, whose tools the model loads by `id`.
             description: The capability description.
-            mode: Deprecated: use `native` and `local`.
+            mode: Deprecated: use `native` and `local`. Combined with a non-default `native` or
+                `local`, it raises `UserError`; a default value is overridden by `mode`.
         """
         if local is None:
             # `None` and `True` build the same tool; stating `True` makes them merge the same way too.
