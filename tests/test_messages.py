@@ -363,6 +363,8 @@ def test_structured_content_round_trips_through_json():
     [
         ('audio/wav', 'wav'),
         ('audio/mpeg', 'mp3'),
+        ('audio/mp3', 'mp3'),
+        ('audio/x-wav', 'wav'),
     ],
 )
 def test_binary_content_audio(media_type: str, format: str):
@@ -375,6 +377,7 @@ def test_binary_content_audio(media_type: str, format: str):
     'media_type, format',
     [
         ('image/jpeg', 'jpeg'),
+        ('image/jpg', 'jpeg'),
         ('image/png', 'png'),
         ('image/gif', 'gif'),
         ('image/webp', 'webp'),
@@ -460,6 +463,8 @@ def test_binary_content_document(media_type: str, format: str):
         pytest.param(AudioUrl('foobar.aiff'), 'audio/aiff', 'aiff', id='aiff'),
         pytest.param(AudioUrl('foobar.aac'), 'audio/aac', 'aac', id='aac'),
         pytest.param(AudioUrl('foobar', media_type='audio/mpeg'), 'audio/mpeg', 'mp3', id='mp3'),
+        pytest.param(AudioUrl('foobar', media_type='audio/mp3'), 'audio/mp3', 'mp3', id='mp3-alias'),
+        pytest.param(AudioUrl('foobar', media_type='audio/x-wav'), 'audio/x-wav', 'wav', id='x-wav-alias'),
     ],
 )
 def test_audio_url(audio_url: AudioUrl, media_type: str, format: str):

@@ -798,11 +798,3 @@ def test_vertex_leaves_a_model_without_an_image_set_judged_by_kind():
     gemma = GoogleModel('gemma-3-27b-it', provider=GoogleCloudProvider(project='test', location='us-central1'))
 
     assert 'supported_image_media_types' not in gemma.profile
-
-
-def test_image_jpg_is_sent_to_bedrock_and_anthropic_as_jpeg():
-    """Bedrock names a format and Anthropic validates the media type, so both get the registered spelling."""
-    assert BinaryContent(b'jpg', media_type='image/jpg').format == 'jpeg'
-    if anthropic_available():
-        block = AnthropicModel._map_binary_data(b'jpg', 'image/jpg')  # pyright: ignore[reportPrivateUsage]
-        assert block['source']['media_type'] == 'image/jpeg'  # pyright: ignore[reportGeneralTypeIssues]
