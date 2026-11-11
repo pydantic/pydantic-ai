@@ -69,6 +69,8 @@ class RequestInput(AbstractCapability[AgentDepsT]):
     When it elapses, or the token is resolved with a failure instead of an answer, every pending
     approval is denied and every pending external call fails, with a message to the model saying why.
     In process, it also bounds `ask`: an async `ask` still running when it elapses is cancelled.
+    On AWS Lambda, it is also the timeout of the callback created for each wait, which is left open
+    when `ask` answers in place; set it so such callbacks expire.
     """
 
     name: str = 'deferred_tool_calls'

@@ -233,7 +233,8 @@ external call fails, with a message saying why, and the run continues.
 The callback's `timeout` is set from `RequestInput(timeout=...)`, rounded up to whole seconds, and
 counts from when the callback is created, just before `ask` runs. Without one, the execution waits
 until its `ExecutionTimeout`. When `ask` answers right away, nothing waits on the callback: it stays
-open until its timeout, and resolving it has no effect on the run. The `ask` step is a step like any
+open until its timeout, and resolving it has no effect on the run. Without a `timeout`, that callback
+has none, so it is never closed; when `ask` may answer in place, set `timeout` so it expires. The `ask` step is a step like any
 other: it is not run again on replay, `step_config` applies to it, and the default retry policy can
 run it again when it fails, so make it idempotent. Both are named after `RequestInput(name=...)`,
 `deferred_tool_calls` by default. An approved call's tool appears twice in the history as
