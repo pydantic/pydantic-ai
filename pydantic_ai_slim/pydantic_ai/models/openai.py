@@ -56,7 +56,7 @@ from .._utils import (
 )
 from ..capabilities.abstract import AbstractCapability
 from ..computer_use import (
-    _CALL_LABELS,  # pyright: ignore[reportPrivateUsage]
+    _LABEL_KEYS,  # pyright: ignore[reportPrivateUsage]
     _SAFETY_CHECKS,  # pyright: ignore[reportPrivateUsage]
     COMPUTER_KIND,
     ComputerCallPart,
@@ -3052,7 +3052,7 @@ def _call_as_sent(part: ToolCallPart) -> ToolCallPart:
     leaving it in would make a response compared later never match.
     """
     args = part.args if part.args is None or isinstance(part.args, str) else {**part.args}
-    details = {key: value for key, value in (part.provider_details or {}).items() if key not in _CALL_LABELS}
+    details = {key: value for key, value in (part.provider_details or {}).items() if key not in _LABEL_KEYS}
     return ToolCallPart(
         tool_name=part.tool_name,
         args=args,
