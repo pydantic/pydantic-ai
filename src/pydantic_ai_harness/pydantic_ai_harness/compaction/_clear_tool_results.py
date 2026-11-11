@@ -31,10 +31,6 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 
-_DEFAULT_KEEP_PAIRS = 3
-"""`ClearToolResults.keep_pairs` when it isn't set, which `keep_turns` requires."""
-
-
 @dataclass
 class ClearToolResults(AbstractCapability[AgentDepsT]):
     """Zero-cost in-place clearing of old tool results.
@@ -100,7 +96,7 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
     Only consulted alongside `max_fraction`. Supply the real number for a deployment the
     registry cannot resolve."""
 
-    keep_pairs: int = _DEFAULT_KEEP_PAIRS
+    keep_pairs: int = 3
     """Number of most-recent tool-call / tool-return pairs left untouched.
 
     `keep_turns` replaces the pair count when set; setting both to a `keep_pairs` other than the
@@ -160,7 +156,8 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
             raise UserError(f'tools takes a sequence of tool names, not a string: use tools=[{self.tools!r}].')
         if self.tools is not None and self.exclude_tools:
             raise UserError('Set at most one of tools or exclude_tools.')
-        if self.keep_turns is not None and self.keep_pairs != _DEFAULT_KEEP_PAIRS:
+        # The field's own default, read off the class, so the two can't drift apart.
+        if self.keep_turns is not None and self.keep_pairs != ClearToolResults.keep_pairs:
             raise UserError('Set at most one of keep_pairs or keep_turns.')
         if self.max_messages is None and self.max_tokens is None and self.max_fraction is None:
             raise ValueError('At least one of max_messages, max_tokens, or max_fraction must be set.')
