@@ -707,14 +707,14 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 def _is_computer_use_model(model_name: str) -> bool:
     """Whether OpenAI serves its native `computer` tool to the model.
 
-    The families whose model page lists `computer_use` among its supported tools: GPT-5.4 (also mini and pro), GPT-5.5,
-    GPT-5.6 and GPT-6. GPT-5.4 nano and GPT-5.5 pro leave it out:
-    https://developers.openai.com/api/docs/models/gpt-5.4-nano, https://developers.openai.com/api/docs/models/gpt-5.5-pro.
-    Known families only, like tool search above, so a new family gets the `computer` function tool until it is added.
+    Checked against the live Responses API: GPT-5.4 (also mini and pro), GPT-5.5 (also pro), GPT-5.6 and GPT-6 accept
+    the tool and call it, while GPT-5.4 nano, GPT-5.3 Codex and GPT-5.2 reject it with a 400 ("Tool 'computer' is not
+    supported"). This differs from tool search above, which GPT-5.3 Codex and GPT-5.2 take. Known families only, so a
+    new family gets the `computer` function tool until it is added.
     """
     return model_name.startswith(
         ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
-    ) and not model_name.startswith(('gpt-5.4-nano', 'gpt-5.5-pro'))
+    ) and not model_name.startswith('gpt-5.4-nano')
 
 
 def is_openai_live_model(model_name: str) -> bool:
