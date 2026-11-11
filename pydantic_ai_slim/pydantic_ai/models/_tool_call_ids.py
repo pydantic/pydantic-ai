@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import hashlib
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -54,27 +55,40 @@ def stored_tool_call_id(
     return qualify_tool_call_id(tool_call_id, tool_call_id_scope(provider_response_id, timestamp))
 
 
-def unqualify_tool_call_id(tool_call_id: str, scope: str) -> str:
-    """Restore the ID the provider sent from one `qualify_tool_call_id` qualified with `scope`."""
-    restored = tool_call_id.removesuffix(f'_{hashed_tool_call_id(scope, 8)}')
-    if restored != tool_call_id:
-        return restored
-    # Before the flag moved to `ModelProfile`, `OpenAIResponsesModel` qualified IDs as `{response_id}:{tool_call_id}`.
-    return tool_call_id.removeprefix(f'{scope}:')
+def response_tool_call_id_scopes(provider_response_id: str | None, timestamp: datetime) -> tuple[str, ...]:
+    """The scopes the tool call IDs of a response can have been qualified with, the one it gets now first.
+
+    A response with a `provider_response_id` can also have IDs qualified with its timestamp: a stream stores a call
+    before the ID arrives when its first event doesn't carry it.
+    """
+    timestamp_scope = tool_call_id_scope(None, timestamp)
+    return (provider_response_id, timestamp_scope) if provider_response_id else (timestamp_scope,)
 
 
-def with_unqualified_tool_call_ids(message: ModelMessage, scope: str) -> ModelMessage:
-    """`message` with the IDs of its tool calls, or of its tool results, that were qualified with `scope` restored."""
+def unqualify_tool_call_id(tool_call_id: str, scopes: Sequence[str]) -> str:
+    """Restore the ID the provider sent from one `qualify_tool_call_id` qualified with one of `scopes`."""
+    for scope in scopes:
+        restored = tool_call_id.removesuffix(f'_{hashed_tool_call_id(scope, 8)}')
+        # Before the flag moved to `ModelProfile`, `OpenAIResponsesModel` qualified IDs as `{response_id}:{tool_call_id}`.
+        if restored == tool_call_id:
+            restored = tool_call_id.removeprefix(f'{scope}:')
+        if restored != tool_call_id:
+            return restored
+    return tool_call_id
+
+
+def with_unqualified_tool_call_ids(message: ModelMessage, scopes: Sequence[str]) -> ModelMessage:
+    """`message` with the IDs of its tool calls, or of its tool results, qualified with one of `scopes` restored."""
     if isinstance(message, ModelResponse):
         response_parts = [
-            replace(part, tool_call_id=unqualify_tool_call_id(part.tool_call_id, scope))
+            replace(part, tool_call_id=unqualify_tool_call_id(part.tool_call_id, scopes))
             if isinstance(part, ToolCallPart)
             else part
             for part in message.parts
         ]
         return replace(message, parts=response_parts)
     request_parts = [
-        replace(part, tool_call_id=unqualify_tool_call_id(part.tool_call_id, scope))
+        replace(part, tool_call_id=unqualify_tool_call_id(part.tool_call_id, scopes))
         if isinstance(part, ToolReturnPart)
         else part
         for part in message.parts

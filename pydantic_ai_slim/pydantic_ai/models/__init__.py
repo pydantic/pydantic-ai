@@ -202,7 +202,7 @@ from ._known_model_names import KnownModelName as KnownModelName
 from ._prompt_cache import snap_cache_setting, split_cache_setting
 from ._request_timeout import RequestDeadline
 from ._speech import assistant_speech_text
-from ._tool_call_ids import hashed_tool_call_id, tool_call_id_scope, with_unqualified_tool_call_ids
+from ._tool_call_ids import hashed_tool_call_id, response_tool_call_id_scopes, with_unqualified_tool_call_ids
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -1414,16 +1414,16 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if not self.profile.get('tool_call_ids_are_response_scoped', False):
             return list(messages)
         restored: list[ModelMessage] = []
-        scope = previous_response_id
+        scopes: tuple[str, ...] = (previous_response_id,) if previous_response_id else ()
         for message in messages:
             if isinstance(message, ModelResponse):
-                scope = (
-                    tool_call_id_scope(message.provider_response_id, message.timestamp)
+                scopes = (
+                    response_tool_call_id_scopes(message.provider_response_id, message.timestamp)
                     if self.accepts_server_state(message)
-                    else None
+                    else ()
                 )
-            if scope is not None:
-                message = with_unqualified_tool_call_ids(message, scope)
+            if scopes:
+                message = with_unqualified_tool_call_ids(message, scopes)
             restored.append(message)
         return restored
 

@@ -22,7 +22,12 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, infer_model
-from pydantic_ai.models._tool_call_ids import qualify_tool_call_id, tool_call_id_scope, unqualify_tool_call_id
+from pydantic_ai.models._tool_call_ids import (
+    qualify_tool_call_id,
+    response_tool_call_id_scopes,
+    tool_call_id_scope,
+    unqualify_tool_call_id,
+)
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
@@ -65,12 +70,13 @@ def test_qualified_ids_restore_and_stay_valid():
     assert qualified == snapshot('call_0_MshzREZh')
     assert ANTHROPIC_TOOL_USE_ID.fullmatch(qualified)
     assert qualify_tool_call_id('call_0', 'resp_b') != qualified
-    assert unqualify_tool_call_id(qualified, 'resp_a') == 'call_0'
+    assert unqualify_tool_call_id(qualified, ['resp_a']) == 'call_0'
+    assert unqualify_tool_call_id(qualified, ['resp_b', 'resp_a']) == 'call_0'
     # Only the scope it was qualified with restores an ID, so an ID from another response is left alone.
-    assert unqualify_tool_call_id(qualified, 'resp_b') == qualified
-    assert unqualify_tool_call_id('call_0', 'resp_a') == 'call_0'
+    assert unqualify_tool_call_id(qualified, ['resp_b']) == qualified
+    assert unqualify_tool_call_id('call_0', ['resp_a']) == 'call_0'
     # `OpenAIResponsesModel` stored `{response_id}:{call_id}` before the flag moved to `ModelProfile`.
-    assert unqualify_tool_call_id('resp_a:call_0', 'resp_a') == 'call_0'
+    assert unqualify_tool_call_id('resp_a:call_0', ['resp_a']) == 'call_0'
 
 
 def test_scope_falls_back_to_the_timestamp():
@@ -86,6 +92,9 @@ def test_scope_falls_back_to_the_timestamp():
     assert tool_call_id_scope(None, timestamp.astimezone(timezone(timedelta(hours=2)))) == tool_call_id_scope(
         None, timestamp
     )
+    # A response with an ID is also restored from its timestamp, which a stream can qualify with before the ID arrives.
+    assert response_tool_call_id_scopes('resp_a', timestamp) == ('resp_a', '2024-01-01T12:00:00+00:00')
+    assert response_tool_call_id_scopes(None, timestamp) == ('2024-01-01T12:00:00+00:00',)
 
 
 def _completion(response_id: str, tool_name: str | None) -> chat.ChatCompletion:
@@ -253,6 +262,31 @@ async def test_chat_ids_without_response_id_survive_a_stored_history(allow_model
     await Agent(replay_model).run('Again.', message_history=loaded)
 
     assert _wire_ids(replay_client) == [['call_0', 'call_0', 'call_0', 'call_0']]
+
+
+async def test_chat_stream_whose_response_id_arrives_late_restores_its_ids(allow_model_requests: None):
+    """A stream whose first chunk has no response ID qualifies its call with the timestamp, and the ID a later chunk
+    sets on the response doesn't keep that call from being restored.
+    """
+    first_tool_chunks = _chunks('chatcmpl-a', 'first_tool')
+    first_tool_chunks[0] = first_tool_chunks[0].model_copy(update={'id': ''})
+    client = MockOpenAI(stream=[first_tool_chunks, _chunks('chatcmpl-b', None)])
+    model = OpenAIChatModel(
+        'gpt-test',
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, client)),
+        profile=ModelProfile(tool_call_ids_are_response_scoped=True),
+    )
+    messages = await _run(_agent(), model, stream=True)
+    response = next(message for message in messages if isinstance(message, ModelResponse) and message.tool_calls)
+    assert response.provider_response_id == 'chatcmpl-a'
+    assert response.tool_calls[0].tool_call_id == qualify_tool_call_id(
+        'call_0', tool_call_id_scope(None, response.timestamp)
+    )
+
+    replay_model, replay_client = _chat_model(stream=False, response_ids=['chatcmpl-c'], scoped=True)
+    await Agent(replay_model).run('Again.', message_history=messages)
+
+    assert _wire_ids(replay_client) == [['call_0', 'call_0']]
 
 
 @pytest.mark.vcr
