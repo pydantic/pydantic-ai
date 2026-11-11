@@ -249,5 +249,5 @@ async def test_streamed_explicit_native_output_raises():
 
     with pytest.raises(ModelSchemaTooComplexError):
         async with agent.run_stream('Answer the survey.') as result:
-            await result.get_output()
+            await result.get_output()  # pragma: no cover  # opening the stream raises
     assert modes == ['native']
