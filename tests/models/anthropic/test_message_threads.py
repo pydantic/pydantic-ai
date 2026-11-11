@@ -611,13 +611,13 @@ async def test_cache_breakpoints_recorded_for_the_request_sent(allow_model_reque
         [
             {
                 'pydantic_ai.cache.requested_breakpoints': (
-                    'system[1]',
+                    'system[0]',
                     'tools[0]',
                     'messages[0].content[0]',
                     'automatic',
                 ),
                 'pydantic_ai.cache.applied_breakpoints': (
-                    'system[1]',
+                    'system[0]',
                     'tools[0]',
                     'messages[0].content[0]',
                     'automatic',
@@ -629,14 +629,14 @@ async def test_cache_breakpoints_recorded_for_the_request_sent(allow_model_reque
             },
             {
                 'pydantic_ai.cache.requested_breakpoints': (
-                    'system[1]',
+                    'system[0]',
                     'tools[0]',
                     'messages[0].content[0]',
                     'messages[2].content[0]',
                     'automatic',
                 ),
                 'pydantic_ai.cache.applied_breakpoints': (
-                    'system[1]',
+                    'system[0]',
                     'tools[0]',
                     'messages[2].content[0]',
                     'automatic',
