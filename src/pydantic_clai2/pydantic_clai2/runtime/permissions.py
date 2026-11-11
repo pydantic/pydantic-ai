@@ -24,6 +24,7 @@ from pydantic_ai.tools import (
     DeferredToolResults,
     RunContext,
     ToolDefinition,
+    ToolDenied,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse, Question, QuestionOption
 from pydantic_ai_harness.deny_unanswered import DenyUnanswered
@@ -34,6 +35,7 @@ from pydantic_ai_harness.permissions import (
     PermissionRequest,
     Permissions,
     ask_permissions,
+    permission_requests,
 )
 from pydantic_ai_harness.subagents import SELF_AGENT_NAME, SubAgents
 from pydantic_clai2.cli.command_context import CommandContext
@@ -76,9 +78,26 @@ def session_permissions(
     permissions = Permissions[AgentDepsT](lambda ctx: mode())
     return (
         permissions,
-        DenyUnanswered[AgentDepsT](message=UNANSWERED),
+        DenyUnansweredInSession[AgentDepsT](),
         KeepDelegatesChecked[AgentDepsT](permissions=permissions),
     )
+
+
+@dataclass(kw_only=True)
+class DenyUnansweredInSession(DenyUnanswered[AgentDepsT]):
+    """`DenyUnanswered` that tells the model `/permissions full` lets a call `Permissions` held run.
+
+    Other held approvals keep `message`: `/permissions` only changes what `Permissions` holds.
+    """
+
+    async def handle_deferred_tool_calls(
+        self, ctx: RunContext[AgentDepsT], *, requests: DeferredToolRequests
+    ) -> DeferredToolResults | None:
+        results = await super().handle_deferred_tool_calls(ctx, requests=requests)
+        if results is not None:
+            for held in permission_requests(requests):
+                results.approvals[held.call.tool_call_id] = ToolDenied(UNANSWERED)
+        return results
 
 
 @dataclass

@@ -17,6 +17,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse
+from pydantic_ai_harness.deny_unanswered import DEFAULT_MESSAGE
 from pydantic_ai_harness.permissions import (
     PermissionDecision,
     PermissionMode as HarnessPermissionMode,
@@ -290,7 +291,8 @@ async def test_approval_handler_answers_held_calls_and_backstop_denies_the_rest(
     results = await unanswered.handle_deferred_tool_calls(None, requests=other)  # pyright: ignore[reportArgumentType]
     assert results is not None and list(results.approvals) == ['x']
     denial = results.approvals['x']
-    assert isinstance(denial, ToolDenied) and denial.message == UNANSWERED
+    assert isinstance(denial, ToolDenied) and denial.message == DEFAULT_MESSAGE
+    assert await unanswered.handle_deferred_tool_calls(None, requests=DeferredToolRequests()) is None  # pyright: ignore[reportArgumentType]
 
 
 async def test_code_mode_holds_a_shell_call_from_run_code(tmp_path: Path) -> None:
