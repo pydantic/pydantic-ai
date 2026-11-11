@@ -848,7 +848,9 @@ async def test_no_content_reaches_telemetry_from_a_deferred_capability_catalog(i
     def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
 
-    capability = Capability[Any](id='secret', description=lambda: SECRETS['capability_description'], defer_loading=True)
+    capability = Capability[object](
+        id='secret', description=lambda: SECRETS['capability_description'], defer_loading=True
+    )
     agent = Agent(FunctionModel(respond), capabilities=[capability, Instrumentation(settings=settings)])
     await agent.run(SECRETS['user_prompt'])
 

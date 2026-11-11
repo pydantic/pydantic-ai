@@ -968,7 +968,7 @@ async def test_a_deferred_capability_is_loaded_then_its_tool_called(
     allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
 ):
     """Jev picks the capability the message calls for, which loads it without a hand-off, then calls its tool."""
-    refunds = Capability[Any](
+    refunds = Capability[object](
         id='refunds',
         description='Use for refund eligibility, refund status, or processing a refund.',
         instructions='Confirm the order ID before issuing a refund.',
@@ -980,7 +980,7 @@ async def test_a_deferred_capability_is_loaded_then_its_tool_called(
         """Look up the status of the customer's latest refund."""
         return 'Refund of $40 issued on 2026-05-01.'
 
-    shipping = Capability[Any](
+    shipping = Capability[object](
         id='shipping', description='Use for where an order is, delivery dates, and tracking.', defer_loading=True
     )
     agent = Agent(
@@ -1026,7 +1026,7 @@ async def test_a_deferred_capability_is_loaded_then_its_tool_called(
         }
     )
     assert [
-        list(cast(dict[str, Any], cast(dict[str, Any], body['questions'])['route']['criteria']))
+        list(cast(dict[str, Any], body['questions'])['route']['criteria'])
         for body in request_capture.bodies('/v1/systemone')
     ] == snapshot(
         [['Resolution', 'refunds', 'shipping'], ['Resolution', 'shipping', 'refund_status'], ['Resolution', 'shipping']]

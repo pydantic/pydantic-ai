@@ -4176,14 +4176,18 @@ async def test_load_capability_after_the_run_ended_raises() -> None:
 
 async def test_a_callable_description_is_resolved_once_per_step():
     """The catalog in the instructions and the one on the `load_capability` tool are the same resolution, made once
-    per step after the step's tools are prepared."""
+    per step after the step's tools are prepared.
+
+    Not a VCR test: a recording can't show how many times the description callable ran, or that it ran after the
+    step's tools were prepared.
+    """
     resolved_on_steps: list[tuple[int, list[str]]] = []
 
-    def describe(ctx: RunContext[Any]) -> str:
+    def describe(ctx: RunContext[object]) -> str:
         resolved_on_steps.append((ctx.run_step, sorted(ctx.tools)))
         return 'Refund things.'
 
-    refunds = Capability[Any](id='refunds', description=describe, defer_loading=True)
+    refunds = Capability[object](id='refunds', description=describe, defer_loading=True)
 
     @refunds.tool_plain
     def refund_status() -> str:

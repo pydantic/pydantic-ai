@@ -2953,8 +2953,8 @@ async def test_a_fallback_on_decision_hand_offs_takes_only_those(allow_model_req
     assert not isinstance(exc_info.value, DecisionHandOff)
 
 
-def deferred_capabilities() -> list[Capability[Any]]:
-    refunds = Capability[Any](
+def deferred_capabilities() -> list[Capability[object]]:
+    refunds = Capability[object](
         id='refunds',
         description='Use for refund eligibility or status.',
         instructions='Confirm the order ID first.',
@@ -2966,7 +2966,7 @@ def deferred_capabilities() -> list[Capability[Any]]:
         """Look up the status of the customer's refund."""
         return 'Refund issued on 2026-05-01.'
 
-    shipping = Capability[Any](id='shipping', description='Use for where an order is.', defer_loading=True)
+    shipping = Capability[object](id='shipping', description='Use for where an order is.', defer_loading=True)
     return [refunds, shipping]
 
 
@@ -3054,7 +3054,7 @@ async def test_a_capability_route_label_collision_renames_the_capability(allow_m
     """
     model = RoutingDecisionModel({'Triage': 0.1, 'refund (capability)': 0.8, 'refund': 0.0})
     agent = Agent(
-        model, output_type=Triage, tools=[refund], capabilities=[Capability[Any](id='refund', defer_loading=True)]
+        model, output_type=Triage, tools=[refund], capabilities=[Capability[object](id='refund', defer_loading=True)]
     )
     result = await agent.run('Refund me.')
 
@@ -3132,7 +3132,7 @@ async def test_a_capability_loaded_from_code_is_not_offered_again(allow_model_re
     agent = Agent(model, output_type=Triage, capabilities=deferred_capabilities())
 
     @agent.tool
-    def prepare(ctx: RunContext[Any]) -> str:
+    def prepare(ctx: RunContext[object]) -> str:
         """Prepare the ticket."""
         ctx.load_capability('refunds')
         return 'Prepared.'
