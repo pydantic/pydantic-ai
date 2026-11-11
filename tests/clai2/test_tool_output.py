@@ -218,7 +218,7 @@ async def test_edit_uses_termflow_diff_renderer() -> None:
     text = output.getvalue()
     assert '● edit_file demo.py' in Text.from_ansi(text).plain
     assert 'old' in text and 'new' in text
-    assert '\x1b[48;2;43;117;54m' in text  # addition rows: green
+    assert '\x1b[48;2;34;92;43m' in text  # addition rows: green
     assert '\x1b[48;2;122;41;54m' in text  # deletion rows: red
 
 
