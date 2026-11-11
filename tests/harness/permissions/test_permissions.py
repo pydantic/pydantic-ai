@@ -314,6 +314,7 @@ class TestPermissions:
                 2,
             ),
             (ToolReturn('hi', metadata='note'), 'note', 3),
+            (ToolReturn('hi', metadata={'permissions': {'admin': True}}), {'permissions': {'admin': True}}, 3),
         ],
     )
     async def test_remember_inside_durable_execution_is_kept_in_history(
@@ -343,6 +344,25 @@ class TestPermissions:
         assert remembered == set()
         assert len(person.asked) == asks
         assert _return_metadata(result.all_messages())[0] == metadata
+
+    async def test_remember_inside_durable_execution_keeps_the_nested_tool_return_error(self) -> None:
+        def run_command(command: str) -> object:
+            return [ToolReturn('x')]
+
+        person = _Person(PermissionDecision(approved=True, remember=True))
+        agent = Agent[None, str](
+            _calls(('run_command', {'command': 'echo hi'})),
+            deps_type=type(None),
+            tools=[Tool(run_command, metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'})],
+            capabilities=[
+                _DBOSDurability(),
+                Permissions('read-only'),
+                HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
+            ],
+        )
+
+        with pytest.raises(UserError, match='invalid nested `ToolReturn`'):
+            await agent.run('go', conversation_id='c')
 
     async def test_remember_inside_durable_execution_holds_in_its_conversation_only(self, tmp_path: Path) -> None:
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

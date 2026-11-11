@@ -228,16 +228,16 @@ class Permissions(AbstractCapability[AgentDepsT]):
         if not (ctx.tool_call_approved and in_durable_context(ctx) and _remember(ctx.tool_call_metadata)):
             return result
         asked = self._asks(ctx, tool_def=tool_def, args=args)
-        if asked is None:
+        if asked is None or _nests_tool_return(result):
             return result
         tool_return = cast(ToolReturn[Any], result) if isinstance(result, ToolReturn) else ToolReturn[Any](result)
         existing: object = {} if tool_return.metadata is None else tool_return.metadata
-        if not isinstance(existing, dict):
+        if not isinstance(existing, dict) or 'permissions' in existing:
             return tool_return
         remembered = _RememberedMetadata(
             permissions=_Remembered(conversation_id=ctx.conversation_id, subject=asked.subject)
         )
-        return replace(tool_return, metadata={**cast(dict[str, Any], existing), **remembered.model_dump()})
+        return replace(tool_return, metadata={**existing, **remembered.model_dump()})
 
     def _asks(self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]) -> _Asked | None:
         """What to ask about this call in the current mode, or `None` to run it."""
@@ -272,6 +272,11 @@ def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
         return None
     command = args.get(name)
     return command if isinstance(command, str) else None
+
+
+def _nests_tool_return(result: object) -> bool:
+    """Whether `result` is a list holding a `ToolReturn`, which core rejects with a clear error."""
+    return isinstance(result, list) and any(isinstance(item, ToolReturn) for item in cast(list[object], result))
 
 
 def _remembered_in(messages: Sequence[ModelMessage], remembered: _Remembered, tool_name: str) -> bool:
