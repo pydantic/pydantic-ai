@@ -26,8 +26,14 @@ from openai.types.websocket_connection_options import WebSocketConnectionOptions
 from pydantic_core import from_json, to_json
 from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketException
 
-from .._utils import is_str_dict
-from ..exceptions import ModelAPIError, ModelConnectionError, ModelHTTPError, ModelTimeoutError, UnexpectedModelBehavior
+from ..._utils import is_str_dict
+from ...exceptions import (
+    ModelAPIError,
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelTimeoutError,
+    UnexpectedModelBehavior,
+)
 
 
 class ConnectionOptions(WebSocketConnectionOptions):
@@ -77,7 +83,7 @@ class ResponsesWebSocketLane:
     """The consumer's wait for this lane's next event, which closing the response interrupts."""
 
 
-def _is_terminal(event: ResponsesServerEvent) -> bool:
+def is_terminal(event: ResponsesServerEvent) -> bool:
     # The SDK's lane router also treats an `error` event as the end of its request.
     return isinstance(event, (ResponseCompletedEvent, ResponseFailedEvent, ResponseIncompleteEvent, ResponseWsError))
 
@@ -218,7 +224,7 @@ class ResponsesWebSocket:
             lane.receiving.cancel()
             lane.latest_response_id = None
             finished = (
-                self.failure is not None or self.connection_closed or any(_is_terminal(event) for event in lane.events)
+                self.failure is not None or self.connection_closed or any(is_terminal(event) for event in lane.events)
             )
         lane.events.clear()
         if finished:
@@ -276,7 +282,7 @@ class ResponsesWebSocket:
                 message = f'{error.code}: {error.message}' if error.code else error.message
                 await self.fail(f'Responses WebSocket connection failed: {message}')
             elif lane is not None and lane.abandoned:
-                if _is_terminal(event):
+                if is_terminal(event):
                     lane.abandoned = False
                     lane.active = False
             elif lane is not None:
@@ -389,7 +395,7 @@ class ResponsesWebSocketStream:
         if isinstance(event, (ResponseSteerAcceptedEvent, ResponseSteerPendingEvent, ResponseSteerFailedEvent)):
             raise UnexpectedModelBehavior(f'Unexpected Responses WebSocket event: {event.type!r}')
 
-        if _is_terminal(event):
+        if is_terminal(event):
             self.completed = True
             # With store=false the provider only promises the latest completed response in this lane's
             # connection-local cache. A failed or incomplete response cannot be the parent of another response.
