@@ -2900,10 +2900,14 @@ async def test_durability_validates_only_resolved_runtime_capability_layers():
         capabilities=[base_factory, WrapperCapability(wrapped=TemporalDurability())],
     )
 
-    # Only `in_workflow` is faked, so keep the default-ID hook off the real workflow APIs.
+    # Only `in_workflow` is faked, so keep the default-ID hook and replay telemetry off the real workflow APIs.
     with (
         patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
         patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
+        patch(
+            'pydantic_ai.durable_exec.temporal._durability.workflow.unsafe.is_replaying_history_events',
+            return_value=False,
+        ),
     ):
         result = await agent.run('hello', capabilities=[Instrumentation(InstrumentationSettings())])
         assert result.output == 'skipped'
@@ -7893,9 +7897,10 @@ class WorkspaceProbePolicy(WrapperWorkspace):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        cwd: str | None = None,
     ) -> CommandResult:
         assert activity.in_activity()
-        result = await self.wrapped.run(command, shell=shell, env=env, timeout=timeout)
+        result = await self.wrapped.run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
         assert self.ref is not None
         return replace(result, stdout=f'policy:{self.deps.prefix}:{self.ref.id}:{result.stdout}')
 

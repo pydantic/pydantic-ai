@@ -16,7 +16,7 @@ import httpx2
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._context_size import mark_context_input_tokens
-from .._gateway_cost import fill_gateway_header_cost
+from .._gateway_cost import fill_gateway_header_cost, gateway_reported_cost
 from .._run_context import RunContext
 from ..exceptions import (
     ModelAPIError,
@@ -175,6 +175,7 @@ _TOOL_TYPE_TO_NATIVE_TOOL_NAME: dict[ToolType, str] = {
 _NATIVE_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TYPE_TO_NATIVE_TOOL_NAME.items()}
 
 LatestGoogleModelNames = Literal[
+    'gemini-4-carbon',
     'gemini-4-argon',
     'gemini-3.1-pro-preview',
     'gemini-3.8-flash',
@@ -430,7 +431,9 @@ def _map_api_error(
     """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
     if isinstance(e, httpx2.HTTPStatusError):
         # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
-        return _model_errors.transport_status_error(model_name, e.response)
+        error = _model_errors.transport_status_error(model_name, e.response)
+        error.retry_after = _model_errors.google_retry_after(error)
+        return error
     if isinstance(e, httpx2.TransportError):
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)
@@ -468,7 +471,7 @@ def _http_error(
     if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
     category = _model_errors.google_status_category(status, message, body)
-    return ModelHTTPError.for_category(
+    error = ModelHTTPError.for_category(
         category or _model_errors.http_status_category(status_code, message),
         status_code=status_code,
         model_name=model_name,
@@ -478,6 +481,8 @@ def _http_error(
         provider_error_code=status,
         in_stream=in_stream,
     )
+    error.retry_after = _model_errors.google_retry_after(error)
+    return error
 
 
 @contextmanager
@@ -1831,6 +1836,10 @@ class GeminiStreamedResponse(StreamedResponse):
             yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
     def _map_part(self, part: Part) -> Iterator[ModelResponseStreamEvent]:
+        # The gateway reports a stream's cost on the final chunk's last part, which can be an empty text part it adds.
+        # `_map_chunk` adds the chunk's usage before mapping its parts, so that usage doesn't replace this cost.
+        if part.part_metadata and (cost := gateway_reported_cost({'usage': part.part_metadata})) is not None:
+            self._usage.cost = cost
         provider_details = _thought_signature_details(part)
         if part.text is not None and len(part.text) == 0 and not provider_details:
             return

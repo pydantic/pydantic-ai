@@ -23,7 +23,7 @@
 #   imports:
 #     - shared/engine-zai.md
 imports:
-  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@764a75c329840605ed6ecced16f102823389c817
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@c9c896e9f097362c69cabf5312d345155aec9625
 runtimes:
   uv: {}
 # Keep existing configurable budgets. AWF also has a fixed 10,000-credit cap.
@@ -161,6 +161,8 @@ safe-outputs:
         timeout-minutes: 15
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          # Serves detection when OpenCode Go refuses it before its first step.
+          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
           # Detection only reads, so a failed OpenCode run is retried. An invalid verdict is not.
           GH_AW_HARNESS_MAX_RETRIES: "3"

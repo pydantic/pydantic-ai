@@ -882,6 +882,30 @@ class TestSubAgentsTaskControl:
         assert returns[2].endswith('already finished (ok); there is nothing to cancel.')
         assert "Unknown task 'unknown'" in returns[3]
 
+    async def test_listing_passes_a_parent_whose_saved_file_was_damaged(self, tmp_path: Path) -> None:
+        """A loaded task whose parent's file was skipped as damaged does not break the walk up its ancestry."""
+        orphan = DelegationTask(
+            id='b' * 32,
+            parent_id='1' * 32,
+            agent_name='researcher',
+            prompt='Find x.',
+            conversation_id='root',
+            status='finished',
+            outcome='ok',
+        )
+        (tmp_path / f'{orphan.id}.json').write_bytes(TypeAdapter(DelegationTask).dump_json(orphan))
+        (tmp_path / f'{orphan.parent_id}.json').write_text('{"id": "')
+        owner = DelegationTasks(directory=tmp_path)
+        parent = Agent(scripted(call('list_tasks'), echo_last_return), capabilities=[controlled()])
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+                with owner.bind():
+                    result = await parent.run('Go.', conversation_id='root')
+        assert [problem.path.name for problem in owner.problems] == [f'{orphan.parent_id}.json']
+        assert result.output == (
+            f"- {orphan.id} (researcher, finished: ok, started by task {orphan.parent_id}, resumable): 'Find x.'"
+        )
+
     async def test_an_application_owner_gets_every_task_event(self) -> None:
         observed: list[DelegationTaskEvent] = []
 
@@ -2649,6 +2673,48 @@ class TestTaskControlBoundaries:
         assert result.output == 'Done.'
         assert len(task_texts(result.all_messages())) == 1
         assert task_texts(result.all_messages()[-2:-1])
+
+    async def test_a_replayed_background_task_is_announced_as_backgrounded(self) -> None:
+        def parent(durability: RecordingDurability) -> tuple[Agent[Any, str], Recorder]:
+            recorder = Recorder()
+            agent = Agent(
+                scripted(
+                    call('delegate_task', agent_name='researcher', task='Find x.', background=True),
+                    text('Waiting.'),
+                    text('Done.'),
+                ),
+                name='durable',
+                capabilities=[controlled(), recorder, durability],
+            )
+            return agent, recorder
+
+        def task_kinds(recorder: Recorder) -> list[str]:
+            return [kind for kind in recorder.kinds() if kind.startswith('sub_agents.task_')]
+
+        recording = RecordingDurability()
+        agent, recorder = parent(recording)
+        with anyio.fail_after(WAIT):
+            await agent.run('Go.')
+        assert task_kinds(recorder) == [
+            'sub_agents.task_assigned',
+            'sub_agents.task_started',
+            'sub_agents.task_backgrounded',
+            'sub_agents.task_completed',
+        ]
+
+        delegation = 'durable__capability__sub_agents.delegate'
+        journal = {name: result for name, result in recording.results if name == delegation}
+        agent, recorder = parent(RecordingDurability(journal=journal))
+        with anyio.fail_after(WAIT):
+            result = await agent.run('Go.')
+        assert result.output == 'Done.'
+        # The replayed task settles before the delegating tool resumes, so its backgrounding is announced last.
+        assert task_kinds(recorder) == [
+            'sub_agents.task_assigned',
+            'sub_agents.task_started',
+            'sub_agents.task_completed',
+            'sub_agents.task_backgrounded',
+        ]
 
     async def test_a_durable_task_keeps_the_owners_usage_rules(self) -> None:
         ticks: list[str] = []

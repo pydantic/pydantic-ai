@@ -159,6 +159,15 @@ def _revealed_deferred_tool_order(
     ]
 
 
+def _validate_wire_tools_not_all_deferred(tools: list[BetaToolUnionParam]) -> None:
+    """Raise before sending a `tools` list in which every tool has `defer_loading=True`, which Anthropic rejects."""
+    if tools and all(tool.get('defer_loading') is True for tool in tools):
+        raise UserError(
+            'Anthropic rejects a request whose wire tools all have `defer_loading=True`. '
+            'Make at least one tool visible, or add a tool-search surface or capability catalog.'
+        )
+
+
 def _append_revealed_tool_params(tools: list[BetaToolUnionParam], revealed_tool_order: list[str]) -> None:
     """Move revealed deferred definitions behind the request's stable tool segments."""
     by_name = {tool.get('name'): tool for tool in tools}
@@ -520,7 +529,7 @@ def _with_max_retries(client: AsyncAnthropicClient, model_settings: ModelSetting
 
 
 LatestAnthropicModelNames = Literal[
-    'claude-fable-5-1',
+    'claude-fable-5-2',
     'claude-opus-5-5',
     'claude-sonnet-5-5',
     'claude-haiku-5-5',
@@ -772,10 +781,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     anthropic_speed: Literal['standard', 'fast']
     """The inference speed mode for this request.
 
-    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6, 4.7, 4.8, and 5).
+    `'fast'` enables high output-tokens-per-second inference for supported models (currently Claude Opus 4.6, 4.7, 4.8,
+    5, and 5.5, Fable 5.2, and Mythos 5.2).
     On unsupported models or clients, `anthropic_speed='fast'` is ignored with a `UserWarning`.
-    Fast mode is a research preview and only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
-    see [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode) for details.
+    Fast mode is only available on the direct Anthropic API (not Bedrock, Vertex, or Foundry);
+    see [Fast mode](../../models/anthropic.md#fast-mode) for each model's availability.
+    A response that ran in fast mode records `'speed': 'fast'` in `provider_details`, which prices it at fast mode rates.
     Note: switching between `'fast'` and `'standard'` invalidates the prompt cache.
     """
 
@@ -1786,11 +1797,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
         )
         _append_revealed_tool_params(tools, revealed_tool_order)
-        if tools and all(tool.get('defer_loading') is True for tool in tools):
-            raise UserError(
-                'Anthropic rejects a request whose wire tools all have `defer_loading=True`. '
-                'Make at least one tool visible, or add a tool-search surface or capability catalog.'
-            )
+        _validate_wire_tools_not_all_deferred(tools)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
@@ -2228,6 +2235,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
         )
         _append_revealed_tool_params(tools, revealed_tool_order)
+        # Judged on the request's `tools`, which also hold any server tool the count leaves off. A native tool entry is
+        # never deferred, and without one the request's `tools` equal these.
+        if not any(_native_tool_is_a_tools_entry(tool) for tool in model_request_parameters.native_tools):
+            _validate_wire_tools_not_all_deferred(tools)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
@@ -2246,7 +2257,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         thinking = self._translate_thinking(model_settings, model_request_parameters)
         effective_thinking = _effective_thinking(model_settings, thinking)
         betas, extra_headers = self._get_betas_and_extra_headers(
-            model_settings, anthropic_profile, messages, model_request_parameters, effective_thinking
+            model_settings, anthropic_profile, messages, map_parameters, effective_thinking
         )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)

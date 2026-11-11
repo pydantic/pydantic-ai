@@ -6,11 +6,35 @@ import json
 import os
 import subprocess
 import tempfile
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TextIO, TypeVar
 
-from publish_douwebot_review import ReviewResult
+from publish_douwebot_review import ReviewEngine, ReviewResult
+from pydantic import TypeAdapter, ValidationError
 
-MODEL = 'opencode-go/deepseek-v4.1-flash'
+T = TypeVar('T')
+_EVENT = TypeAdapter(dict[str, object])
+# `provider.go-limit` is a spent OpenCode Go usage window; `provider.quota` is a quota error OpenCode cannot name.
+QUOTA_ERRORS = frozenset({'provider.go-limit', 'provider.quota'})
+
+
+@dataclass(frozen=True)
+class Provider:
+    """An OpenCode provider of the review model, the variable holding its key, and its douwebot receipt engine."""
+
+    name: str
+    model: str
+    key_variable: str
+    review_engine: ReviewEngine
+
+
+OPENCODE_GO = Provider('opencode-go', 'opencode-go/deepseek-v4.1-flash', 'OPENCODE_API_KEY', 'opencode')
+DEEPINFRA = Provider(
+    'deepinfra', 'deepinfra/deepseek-ai/DeepSeek-V4.1-Flash', 'DEEPINFRA_API_KEY', 'opencode-deepinfra'
+)
 
 
 def check_symlinks(root: Path, *, skip_pr_head: bool = False) -> None:
@@ -35,8 +59,8 @@ def check_symlinks(root: Path, *, skip_pr_head: bool = False) -> None:
                 raise ValueError(f'Symlink loops through an ancestor: {path.relative_to(root)}')
 
 
-def read_only_config(*, agent: str, steps: int | None = None) -> dict[str, object]:
-    """Allow only the read, grep and glob tools, and only the OpenCode Go provider."""
+def read_only_config(*, agent: str, provider: Provider, steps: int | None = None) -> dict[str, object]:
+    """Allow only the read, grep and glob tools, and only `provider`."""
     # The wildcard deny covers external_directory for direct outside reads. OpenCode checks paths
     # lexically, so callers run check_symlinks to reject links that could escape `cwd`.
     permissions: list[dict[str, str]] = [
@@ -45,7 +69,7 @@ def read_only_config(*, agent: str, steps: int | None = None) -> dict[str, objec
     ]
     policies: list[dict[str, str]] = [
         {'action': 'provider.use', 'resource': '*', 'effect': 'deny'},
-        {'action': 'provider.use', 'resource': 'opencode-go', 'effect': 'allow'},
+        {'action': 'provider.use', 'resource': provider.name, 'effect': 'allow'},
         {'action': 'plugin.use', 'resource': '*', 'effect': 'deny'},
         {'action': 'mcp.use', 'resource': '*', 'effect': 'deny'},
         {'action': 'tool.use', 'resource': '*', 'effect': 'deny'},
@@ -61,44 +85,112 @@ def read_only_config(*, agent: str, steps: int | None = None) -> dict[str, objec
         'permissions': permissions,
         'agents': {
             agent: agent_config,
-            'title': {'model': MODEL},
-            'compaction': {'model': MODEL},
+            'title': {'model': provider.model},
+            'compaction': {'model': provider.model},
         },
         'policies': policies,
     }
 
 
-def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: float | None = None) -> None:
-    """Run OpenCode in `cwd` with read, grep, and glob tools only, saving its event stream to `output`."""
-    api_key = os.environ['OPENCODE_API_KEY']
-    if not api_key:
-        raise ValueError('OPENCODE_API_KEY is empty')
-    runner_temp = Path(os.environ['RUNNER_TEMP'])
+def run_with_fallback(
+    launch: Callable[[list[str], dict[str, str], TextIO], T],
+    *,
+    agent: str,
+    output: Path,
+    steps: int | None = None,
+    extra_env: Mapping[str, str] | None = None,
+) -> tuple[T, Provider]:
+    """Launch OpenCode on Go, and again on DeepInfra when a Go quota limit refused the run before it finished a step.
 
-    with tempfile.TemporaryDirectory(dir=runner_temp, prefix='opencode-') as temp:
-        temp_root = Path(temp)
-        config_dir = temp_root / 'config' / 'opencode'
-        config_dir.mkdir(parents=True)
-        (config_dir / 'opencode.json').write_text(json.dumps(read_only_config(agent=agent)), encoding='utf-8')
-        env = {
-            'HOME': str(temp_root),
-            'PATH': os.environ['PATH'],
-            'XDG_CONFIG_HOME': str(temp_root / 'config'),
-            'XDG_DATA_HOME': str(temp_root / 'data'),
-            'XDG_CACHE_HOME': str(temp_root / 'cache'),
-            'OPENCODE_API_KEY': api_key,
-        }
-        with output.open('w', encoding='utf-8') as stream:
-            subprocess.run(
-                ['opencode', 'run', '--standalone', '--model', MODEL, '--agent', agent, '--format', 'json'],
-                input=prompt,
-                text=True,
-                cwd=cwd,
-                env=env,
-                stdout=stream,
-                check=True,
-                timeout=timeout,
-            )
+    `launch` runs the command in the environment it is given and writes the event stream to the stream it is given,
+    which `output` holds after each run. Each run gets a config that allows only its provider, and an environment
+    that holds only that provider's key.
+    """
+
+    def run_on(provider: Provider, api_key: str) -> tuple[T, Provider]:
+        with (
+            tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP'], prefix='opencode-') as temp,
+            output.open('w', encoding='utf-8') as stream,
+        ):
+            temp_root = Path(temp)
+            config_dir = temp_root / 'config' / 'opencode'
+            config_dir.mkdir(parents=True)
+            config = read_only_config(agent=agent, provider=provider, steps=steps)
+            (config_dir / 'opencode.json').write_text(json.dumps(config), encoding='utf-8')
+            env = {
+                'HOME': str(temp_root),
+                'PATH': os.environ['PATH'],
+                'XDG_CONFIG_HOME': str(temp_root / 'config'),
+                'XDG_DATA_HOME': str(temp_root / 'data'),
+                'XDG_CACHE_HOME': str(temp_root / 'cache'),
+                provider.key_variable: api_key,
+                **(extra_env or {}),
+            }
+            command = [
+                'opencode',
+                'run',
+                '--standalone',
+                '--model',
+                provider.model,
+                '--agent',
+                agent,
+                '--format',
+                'json',
+            ]
+            result = launch(command, env, stream)
+        print(f'OpenCode run served by {provider.model}.')
+        return result, provider
+
+    go_key = os.environ[OPENCODE_GO.key_variable]
+    if not go_key:
+        raise ValueError(f'{OPENCODE_GO.key_variable} is empty')
+    try:
+        return run_on(OPENCODE_GO, go_key)
+    except subprocess.CalledProcessError:
+        fallback_key = os.environ.get(DEEPINFRA.key_variable, '')
+        # OpenCode 2.2.5 does not retry a quota rejection. It writes `step_start`, then an `error` event whose type
+        # `toSessionError` sets, and no `step_finish`:
+        # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
+        try:
+            # Only LF ends an event, as in `douwebot_opencode_result.final_text`.
+            events = [_EVENT.validate_json(line) for line in output.read_text(encoding='utf-8').split('\n') if line]
+            kinds = [
+                _EVENT.validate_python(event.get('error')).get('type')
+                for event in events
+                if event.get('type') == 'error'
+            ]
+        except ValidationError:
+            # A malformed stream is no refusal. Its validation error would copy the stream into the public log.
+            events, kinds = [], []
+        kind = kinds[-1] if kinds else None
+        finished = any(event.get('type') == 'step_finish' for event in events)
+        if not fallback_key or finished or not isinstance(kind, str) or kind not in QUOTA_ERRORS:
+            raise
+        print(f'OpenCode Go refused the run before its first step ({kind}); retrying on DeepInfra.')
+    return run_on(DEEPINFRA, fallback_key)
+
+
+def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: float | None = None) -> Provider:
+    """Run OpenCode in `cwd` with read, grep, and glob tools only, saving its event stream to `output`.
+
+    `timeout` bounds both runs together when Go refuses the first. Returns the provider that served the run.
+    """
+    deadline = None if timeout is None else time.monotonic() + timeout
+    _, provider = run_with_fallback(
+        lambda command, env, stream: subprocess.run(
+            command,
+            input=prompt,
+            text=True,
+            cwd=cwd,
+            env=env,
+            stdout=stream,
+            check=True,
+            timeout=None if deadline is None else deadline - time.monotonic(),
+        ),
+        agent=agent,
+        output=output,
+    )
+    return provider
 
 
 def main() -> None:
@@ -124,12 +216,14 @@ def main() -> None:
         'Return only one JSON object matching this schema: '
         + json.dumps(ReviewResult.model_json_schema(), separators=(',', ':'))
     )
-    run_read_only(
+    provider = run_read_only(
         prompt,
         cwd=workspace,
         agent='reviewer',
         output=Path(os.environ['RUNNER_TEMP']) / 'douwebot-opencode.ndjson',
     )
+    with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as github_output:
+        github_output.write(f'engine={provider.review_engine}\n')
 
 
 if __name__ == '__main__':

@@ -81,15 +81,16 @@ class Conversation(Protocol):
         """
         ...
 
-    async def resume(self, conversation_id: str) -> str:
-        """Switch to a saved conversation, as `/resume ID` does, and return the notice to show.
+    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
+        """Switch to a saved conversation and show its history, as `/resume ID` does, and return the notice to show.
 
         Only restores the saved history: nothing runs and no tool is replayed. Call it between
         turns, such as from `on_session_start` or a command. It raises `RuntimeError` during a run,
         `LookupError` for an unknown ID, and `ValueError` for a conversation saved in another
         directory, when persistence is not configured, or when another live session of this CLAI holds
-        it. A conversation still running in another process is not taken over: a fork of it is resumed,
-        and the notice says so.
+        it. `allow_other_workspace=True` continues a conversation saved in another directory in this one
+        instead, as confirming it in the `/resume` browser does. A conversation still running in another
+        process is not taken over: a fork of it is resumed, and the notice says so.
         `on_conversation_changed` follows when the conversation or its title changed.
         """
         ...
@@ -347,6 +348,18 @@ class LiveSession(Protocol):
         """Whether the session handles input now (a turn, a command, or the terminal's rewind) or has input queued."""
         ...
 
+    @property
+    def waiting_for(self) -> str | None:
+        """The most recent active user wait, or `None` when none is open."""
+        ...
+
+    def wait_for_user(self, reason: str, /) -> Callable[[], None]:
+        """Report a user wait until the returned idempotent function is called; pair it in `finally`.
+
+        Raises `ValueError` for an empty reason. Overlapping waits keep their own lifetimes.
+        """
+        ...
+
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting in the session, as `PluginHost.setting` reads it."""
         ...
@@ -452,7 +465,7 @@ class LiveSessions(Protocol):
         ...
 
     def subscribe(self, listener: Callable[[], None]) -> Callable[[], None]:
-        """Call `listener` whenever a session opens or closes, or its running, queued, or watched state may change.
+        """Call `listener` whenever a session opens or closes, or its running, queued, user-wait, or watched state changes.
 
         It is called synchronously, so it must be quick and not raise. The returned function unsubscribes.
         """
@@ -585,7 +598,7 @@ class Transcript:
         """The `model` given at construction."""
         return self.model
 
-    async def resume(self, conversation_id: str) -> str:
+    async def resume(self, conversation_id: str, *, allow_other_workspace: bool = False) -> str:
         """An in-memory transcript has no saved conversations to switch to."""
         raise LookupError(f'No saved session: {conversation_id}')
 
@@ -641,7 +654,7 @@ class TaskProgress:
     task: TaskInfo
     """The task as it is now."""
     event: AgentStreamEvent | None = None
-    """The event from the task's own run, its `DelegationStartEvent` or `DelegationEndEvent`, or one of its
+    """The event from the task's own run, its `DelegationStartedEvent` or `DelegationFinishedEvent`, or one of its
     `sub_agents` task events, such as `TaskQuestionEvent`; `None` when only the task changed, such as when it
     started, finished, or began waiting for an answer."""
 

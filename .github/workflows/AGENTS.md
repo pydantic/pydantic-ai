@@ -8,10 +8,10 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 | Name | Where | Runs when |
 |------|-------|-----------|
 | `CI Review` | `pydantic-ai-pr-review.md` | when a user with write access or higher **approves** the PR's current head, on applying the **`final-review` label**, or on dispatch, once `CI` has passed on that head. Never in the merge queue. Z.AI Coding Plan engine, submits formal `REQUEST_CHANGES` for verified HIGH or CRITICAL findings, `COMMENT` for incomplete coverage without those findings, and `APPROVE` after complete coverage without them. Same-repo PRs only. |
-| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`). Claude Opus 5.5 reviews. A rejected Claude subscription window reruns the review with `opencode-go/deepseek-v4.1-flash`. Deletes the label when it finishes. A trusted publisher posts structured findings as one formal `APPROVE`, `REQUEST_CHANGES`, or incomplete `COMMENT` review. |
+| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`). Claude Opus 5.5 reviews. A rejected Claude subscription window reruns the review with `opencode-go/deepseek-v4.1-flash` and its [DeepInfra fallback](#opencode-falls-back-from-opencode-go-to-deepinfra). Deletes the label when it finishes. A trusted publisher posts structured findings as one formal `APPROVE`, `REQUEST_CHANGES`, or incomplete `COMMENT` review. |
 | `douwebot:review-agent-config` | `bots.yml` | one explicit review request for one PR head; the labeling sender must be a `User` with current `write` or `admin` permission. The label is not standing approval. |
 
-`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It returns `REQUEST_CHANGES` while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It returns `APPROVE` after a complete review with no outstanding blocking findings; optional findings may remain. Incomplete coverage returns `INCOMPLETE`, which the publisher records as `COMMENT`. A host-verified closed PR or moved head needs no publication and ends successfully. A head that already has douwebot findings cannot get a clean approval, so a later request for that head skips the review and comments with a link to the review that left them; a head with a clean approval, an incomplete review or a failed run is reviewed again, an incomplete one to complete its coverage even when its findings already block the head. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review. Both review labels use the OpenCode fallback. It has read, grep and glob tools, but no live GitHub or Git commands. It uses the prefetched review context and returns `INCOMPLETE` if missing information prevents a complete review. The `OPENCODE_API_KEY` secret must be a Console key for the Go workspace.
+`douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It returns `REQUEST_CHANGES` while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It returns `APPROVE` after a complete review with no outstanding blocking findings; optional findings may remain. Incomplete coverage returns `INCOMPLETE`, which the publisher records as `COMMENT`. A host-verified closed PR or moved head needs no publication and ends successfully. A head that already has douwebot findings cannot get a clean approval, so a later request for that head skips the review and comments with a link to the review that left them; a head with a clean approval, an incomplete review or a failed run is reviewed again, an incomplete one to complete its coverage even when its findings already block the head. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review. Both review labels use the OpenCode fallback. It has read, grep and glob tools, but no live GitHub or Git commands. It uses the prefetched review context and returns `INCOMPLETE` if missing information prevents a complete review.
 
 If GitHub rejects inline publication with HTTP 422, retry once with the findings in the review body.
 Recheck the live head before that retry. Preserve the verdict; body findings still prevent a clean approval.
@@ -215,7 +215,7 @@ supersede an empty incomplete review, but cannot erase earlier findings. PR Bots
 reviewer and a trusted publisher that binds the result to its run and head. The gate verifies that
 receipt, so `CI Review` cannot stand in for douwebot even though both can use the same bot account.
 Maintainer-authorized protected-configuration reviews satisfy the same rule.
-A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine.
+A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine that served the review: `engine=claude`, `engine=opencode` for OpenCode Go, or `engine=opencode-deepinfra` for OpenCode on DeepInfra.
 
 `pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews and
 inline-comment changes with a read-only token, including on forks. Its completion wakes
@@ -258,7 +258,7 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   head. A change only to the documentation `is_content` lists selects nothing and passes. Files
   under `.github/` always get a review, a generated `*.lock.yml` included: Actions runs the lock,
   and nothing checks that it matches its `.md` source.
-- Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash` and only read, grep and glob,
+- Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash`, its [DeepInfra fallback](#opencode-falls-back-from-opencode-go-to-deepinfra), and only read, grep and glob,
   in the douwebot layout: the head is confined to `pr-head/` and its agent instruction files are
   deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts
   and the gathered PR context, so the model can trace callers. The check's `max_steps` and
@@ -290,6 +290,47 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
 To add a check, add a `SpecialistCheck` entry in `pr_review_checks.py` and its prompt
 fragment in `.github/pr-review-checks/prompts/`. The workflow needs no change. Like `bots.yml`, a
 PR cannot test its own change to this workflow or its scripts.
+
+# OpenCode falls back from OpenCode Go to DeepInfra
+
+Every CI OpenCode run starts on `opencode-go/deepseek-v4.1-flash` with `OPENCODE_API_KEY`, a Console key for the Go
+workspace: douwebot's OpenCode fallback, each `PR Review Checks` review and OpenCode threat detection.
+`run_with_fallback` in `.github/scripts/douwebot_opencode_run.py` reruns it on
+`deepinfra/deepseek-ai/DeepSeek-V4.1-Flash` with `DEEPINFRA_API_KEY` only when all of these hold:
+
+- OpenCode exited non-zero, and its event stream has no `step_finish` event.
+- The stream's last `error` event has type `provider.go-limit` or `provider.quota`. OpenCode 2.2.5 gives a spent
+  quota these types and does not retry it; see `toSessionError` in
+  [`to-session-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts).
+- `DEEPINFRA_API_KEY` is set.
+
+Every other failure fails as it does on Go alone, including a rejected key, a provider outage, a time-budget stop, a
+timeout and an invalid answer. The DeepInfra run gets only the rest of the time budget. Each run's config allows
+only its provider and pins the `title` and `compaction` agents to its model. Its environment holds only that
+provider's key. The job log names the model that served the run, and on a fallback the error type. It never prints
+the error message, which can repeat the provider's response. A DeepInfra run sends DeepInfra the same content a
+Go run sends Go, fork pull request content included. Start any new CI OpenCode run through `run_with_fallback`.
+
+# A copy of the repository picks the `CI` Linux runner
+
+The `CI_LINUX_RUNNER` repository variable sets the runner label of `check` and of every Linux job
+it depends on, including the jobs of `clai2-web.yml` and `latest-versions-canary.yml`. Those two
+reusable workflows read it wherever they run, so it also moves the build that `clai2-bleeding.yml`
+publishes and the scheduled canary of `latest-versions-canary-nightly.yml`. A fork or other copy
+sets it when GitHub's standard runners are too small or unavailable for those jobs.
+Leave it unset in pydantic/pydantic-ai: unset, each job runs on its fallback label,
+`ubuntu-24.04` for `test-all-extras` and `ubuntu-latest` for the rest.
+
+- Set it to one static label. Each job's `runs-on` reads the value as that job's only label.
+- Choose a runner that matches GitHub's Ubuntu 24.04 image. `test-all-extras` starts the
+  image's PostgreSQL 16, and several harness integration jobs start Docker containers.
+- GitHub passes no configuration variables to a run for a pull request from a fork. Those runs
+  use the fallback labels.
+- The Linux leg of `test-clai2-clipboard` reads the variable. Its macOS and Windows legs stay on
+  GitHub's runners.
+
+The release and docs-deploy jobs run only in pydantic/pydantic-ai, so a tag pushed to a copy
+starts none of them.
 
 # Code owners review dependency, CI config and durable runtime changes
 
@@ -347,7 +388,7 @@ such source with a comment naming that set. Every other workflow gets an unrestr
 
 gh-aw runs threat detection only on its Copilot, Claude and Codex engines.
 `shared/engine-zai.md` sets `safe-outputs.threat-detection.engine: false` and runs our own detector as detection post-steps.
-`.github/scripts/gh_aw_opencode_detect.py` runs OpenCode with `opencode-go/deepseek-v4.1-flash` and `OPENCODE_API_KEY`.
+`.github/scripts/gh_aw_opencode_detect.py` runs OpenCode with `opencode-go/deepseek-v4.1-flash` and its [DeepInfra fallback](#opencode-falls-back-from-opencode-go-to-deepinfra).
 The post-steps check the script out at `github.workflow_sha` and install OpenCode with `setup-douwebot-tools`.
 
 - Keep the detector step's id `detection_agentic_execution`. gh-aw's conclusion step reads that step's outcome.
@@ -355,7 +396,8 @@ The post-steps check the script out at `github.workflow_sha` and install OpenCod
 - OpenCode runs with douwebot's read-only lockdown in `/tmp/gh-aw/threat-detection`. It cannot read the repository workspace.
 - A valid verdict writes `detection_result.json` without reasons and `detection_result_full.json` with them.
 - An invalid verdict writes `THREAT_DETECTION_STATUS: reason=invalid_report_exhausted` to `detection.log`, which concludes as `parse_error`.
-  An OpenCode failure is retried `GH_AW_HARNESS_MAX_RETRIES` times. It then writes `reason=engine_error`, which concludes as `agent_failure`.
+  An OpenCode failure is retried `GH_AW_HARNESS_MAX_RETRIES` times. A DeepInfra fallback runs inside its attempt and does not count as a retry.
+  After the last retry fails, the detector writes `reason=engine_error`, which concludes as `agent_failure`.
   An invalid verdict is not retried.
   A run that reaches the script's deadline, two minutes before the step's 15, writes `reason=engine_timeout`, which concludes as `agent_failure`, and stops.
   Warn mode turns each of these three into a `warning` and a comment on the `[aw] Detection Runs` tracker.
@@ -435,8 +477,23 @@ first pre-agent step, before any workspace script runs:
   instead: `detection` runs on any agent output and would still spend a detection pass.
 
 A blocked recheck concludes the run as `failure`. For **CI Review**, `flag_failed_review`
-then labels the PR `ci-review-failed`. Keep `ZAI_API_KEY` in the `provider_health` job and
-these host steps. The agent container gets no Z.AI credential beyond the engine's own.
+then labels the PR `ci-review-failed`. Keep `ZAI_API_KEY` in the `provider_health` job, these
+host steps, and the `record` step of the `provider_health_record` job below. gh-aw allows no
+secret in the agent job's post-steps. The agent container gets no Z.AI credential beyond the
+engine's own.
+
+The monitor reads a run's terminal result from a record a host job writes, not from the
+agent's own output. After the agent job, including a failed one, `shared/provider-health.md`
+runs the `provider_health_record` job. It checks out the default-branch controller, reads the
+engine's terminal `session.result` from this run's `agent` artifact, and adds `run-result.json`
+to the `provider-health` artifact. gh-aw's parser wrote that `agent-session.jsonl` on the agent
+host from the engine's verified recording. The record keeps the failure kind the runner
+reported. It marks a provider-scope kind confirmed only when the job's own Z.ai check observes
+the same condition: the credential rejected with HTTP 401 or 403, or the plan's quota exhausted.
+gh-aw runs the job only after threat detection passes cleanly, and detection skips the model
+when the agent left no output or patch. A failed record does not fail the run. Without a valid
+record (the run predates the job, detection did not pass, or the record failed), the monitor
+reads the `agent` artifact, which never confirms a provider failure.
 
 The monitor serializes only incident work. Its `triage` job runs for each allowlisted
 completion without a concurrency group and stops before it reads incidents. The `monitor`
@@ -467,7 +524,9 @@ provider, workflow, or task incident.
 
 A provider incident blocks every Z.AI workflow. Open one only on provider-wide evidence:
 exhausted or unverifiable quota, rejected credentials, or a 429 whose Z.AI code is a
-documented account or plan limit (runner kind `plan_limit`). Keep these outcomes local to their run:
+documented account or plan limit (runner kind `plan_limit`). A rejected credential or plan
+limit from the agent run needs the host record's confirmation; unconfirmed, it opens a
+workflow or task incident like other typed failures. Keep these outcomes local to their run:
 
 - Any other 429 that outlasts the runner's retry window (runner kind `rate_limit`), such as
   `1302` request-rate limits and `1305` overload. A healthy quota check cannot show spare
@@ -549,7 +608,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | Check | Rejects | Why it matters |
 |---|---|---|
 | `dangling-needs` | any `if:`, `outputs:`, `env:`, `with:` or `run:` referencing `needs.<job>` where `<job>` isn't a dependency of that job (outside `if:`, only inside `${{ }}` — elsewhere the text is literal) | The expression evaluates to empty rather than failing. In `if:` that skips the job or step — and **a job skipped by `if:` reports success**, so the required check stays green while the agent never runs. In `outputs:`/`env:`/`with:`/`run:` nothing skips at all: the step runs with an empty value, so a wrong action call or shell variable goes through looking healthy. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
-| `provider-health-*` | a Z.AI source missing the shared gate, generic failure-as-issue or failed-job reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
+| `provider-health-*` | a Z.AI source missing the shared gate, generic failure-as-issue or failed-job reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, a workflow without the host job that records the agent job's terminal result, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
 | `provider-engine-config` | a shared threat-detection engine other than `false`, or a workflow-local engine override, whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
 | `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |
@@ -562,6 +621,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | `awf-binary-version` | an installer pin differing from the bundled version or generated schema URL | The compiler installs AWF directly. Its binary must match the configuration schema. |
 | `ai-credits-accounting` | an AWF provider overlay with unverified prices or per-million values in per-token fields | GLM accounting uses the verified Z.ai API-equivalent rates. Provider overlays use USD per token; default pricing uses USD per million. AWF retains its fixed 10,000-credit cap independently of configurable budgets. |
 | `daily-aic-guardrail` | a lock that compiles gh-aw's daily AI-credits guardrail step, matched by the script it runs (`check_daily_aic_workflow_guardrail.cjs`) | On every activation the guardrail lists the artifacts of each run from the past 24h to total their AI credits: about 700 REST calls per CI Review activation in [run 39522281523](https://github.com/pydantic/pydantic-ai/actions/runs/39522281523). That spend exhausted the repo's `GITHUB_TOKEN` rate limit. AI credits do not measure the Z.AI Coding Plan quota; provider health gates that quota. Disable the guardrail with `max-daily-ai-credits: -1` in each source's own frontmatter. gh-aw removes the guardrail only for that value. A `-1` in an import such as `shared/engine-zai.md` only drops `GH_AW_MAX_DAILY_AI_CREDITS`: the scan step compiles but skips, and the conclusion job's `if: always()` cache restore, write, save and `aic-usage-cache` upload still run whenever the conclusion job runs. |
+| `engine-sys-path-order` | a compiled engine wrapper (`AGENT_MODULE`) with a `sys.path.insert(0, ...)` statement, or a lock with no engine wrapper | The wrapper comes from the engine revision `shared/engine-zai.md` imports. #10347 imported one from before #12818, so every lock put the checkout ahead of installed packages on `sys.path` (#12815). |
 | `logfire-import` / `logfire-compiled` / `logfire-network` | a Z.AI source missing `shared/otel-logfire.md`, a lock missing the compiled OTLP settings, or a compiled firewall missing any of the six Logfire ingest hosts | Three Z.AI workflows reached `main` without trace export (#19). The import and compiled settings enable export; the firewall must allow the ingest hosts or it silently blocks traces. |
 | `lock-not-regenerated` | a changed `*.md` (or `shared/*.md` import) without its recompiled lock | Enforces the rule above. Checks that source and lock changed *together*, not that the lock was actually recompiled — `gh aw compile` is still on you. |
 

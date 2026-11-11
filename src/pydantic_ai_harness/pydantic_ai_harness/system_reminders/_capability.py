@@ -655,10 +655,10 @@ def _is_reminder_data(part: UserPromptPart) -> bool:
 
 
 def _first_user_text(messages: Sequence[ModelMessage]) -> str | None:
-    for msg in messages:
-        if not isinstance(msg, ModelRequest):
+    for message in messages:
+        if not isinstance(message, ModelRequest):
             continue
-        for part in msg.parts:
+        for part in message.parts:
             if not isinstance(part, UserPromptPart) or _is_reminder_data(part):
                 continue
             if text := user_prompt_text(part):
@@ -701,8 +701,8 @@ def _opening_compaction(window: Sequence[ModelMessage]) -> CompactionPart | None
 def _recent_texts(messages: Sequence[ModelMessage], max_messages: int) -> list[str]:
     """The recent user and assistant texts, each quoted in a `<message>` element with its role."""
     fragments: list[str] = []
-    for msg in messages:
-        for part in msg.parts:
+    for message in messages:
+        for part in message.parts:
             if isinstance(part, UserPromptPart) and not _is_reminder_data(part):
                 text = user_prompt_text(part)
                 if text:
@@ -722,7 +722,7 @@ _HARNESS_TAG_OPENERS = re.compile(
 """The `<` of an opening or closing reminder tag in every spelling, matched the way core matches its own."""
 
 
-def _quote(tag: str, body: str, **attrs: str) -> str:
+def _quote(tag: str, body: str, **attributes: str) -> str:
     """Quote `body` as data in a `<tag>` element it can't end early, open another frame in, or speak as the system from.
 
     The `<` of every opening and closing spelling of every core framing tag (`system`, `context` and
@@ -731,5 +731,5 @@ def _quote(tag: str, body: str, **attrs: str) -> str:
     """
     # TODO: switch to the public `pydantic_ai.framing.wrap()` with registered tags (#10957).
     escaped = _HARNESS_TAG_OPENERS.sub('&lt;', neutralize_tags(body))
-    attributes = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items())
-    return f'<{tag}{attributes}>\n{escaped}\n</{tag}>'
+    rendered_attributes = ''.join(f' {name}="{html.escape(value)}"' for name, value in attributes.items())
+    return f'<{tag}{rendered_attributes}>\n{escaped}\n</{tag}>'
