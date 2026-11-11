@@ -13,7 +13,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.subagents import DelegationEndEvent, DelegationStartEvent, DelegationTaskEvent
+from pydantic_ai_harness.subagents import DelegationFinishedEvent, DelegationStartedEvent, DelegationTaskEvent
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -168,7 +168,7 @@ async def test_task_events_reach_only_the_session_holding_the_conversation() -> 
     router.owner.records[record.id] = record
     assert b.running() and not a.running()
     record.status, record.outcome = 'finished', 'ok'
-    end = DelegationEndEvent(
+    end = DelegationFinishedEvent(
         agent_name='worker', outcome='failed', output='', truncated=False, usage=None, duration_seconds=1.0
     )
     await router.observe(DelegationTaskEvent(task=record, event=end))
@@ -187,7 +187,9 @@ async def test_task_events_reach_only_the_session_holding_the_conversation() -> 
     # A session that takes the conversation over does not take over B's task, until it resumes the task.
     held['a'] = 'b'
     assert a.records() == (record,) and not a.running()
-    start = DelegationStartEvent(agent_name='worker', task='inspect', truncated=False, inherits_tools=True, model=None)
+    start = DelegationStartedEvent(
+        agent_name='worker', task='inspect', truncated=False, inherits_tools=True, model=None
+    )
     await router.observe(DelegationTaskEvent(task=record, event=start))
     assert router.started == {record.id: a}
     assert a.running() and not b.running()

@@ -2112,7 +2112,7 @@ class TestIdempotentAccrual:
         Read for presence rather than truth, every response from that provider names the
         same token and everything after the first is dropped as a replay of it -- the brake
         releasing late, which is the direction this capability exists to avoid. Core reads
-        the same field for truth (`models/_continuation.py`, `models/openai.py`).
+        the same field for truth (`models/_continuation.py`, `models/openai/_chat_model.py`).
         """
         guard = SpendLimits(budgets=[Budget(window='total')], price=lambda r: Decimal('1'))
 

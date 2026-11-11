@@ -50,7 +50,7 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse, Question, QuestionOption
 from pydantic_ai_harness.filesystem import (
     EditFileCallPart,
-    FileChangeRequestEvent,
+    FileChangeRequestedEvent,
     FileEditedEvent,
     FileSystem,
     FileWrittenEvent,
@@ -181,8 +181,8 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
         == []
     )
 
-    def write(call_id: str, *, cancelled: bool = False) -> FileChangeRequestEvent:
-        return FileChangeRequestEvent(
+    def write(call_id: str, *, cancelled: bool = False) -> FileChangeRequestedEvent:
+        return FileChangeRequestedEvent(
             tool_call_id=call_id,
             path='n.py',
             root_dir='/w',
@@ -200,7 +200,7 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
     assert translate(FileWrittenEvent(tool_call_id='w2', path='n.py', root_dir='/w', content_hash='h')) == []
     assert translate(FileWrittenEvent(tool_call_id='w3', path='n.py', root_dir='/w', content_hash='h')) == []
     assert translate(FileWrittenEvent(tool_call_id=None, path='n.py', root_dir='/w', content_hash='h')) == []
-    edit_request = FileChangeRequestEvent(
+    edit_request = FileChangeRequestedEvent(
         tool_call_id='e2', path='a.py', root_dir='/w', operation='edit', diff='', truncated=False
     )
     assert translate(edit_request) == []

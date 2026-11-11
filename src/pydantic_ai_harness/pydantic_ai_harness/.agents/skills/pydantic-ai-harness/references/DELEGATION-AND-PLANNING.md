@@ -172,8 +172,9 @@ Gotchas:
   remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
   crashes abort the parent unless `contain_errors=True`.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
-- Not agent-spec serializable (holds live agents). Events: `DelegationStartEvent`,
-  `DelegationEndEvent` (`outcome` is `ok`/`timeout`/`budget`/`failed`/`contained`).
+- Not agent-spec serializable (holds live agents). Events: `DelegationStartedEvent` (not
+  `DelegationStartEvent`) and `DelegationFinishedEvent` (not `DelegationEndEvent`), whose `outcome`
+  is `ok`/`timeout`/`budget`/`failed`/`contained`.
 
 ### Task control
 
@@ -209,11 +210,13 @@ orchestrator = Agent(
   in the other process. `accept_timeout=30.0` fails a task no worker picks up.
 - `dynamic_agents=DynamicAgents(models=['fast'])` adds `create_agent`, with a vetoable
   `AgentCreatedEvent`; works with or without task control.
-- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). `task_control`, and `dynamic_agents`
-  within a bound `DelegationTasks` owner, raise `UserError` under a durability capability; don't use either
-  with the deprecated wrapper agents (`TemporalAgent`, ...).
-  On Temporal and DBOS, `dynamic_agents` runs each delegation other than to `self` in a durable unit of its
-  own; other durable engines raise `UserError`.
+- One `SubAgents` per agent may set `task_control` (or `dynamic_agents`). Don't use either with the deprecated
+  wrapper agents (`TemporalAgent`, ...). On Temporal and DBOS, `dynamic_agents` and task control run each
+  delegation other than to `self` in a durable unit of its own; a durable task can't ask questions, take messages
+  or be resumed, `cancel_task` stops it right away, and its report arrives when the run would otherwise end.
+  `UserError` under durability: task control with `include_self`, `remote_agents` or `forward_events`,
+  `auto_background_after` or `max_running_tasks` outside Temporal, other durable engines, and a bound
+  `DelegationTasks` owner.
 
 ## DelegationReports
 

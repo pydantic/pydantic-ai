@@ -506,7 +506,7 @@ conversation from `message_history`, in a new workflow or flow, works in the
 | Commands: `run_command`, `shell` | Yes, within the [activity timeout](durable_execution/temporal.md#harness-command-timeouts) | Yes | Yes |
 | Background jobs: `start_command`, `check_command`, `stop_command` | Yes | Yes | Yes |
 | Sticky `cd`: `Shell(persist_cwd=True)` | Yes | Yes | Yes |
-| File-change approval: [`FileChangeRequestEvent`](harness/filesystem.md#events) | Yes | Yes | Yes |
+| File-change approval: [`FileChangeRequestedEvent`](harness/filesystem.md#events) | Yes | Yes | Yes |
 | Live tool events | [File-change requests and write events only](durable_execution/temporal.md#harness-workspace-capabilities) | Yes | Yes |
 | Delegation: `delegate_task` | [To `self` only](durable_execution/temporal.md#harness-workspace-capabilities) | Yes | Yes |
 

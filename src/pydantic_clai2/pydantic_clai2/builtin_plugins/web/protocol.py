@@ -42,7 +42,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import (
     EditFileCallPart,
-    FileChangeRequestEvent,
+    FileChangeRequestedEvent,
     FileEditedEvent,
     FileWrittenEvent,
     ReplacementArgs,
@@ -1322,7 +1322,7 @@ class EventTranslator:
         self._scope = scope
         self._parts: dict[int, str] = {}
         self._count = 0
-        self._writes: dict[tuple[str | None, str], FileChangeRequestEvent] = {}
+        self._writes: dict[tuple[str | None, str], FileChangeRequestedEvent] = {}
         self._streamed: set[str] = set()
         """`run_code` cells already shown from their streamed part, so their call event only completes them."""
 
@@ -1404,7 +1404,7 @@ class EventTranslator:
             return [ToolOutput(id=event.tool_call_id, text=event.text)]
         if isinstance(event, CommandFinishedEvent) and event.tool_call_id is not None:
             return [ShellDone(id=event.tool_call_id, exit_code=event.exit_code)]
-        if isinstance(event, FileChangeRequestEvent) and event.operation == 'write':
+        if isinstance(event, FileChangeRequestedEvent) and event.operation == 'write':
             self._writes[event.tool_call_id, event.path] = event
         elif isinstance(event, FileEditedEvent) and event.tool_call_id is not None:
             diff = Diff(path=event.path, diff=event.diff, truncated=event.truncated)

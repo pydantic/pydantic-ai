@@ -208,7 +208,7 @@ Gotchas:
 ## KeenableSearch
 
 `KeenableSearch` adds `web_search` (a short excerpt per hit) and `get_page` (one URL as markdown).
-It needs no extra and no API key: Keenable's public endpoints are keyless, and the client uses `httpx`,
+It needs no extra and no API key: Keenable's public endpoints are keyless, and the client uses `httpx2`,
 which the harness already depends on.
 
 ```bash
@@ -240,7 +240,7 @@ Gotchas:
   become `ModelRetry`; 401/402/403 stop the run. `get_page` reads Keenable's indexed copy, and
   Keenable documents that an unindexed URL fails to fetch. For tests, pass `client=` a fake
   satisfying the exported `KeenableClient` protocol.
-- `HttpKeenableClient(http_client=...)` sends every request through your `httpx.AsyncClient` (connection
+- `HttpKeenableClient(http_client=...)` sends every request through your `httpx2.AsyncClient` (connection
   reuse, proxy, TLS, retrying transport); you close it. Without it, each request uses a fresh client.
 - A non-empty `guidance` replaces the default instructions, untrusted-content rule included, like
   `ExaSearch` and `YouSearch`.

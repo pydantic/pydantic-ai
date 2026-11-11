@@ -581,6 +581,12 @@ regenerated `.lock.yml`, including for existing workflows. Upgrading the CLI alo
 locks unchanged. Omit `evals`, which protected capture rejects. Treat `PAI_AGENT` modules and
 caller-supplied `PYTHONPATH` as trusted engine configuration. Point both settings only at code you trust.
 
+For authenticated terminal metadata, set `engine.env.PAI_RESULT_METADATA` to a trusted `MODULE:ATTRIBUTE` dictionary.
+Keep its keys as strings and its values JSON-serializable; update the same dictionary during the run.
+Read the signed value from verified `agent-session.jsonl` under `session.result.data.metadata`.
+OTLP endpoints and credentials stay on the host, so the launcher's direct OTLP export does not run under gh-aw.
+See the engine README's observability section.
+
 Gotchas: leave the model off the `Agent`, because the engine's `-m` overrides it. Writes go through safe
 outputs (for example the `safeoutputs_add_comment` tool). A step that appends `{"type":"noop","message":"..."}` to
 `$GH_AW_SAFE_OUTPUTS` makes the engine exit 0 before starting the agent; gh-aw rejects a `noop`
