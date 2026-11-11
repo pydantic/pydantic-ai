@@ -183,6 +183,7 @@ _CAPABILITY_PAGE_META = {
     'playwright.md': ('playwright', 'Playwright Browser'),
     'youdotcom.md': ('youdotcom', 'You.com'),
     'keenable-search.md': ('keenable', 'Keenable Search'),
+    'spider.md': ('spider', 'Spider'),
     'macroscope.md': ('macroscope', 'Macroscope'),
     'browser-use.md': ('browser_use', 'Browser Use'),
     'compaction.md': ('compaction', 'Compaction'),

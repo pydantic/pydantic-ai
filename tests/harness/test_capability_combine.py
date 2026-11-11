@@ -487,6 +487,10 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one Keenable search configuration per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(), cls(num_results=3)),
     ),
+    'Spider': Narrows(
+        'one Spider configuration per id; different configurations need separate ids and tool prefixes',
+        lambda cls: (cls(), cls(max_crawl_pages=3)),
+    ),
     'Slack': Narrows(
         'one Slack connection per id; two that differ need their own ids and tool prefixes',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),

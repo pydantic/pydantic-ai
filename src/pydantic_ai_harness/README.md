@@ -203,6 +203,7 @@ Finding and reading things on the open web.
 | [You.com Search](pydantic_ai_harness/youdotcom/) | Harness | Web search and page reads via [You.com](https://you.com): query-relevant excerpts or full-page markdown |
 | [You.com Research](pydantic_ai_harness/youdotcom/) | Harness | Cited answers and multi-step research via the You.com Answer, Research, and Finance Research APIs |
 | [Keenable Search](pydantic_ai_harness/keenable/) | Harness | Web research via [Keenable](https://keenable.ai): excerpted search and full-page reads, keyless and with no extra to install |
+| [Spider](pydantic_ai_harness/spider/) | Harness | Bounded site crawling, web search with optional content fetching, and browser-rendered markdown scraping |
 | [Browser Use](pydantic_ai_harness/browser_use/) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
 | [Playwright Browser](pydantic_ai_harness/playwright/) | Harness | Drive a real Chromium page yourself: navigate, click, type, read, and inspect what the page did |
 
@@ -327,7 +328,7 @@ agent = Agent(
 
 result = agent.run_sync('What changed in the top three Python agent frameworks this month? Cite sources.')
 print(result.output)
-#> ...
+# > ...
 ```
 
 `logfire.instrument_pydantic_ai()` records [a full trace of every run](https://logfire-us.pydantic.dev/public-trace/84bcf123-2106-49da-9f6f-5c26395339bb?spanId=7650806a0785b946): every model call and tool call, with token and cost tracking. It's standard OpenTelemetry, so any OTLP backend works; run `uvx logfire-cli wizard --task pydantic-ai` once to [set up Logfire](https://pydantic.dev/docs/ai/integrations/logfire/#using-logfire).

@@ -79,6 +79,7 @@ if TYPE_CHECKING:
     from .smart_search import SmartSearch
     from .smol_sandbox import SmolSandbox, SmolSandboxBackend
     from .spend import SpendLimits
+    from .spider import Spider
     from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
     from .ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
     from .stackone import StackOne
@@ -137,6 +138,7 @@ __all__ = [
     'InputGuardrail',
     'InputGuardrailFunc',
     'KeenableSearch',
+    'Spider',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -240,6 +242,7 @@ _LAZY_EXPORTS = {
     'InputGuardrailFunc': 'guardrails',
     'IPythonCodeMode': 'ipython_code_mode',
     'KeenableSearch': 'keenable',
+    'Spider': 'spider',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
