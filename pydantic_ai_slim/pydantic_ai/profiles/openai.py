@@ -697,10 +697,13 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     if reasoning.efforts is not None:
         profile['openai_reasoning_efforts'] = reasoning.efforts
     if _is_computer_use_model(model_name):
-        # The computer use models. Measured live on gpt-5.5 with the native `computer` tool: clicks land exactly up to
-        # 2560x1440 and miss by hundreds of pixels at 3840x2160, so a larger screen is sent scaled down to fit.
-        profile['computer_use_screenshot_max_side'] = 2560
-        profile['computer_use_screenshot_max_pixels'] = 2560 * 1440
+        # Measured live with the native `computer` tool and `detail: 'original'`, which OpenAI doesn't resize at these
+        # sizes: gpt-5.4 and gpt-5.6 click exactly up to 2560x1440 and miss by hundreds of pixels at 3840x2160.
+        # gpt-5.5 clicks exactly up to 1920x1200 (18 of 18), but often misses from 2048x1280 up (6 of 9 there, 4 of 9 at
+        # 2560x1440). A larger screen is sent scaled down to fit.
+        max_side, max_height = (1920, 1200) if model_name.startswith('gpt-5.5') else (2560, 1440)
+        profile['computer_use_screenshot_max_side'] = max_side
+        profile['computer_use_screenshot_max_pixels'] = max_side * max_height
     return profile
 
 
