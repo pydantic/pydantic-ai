@@ -1714,12 +1714,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
 
+        # Models this run built from a name or a run-time spec's model spec, which it enters so their HTTP clients
+        # close when it ends.
+        run_built_models: list[models.Model] = []
+
         effective_output_retries = retry_overrides.get('output')
         effective_tool_retries = retry_overrides.get('tools')
         if resolved is not None:
-            # Model: spec as fallback (override > run param > spec > agent), only built when it's used
-            if model is None and self._override_model.get() is None and resolved.model is not None:
-                model = model_from_spec(resolved.model)
+            # Model: spec as fallback (override > run param > spec > agent)
+            if model is None and resolved.model is not None:
+                model = self._run_spec_model(resolved.model, run_built_models)
             # Output retries: run param > spec > agent default
             if effective_output_retries is None and resolved.output_retries is not None:
                 effective_output_retries = resolved.output_retries
@@ -1786,9 +1790,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             bootstrap_capability = model_layers[0]
         resolved_models_by_selection: dict[tuple[int, str], models.Model] = {}
-        # Models this run built from a name, which it enters so their HTTP clients close when it ends.
-        run_built_models: list[models.Model] = []
-
         # Explicit run/spec/override models are authoritative. Otherwise the capability model
         # contribution selects the initial model needed to construct RunContext and resolve
         # `for_run()`; dynamic contributions are evaluated again for later request steps.
@@ -3554,6 +3555,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         _reject_second_of_a_kind([self._effective_root_capability(), *extra_capabilities])
         return [capability.for_agent(self) for capability in extra_capabilities]
+
+    def _run_spec_model(
+        self, spec_model: str | ModelSpec, run_built_models: list[models.Model]
+    ) -> models.Model | str | None:
+        """The model for a run from a run-time spec's `model`, or `None` while a model override, which wins, is active.
+
+        A model spec is only built when it's used, and is added to `run_built_models` so the run closes its HTTP client.
+        """
+        if self._override_model.get() is not None:
+            return None
+        model = model_from_spec(spec_model)
+        if isinstance(model, models.Model):
+            run_built_models.append(model)
+        return model
 
     async def _resolve_model_selection(
         self,

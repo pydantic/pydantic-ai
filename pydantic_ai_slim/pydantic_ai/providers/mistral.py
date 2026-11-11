@@ -83,7 +83,11 @@ class MistralProvider(Provider[Mistral]):
 
     @overload
     def __init__(
-        self, *, api_key: str | None = None, base_url: str | None = None, http_client: AsyncHTTPClient | None = None
+        self,
+        *,
+        api_key: str | SecretStr | None = None,
+        base_url: str | None = None,
+        http_client: AsyncHTTPClient | None = None,
     ) -> None: ...
 
     def __init__(

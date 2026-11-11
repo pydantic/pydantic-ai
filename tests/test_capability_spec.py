@@ -102,6 +102,9 @@ pytestmark = []
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
+with try_import() as groq_imports_successful:
+    from pydantic_ai.providers.groq import GroqProvider
+
 with try_import() as openai_imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -875,6 +878,14 @@ def test_agent_from_spec_model_with_custom_provider(monkeypatch: pytest.MonkeyPa
             "A model spec `name` must have the form `<provider>:<model>`, got 'qwen3'.",
         ),
         (_model_spec({'OpenAICompatible': _GATEWAY_PROVIDER}, 'unknown:qwen3'), 'Unknown model: unknown:qwen3'),
+        (
+            _model_spec({'OpenAICompatible': _GATEWAY_PROVIDER}, 'sentence-transformers:all-MiniLM-L6-v2'),
+            'Unknown model: sentence-transformers:all-MiniLM-L6-v2',
+        ),
+        (
+            _model_spec({'OpenAICompatible': {**_GATEWAY_PROVIDER, 'openai_client': 'not-a-client'}}),
+            "Invalid arguments for provider 'OpenAICompatible': 1 validation error for ProviderArguments\nopenai_client\n  Extra inputs are not permitted",
+        ),
     ],
 )
 def test_agent_from_spec_model_with_provider_errors(
@@ -940,8 +951,14 @@ async def test_run_time_spec_model_with_provider(via: str) -> None:
 
     with agent.override(spec=spec) if via == 'override' else nullcontext():
         async with agent.iter('hello', spec=spec if via == 'run' else None) as run:
-            assert isinstance(run.ctx.deps.model, OpenAIChatModel)
-            assert run.ctx.deps.model.system == 'my-gateway'
+            model = run.ctx.deps.model
+            assert isinstance(model, OpenAIChatModel)
+            assert model.system == 'my-gateway'
+            http_client = model._provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+            assert http_client is not None and not http_client.is_closed
+
+    # A model built for a single run is closed when the run ends, like one it builds from a model name.
+    assert http_client.is_closed == (via == 'run')
 
 
 @pytest.mark.parametrize('via', ['run', 'override', 'override-around-run'])
@@ -1161,6 +1178,11 @@ def test_spec_provider_names() -> None:
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 def test_provider_takes_secret_str() -> None:
     assert OpenAIProvider(api_key=SecretStr('openai-key')).client.api_key == 'openai-key'
+
+
+@pytest.mark.skipif(not groq_imports_successful(), reason='groq not installed')
+def test_provider_overload_takes_secret_str() -> None:
+    assert GroqProvider(api_key=SecretStr('groq-key')).client.api_key == 'groq-key'
 
 
 def test_agent_from_spec_capabilities_merged():

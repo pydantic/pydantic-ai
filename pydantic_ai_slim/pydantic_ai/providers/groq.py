@@ -111,7 +111,11 @@ class GroqProvider(Provider[AsyncGroq]):
 
     @overload
     def __init__(
-        self, *, api_key: str | None = None, base_url: str | None = None, http_client: httpx.AsyncClient | None = None
+        self,
+        *,
+        api_key: str | SecretStr | None = None,
+        base_url: str | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None: ...
 
     def __init__(

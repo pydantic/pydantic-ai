@@ -100,8 +100,8 @@ class Provider(ABC, Generic[InterfaceClient]):
         """Create the provider from the arguments in an agent spec. Defaults to `cls(*args, **kwargs)`.
 
         The spec's JSON schema is derived from the parameters of this method if it's overridden, and from
-        `__init__` otherwise. Parameters whose types have no JSON schema, like client objects, are left out.
-        A parameter that accepts a [`SecretStr`][pydantic.SecretStr] can only be set from an environment
+        `__init__` otherwise. Parameters whose types have no JSON schema, like client objects, are left out, and
+        the spec's arguments are validated against the parameters' types. A parameter that accepts a [`SecretStr`][pydantic.SecretStr] can only be set from an environment
         variable, as `{env: VAR_NAME}`, and receives the value as a `SecretStr`.
 
         Override this when `__init__` takes parameters a spec shouldn't set.

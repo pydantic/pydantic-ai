@@ -18,6 +18,7 @@ from pydantic import (
     PydanticUserError,
     SecretStr,
     TypeAdapter,
+    ValidationError,
     create_model,
     model_serializer,
     with_config,
@@ -523,7 +524,13 @@ def model_from_spec(model: str | ModelSpec, custom_provider_types: Sequence[type
         raise UserError(f'Unknown model: {model.name}') from None
 
     provider = _load_provider(model.provider, custom_provider_types)
-    if not isinstance(provider.client, _provider_client_type(default_provider_class)):
+    client_types = _provider_client_types(type(provider))
+    default_client_types = _provider_client_types(default_provider_class)
+    if (
+        client_types is not None
+        and default_client_types is not None
+        and not all(issubclass(client_type, default_client_types) for client_type in client_types)
+    ):
         raise UserError(
             f'Provider {model.provider.name!r} ({type(provider).__name__}) cannot be used with model {model.name!r},'
             f' which needs a provider like `{default_provider_class.__name__}`.'
@@ -541,10 +548,10 @@ def _load_provider(spec: ProviderSpec, custom_provider_types: Sequence[type[Prov
     target: Callable[..., Provider[Any]]
     if name in custom_registry:
         target = custom_registry[name].from_spec
-        hints = _provider_spec_type_hints(custom_registry[name])
+        params = _provider_spec_params(_provider_spec_target(custom_registry[name]))
     elif name.startswith('gateway/'):
         target = functools.partial(_gateway_provider_from_spec, name.removeprefix('gateway/'))
-        hints = get_function_type_hints(_gateway_provider_from_spec)
+        params = _provider_spec_params(_gateway_provider_from_spec)
     else:
         provider_name = name if name in _PROVIDER_CLASS_KEYS else _provider_name_for_class_key(name)
         if provider_name is None:
@@ -555,12 +562,17 @@ def _load_provider(spec: ProviderSpec, custom_provider_types: Sequence[type[Prov
             )
         provider_class = _builtin_provider_class(provider_name)
         target = provider_class.from_spec
-        hints = _provider_spec_type_hints(provider_class)
+        params = _provider_spec_params(_provider_spec_target(provider_class))
 
     kwargs = {
-        param: _resolve_env_var(name, param, value, secret=_is_secret_type(hints.get(param)))
+        param: _resolve_env_var(name, param, value, secret=param in params and _is_secret_type(params[param][0]))
         for param, value in spec.kwargs.items()
     }
+    params_typed_dict, _ = _provider_params_typed_dict(params, 'ProviderArguments', for_schema=False)
+    try:
+        kwargs = TypeAdapter(params_typed_dict).validate_python(kwargs)
+    except ValidationError as e:
+        raise UserError(f'Invalid arguments for provider {name!r}: {e}') from e
     return target(**kwargs)
 
 
@@ -643,14 +655,23 @@ def _get_custom_provider_registry(
     )
 
 
-def _provider_client_type(provider_class: type[Provider[Any]]) -> Any:
-    """The client type in the `Provider[...]` base of a built-in provider class."""
-    return next(
-        get_args(base)[0]
-        for cls in provider_class.__mro__
-        for base in cls.__dict__.get('__orig_bases__', ())
-        if get_origin(base) is Provider
+def _provider_client_types(provider_class: type[Provider[Any]]) -> tuple[type[Any], ...] | None:
+    """The client types in the `Provider[...]` base of a provider class, or `None` if it doesn't declare concrete ones.
+
+    A union of client types, like `AnthropicProvider`'s, gives each of its members.
+    """
+    client_type: Any = next(
+        (
+            get_args(base)[0]
+            for cls in provider_class.__mro__
+            for base in cls.__dict__.get('__orig_bases__', ())
+            if get_origin(base) is Provider
+        ),
+        Any,
     )
+    if client_type is Any:
+        return None
+    return get_args(client_type) or (client_type,)
 
 
 def _provider_spec_target(provider_class: type[Provider[Any]]) -> Callable[..., Any]:
@@ -660,44 +681,50 @@ def _provider_spec_target(provider_class: type[Provider[Any]]) -> Callable[..., 
     return provider_class.from_spec
 
 
-def _provider_spec_type_hints(provider_class: type[Provider[Any]]) -> dict[str, Any]:
-    return get_function_type_hints(_provider_spec_target(provider_class))
-
-
 def _is_secret_type(tp: Any) -> bool:
     return tp is SecretStr or SecretStr in get_args(tp)
 
 
-def _provider_param_schema_type(tp: Any) -> Any | None:
-    """The type of a provider argument in the JSON schema, or `None` if a spec can't set it."""
-    if _is_secret_type(tp):
-        return EnvVar | None if type(None) in get_args(tp) else EnvVar
+def _has_json_schema(tp: Any) -> bool:
     try:
         TypeAdapter(tp).json_schema()
     except PydanticUserError:
-        return None
-    return tp
+        return False
+    return True
 
 
-def _provider_params_typed_dict(target: Callable[..., Any], title: str) -> tuple[Any, bool]:
-    """A TypedDict of the spec arguments of a provider's spec target, and whether any argument is required.
+def _provider_spec_params(target: Callable[..., Any]) -> dict[str, tuple[Any, bool]]:
+    """The parameters of a provider's spec target that a spec can set, with their types and whether they're required.
 
-    Positional-only parameters, like the Gateway's upstream provider, are left out.
+    These are its secret parameters and those whose types have a JSON schema, which leaves out client objects.
+    Positional-only parameters, like the Gateway's upstream provider, are left out too.
     """
     hints = get_function_type_hints(target)
-    fields: dict[str, Any] = {}
-    has_required = False
+    params: dict[str, tuple[Any, bool]] = {}
     for p in inspect.signature(target).parameters.values():
         if p.name == 'self' or p.kind in (p.POSITIONAL_ONLY, p.VAR_POSITIONAL, p.VAR_KEYWORD) or p.name not in hints:
             continue
-        if (schema_type := _provider_param_schema_type(hints[p.name])) is None:
-            continue
-        if p.default is p.empty:
-            has_required = True
-            fields[p.name] = schema_type
-        else:
-            fields[p.name] = NotRequired[schema_type]
+        tp = hints[p.name]
+        if _is_secret_type(tp) or _has_json_schema(tp):
+            params[p.name] = (tp, p.default is p.empty)
+    return params
+
+
+def _provider_params_typed_dict(
+    params: dict[str, tuple[Any, bool]], title: str, *, for_schema: bool
+) -> tuple[Any, bool]:
+    """A TypedDict of a provider's spec arguments, and whether any argument is required.
+
+    For the JSON schema, secret arguments are typed as an `EnvVar` reference; otherwise they keep their type, to
+    validate the `SecretStr` read from the environment variable.
+    """
+    fields: dict[str, Any] = {}
+    for param, (tp, required) in params.items():
+        if for_schema and _is_secret_type(tp):
+            tp = EnvVar | None if type(None) in get_args(tp) else EnvVar
+        fields[param] = tp if required else NotRequired[tp]
     td = TypedDict(title, fields)  # pyright: ignore[reportArgumentType]
+    has_required = any(required for _, required in params.values())
     return with_config(ConfigDict(extra='forbid'))(td), has_required
 
 
@@ -738,7 +765,7 @@ def _build_provider_schema_types(custom_provider_types: Sequence[type[Provider[A
 
 def _provider_schema_entries(names: Sequence[str], target: Callable[..., Any], title: str) -> list[Any]:
     """The schema types for provider names that resolve to the same class or function, sharing its arguments TypedDict."""
-    params_td, has_required = _provider_params_typed_dict(target, title)
+    params_td, has_required = _provider_params_typed_dict(_provider_spec_params(target), title, for_schema=True)
     entries: list[Any] = []
     for name in names:
         if not has_required:
