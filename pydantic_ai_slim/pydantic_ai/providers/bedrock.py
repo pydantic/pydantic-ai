@@ -22,7 +22,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.profiles.zai import ZaiModelProfile, zai_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import (
     BEDROCK_GEO_PREFIXES as BEDROCK_GEO_PREFIXES,  # re-exported for backwards compatibility
@@ -260,7 +260,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     """
 
     bedrock_thinking_variant: (
-        Literal['anthropic', 'deepseek', 'openai', 'openai_responses', 'qwen', 'xai', 'zai'] | None
+        Literal['anthropic', 'deepseek', 'openai', 'openai_responses', 'qwen', 'xai', 'zai', 'zai_effort'] | None
     )
     """Which thinking API shape to use for unified thinking translation.
 
@@ -273,8 +273,10 @@ class BedrockModelProfile(ModelProfile, total=False):
       shape that the OpenAI GPT-5.6 and GPT-6 models take on Converse.
     - `'qwen'`: Uses `{'reasoning_config': 'none'|'low'|'high'}`
     - `'xai'`: Uses `{'reasoning': {'effort': 'low'|'medium'|'high'|'xhigh'}}`
-    - `'zai'`: Uses `{'reasoning_effort': ...}`: `'high'` to turn reasoning on for models without effort levels
-      (e.g. GLM-4.7, GLM-5), or the effort level for models with `zai_supports_reasoning_effort` (e.g. GLM-5.3)
+    - `'zai'`: Uses `{'reasoning_effort': 'high'|'none'}`: `'high'` is the only level that turns reasoning on
+      (e.g. GLM-4.7, GLM-5)
+    - `'zai_effort'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'|'xhigh'|'max'}`, for GLM models that always
+      reason and take an effort level (e.g. GLM-5.3)
     - `None`: No unified thinking support.
 
     Default: `None`.
@@ -544,26 +546,19 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
 
 def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Z.AI (Zhipu) GLM model used via Bedrock."""
-    zai_profile = _strip_builtin_tools(zai_model_profile(model_name))
-    # Bedrock accepts every `reasoning_effort` from `low` to `max` on GLM-5.3 (unlike Z.AI's API, which only
-    # accepts `low`/`high`/`max`), so only `minimal` needs substituting. The mapping is read only for models with
-    # effort levels, so it is set only for them.
-    effort_mapping = (
-        ZaiModelProfile(zai_reasoning_effort_mapping={'minimal': 'low'})
-        if zai_profile.get('zai_supports_reasoning_effort', False)
-        else None
-    )
+    # GLM-5.3 always reasons and takes every effort level from `low` to `max` on Converse; earlier GLM models only
+    # reason with `'high'`.
+    thinking_variant: Literal['zai', 'zai_effort'] = 'zai_effort' if model_name.startswith('glm-5.3') else 'zai'
     return merge_profile(
-        zai_profile,
+        _strip_builtin_tools(zai_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_supports_tool_choice=True,
             bedrock_supports_leading_assistant_message=True,
             json_schema_transformer=_BedrockJsonSchemaTransformerWithoutContains,
             supports_json_schema_output=True,
             bedrock_supports_strict_tool_definition=True,
-            bedrock_thinking_variant='zai',
+            bedrock_thinking_variant=thinking_variant,
         ),
-        effort_mapping,
     )
 
 

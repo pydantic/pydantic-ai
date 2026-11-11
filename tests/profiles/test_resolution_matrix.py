@@ -1404,14 +1404,14 @@ def test_bedrock_zai_glm_5_3():
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'zai_supports_reasoning_effort': True,
-            'zai_reasoning_effort_mapping': {'minimal': 'low'},
+            'zai_reasoning_effort_mapping': {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'},
             'supported_native_tools': frozenset(),
             'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
             'bedrock_supports_tool_choice': True,
             'bedrock_supports_leading_assistant_message': True,
             'supports_json_schema_output': True,
             'bedrock_supports_strict_tool_definition': True,
-            'bedrock_thinking_variant': 'zai',
+            'bedrock_thinking_variant': 'zai_effort',
             'supports_video_input': False,
         }
     )

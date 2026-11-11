@@ -1286,14 +1286,13 @@ class TestBedrockThinkingTranslation:
             ('zai.glm-5', True, {'reasoning_effort': 'high'}),
             ('zai.glm-5', 'low', {'reasoning_effort': 'high'}),
             ('zai.glm-5', False, {'reasoning_effort': 'none'}),
-            # GLM-5.3 takes the effort level, except `'minimal'`; `True` leaves the model's default. Its `'medium'` and
-            # `'xhigh'` rows show the Bedrock override replaces Z.AI's native mapping.
-            ('us.zai.glm-5.3', True, None),
+            # GLM-5.3 takes every effort level except `'minimal'`, and `True` sends `'max'`, its default. Its `'medium'`
+            # and `'xhigh'` rows pass through, where Z.AI's own API would fold them.
+            ('us.zai.glm-5.3', True, {'reasoning_effort': 'max'}),
             ('us.zai.glm-5.3', 'minimal', {'reasoning_effort': 'low'}),
             ('us.zai.glm-5.3', 'medium', {'reasoning_effort': 'medium'}),
             ('us.zai.glm-5.3', 'xhigh', {'reasoning_effort': 'xhigh'}),
-            # GLM-5.3 can't turn thinking off, so `False` reasons as little as it can. It is the only Bedrock model on the
-            # effort-capable path and it is always on, so the not-always-on side of that branch isn't reachable.
+            # GLM-5.3 can't turn thinking off, so `False` reasons as little as it can.
             ('us.zai.glm-5.3', False, {'reasoning_effort': 'low'}),
         ],
     )
