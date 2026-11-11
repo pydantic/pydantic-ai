@@ -160,6 +160,15 @@ def _revealed_deferred_tool_order(
     ]
 
 
+def _validate_wire_tools_not_all_deferred(tools: list[BetaToolUnionParam]) -> None:
+    """Raise before sending a `tools` list in which every tool has `defer_loading=True`, which Anthropic rejects."""
+    if tools and all(tool.get('defer_loading') is True for tool in tools):
+        raise UserError(
+            'Anthropic rejects a request whose wire tools all have `defer_loading=True`. '
+            'Make at least one tool visible, or add a tool-search surface or capability catalog.'
+        )
+
+
 def _append_revealed_tool_params(tools: list[BetaToolUnionParam], revealed_tool_order: list[str]) -> None:
     """Move revealed deferred definitions behind the request's stable tool segments."""
     by_name = {tool.get('name'): tool for tool in tools}
@@ -1789,11 +1798,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
         )
         _append_revealed_tool_params(tools, revealed_tool_order)
-        if tools and all(tool.get('defer_loading') is True for tool in tools):
-            raise UserError(
-                'Anthropic rejects a request whose wire tools all have `defer_loading=True`. '
-                'Make at least one tool visible, or add a tool-search surface or capability catalog.'
-            )
+        _validate_wire_tools_not_all_deferred(tools)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
@@ -2231,6 +2236,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             code_execution_in_open_turn=open_turn_has_code_execution(messages, self.system),
         )
         _append_revealed_tool_params(tools, revealed_tool_order)
+        # Judged on the request's `tools`, which also hold any server tool the count leaves off. A native tool entry is
+        # never deferred, and without one the request's `tools` equal these.
+        if not any(_native_tool_is_a_tools_entry(tool) for tool in model_request_parameters.native_tools):
+            _validate_wire_tools_not_all_deferred(tools)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
@@ -2249,7 +2258,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         thinking = self._translate_thinking(model_settings, model_request_parameters)
         effective_thinking = _effective_thinking(model_settings, thinking)
         betas, extra_headers = self._get_betas_and_extra_headers(
-            model_settings, anthropic_profile, messages, model_request_parameters, effective_thinking
+            model_settings, anthropic_profile, messages, map_parameters, effective_thinking
         )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)

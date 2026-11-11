@@ -597,12 +597,12 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
                 continue
             if item == previous:
                 continue
-            await ctx.emit(PlanUpdatedEvent(item=item, previous_state=previous))
+            await ctx.emit(PlanUpdatedEvent(item=item, previous_item=previous))
             if item.status == previous.status:
                 continue
-            await ctx.emit(PlanStatusChangedEvent(item=item, previous_state=previous))
+            await ctx.emit(PlanStatusChangedEvent(item=item, previous_item=previous))
             if item.status is TaskStatus.completed:
-                await ctx.emit(PlanCompletedEvent(item=item, previous_state=previous))
+                await ctx.emit(PlanCompletedEvent(item=item, previous_item=previous))
         for item in before:
             if item.id not in new:
                 await ctx.emit(PlanDeletedEvent(item=item))

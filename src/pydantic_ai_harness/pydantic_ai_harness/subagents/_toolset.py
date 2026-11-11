@@ -18,7 +18,7 @@ import anyio
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
-from pydantic_ai.durable_exec import DurableRunContext
+from pydantic_ai.durable_exec import BaseDurabilityCapability, DurableRunContext
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -65,9 +65,9 @@ from pydantic_ai_harness.subagents._control import (
 )
 from pydantic_ai_harness.subagents._events import (
     AgentCreatedEvent,
-    DelegationEndEvent,
+    DelegationFinishedEvent,
     DelegationOutcome,
-    DelegationStartEvent,
+    DelegationStartedEvent,
     ParentMessage,
     TaskAnswerEvent,
     TaskAssignedEvent,
@@ -308,7 +308,7 @@ class _Ended:
 
 
 async def _send_to_owner(
-    owner: DelegationTasks, record: DelegationTask, event: DelegationStartEvent | DelegationEndEvent
+    owner: DelegationTasks, record: DelegationTask, event: DelegationStartedEvent | DelegationFinishedEvent
 ) -> None:
     """Send a managed delegation's start or end to the application's observer.
 
@@ -350,7 +350,7 @@ async def _emit_delegation(
     owner: DelegationTasks | None,
     record: DelegationTask | None,
     emits: bool,
-    event: DelegationStartEvent | DelegationEndEvent,
+    event: DelegationStartedEvent | DelegationFinishedEvent,
 ) -> None:
     """Send a delegation's start or end to its owner, or emit it from the delegating run."""
     if owner is not None and record is not None:
@@ -359,6 +359,10 @@ async def _emit_delegation(
     # Only called when `emits` holds or an owner exists, and an owner always comes with a record.
     elif emits:  # pragma: no branch
         await ctx.emit(event)
+
+
+def _elapsed_ms(started: float) -> float:
+    return (time.perf_counter() - started) * 1000
 
 
 def _emits_events(ctx: RunContext[AgentDepsT]) -> bool:
@@ -427,7 +431,9 @@ def _descendants(ctx: RunContext[Any], owner: DelegationTasks) -> list[Delegatio
     def descends(record: DelegationTask) -> bool:
         parent = record.parent_id
         while parent is not None and parent != ancestor:
-            parent = owner.records[parent].parent_id
+            # A parent whose saved file was skipped as damaged is not in the records.
+            above = owner.records.get(parent)
+            parent = above.parent_id if above is not None else None
         return parent == ancestor and record.id != ancestor
 
     return [r for r in owner.records.values() if r.conversation_id == conversation_id and descends(r)]
@@ -693,6 +699,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             working_directory: Start the child in this directory using the configured workspace resolver.
                 On resume, omit it to keep the saved directory, or supply the same resolved directory.
         """
+        self._check_child_workflow(ctx)
         owner = DelegationTasks.current()
         if owner is not None:
             agent_name = owner.aliases.get(agent_name, agent_name)
@@ -753,6 +760,30 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if ended is None:
             ended = await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key, workspace=workspace)
         return ended.result()
+
+    def _check_child_workflow(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Reject options that need the parent run when the delegate tool runs as a child workflow."""
+        # Temporal runs a restored context in workflow code, and DBOS a restored context at all, only in a child workflow.
+        if not (isinstance(ctx, DurableRunContext) and ctx.in_durable_context and ctx.agent is not None):
+            return
+        durability = BaseDurabilityCapability.from_agent(ctx.agent)
+        if durability is None or durability.engine_spec.engine_name not in ('Temporal', 'DBOS'):
+            return
+        if (
+            self._include_self
+            or self._inherit_tools
+            or self._models
+            or self._shared_capabilities
+            or self._event_stream_handler is not None
+            or self._dynamic_agents is not None
+            or self._task_control is not None
+            or any(sub.max_calls is not None for sub in self._agents.values())
+        ):
+            raise UserError(
+                'A `SubAgents` delegate tool running as a child workflow does not support `include_self`, '
+                '`inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, '
+                "`task_control`, or a delegate's `max_calls`."
+            )
 
     async def _delegate_recorded(
         self, ctx: RunContext[AgentDepsT], agent_name: str, task: str, key: str | None, *, managed: bool = False
@@ -1280,7 +1311,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if emits:
             text, truncated = bounded_text(task)
             await emit(
-                DelegationStartEvent(
+                DelegationStartedEvent(
                     agent_name=agent_name, task=text, truncated=truncated, model=key, inherits_tools=inherit_tools
                 )
             )
@@ -1321,13 +1352,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if owner is not None:
                 with anyio.move_on_after(5, shield=True):
                     await emit(
-                        DelegationEndEvent(
+                        DelegationFinishedEvent(
                             agent_name=agent_name,
                             outcome=outcome,
                             output=str(exc),
                             truncated=False,
                             usage=child_usage,
-                            duration_seconds=time.perf_counter() - started,
+                            duration_ms=_elapsed_ms(started),
                         )
                     )
             raise
@@ -1340,13 +1371,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if emits:
             text, truncated = bounded_text(ended.output)
             await emit(
-                DelegationEndEvent(
+                DelegationFinishedEvent(
                     agent_name=agent_name,
                     outcome=ended.outcome,
                     output=text,
                     truncated=truncated,
                     usage=child_usage,
-                    duration_seconds=time.perf_counter() - started,
+                    duration_ms=_elapsed_ms(started),
                 )
             )
         return ended

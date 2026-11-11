@@ -73,6 +73,8 @@ class Fleet:
     root: Path
     portal: BlockingPortal
     agents: dict[str, Agent[None, str]]
+    builtin: tuple[PluginSettings, ...] = ()
+    """Built-in plugins beside `web`, which every session loads."""
     launch: SessionRuntime[None, str] = field(init=False)
     client: TestClient = field(init=False)
     runtimes: dict[str, SessionRuntime[None, str]] = field(default_factory=dict[str, SessionRuntime[None, str]])
@@ -119,7 +121,7 @@ class Fleet:
             console=Console(file=io.StringIO(), width=100),
             settings=None,
             store=SettingsStore(self.root / 'config.db') if joined is None else None,
-            builtin_plugins=[WEB] if joined is None else (),
+            builtin_plugins=[WEB, *self.builtin] if joined is None else (),
             project=ProjectSettings(),
             headless=True,
             workspace=directory,
@@ -741,6 +743,14 @@ async def test_a_host_outside_the_loader_is_its_one_session() -> None:
     live.subscribe(lambda: None)()
     unwatch = session.watch()
     unwatch()
+    assert session.waiting_for is None
+    with pytest.raises(ValueError, match='must not be empty'):
+        session.wait_for_user('')
+    finished = session.wait_for_user('approval')
+    assert session.waiting_for == 'approval'
+    finished()
+    finished()
+    assert session.waiting_for is None
     assert (session.session_id, session.workspace, session.conversation) == (None, Path.cwd(), host.conversation)
     assert (session.status, session.sessions, session.tasks) == (host.status, None, None)
     assert (session.running, session.busy, session.queued, session.watchers, session.interrupt()) == (
