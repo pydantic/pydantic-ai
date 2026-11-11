@@ -8423,6 +8423,90 @@ async def test_bedrock_zai_native_output(allow_model_requests: None, bedrock_pro
     assert not any(isinstance(part, ToolCallPart) for message in result.all_messages() for part in message.parts)
 
 
+class _NestedInner(BaseModel):
+    tags: list[str] = Field(json_schema_extra={'contains': {'type': 'string'}})
+
+
+class _NestedOuter(BaseModel):
+    inner: _NestedInner
+
+
+async def test_bedrock_zai_glm_5_3_inlines_defs(allow_model_requests: None, env: TestEnv):
+    """GLM-5.3 stringifies nested `$ref` arguments, so its tool and output schemas go out with `$defs` inlined.
+
+    Strict native output still moves `contains`, which GLM rejects, into the description; the non-strict tool keeps it.
+    Not a VCR test: the request is aborted at `before-send` to pin the schemas the real botocore pipeline sends, which
+    cassette matching does not check. See https://github.com/pydantic/pydantic-ai/issues/12103.
+    """
+    env.remove('AWS_BEARER_TOKEN_BEDROCK')
+    provider = BedrockProvider(
+        region_name='us-east-1',
+        aws_access_key_id='AKIA6666666666666666',
+        aws_secret_access_key='6666666666666666666666666666666666666666',
+    )
+    client = cast(BedrockRuntimeClient, provider.client)
+    sent: list[dict[str, Any]] = []
+
+    class RequestCaptured(Exception):
+        pass
+
+    def capture(request: Any, **_: Any) -> None:
+        sent.append(json.loads(request.body))
+        raise RequestCaptured
+
+    client.meta.events.register_last('before-send.bedrock-runtime.Converse', capture)
+
+    agent = Agent(BedrockConverseModel('us.zai.glm-5.3', provider=provider), output_type=NativeOutput(_NestedOuter))
+
+    @agent.tool_plain
+    def save(outer: _NestedOuter) -> str:
+        return 'saved'  # pragma: no cover
+
+    try:
+        with pytest.raises(RequestCaptured):
+            await agent.run('Save the tags.')
+    finally:
+        client.close()
+
+    [body] = sent
+    assert body['toolConfig']['tools'][0]['toolSpec']['inputSchema']['json'] == snapshot(
+        {
+            'properties': {
+                'inner': {
+                    'properties': {
+                        'tags': {'contains': {'type': 'string'}, 'items': {'type': 'string'}, 'type': 'array'}
+                    },
+                    'required': ['tags'],
+                    'type': 'object',
+                }
+            },
+            'required': ['inner'],
+            'type': 'object',
+        }
+    )
+    assert json.loads(body['outputConfig']['textFormat']['structure']['jsonSchema']['schema']) == snapshot(
+        {
+            'properties': {
+                'inner': {
+                    'properties': {
+                        'tags': {
+                            'items': {'type': 'string'},
+                            'type': 'array',
+                            'description': "contains={'type': 'string'}",
+                        }
+                    },
+                    'required': ['tags'],
+                    'type': 'object',
+                    'additionalProperties': False,
+                }
+            },
+            'required': ['inner'],
+            'type': 'object',
+            'additionalProperties': False,
+        }
+    )
+
+
 @pytest.mark.vcr()
 async def test_bedrock_moonshotai_tool_call(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Moonshot AI Kimi via Bedrock supports tool calls (registered under the `moonshot.` prefix here)."""
