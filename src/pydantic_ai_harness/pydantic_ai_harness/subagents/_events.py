@@ -4,7 +4,7 @@ One delegation is one `delegate_task` call, so its start and end events share
 the `tool_call_id` core stamps on every event a capability tool emits; that is
 how a subscriber pairs them when several delegations run at once.
 
-The text of `DelegationStartEvent` and `DelegationEndEvent` is bounded: `task`
+The text of `DelegationStartedEvent` and `DelegationFinishedEvent` is bounded: `task`
 and `output` are cut at `MAX_EVENT_TEXT_CHARS` with a `truncated` flag, so an
 event stream that is persisted or forwarded to a UI cannot be flooded by one
 verbose delegation. A `SubAgentMessageEvent` is not cut: it is the message itself,
@@ -30,7 +30,7 @@ from pydantic_ai_harness._warn import HarnessDeprecationWarning
 SUB_AGENTS_EVENTS = 'sub_agents'
 
 MAX_EVENT_TEXT_CHARS = 4096
-"""Characters kept of `DelegationStartEvent.task` and `DelegationEndEvent.output` before they are cut."""
+"""Characters kept of `DelegationStartedEvent.task` and `DelegationFinishedEvent.output` before they are cut."""
 
 DelegationOutcome = Literal['ok', 'timeout', 'budget', 'failed', 'contained', 'cancelled', 'error']
 """How a delegation ended, mirroring the failure-handling contract of `SubAgent`.
@@ -56,7 +56,7 @@ _ParentTaskId: TypeAlias = Annotated[str | None, Field(validation_alias=AliasCho
 
 
 @dataclass(kw_only=True)
-class DelegationStartEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='delegation_start'):
+class DelegationStartedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='delegation_start'):
     """A sub-agent run is about to start for one delegation.
 
     Emitted once the delegation has passed every check that could refuse it (an
@@ -83,7 +83,7 @@ class DelegationStartEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='d
 
 
 @dataclass(kw_only=True)
-class DelegationEndEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='delegation_end'):
+class DelegationFinishedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='delegation_end'):
     """A delegation settled into what the parent receives.
 
     `output` is what the delegate tool hands back to the parent: the child's
@@ -117,7 +117,7 @@ class DelegationEndEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='del
 class _Vetoable:
     """The veto of an immediately dispatched event: a listener can stop what the event announces.
 
-    Named `veto`, not `cancel` as `FileChangeRequestEvent` has it, as these events sit beside task cancellation.
+    Named `veto`, not `cancel` as `FileChangeRequestedEvent` has it, as these events sit beside task cancellation.
     """
 
     vetoed: bool = False
@@ -222,7 +222,7 @@ class TaskRequestEvent(ParentMessageEvent, abstract=True):
 
 
 @dataclass(kw_only=True)
-class TaskAssignedEvent(TaskRequestEvent, name='task_assigned'):
+class TaskAssignedEvent(TaskRequestEvent):
     """The delegating run assigns a new task to a sub-agent."""
 
 
@@ -261,7 +261,7 @@ class TaskForceCancelRequestedEvent(ParentMessageEvent, name='task_force_cancel'
 
 
 @dataclass(kw_only=True)
-class TaskStartedEvent(ChildMessageEvent, name='task_started'):
+class TaskStartedEvent(ChildMessageEvent):
     """A worker picked the task up and its run is starting.
 
     A remote task that no worker picks up within `TaskControl.accept_timeout` fails.
@@ -269,7 +269,7 @@ class TaskStartedEvent(ChildMessageEvent, name='task_started'):
 
 
 @dataclass(kw_only=True)
-class TaskProgressEvent(ChildMessageEvent, name='task_progress', dispatch='stream'):
+class TaskProgressEvent(ChildMessageEvent, dispatch='stream'):
     """An event from the sub-agent's own run, forwarded while the task runs, with `TaskControl.forward_events`.
 
     Dispatched at its stream position, like the event it carries.
@@ -320,7 +320,7 @@ class TaskSettledEvent(ChildMessageEvent, abstract=True):
 
 
 @dataclass(kw_only=True)
-class TaskCompletedEvent(TaskSettledEvent, name='task_completed'):
+class TaskCompletedEvent(TaskSettledEvent):
     """The task finished with an output."""
 
     output: str
@@ -328,7 +328,7 @@ class TaskCompletedEvent(TaskSettledEvent, name='task_completed'):
 
 
 @dataclass(kw_only=True)
-class TaskFailedEvent(TaskSettledEvent, name='task_failed'):
+class TaskFailedEvent(TaskSettledEvent):
     """The task's run failed, or ended in a way that delivered no output."""
 
     error: str
@@ -336,7 +336,7 @@ class TaskFailedEvent(TaskSettledEvent, name='task_failed'):
 
 
 @dataclass(kw_only=True)
-class TaskCancelledEvent(TaskSettledEvent, name='task_cancelled'):
+class TaskCancelledEvent(TaskSettledEvent):
     """The task stopped because it was cancelled. A resumable task can be followed up on."""
 
     forced: bool
@@ -353,7 +353,7 @@ BackgroundReason: TypeAlias = Literal['requested', 'auto', 'question']
 
 
 @dataclass(kw_only=True)
-class TaskBackgroundedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='task_backgrounded'):
+class TaskBackgroundedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS):
     """A task now runs in the background: the delegation tool returned a receipt, and its report arrives later.
 
     A `requested` task still running when the delegation tool gets its receipt, but settled before this event is
@@ -371,9 +371,7 @@ class TaskBackgroundedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='
 
 
 @dataclass(kw_only=True)
-class AgentCreatedEvent(
-    _Vetoable, CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='agent_created', dispatch='immediate'
-):
+class AgentCreatedEvent(_Vetoable, CapabilityEvent, namespace=SUB_AGENTS_EVENTS, dispatch='immediate'):
     """The model is creating a sub-agent with `create_agent` (`SubAgents.dynamic_agents`).
 
     Dispatched immediately, so a listener can rewrite `description` and `instructions`, or veto the

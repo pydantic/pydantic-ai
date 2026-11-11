@@ -642,7 +642,7 @@ class TaskProgress:
     task: TaskInfo
     """The task as it is now."""
     event: AgentStreamEvent | None = None
-    """The event from the task's own run, its `DelegationStartEvent` or `DelegationEndEvent`, or one of its
+    """The event from the task's own run, its `DelegationStartedEvent` or `DelegationFinishedEvent`, or one of its
     `sub_agents` task events, such as `TaskQuestionAskedEvent`; `None` when only the task changed, such as when it
     started, finished, or began waiting for an answer."""
 

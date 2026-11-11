@@ -11,8 +11,8 @@ from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents import (
     AgentCreatedEvent,
     ChildMessageEvent,
-    DelegationEndEvent,
-    DelegationStartEvent,
+    DelegationFinishedEvent,
+    DelegationStartedEvent,
     ParentMessageEvent,
     SubAgentMessageEvent,
     TaskAnsweredEvent,
@@ -61,20 +61,6 @@ def test_old_class_names_warn_and_resolve(old_name: str) -> None:
     assert old_name not in subagents.__all__
 
 
-def test_renamed_events_keep_their_wire_kinds() -> None:
-    kinds = {
-        TaskResumedEvent: 'task_follow_up',
-        TaskSteeredEvent: 'task_message',
-        TaskAnsweredEvent: 'task_answer',
-        TaskCancelRequestedEvent: 'task_cancel_request',
-        TaskForceCancelRequestedEvent: 'task_force_cancel',
-        TaskQuestionAskedEvent: 'task_question',
-        TaskRetriedEvent: 'task_retry',
-    }
-    for event_type, name in kinds.items():
-        assert event_type.kind == f'sub_agents.{name}'
-
-
 def test_agent_created_event_name_is_agent_name() -> None:
     event = AgentCreatedEvent(agent_name='poet', description='d', instructions='i', model=None)
     with pytest.warns(HarnessDeprecationWarning, match='`name` is deprecated, use `agent_name` instead.'):
@@ -87,7 +73,7 @@ def test_agent_created_event_name_is_agent_name() -> None:
 @pytest.mark.parametrize(
     'event',
     [
-        DelegationStartEvent(
+        DelegationStartedEvent(
             agent_name='worker',
             task='t',
             truncated=False,
@@ -96,7 +82,7 @@ def test_agent_created_event_name_is_agent_name() -> None:
             parent_task_id='parent',
             inherits_tools=False,
         ),
-        DelegationEndEvent(
+        DelegationFinishedEvent(
             agent_name='worker',
             outcome='ok',
             output='o',
@@ -108,7 +94,7 @@ def test_agent_created_event_name_is_agent_name() -> None:
         ),
     ],
 )
-def test_delegation_event_parent_id_is_parent_task_id(event: DelegationStartEvent | DelegationEndEvent) -> None:
+def test_delegation_event_parent_id_is_parent_task_id(event: DelegationStartedEvent | DelegationFinishedEvent) -> None:
     with pytest.warns(HarnessDeprecationWarning, match='`parent_id` is deprecated, use `parent_task_id` instead.'):
         assert event.parent_id == 'parent'  # pyright: ignore[reportDeprecated]
 

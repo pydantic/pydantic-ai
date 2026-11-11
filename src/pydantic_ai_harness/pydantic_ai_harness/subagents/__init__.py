@@ -27,9 +27,9 @@ from pydantic_ai_harness.subagents._events import (
     AgentCreatedEvent,
     BackgroundReason,
     ChildMessageEvent,
-    DelegationEndEvent,
+    DelegationFinishedEvent,
     DelegationOutcome,
-    DelegationStartEvent,
+    DelegationStartedEvent,
     ParentMessageEvent,
     Recipient,
     SubAgentMessageEvent,
@@ -84,9 +84,9 @@ __all__ = [
     'AgentOverride',
     'BackgroundReason',
     'ChildMessageEvent',
-    'DelegationEndEvent',
+    'DelegationFinishedEvent',
     'DelegationOutcome',
-    'DelegationStartEvent',
+    'DelegationStartedEvent',
     'DelegationReports',
     'DelegationTask',
     'DelegationTaskEvent',
@@ -131,7 +131,9 @@ __all__ = [
     'serialize_message',
 ]
 
-_RENAMED: dict[str, type[SubAgentMessageEvent]] = {
+_RENAMED = {
+    'DelegationEndEvent': DelegationFinishedEvent,
+    'DelegationStartEvent': DelegationStartedEvent,
     'SubAgentMessage': SubAgentMessageEvent,
     'ParentMessage': ParentMessageEvent,
     'ChildMessage': ChildMessageEvent,
@@ -146,7 +148,8 @@ _RENAMED: dict[str, type[SubAgentMessageEvent]] = {
 
 
 def __getattr__(name: str) -> object:
-    if (renamed := _RENAMED.get(name)) is not None:
+    renamed = _RENAMED.get(name)
+    if renamed is not None:
         warn_class_renamed(name, renamed.__name__, __name__)
         return renamed
     if name in {'MINIMUM_EFFORT_FLOOR', 'clamp_effort'}:
