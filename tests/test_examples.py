@@ -879,6 +879,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Now redesign its auth layer.': 'Start from the threat model: who can mint a token, and what it is scoped to.',
     'hello': 'Hello! How can I help you today?',
     'What time is it?': 'The current time is 3:45 PM.',
+    "What is today's date?": 'Today is January 2, 2032.',
     "What's Jane's contact info?": 'You can reach Jane at jane@example.com or 555-123-4567.',
     'Say hi!': "Bonjour ! Comment puis-je vous aider aujourd'hui ?",
     'first run': 'Response to first run.',
@@ -903,6 +904,8 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'A new error was just reported — include it in the summary.': (
         'Updated summary: 12 services updated, all green; one new error in the auth service was just reported.'
     ),
+    'Refactor the billing module': 'Refactored the billing module into smaller functions.',
+    'Then update the changelog.': 'Refactored the billing module and added a changelog entry.',
     'Tell me a different joke.': 'No.',
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',
@@ -2096,7 +2099,7 @@ def mock_infer_image_generation_model(model: ImageGenerationModel | str) -> Imag
     return TestImageGenerationModel(actual_model.model_name, provider_name=actual_model.system)
 
 
-def mock_infer_model(model: Model | KnownModelName) -> Model:
+def mock_infer_model(model: Model | KnownModelName | str) -> Model:
     if model == 'test':
         return TestModel()
 

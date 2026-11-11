@@ -25,7 +25,7 @@ from . import (
     usage as _usage,
 )
 from ._conversation_marks import mark_stored
-from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
     CustomEventT,
@@ -120,9 +120,27 @@ _STAMPED_FIELDS = ('timestamp', 'instructions', 'run_id', 'conversation_id')
 
 
 def _rewritten(message: _messages.ModelMessage, original: _messages.ModelMessage) -> bool:
-    """Whether `message` differs from `original` other than by what a run fills in on a request it sends."""
+    """Whether `message` differs from `original` other than by what a run adds to a request it sends.
+
+    A run fills in the fields the request lacks, and adds parts to it, like the system prompt it reinjects
+    when the request opens the history it sends, or a `ModelSettingsDeltaPart` recording a settings change.
+    Any part added around the request's own parts, by the run or a capability, is saved with the request as
+    it was sent. Changing or dropping one of the request's own parts rewrites it.
+    """
     filled = {name: getattr(message, name, None) for name in _STAMPED_FIELDS if getattr(original, name, False) is None}
+    if (
+        isinstance(message, _messages.ModelRequest)
+        and isinstance(original, _messages.ModelRequest)
+        and _keeps_in_order(message.parts, original.parts)
+    ):
+        filled['parts'] = message.parts
     return message != dataclasses.replace(original, **filled)
+
+
+def _keeps_in_order(parts: Sequence[object], kept: Sequence[object]) -> bool:
+    """Whether `parts` holds each of `kept`, in the same order, with only other parts added around them."""
+    remaining = iter(parts)
+    return all(part in remaining for part in kept)
 
 
 _STATE_KEYS = (
@@ -758,7 +776,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def pending_messages(self) -> list[PendingMessage]:
         """Internal: live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
 
-        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages.
+        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages,
+        and [`dequeue`][pydantic_ai.run.AgentRun.dequeue] or [`set_enqueue_priority`][pydantic_ai.run.AgentRun.set_enqueue_priority]
+        to change them.
         """
         return self._graph_run.state.pending_messages
 
@@ -837,6 +857,43 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             return None
         self._graph_run.state.pending_messages.append(pending)
         return pending.enqueue_id
+
+    def dequeue(self, enqueue_id: str) -> bool:
+        """Remove a message queued with [`enqueue`][pydantic_ai.run.AgentRun.enqueue] before it's delivered.
+
+        Works like [`RunContext.dequeue`][pydantic_ai.tools.RunContext.dequeue], and is safe to call
+        from the same places as `enqueue`.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+
+        Returns:
+            `True` if the message was still queued and is now removed, or `False` if it was already
+            delivered, dequeued, or never queued in this run, including once the run has ended.
+        """
+        return self._queue.dequeue(enqueue_id)
+
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        """Change when a message queued with [`enqueue`][pydantic_ai.run.AgentRun.enqueue] is delivered.
+
+        Works like [`RunContext.set_enqueue_priority`][pydantic_ai.tools.RunContext.set_enqueue_priority]: the message
+        keeps its place and its `enqueue_id`.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+            priority: The new priority, with the same meaning as in `enqueue`.
+
+        Returns:
+            `True` if the message was still queued, or `False` if it was already delivered, dequeued,
+            or never queued in this run, including once the run has ended.
+        """
+        return self._queue.set_enqueue_priority(enqueue_id, priority)
+
+    @property
+    def _queue(self) -> PendingMessageQueue:
+        queue = self._graph_run.state.pending_messages
+        assert isinstance(queue, PendingMessageQueue)  # `GraphAgentState.__post_init__` guarantees it
+        return queue
 
     def cancel(self) -> None:
         """Cancel the whole agent run.
