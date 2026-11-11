@@ -5,6 +5,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness import DenyUnanswered, DynamicWorkflow
 from pydantic_ai_harness.ask_user import AskUser
+from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE
 
 QUESTION = [{'header': 'Check', 'question': 'Proceed?', 'options': [{'label': 'Yes'}, {'label': 'No'}]}]
 
@@ -51,4 +52,4 @@ async def test_deny_unanswered_reaches_dynamic_workflow_children_by_default():
 
     result = await parent.run('run it')
     assert result.output == 'workflow done'
-    assert any('declined to answer' in content for content in observed)
+    assert observed == [DEFAULT_QUESTION_MESSAGE]

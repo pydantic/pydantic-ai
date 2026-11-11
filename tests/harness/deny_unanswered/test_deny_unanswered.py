@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import CallDeferred
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -7,8 +9,9 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai_harness import DenyUnanswered
 from pydantic_ai_harness.ask_user import AskUser
+from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE
 
-QUESTION = [{'header': 'Check', 'question': 'Proceed?', 'options': ['Yes', 'No']}]
+QUESTION = [{'header': 'Check', 'question': 'Proceed?', 'options': [{'label': 'Yes'}, {'label': 'No'}]}]
 
 
 def _call_then_echo(tool_name: str, args: dict[str, object], call_id: str, final: str):
@@ -54,17 +57,30 @@ async def test_deny_unanswered_answers_approval_required_tool_in_run():
     )
 
 
-async def test_deny_unanswered_answers_ask_user_question_in_run():
-    """An unanswered `AskUser` question is resolved through the answerer plumbing as cancelled."""
+@pytest.mark.parametrize(
+    ('capability', 'expected'),
+    [
+        pytest.param(DenyUnanswered(), DEFAULT_QUESTION_MESSAGE, id='default'),
+        pytest.param(
+            DenyUnanswered(question_message='Nobody is on duty; decide yourself.'),
+            'Nobody is on duty; decide yourself.',
+            id='custom',
+        ),
+    ],
+)
+async def test_deny_unanswered_answers_ask_user_question_in_run(capability: DenyUnanswered[None], expected: str):
+    """An unanswered `AskUser` question gets `question_message` as its tool result, and the run finishes."""
     agent = Agent(
         FunctionModel(_call_then_echo('ask_user_question', {'questions': QUESTION}, 'q1', 'done')),
-        capabilities=[AskUser(answerer=None), DenyUnanswered()],
+        capabilities=[AskUser(answerer=None), capability],
         output_type=[str, DeferredToolRequests],
     )
 
     result = await agent.run('go')
     assert result.output == 'done'
-    assert any(part.tool_name == 'ask_user_question' for part in _tool_returns(result.all_messages()))
+    assert [(part.tool_name, part.content) for part in _tool_returns(result.all_messages())] == [
+        ('ask_user_question', expected)
+    ]
 
 
 async def test_deny_unanswered_leaves_other_deferred_calls_deferred():

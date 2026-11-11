@@ -10,7 +10,7 @@ description: "Deny approval-required calls and unanswered AskUser questions with
 Deferred calls exist for a caller who answers them in a second run. In an unattended run nobody ever will: approvals wait on a person who is not there, questions wait on a user who left. `DenyUnanswered` ends the wait inside the run:
 
 - A held approval is denied with `message` (`ToolDenied`).
-- A deferred `ask_user_question` call is answered as cancelled through `ask_user_result`, so the model sees `AskUser`'s standard decline text.
+- A deferred `ask_user_question` call is answered with `question_message`, which says nobody is available to answer rather than that the user declined.
 
 Any other deferred call stays deferred for its own handler. Without `DenyUnanswered`, nothing changes.
 
@@ -31,12 +31,15 @@ agent = Agent(
 )
 ```
 
-Use `message` to change the denial text for approvals:
+Use `message` and `question_message` to change the text the model sees for a denied approval and an unanswered question:
 
 ```python
 from pydantic_ai_harness import DenyUnanswered
 
-deny = DenyUnanswered(message='No one is on duty, so the request was not approved.')
+deny = DenyUnanswered(
+    message='No one is on duty, so the request was not approved.',
+    question_message='No one is on duty to answer; pick a safe default and say which one.',
+)
 ```
 
 ## Forwarding to children
