@@ -365,8 +365,9 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
             session_reset = await discard_session(run_state)
             # A statement fed early may have failed; the mismatch itself is not a sandbox failure.
-            if call.execution.failure is not None:
-                call.execution.failure = replace(call.execution.failure, session_reset=session_reset)
+            # A failure that already discarded the session left nothing for this discard to find.
+            if (failure := call.execution.failure) is not None:
+                call.execution.failure = replace(failure, session_reset=failure.session_reset or session_reset)
             call.execution.record(ctx)
             if call.execution.usage_limit_exceeded is not None:
                 raise call.execution.usage_limit_exceeded

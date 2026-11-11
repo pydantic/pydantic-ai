@@ -747,8 +747,8 @@ span already says why. The code, the error message and the traceback stay out of
 Eager execution can fail a statement before the `run_code` span opens; the failure is then recorded on
 that span when the call is dispatched. The retry eager execution sends when the final code no longer
 matches the statements it already ran has no `error_kind` of its own. It records the budget, and the
-`error_kind` of a statement that had already failed, with `session_reset` saying whether the restart
-discarded a session code had run in.
+`error_kind` of a statement that had already failed, with `session_reset` saying whether the failure or
+the restart discarded a session code had run in.
 
 Monty has no typed marker for a resource limit, so the limit is read from its error, backed by a
 structural signal where one exists (a duration stop has no traceback). A nested tool's error is

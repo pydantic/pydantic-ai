@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
@@ -14,13 +15,27 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic_monty import AsyncSnapshot, MontyComplete
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    ToolCallPart,
+    ToolCallPartDelta,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeMode
+from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
 
 
 def instrumented() -> tuple[Instrumentation, InMemorySpanExporter]:
@@ -81,6 +96,57 @@ class DisconnectError(Exception):
     """Stands in for `MontyDisconnectError`, which Python cannot construct."""
 
     cause: str | None
+
+
+async def diverged_prefix_attributes(original: str, rewritten: str) -> list[tuple[str, dict[str, Any]]]:
+    """Stream `original` to an eager `run_code` call, then dispatch it as `rewritten`, which drops the fed prefix."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer('test')
+    capability = CodeMode[None](eager=True)
+    root = capability.get_wrapper_toolset(FunctionToolset[None]())
+    assert root is not None
+    ctx = RunContext[None](
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        prompt=None,
+        messages=[],
+        run_step=0,
+        pending_messages=[],
+        tracer=tracer,
+    )
+    async with root:
+        manager = await ToolManager(toolset=root).for_run_step(ctx)
+        ctx.tool_manager = manager
+        assert manager.tools is not None
+        run_code = manager.tools['run_code']
+        toolset = run_code.toolset
+        assert isinstance(toolset, EagerCodeModeToolset)
+
+        async def observe(*events: PartStartEvent | PartDeltaEvent) -> None:
+            async def stream() -> AsyncIterator[PartStartEvent | PartDeltaEvent]:
+                for event in events:
+                    yield event
+
+            async for _ in capability.wrap_run_event_stream(ctx, stream=stream()):
+                pass
+
+        part = ToolCallPart(tool_name='run_code', args={'code': original}, tool_call_id='c1')
+        await observe(PartStartEvent(index=0, part=part))
+        await asyncio.gather(*toolset.execution.pumps)
+        await observe(
+            PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'code': rewritten}, tool_call_id='c1'))
+        )
+
+        exec_ctx = dataclasses.replace(ctx, tool_call_id='c1', tool_name='run_code')
+        with (
+            tracer.start_as_current_span('execute_tool run_code'),
+            pytest.raises(ModelRetry, match='no longer matches'),
+        ):
+            await toolset.call_tool('run_code', {'code': rewritten}, exec_ctx, run_code)
+    return code_mode_attributes(exporter)
 
 
 def run_code_span(*, budget_exhausted: bool = False, **failure: Any) -> tuple[str, dict[str, Any]]:
@@ -226,3 +292,28 @@ class TestRunCodeFailureTelemetry:
         await agent.run('go')
 
         assert code_mode_attributes(exporter) == [run_code_span(error_kind='runtime', session_reset=False)]
+
+    async def test_a_diverged_prefix_records_the_failed_statement_and_the_restart(self):
+        """The failure kept the session, but the restart discards the one `x = 1` ran in."""
+        assert await diverged_prefix_attributes('x = 1\nboom = 1 // 0\n"unused"\n', 'y = 2\ny') == [
+            run_code_span(error_kind='runtime', session_reset=True)
+        ]
+
+    async def test_a_diverged_prefix_keeps_the_reset_a_failure_already_made(self, monkeypatch: pytest.MonkeyPatch):
+        """The host failure discards the session first, so the restart finds nothing left to discard."""
+        original_run = MontyExecutor.run
+        feeds: list[None] = []
+
+        async def fail_second_feed(
+            self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]
+        ) -> MontyComplete:
+            feeds.append(None)
+            if len(feeds) == 1:
+                return await original_run(self, feed_start)
+            raise RuntimeError('host binding failed')
+
+        monkeypatch.setattr(MontyExecutor, 'run', fail_second_feed)
+
+        assert await diverged_prefix_attributes('x = 1\n1 + 1\n"unused"\n', 'y = 2\ny') == [
+            run_code_span(error_kind='host', session_reset=True)
+        ]
