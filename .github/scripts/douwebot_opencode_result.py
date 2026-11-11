@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from publish_douwebot_review import ReviewResult
 from pydantic import TypeAdapter
 
 _EVENT = TypeAdapter(dict[str, object])
+# Some models wrap the requested JSON object in one Markdown code fence despite the prompt.
+_FENCE = re.compile(r'\A\s*```[\w+-]*[ \t]*\n(.*)\n[ \t]*```\s*\Z', re.DOTALL)
 
 
 def final_text(path: Path) -> str:
@@ -40,7 +43,10 @@ def final_text(path: Path) -> str:
 
 def review_result(path: Path) -> ReviewResult:
     """Return the final assistant result only after a normal completed stream."""
-    return ReviewResult.model_validate_json(final_text(path))
+    text = final_text(path)
+    if fenced := _FENCE.match(text):
+        text = fenced[1]
+    return ReviewResult.model_validate_json(text)
 
 
 def main() -> None:
