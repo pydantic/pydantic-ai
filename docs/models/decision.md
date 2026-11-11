@@ -10,11 +10,12 @@ A decision model answers typed questions about a text rather than writing text: 
 
 A decision model can also work together with a language model. When it picks a route it cannot continue down — a tool with an argument it cannot fill, such as a free-form `str`, or one of several output types with such a field — it escalates: with [`ModelFallback`](../capabilities/model-fallback.md), a language model takes that whole step, with the same tools and output types to choose from. The same fallback can take the steps the decision model [was unsure about](#falling-back-on-low-confidence). The cheap model answers what it can, and the expensive one only runs when it is needed.
 
-Pydantic AI supports three decision model backends out of the box:
+Pydantic AI supports four decision model backends out of the box:
 
 - TypeSafe's Jev, through [`TypeSafeModel`](typesafe.md), as `typesafe:jev-latest`.
 - Any other decision model behind the same `/v1/systemone` API as Jev, such as [Contrastive Language Models](https://huggingface.co/Contrastive-LM/CLM-v0.1-8B) (CLM), [Laya](https://huggingface.co/convaiinnovations/laya), or the models [Ollama](system-one.md#ollama) runs locally, through [`SystemOneModel`](system-one.md), as `system-one:<model>`.
 - OpenAI's `gpt-6-luna` on its Decisions API, with image input support, through [`OpenAIDecisionsModel`](openai.md#decisions-api), as `openai-decisions:gpt-6-luna`.
+- Google's Gemini decision model on the Gemini API, with image input support, through [`GoogleDecisionsModel`](google.md#decisions-api), as `google-decisions:gemini-decision-launch-id`.
 
 The examples on this page use Jev, and run on any other decision model by changing the model name. This page covers what `DecisionModel` does for any backend; each backend's page covers its setup, its own limits and what it answers badly. To use another backend, [implement `decide`](#implementing-a-decision-model).
 
@@ -109,7 +110,7 @@ Every field is asked as one of a few kinds of question: a yes or no (`bool`), a 
 
 A field of any other type is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent, and the message names the field and lists what is supported. The ones to expect are a `str`, an unbounded `int` or `float`, a `datetime`, a `dict` of anything but options to yes/no, and a union of models as a field. That is about the fields of a type the model is asked to fill. An output type beside other [routes](#routes-which-thing-to-do), a [union member](#a-union-of-output-types) or a [tool](#tools-pick-then-fill) the model cannot fill is not an error — it is still offered as a route, and picking it [escalates](#escalating-to-a-language-model) the step to the model behind it.
 
-A model can also cap how many options a pick-one or how many levels a rubric may have, through `decision_max_choice_options` and `decision_max_score_levels` in its [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile], which the provider sets for the model name, or a backend class's [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options] and [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels] where the profile leaves them out. A pick-one over its cap is refused the same way, before a request is sent, while whole numbers with more levels than a rubric's cap are not a rubric, and are [a pick-one instead](#what-each-field-type-does). Jev's caps are on the [TypeSafe page](typesafe.md#limits), and the OpenAI Decisions API's on the [OpenAI page](openai.md#decisions-api).
+A model can also cap how many options a pick-one or how many levels a rubric may have, through `decision_max_choice_options` and `decision_max_score_levels` in its [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile], which the provider sets for the model name, or a backend class's [`max_choice_options`][pydantic_ai.models.decision.DecisionModel.max_choice_options] and [`max_score_levels`][pydantic_ai.models.decision.DecisionModel.max_score_levels] where the profile leaves them out. A pick-one over its cap is refused the same way, before a request is sent, while whole numbers with more levels than a rubric's cap are not a rubric, and are [a pick-one instead](#what-each-field-type-does). Jev's caps are on the [TypeSafe page](typesafe.md#limits), the OpenAI Decisions API's on the [OpenAI page](openai.md#decisions-api), and the Gemini API's on the [Google page](google.md#decisions-api).
 
 ## A support desk, end to end
 

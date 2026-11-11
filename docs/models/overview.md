@@ -30,6 +30,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [DeepSeek](deepseek.md) | Model developer | `deepseek:`; explicit Responses model |
 | [Fireworks AI](compatible-apis.md#fireworks-ai) | Inference platform | `fireworks:` |
 | [GitHub Copilot](github-copilot.md) | Subscription access | `github-copilot:` |
+| [Google / Gemini API decisions](google.md#decisions-api) | [Decision model](decision.md) | `google-decisions:` |
 | [Groq](groq.md) | Inference platform | `groq:` |
 | [Heroku AI](compatible-apis.md#heroku-ai) | Cloud platform | `heroku:` |
 | [Hugging Face](huggingface.md) | Inference platform | `huggingface:` |

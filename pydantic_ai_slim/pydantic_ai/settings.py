@@ -296,6 +296,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * OpenAI Decisions
+    * Google Decisions
     """
 
     request_timeout: float
@@ -399,6 +400,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe (the request's other `RetryPolicy` options are the SDK defaults)
     * OpenAI Decisions
+    * Google Decisions
     """
 
     parallel_tool_calls: bool
@@ -598,6 +600,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * OpenAI Decisions
+    * Google Decisions
     """
 
     thinking: ThinkingLevel
@@ -757,6 +760,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * OpenAI Decisions
+    * Google Decisions
 
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
     Z.AI), the model's own derived keys overwrite yours when the keys collide.
