@@ -104,10 +104,11 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
     """
 
     id: str | None = 'advisor'
-    """One-off: an agent has one advisor, so the id is fixed.
+    """The capability id, `'advisor'` by default.
 
-    Two `Advisor` capabilities resolve to one via
-    [`combine`][pydantic_ai.capabilities.AbstractCapability.combine].
+    Two `Advisor` capabilities with the same id resolve to one via
+    [`combine`][pydantic_ai.capabilities.AbstractCapability.combine]. With different ids, their
+    built tools conflict, since both are named `advisor`.
     """
 
     _local_uses: int = field(init=False, repr=False, compare=False, default=0)
@@ -160,9 +161,10 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
                 keeps its own tool name. `output_type` and `forward_history` apply only to the
                 built tool, so they are rejected with a replacement, as is `max_uses` on OpenRouter,
                 where it would leave only the unlimited replacement. Otherwise `max_uses`,
-                `max_tokens` and `caching` still shape the native advisor. `None` is stored as `True`, so that, as
-                with the earlier `mode='auto'`, a later default `Advisor` in a merge restores the
-                built local fallback, replacing an earlier `False` or replacement tool.
+                `max_tokens` and `caching` still shape the native advisor. `None` is stored as
+                `True`, so that, as with the earlier `mode='auto'`, a later default `Advisor` in a
+                merge restores the built local fallback, replacing an earlier `False` or replacement
+                tool.
             output_type: Output specification for local consultations.
             max_uses: Maximum consultations in one executor model request.
             max_tokens: Maximum output tokens for each consultation.
@@ -305,7 +307,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
 
     def _check_typed_output(self) -> None:
         """Reject a typed advisor that could only consult the native advisor, which returns text."""
-        if self.local is False:
+        if self.local is False and self.native is not False:
             raise ValueError('`Advisor.output_type` is not supported with `local=False`')
         if self.native is not True and self.native is not False:
             raise UserError(

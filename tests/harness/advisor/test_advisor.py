@@ -947,6 +947,8 @@ class TestAdvisorNativeOrLocal:
     def test_rejects_unsupported_native_and_local_combinations(self) -> None:
         with pytest.raises(UserError, match=r'both `native` and `local` cannot be False'):
             Advisor('test', native=False, local=False)
+        with pytest.raises(UserError, match=r'both `native` and `local` cannot be False'):
+            Advisor('test', native=False, local=False, output_type=bool)
         with pytest.raises(UserError, match=r'`local=.duckduckgo.` is not supported'):
             Advisor('test', local='duckduckgo')  # pyright: ignore[reportArgumentType]
         with pytest.raises(UserError, match=r'native advisor tool, which returns text'):
