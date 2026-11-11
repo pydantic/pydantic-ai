@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TextIO, TypeVar
 
 from publish_douwebot_review import ReviewEngine, ReviewResult
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 
 T = TypeVar('T')
 _EVENT = TypeAdapter(dict[str, object])
@@ -150,8 +150,9 @@ def run_with_fallback(
             # Only LF ends an event, as in `douwebot_opencode_result.final_text`.
             events = [_EVENT.validate_json(line) for line in output.read_text(encoding='utf-8').split('\n') if line]
             errors = [_EVENT.validate_python(event.get('error')) for event in events if event.get('type') == 'error']
-        except ValidationError:
-            # A malformed stream names no error. Its validation error would copy the stream into the public log.
+        except ValueError:
+            # A malformed or undecodable stream names no error, and the caller re-raises the process failure.
+            # A validation error would copy the stream into the public log.
             events, errors = [], []
         error = errors[-1] if errors else {}
         # Job logs are public, and the error's message and response body can repeat the provider's response.

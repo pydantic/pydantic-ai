@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -118,7 +119,7 @@ class Launch:
 
 
 def fake_opencode(
-    monkeypatch: pytest.MonkeyPatch, *runs: tuple[Sequence[Mapping[str, object] | str], BaseException | None]
+    monkeypatch: pytest.MonkeyPatch, *runs: tuple[Sequence[Mapping[str, object] | str | bytes], BaseException | None]
 ) -> list[Launch]:
     """Make each OpenCode launch write its event lines and then raise its error, recording each launch."""
     invoked: list[Launch] = []
@@ -132,7 +133,12 @@ def fake_opencode(
         events, error = runs[len(invoked) - 1]
         stdout = kwargs['stdout']
         assert isinstance(stdout, io.TextIOBase)
-        stdout.write(''.join((event if isinstance(event, str) else json.dumps(event)) + '\n' for event in events))
+        # OpenCode writes bytes to the stream's descriptor, so an event can be invalid UTF-8.
+        lines = [
+            event if isinstance(event, bytes) else (event if isinstance(event, str) else json.dumps(event)).encode()
+            for event in events
+        ]
+        os.write(stdout.fileno(), b''.join(line + b'\n' for line in lines))
         if error is not None:
             raise error
         return subprocess.CompletedProcess(args, 0)
@@ -246,6 +252,13 @@ NO_TYPE_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash failed with no er
             NO_TYPE_LOG,
             id='cut-off-event',
         ),
+        pytest.param(
+            'deepinfra-key',
+            [REFUSED[0], b'\xff'],
+            subprocess.CalledProcessError(1, 'opencode'),
+            NO_TYPE_LOG,
+            id='undecodable',
+        ),
         pytest.param('deepinfra-key', REFUSED[:1], subprocess.TimeoutExpired('opencode', 1), None, id='timeout'),
     ],
 )
@@ -254,7 +267,7 @@ def test_go_failure_stays_on_go(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     deepinfra_key: str | None,
-    events: Sequence[Mapping[str, object] | str],
+    events: Sequence[Mapping[str, object] | str | bytes],
     error: BaseException,
     log: str | None,
 ) -> None:

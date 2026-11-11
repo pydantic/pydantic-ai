@@ -342,6 +342,15 @@ def test_unparseable_answer_at_the_step_budget_is_incomplete(tmp_path: Path) -> 
         pytest.param('Still reading.', 'stop', 'validation failed: json_invalid', id='not-json'),
         pytest.param('{"outcome": "COMPLETE"}', 'stop', 'validation failed: missing', id='not-the-schema'),
         pytest.param(_result('a.py'), 'tool-calls', 'OpenCode review did not stop normally', id='not-stopped'),
+        pytest.param(
+            f"I've read the files.\n```json\n{_result('a.py')}\n```",
+            'stop',
+            'validation failed: json_invalid',
+            id='text-before-the-fence',
+        ),
+        pytest.param(
+            f'```json\n{_result("a.py")}\n```\nDone.', 'stop', 'validation failed: json_invalid', id='text-after-the-fence'
+        ),
     ],
 )
 def test_rejected_answer_under_the_budget_fails_with_its_reason(
@@ -351,6 +360,20 @@ def test_rejected_answer_under_the_budget_fails_with_its_reason(
     with pytest.raises(ValueError) as error:
         check_result(CHECK, ['a.py'], _stream(tmp_path, text, finish=finish), Usage(steps=1), changed=CHANGED)
     assert str(error.value) == f'The review answer was rejected: {reason}'
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        f'```json\n{_result("a.py")}\n```',
+        f'```\n{_result("a.py")}\n```',
+        f'\n  ```json\n{json.dumps(json.loads(_result("a.py")), indent=2)}\n```\n',
+    ],
+)
+def test_answer_in_one_code_fence_is_unwrapped(tmp_path: Path, text: str) -> None:
+    """A model that wraps its whole answer in one Markdown code fence still completes the review."""
+    result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=2), changed=CHANGED)
+    assert (result.outcome, [finding.path for finding in result.findings]) == ('COMPLETE', ['a.py'])
 
 
 def test_undecodable_stream_names_only_its_error_type(tmp_path: Path) -> None:
