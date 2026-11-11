@@ -139,7 +139,7 @@ async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(
 ) -> None:
     agent = Agent(
         FunctionModel(_look_click_then_finish),
-        capabilities=[E2BSandbox(desktop=True), ComputerUse(native=False, settle_seconds=0)],
+        capabilities=[E2BSandbox(desktop=True), ComputerUse(native=False)],
     )
 
     result = await agent.run('Click.')
