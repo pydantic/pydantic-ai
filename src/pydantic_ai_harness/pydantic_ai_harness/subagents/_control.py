@@ -22,9 +22,9 @@ from uuid import uuid4
 import anyio
 import anyio.abc
 from opentelemetry import propagate
-from opentelemetry.trace import Tracer
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai._telemetry import record_decision
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import RunCancelled
@@ -82,14 +82,10 @@ class TaskTelemetry:
     run's instrumentation includes content.
     """
 
-    tracer: Tracer
-    include_content: bool
+    ctx: RunContext[Any]
+    """The delegating run, whose tracer and content setting the decisions are recorded with."""
     model_named: frozenset[str] = frozenset()
     """Agent names the model chose, by creating those agents, which are recorded only as content."""
-
-    @classmethod
-    def of(cls, ctx: RunContext[AgentDepsT], *, model_named: frozenset[str] = frozenset()) -> TaskTelemetry:
-        return cls(tracer=ctx.tracer, include_content=ctx.trace_include_content, model_named=model_named)
 
     def decision(
         self,
@@ -101,18 +97,13 @@ class TaskTelemetry:
         content: Mapping[str, str] | None = None,
     ) -> None:
         """Record the span `sub_agents {name}`, with `sub_agents.`-prefixed attributes."""
-        span = self.tracer.start_span(f'sub_agents {name}')
-        if span.is_recording():
-            if agent_name is not None and (self.include_content or agent_name not in self.model_named):
-                span.set_attribute('sub_agents.agent_name', agent_name)
-            if task_id is not None:
-                span.set_attribute('sub_agents.task_id', task_id)
-            for key, value in (attributes or {}).items():
-                span.set_attribute(f'sub_agents.{key}', value)
-            if self.include_content:
-                for key, value in (content or {}).items():
-                    span.set_attribute(f'sub_agents.{key}', value)
-        span.end()
+        plain: dict[str, str | float] = {f'sub_agents.{key}': value for key, value in (attributes or {}).items()}
+        quoted = {f'sub_agents.{key}': value for key, value in (content or {}).items()}
+        if task_id is not None:
+            plain['sub_agents.task_id'] = task_id
+        if agent_name is not None:
+            (quoted if agent_name in self.model_named else plain)['sub_agents.agent_name'] = agent_name
+        record_decision(self.ctx, f'sub_agents {name}', attributes=plain, content=quoted)
 
     def vetoed(self, event: ParentMessage | AgentCreatedEvent) -> None:
         """Record that a listener vetoed `event`."""

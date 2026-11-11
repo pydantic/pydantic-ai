@@ -301,6 +301,9 @@ class TestSubAgentsTaskControl:
             'sub_agents task backgrounded',
             {'sub_agents.agent_name': 'researcher', 'sub_agents.reason': 'auto'},
         ) in (decisions(exporter))
+        # The task settled after its tool call returned the receipt, so its span ended without an outcome.
+        [tool_span] = [span for span in exporter.get_finished_spans() if span.name == 'execute_tool delegate_task']
+        assert 'sub_agents.outcome' not in (tool_span.attributes or {})
 
     async def test_a_listener_failing_on_auto_backgrounding_aborts_the_run(self) -> None:
         gate = Gate()

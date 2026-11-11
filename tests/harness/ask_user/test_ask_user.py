@@ -1347,3 +1347,51 @@ class TestAnswerNotes:
         )
         with pytest.raises(ValueError, match="answer note for 'Second' must not contain control characters"):
             ask_user_result(request, response)
+
+
+async def never_answers(request: AskUserRequest) -> AskUserResponse:
+    await anyio.sleep_forever()
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
+class TestTelemetry:
+    """`ask_user.outcome` on the call's `execute_tool` span says how it ended, with or without content."""
+
+    @pytest.mark.parametrize(
+        ('capability', 'outcome'),
+        [
+            (AskUser(answerer=ScriptedAnswerer()), 'answered'),
+            (AskUser(answerer=ScriptedAnswerer(AskUserResponse(cancelled=True))), 'declined'),
+            (AskUser(answerer=never_answers, timeout=0.01), 'timed_out'),
+            (AskUser(answerer=None), 'deferred'),
+        ],
+    )
+    @pytest.mark.parametrize('include_content', [False, True])
+    async def test_outcome_is_recorded(self, capability: AskUser[None], outcome: str, include_content: bool) -> None:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        settings = InstrumentationSettings(tracer_provider=provider, include_content=include_content)
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[capability, Instrumentation(settings=settings)],
+        )
+        await agent.run('go')
+
+        (tool_span,) = [span for span in exporter.get_finished_spans() if span.name == f'execute_tool {TOOL_NAME}']
+        attributes = dict(tool_span.attributes or {})
+        assert attributes['ask_user.outcome'] == outcome
+        assert ('How should we do it?' in json.dumps(attributes)) is include_content
+
+    async def test_an_uninstrumented_run_leaves_the_applications_span_alone(self) -> None:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        with provider.get_tracer('app').start_as_current_span('app request'):
+            await Agent(calling(raw_questions()), capabilities=[AskUser(answerer=ScriptedAnswerer())]).run('go')
+
+        assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [
+            ('app request', {})
+        ]

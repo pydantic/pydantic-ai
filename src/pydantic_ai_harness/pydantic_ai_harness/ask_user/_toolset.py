@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import overload
+from typing import Literal, overload
 
 import anyio
 from typing_extensions import TypeIs
 
+from pydantic_ai._telemetry import current_span
 from pydantic_ai.exceptions import CallDeferred
 from pydantic_ai.framing import close_tag, neutralize_tags, open_tag, register_tag
 from pydantic_ai.messages import TextContent, ToolReturn, UserContent
@@ -33,6 +34,10 @@ TIMED_OUT = (
     'The user did not answer in time. Continue without the answer: make a reasonable choice and say which one you made.'
 )
 """The tool result when the answerer does not return within `AskUser.timeout`."""
+
+
+_Outcome = Literal['answered', 'declined', 'timed_out', 'deferred']
+"""How an `ask_user_question` call ended, recorded on its `execute_tool` span as `ask_user.outcome`."""
 
 
 _ANSWER_NOTE_TAG = register_tag('answer_note')
@@ -119,6 +124,7 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
             # Keyed by the call (always set inside a tool) so `AskUserRequest.from_tool_call` rebuilds the same request.
             request = AskUserRequest(questions=tuple(questions), id=ctx.tool_call_id or '')
             await ctx.emit(AskUserRequestedEvent(request=request))
+            _record_outcome(ctx, 'deferred')
             raise CallDeferred
         request = AskUserRequest(questions=tuple(questions))
         await ctx.emit(AskUserRequestedEvent(request=request))
@@ -132,5 +138,12 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
         # Observers waiting since the request event are released whether or not the response fits.
         await ctx.emit(AskUserAnsweredEvent(request_id=request.id, response=response, timed_out=scope.cancelled_caught))
         if scope.cancelled_caught:
+            _record_outcome(ctx, 'timed_out')
             return TIMED_OUT
-        return ask_user_result(request, response)
+        result = ask_user_result(request, response)
+        _record_outcome(ctx, 'declined' if response.cancelled else 'answered')
+        return result
+
+
+def _record_outcome(ctx: RunContext[AgentDepsT], outcome: _Outcome) -> None:
+    current_span(ctx).set_attribute('ask_user.outcome', outcome)

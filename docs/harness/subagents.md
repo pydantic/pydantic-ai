@@ -250,7 +250,14 @@ Nested model streaming from the child run is not an event concern; pass an `even
 
 See [capability events](../capabilities/overview.md#capability-events) for how `@on_event` works.
 
-`SubAgents` emits no OpenTelemetry spans for plain delegation: the child run is a core agent run with its own spans nested under the parent's tool-call span, and the events above carry the outcome a trace would only show as an exception or a tool result.
+`SubAgents` opens no span for plain delegation: the child run is a core agent run with its own spans nested under the parent's tool-call span. A timeout or a reached budget returns a successful steering message, so that span alone doesn't say the delegation went wrong. `SubAgents` records how it ended on the `execute_tool delegate_task` span, so "which sub-agents time out, and on which model" is one query whether or not the run records content:
+
+| Attribute | Value |
+| --- | --- |
+| `sub_agents.outcome` | the `DelegationOutcome`: `ok`, `timeout`, `budget`, `failed`, `contained`, `cancelled` or `error`; or `max_calls` when the delegate's `max_calls` budget refused the call before the child ran |
+| `sub_agents.model` | the model the child ran on: `<system>:<model name>` for a `Model` instance, or the model string as given; not set for `max_calls` |
+
+On `error` the span also records the exception, as for any tool call that raises. Nothing is recorded for a task that moved to the background, which settles after its tool call's span has ended, for a remote task, whose run is on its worker, or inside a durable unit, such as a Temporal activity, whose context carries no tracer.
 
 Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer, with `sub_agents.`-prefixed attributes, including `sub_agents.agent_name` (for a created agent, whose name the model chose, only as content) and, for a task, `sub_agents.task_id`:
 

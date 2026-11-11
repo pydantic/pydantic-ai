@@ -10,12 +10,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, replace
 from functools import partial
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 from uuid import uuid4
 
 import anyio
 
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
+from pydantic_ai._telemetry import current_span
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
 from pydantic_ai.durable_exec import DurableRunContext
@@ -83,7 +84,7 @@ from pydantic_ai_harness.subagents._events import (
     TaskStartedEvent,
     bounded_text,
 )
-from pydantic_ai_harness.subagents._models import ModelOption, validate_restriction
+from pydantic_ai_harness.subagents._models import ModelOption, model_label, validate_restriction
 from pydantic_ai_harness.subagents._tasks import (
     NOT_BACKGROUNDABLE,
     RESUME_DIRECTORY_MISMATCH,
@@ -601,6 +602,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         counts[agent_name] = counts.get(agent_name, 0) + 1
         if counts[agent_name] <= sub_agent.max_calls:
             return None
+        _record_outcome(ctx, 'max_calls')
         return self._steer(
             sub_agent.on_failure,
             f'Delegate budget for {agent_name!r} is exhausted for this run '
@@ -1013,7 +1015,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         return {name: sub_agent for name, (_, sub_agent) in self._created.get(ctx.run_id or '', {}).items()}
 
     def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
-        return TaskTelemetry.of(ctx, model_named=frozenset(self._created_agents(ctx)))
+        return TaskTelemetry(ctx=ctx, model_named=frozenset(self._created_agents(ctx)))
 
     def _owner(self) -> DelegationTasks:
         owner = DelegationTasks.current()
@@ -1264,12 +1266,14 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             run_id=record.run_id if record is not None else None,
         )
         token = _depth.set(_depth.get() + 1)
+        model = _model_run_on(run_model, sub_agent)
         try:
             ended = await self._settle(agent_name, sub_agent, run, own_budget=own_budget, serving_model=serving_model)
         except BaseException as exc:
             outcome: DelegationOutcome = (
                 'cancelled' if isinstance(exc, (asyncio.CancelledError, RunCancelled)) else 'error'
             )
+            _record_outcome(ctx, outcome, model)
             if owner is not None:
                 with anyio.move_on_after(5, shield=True):
                     await emit(
@@ -1287,6 +1291,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             _depth.reset(token)
             if child_usage is not None and self._forward_usage:
                 ctx.usage.incr(child_usage)
+        _record_outcome(ctx, ended.outcome, model)
         if record is not None:
             record.outcome = ended.outcome
         if emits:
@@ -1483,6 +1488,33 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if on_failure is not None:
             return on_failure
         return default
+
+
+def _model_run_on(
+    run_model: Model | KnownModelName | str | None, sub_agent: SubAgent[Any]
+) -> Model | KnownModelName | str | None:
+    """The model a delegation runs on: the one `_run_model` chose, else the sub-agent's own."""
+    return run_model if run_model is not None else sub_agent.agent.model
+
+
+def _record_outcome(
+    ctx: RunContext[Any],
+    outcome: DelegationOutcome | Literal['max_calls'],
+    model: Model | KnownModelName | str | None = None,
+) -> None:
+    """Record how a delegation ended, and the model it ran on, on the delegation tool call's `execute_tool` span.
+
+    Skipped once that span has ended, as a task moved to the background settles after its tool call returned,
+    and inside a durable unit, whose context carries no tracer: the tool call's span is the workflow's.
+    """
+    if isinstance(ctx, DurableRunContext):
+        return
+    span = current_span(ctx)
+    if not span.is_recording():
+        return
+    span.set_attribute('sub_agents.outcome', outcome)
+    if model is not None:
+        span.set_attribute('sub_agents.model', model_label(model))
 
 
 def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: UsageLimits) -> UsageLimits:
