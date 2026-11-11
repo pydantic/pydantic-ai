@@ -64,11 +64,11 @@ class RefineOutput(AbstractCapability[AgentDepsT]):
         result: NodeResult[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
         # `Agent.run_stream()` ends through a node of its own, after which the run cannot continue.
-        # A response without a `model_id` came from no model request, like an input guardrail's refusal.
+        # A response without a `model_name` came from no model, like an input guardrail's refusal.
         if (
             self._rounds_started < self.rounds
             and isinstance(node, CallToolsNode)
-            and node.model_response.model_id is not None
+            and node.model_response.model_name is not None
             and isinstance(result, End)
             and not isinstance(result.data.output, DeferredToolRequests | PendingModelResponse)
         ):
