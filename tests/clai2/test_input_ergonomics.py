@@ -955,6 +955,66 @@ async def test_delivery_choice_rechecks_eligibility_after_draft_changes() -> Non
             live.feed('escape')
 
 
+@pytest.mark.parametrize('finish', ['enter', 'escape'])
+@pytest.mark.parametrize('remove_all_predecessors', [False, True])
+async def test_removing_edit_predecessors_preserves_reserved_order(finish: str, remove_all_predecessors: bool) -> None:
+    async with editor() as (live, _, _):
+        for text in ('first', 'second', 'third'):
+            live.submit(text)
+        first, second, third = live.queued_prompts()
+        live.recall(backwards=True)
+        live.discard(second)
+        if remove_all_predecessors:
+            live.discard(first)
+        live.buffer.replace('edited third')
+        live.feed(finish)
+        expected = [third] if remove_all_predecessors else [first, third]
+        assert live.queued_prompts() == expected
+        assert third.text == ('edited third' if finish == 'enter' else 'third')
+
+
+def test_binding_reset_collision_is_recoverable_and_preserves_settings(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'settings.db')
+    store.set('input.bindings', {'send': 'ctrl-s', 'newline': 'enter'})
+    context = CommandContext(settings=store.load(), store=store, apply_setting=lambda key, settings: None)
+    menu = input_menu(context, start_test=lambda: None)
+    row = next(row for row in menu.source.rows() if row.key == 'send')
+    saved = store.overrides()
+    assert 'collide' in menu.source.reset(row)
+    assert store.overrides() == saved
+    assert context.settings.input_bindings.send == 'ctrl-s'
+    assert context.settings.input_bindings.newline == 'enter'
+
+
+@pytest.mark.parametrize('boundary', ['route', 'question'])
+async def test_image_answer_notice_clears_for_new_routing_or_question(boundary: str) -> None:
+    async with editor() as (live, _, _):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(live.questions.ask, question_request(batch=True))
+            await anyio.wait_all_tasks_blocked()
+            marker = live.images.attach([BinaryContent(data=b'image', media_type='image/png')])
+            live.buffer.replace('caption ' + marker)
+            live.feed('enter')
+            await anyio.lowlevel.checkpoint()
+            live.feed('a')
+            assert 'text only' in live.questions.notice
+            await anyio.lowlevel.checkpoint()
+            live.feed('escape')
+            live.buffer.replace('text only answer')
+            if boundary == 'route':
+                live.feed('enter')
+                assert live.questions.routing
+            else:
+                live.feed('f2')
+                await anyio.lowlevel.checkpoint()
+                live.feed('enter')
+                await anyio.wait_all_tasks_blocked()
+                assert live.questions.menu is not None and live.questions.menu.position == 2
+            assert live.questions.notice == ''
+            assert 'Queue the draft to keep its images' not in '\n'.join(live.frame())
+            tasks.cancel_scope.cancel()
+
+
 async def test_mixed_checkpoint_choice_remains_explicit_between_turns() -> None:
     async with editor() as (live, _, _):
         live.busy_delivery = lambda: 'next-checkpoint'

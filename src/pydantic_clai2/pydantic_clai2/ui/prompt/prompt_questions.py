@@ -63,6 +63,7 @@ class PromptQuestions:
                         question=question, position=position, total=len(request.questions), asker=asker
                     )
                     self.focused = self.routing = False
+                    self.notice = ''
                     self._reviewed = position == 1
                     self._ready = anyio.Event()
                     self._answer = None
@@ -95,6 +96,7 @@ class PromptQuestions:
         """Intercept a generic send while a question waits; false means queue a follow-up normally."""
         if self.approval or self.menu is None or self._ready.is_set() or not draft.text.strip():
             return False
+        self.notice = ''
         preference = self.preference()
         if preference == 'follow-up':
             return False

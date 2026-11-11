@@ -49,7 +49,10 @@ class InputSource(SettingsSource):
         if row.key in _ACTIONS:
             values = self.context.settings.input_bindings.model_dump()
             values[row.key] = InputBindings().model_dump()[row.key]
-            return self.context.set_setting(['input.bindings', json.dumps(values)])
+            try:
+                return self.context.set_setting(['input.bindings', json.dumps(values)])
+            except ValueError as exc:
+                return str(exc)
         return 'No captured key is saved.' if row.key == 'test' else super().reset(row)
 
 

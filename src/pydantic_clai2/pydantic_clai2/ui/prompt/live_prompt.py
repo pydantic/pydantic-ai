@@ -288,6 +288,10 @@ class LivePrompt:
         self._submitted.set()
 
     def _discard(self, entry: QueuedPrompt) -> None:
+        # Removing the anchor does not consume the earlier work ahead of a held edit.
+        if entry is self._editing_after:
+            index = self._submissions.index(entry)
+            self._editing_after = self._submissions[index - 1] if index else None
         self._submissions.remove(entry)
         if not self._submissions and not self._wake_pending:
             self._submitted.clear()
