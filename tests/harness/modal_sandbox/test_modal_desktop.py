@@ -18,9 +18,7 @@ async def test_a_desktop_sandbox_has_the_display_programs_and_runs_computer_use(
     display = FakeDisplay()
     fake_modal.responder = lambda argv, timeout: display(' '.join(argv), timeout)
     sandbox = ModalSandbox(desktop=True)
-    agent = Agent(
-        FunctionModel(look_click_then_finish), capabilities=[sandbox, ComputerUse(native=False, settle_seconds=0)]
-    )
+    agent = Agent(FunctionModel(look_click_then_finish), capabilities=[sandbox, ComputerUse(native=False)])
 
     with warnings.catch_warnings():
         warnings.simplefilter('error', ModalSandboxNoToolsWarning)
