@@ -120,6 +120,7 @@ from pydantic_ai_harness.compaction._summarizing_compaction import (
     _extract_system_prompts,  # pyright: ignore[reportPrivateUsage]
     _fit_transcript,  # pyright: ignore[reportPrivateUsage]
     _is_kept_user_part,  # pyright: ignore[reportPrivateUsage]
+    _keep_newest,  # pyright: ignore[reportPrivateUsage]
     _summary_input_budget,  # pyright: ignore[reportPrivateUsage]
     extract_previous_summary,
     format_transcript,
@@ -3823,6 +3824,39 @@ class TestFitTranscript:
         # request, and its own tokens come out of the budget.
         assert trimmed.dropped_entries == 1
         assert trimmed.text == f'{_OMITTED_TRANSCRIPT_HEAD}\n{"y" * 402}'
+
+    def test_the_fitted_element_stays_within_the_budget_it_was_given(self):
+        # The newline before the closing tag is part of the request, so a tail measured only against
+        # what is left of the budget after the tags lands one token over it.
+        entry = '<message role="user">\n' + 'x' * 400 + '\n</message>'
+        trimmed = _fit_transcript([('user', entry)], 200, len)
+
+        assert trimmed is not None
+        assert trimmed.text.endswith('\n</message>')
+        assert len(trimmed.text) <= 200
+
+    def test_tool_output_goes_before_a_whole_entry_when_only_the_joined_text_is_over(self):
+        # Each entry fits the budget on its own and the newlines between them do not, so the sum says
+        # the transcript fits: shrinking the tool body still costs fewer turns than dropping the
+        # user's opening request.
+        user = '<message role="user">\n' + 'u' * 50 + '\n</message>'
+        tool = '<message role="tool_return" name="t">\n' + 'r' * 88 + '\n</message>'
+        trimmed = _fit_transcript([('user', user), ('tool_return', tool), ('user', user)], 304, len)
+
+        assert trimmed is not None
+        assert trimmed.dropped_tool_results == 1
+        assert trimmed.dropped_entries == 0
+        assert trimmed.text.count('u' * 50) == 2
+        assert 'r' * 20 not in trimmed.text
+
+    def test_no_entry_is_dropped_for_a_marker_that_has_not_been_written_yet(self):
+        # The marker is only written once an entry goes, so charging for it up front would drop the
+        # oldest turn from text that already fits.
+        elements = ['x' * 40, 'y' * 40]
+        text, dropped = _keep_newest(elements, [40, 40], 81, 81, len)
+
+        assert dropped == 0
+        assert text == '\n'.join(elements)
 
     def test_drops_tool_output_bodies_first_and_keeps_their_tag(self):
         entries: list[tuple[Any, str]] = [

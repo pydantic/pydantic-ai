@@ -417,11 +417,13 @@ def _keep_element_tail(
     opening, _, rest = element.partition('\n')
     body, _, closing = rest.rpartition('\n')
     fixed = f'{opening}\n{marker}\n{closing}'
-    budget = max_tokens - estimate_text_tokens(fixed, tokenizer)
     start, end = 0, len(body)
     while start < end:
         middle = (start + end) // 2
-        if estimate_text_tokens(body[middle:], tokenizer) <= budget:
+        # The whole wrapped candidate is what the request carries, not just its body: the newline
+        # before the closing tag costs a token too, so measuring a tail against what is left of the
+        # budget after the tags can land one over it.
+        if estimate_text_tokens(f'{opening}\n{marker}\n{body[middle:]}\n{closing}', tokenizer) <= max_tokens:
             end = middle
         else:
             start = middle + 1
@@ -440,20 +442,20 @@ def _keep_newest(
     """The text of the newest entries that fit *max_tokens*, and how many whole entries that dropped.
 
     Entries go from the oldest end and whole. The per-entry sum decides how far to go rather than a
-    re-measurement per candidate cut, so a long history costs one tokenizer call per entry; the
-    separators between entries are not in that sum, though, so the joined text can still be over
+    re-measurement per candidate cut, so a long history costs one tokenizer call per entry; that sum
+    leaves out the separators between the entries, though, so the joined text can still be over
     budget. It then costs the next oldest entry rather than the head of an element, and only a single
     entry left too large keeps a tail of its body.
 
     Dropping an entry also writes `_OMITTED_TRANSCRIPT_HEAD` in front of the text, because a
     summarizer that reads a transcript starting mid-conversation writes its `## Intent` section from
-    whatever turn happens to be first. That marker is part of the request, so its own tokens come off
-    the budget before the entries are fitted into it.
+    whatever turn happens to be first. That marker is part of the request, so once an entry is
+    dropped its own tokens come off the budget too; while none has been, nothing is reserved for it.
     """
     head = f'{_OMITTED_TRANSCRIPT_HEAD}\n'
     head_tokens = estimate_text_tokens(head, tokenizer)
     start = 0
-    while len(elements) - start > 1 and total + head_tokens > max_tokens:
+    while len(elements) - start > 1 and total + (head_tokens if start else 0) > max_tokens:
         total -= sizes[start]
         start += 1
     kept = list(elements[start:])
@@ -486,17 +488,21 @@ def _fit_transcript(
 
     Sizes are accounted per entry rather than by re-measuring the joined text, so a long history costs
     one tokenizer call per entry instead of one per candidate cut. What decides whether the entries
-    fit is the joined text, though: the per-entry sum leaves out the separators between them and each
-    entry's own rounding, so a sum that reaches the budget can still be a request that goes over it.
+    fit is the joined text, though, and the per-entry sum is not it: the separators between the
+    entries and each entry's own rounding are missing from that sum, so it can sit under the budget
+    while the request it describes is over it. The joined text is measured once up front and carried
+    alongside the sum, so the tool output keeps shrinking until the request itself fits rather than
+    until the entries' own sizes do.
     """
     elements = [element for _, element in entries]
     sizes = [estimate_text_tokens(element, tokenizer) for element in elements]
-    total = sum(sizes)
-    if estimate_text_tokens('\n'.join(elements), tokenizer) <= max_tokens:
+    joined = estimate_text_tokens('\n'.join(elements), tokenizer)
+    if joined <= max_tokens:
         return None
+    total = sum(sizes)
     dropped_tool_results = 0
     for index, (kind, _) in enumerate(entries):
-        if total <= max_tokens:
+        if joined <= max_tokens:
             break
         if kind not in _TOOL_OUTPUT_KINDS:
             continue
@@ -504,7 +510,9 @@ def _fit_transcript(
         reduced_size = estimate_text_tokens(reduced, tokenizer)
         # An entry already shorter than the marker gains nothing from being replaced by it.
         if reduced_size < sizes[index]:
-            total -= sizes[index] - reduced_size
+            gain = sizes[index] - reduced_size
+            total -= gain
+            joined -= gain
             elements[index] = reduced
             sizes[index] = reduced_size
             dropped_tool_results += 1
