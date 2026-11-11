@@ -180,7 +180,7 @@ def build_provider(provider: str, *, key: str | None = None, base_url: str | Non
 
         return gateway_provider(provider.removeprefix('gateway/'), api_key=key, base_url=base_url)
     if provider == 'xai' and base_url is not None:
-        base_url = urlsplit(base_url).netloc or base_url  # xAI's gRPC `api_host` is `host:port`, not a URL.
+        base_url = _grpc_host(base_url)
     options = {'api_key': key, _url_argument(provider): base_url}
     options = {name: value for name, value in options.items() if value is not None}
     provider_class = keyed_provider(provider, *options)
@@ -197,6 +197,16 @@ def takes_endpoint(provider: str) -> bool:
         return keyed_provider(provider, _url_argument(provider)) is not None
     except ImportError:  # A known provider; building it reports the missing extra.
         return True
+
+
+def _grpc_host(base_url: str) -> str:
+    """The `host:port` of an `https://` URL, for xAI's `api_host`, as its SDK connects over gRPC with TLS."""
+    url = urlsplit(base_url)
+    if not url.netloc:
+        return base_url
+    if url.scheme != 'https' or url.path.strip('/') or url.username or url.password or url.query:
+        raise UserError(f'xai connects over gRPC with TLS, so give base_url as https://HOST[:PORT], not {base_url!r}.')
+    return url.netloc
 
 
 def _url_argument(provider: str) -> str:

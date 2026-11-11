@@ -820,7 +820,7 @@ proxy, an AI gateway, or a self-hosted server. It must be an `http://` or `https
 URL. It is saved per model, so two models of one provider can use different endpoints,
 and it wins over the provider's environment variable, such as `OPENAI_BASE_URL`. It
 sets the provider's own endpoint option: `azure_endpoint` for Azure, `api_base` for
-LiteLLM, and `api_host` for xAI, which takes the URL's host and port. A model on one
+LiteLLM, and `api_host` for xAI, which takes an `https://HOST[:PORT]` URL. A model on one
 account, `PROVIDER@PROFILE:MODEL`, uses its own `base_url`, else the one saved for
 `PROVIDER@*:MODEL`, else for `PROVIDER:MODEL`, so pooled accounts share it.
 `openai-codex` sends its credentials to that origin, which must be HTTPS. A chain uses

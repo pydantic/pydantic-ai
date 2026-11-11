@@ -172,9 +172,14 @@ def test_xai_takes_the_base_url_as_its_api_host() -> None:
     pytest.importorskip('xai_sdk', reason='needs the `xai` extra')
     from pydantic_ai.providers.xai import XaiProvider
 
-    for base_url in ('gateway.example:8443', 'https://gateway.example:8443/v1'):
+    for base_url in ('gateway.example:8443', 'https://gateway.example:8443/'):
         built = key_profiles.build_provider('xai', key='sk-profile', base_url=base_url)
         assert isinstance(built, XaiProvider) and built.api_host == 'gateway.example:8443'
+    for base_url in ('http://gateway.example:8080', 'https://gateway.example/v1', 'https://user:pass@gateway.example'):
+        with pytest.raises(
+            UserError, match=r'xai connects over gRPC with TLS, so give base_url as https://HOST\[:PORT\]'
+        ):
+            key_profiles.build_provider('xai', key='sk-profile', base_url=base_url)
 
 
 def test_a_provider_without_an_endpoint_fails_clearly() -> None:
