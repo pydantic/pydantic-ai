@@ -136,7 +136,7 @@ async def test_claude_drives_the_screen_through_the_computer_toolset(
 ) -> None:
     provider = ScreenProvider()
     model = _claude('claude-sonnet-5-5', anthropic_api_key, request_capture)
-    await Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]).run(TASK)
+    await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     first, *_, last = request_capture.bodies('/v1/messages')
@@ -160,7 +160,7 @@ async def test_claude_sonnet_4_6_gets_computer_20251124_sized_to_the_display(
 ) -> None:
     provider = ScreenProvider()
     model = _claude('claude-sonnet-4-6', anthropic_api_key, request_capture)
-    await Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]).run(TASK)
+    await Agent(model, capabilities=[provider.capability(), ComputerUse()]).run(TASK)
 
     assert provider.actions == [Click(x=100, y=200), TypeText(text='hello')]
     # The capability gave the display size the earlier tool must declare, and the beta it needs went out.
