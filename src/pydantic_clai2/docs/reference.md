@@ -2442,12 +2442,12 @@ CLAI also keeps what the other agent's harness added to the conversation. From
 Claude Code: messages you typed while the model worked, attached files,
 reminders, skill bodies, and task notifications. From Codex: its developer
 instructions, environment, `AGENTS.md` and other context, and messages between
-its agents. They are marked as the harness's, so the
-transcript doesn't show them as your prompts and compaction doesn't treat them
-as your requests. A note opens the history saying it ran in the other agent, and
-another closes it saying it continues in CLAI, whose tools and instructions now
-apply. A Claude Code session keeps the name you or Claude Code gave it, and a
-Codex session the name in Codex's index.
+its agents. They are marked as the harness's, so the transcript doesn't show
+them as your prompts and compaction doesn't treat them as your requests. A note
+opens the history saying it ran in the other agent, and another closes it saying
+it continues in CLAI, whose tools and instructions now apply. A Claude Code
+session keeps the name you or Claude Code gave it, and a Codex session the name
+in Codex's index.
 
 A compaction summary Claude Code or Codex wrote is imported as a summary like
 the ones CLAI's own compaction writes, after the history it replaced, which
