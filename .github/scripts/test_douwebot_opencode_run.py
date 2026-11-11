@@ -189,7 +189,10 @@ def test_go_refusal_reruns_the_review_on_deepinfra(
     review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], kind: str
 ) -> None:
     """A run Go refused before its first step did no work, so DeepInfra reviews instead and the receipt says so."""
-    refused = [REFUSED[0], {'type': 'error', 'error': {'type': kind, 'message': LIMIT, 'status': 429}}]
+    refused: list[dict[str, object]] = [
+        REFUSED[0],
+        {'type': 'error', 'error': {'type': kind, 'message': LIMIT, 'status': 429}},
+    ]
     invoked = fake_opencode(monkeypatch, (refused, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
     douwebot_opencode_run.main()
     assert invoked[1].input == invoked[0].input

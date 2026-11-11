@@ -152,7 +152,8 @@ def run_with_fallback(
         # `toSessionError` sets, and no `step_finish`:
         # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
         try:
-            events = [_EVENT.validate_json(line) for line in output.read_text(encoding='utf-8').splitlines()]
+            # Only LF ends an event, as in `douwebot_opencode_result.final_text`.
+            events = [_EVENT.validate_json(line) for line in output.read_text(encoding='utf-8').split('\n') if line]
             kinds = [
                 _EVENT.validate_python(event.get('error')).get('type')
                 for event in events
