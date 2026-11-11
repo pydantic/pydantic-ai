@@ -102,7 +102,8 @@ class Wanted(TypedDict):
     root: str
     read_only: bool
     keys: Keys
-    expires_at: float
+    expires_at: float | None
+    """When the keys expire, as a Unix time; `None` for long-lived keys."""
 
 
 class Request(TypedDict):
@@ -388,10 +389,13 @@ def prepare(path: str, owner: os.stat_result) -> tuple[bool, str | None]:
     return False, os.path.join(recovered, staged)
 
 
-def record_expiry(fingerprint: str, expires_at: float) -> None:
-    """Remember when the keys a mount last received expire, so another bucket may take its folder after that."""
+def record_expiry(fingerprint: str, expires_at: float | None) -> None:
+    """Remember when the keys a mount last received expire, so another bucket may take its folder after that.
+
+    Long-lived keys never expire, so their folder stays theirs until the sandbox is destroyed.
+    """
     with open(f'{STATE}/{fingerprint}.expires', 'w', encoding='utf-8') as file:
-        file.write(str(expires_at))
+        file.write('inf' if expires_at is None else str(expires_at))
 
 
 def expired(fingerprint: str) -> bool:

@@ -93,8 +93,12 @@ class S3Mount:
     """The access key ID, kept out of the `repr` along with the other keys."""
     secret_access_key: str = field(repr=False, compare=False)
     """The secret access key that goes with `access_key_id`."""
-    expires_at: datetime = field(compare=False)
-    """When the keys expire. Required, since code in the sandbox can read them: pass only short-lived keys."""
+    expires_at: datetime | None = field(default=None, compare=False)
+    """When the keys expire, so a function passed as `mounts=` is called again for fresh ones before then.
+
+    `None` means long-lived keys, such as most R2 and MinIO keys, used until they are revoked. Code in the sandbox can
+    read the keys, so prefer short-lived ones scoped to the bucket.
+    """
     session_token: str | None = field(default=None, repr=False, compare=False)
     """The session token that comes with temporary keys, such as those from AWS STS."""
     endpoint: str | None = None
@@ -113,6 +117,8 @@ class S3Mount:
         if self.path == '..' or self.path.startswith('../'):
             raise UserError(f'The mount path {self.path!r} leads out of the working directory. Mount inside it.')
         _root(self.url)
+        if self.expires_at is None:
+            return
         if self.expires_at.utcoffset() is None:
             raise UserError(
                 f'The `expires_at` of mount {self.path!r} has no time zone. Pass an aware datetime, '
@@ -163,8 +169,8 @@ def _settings(mount: S3Mount) -> tuple[dict[str, str], str, Keys]:
     assert_never(mount)
 
 
-def _request(mounts: Sequence[S3Mount], working_dir: str) -> tuple[Request, datetime]:
-    """The helper's request, and when its keys expire first."""
+def _request(mounts: Sequence[S3Mount], working_dir: str) -> tuple[Request, datetime | None]:
+    """The helper's request, and when its keys expire first; `None` when none of them expire."""
     wanted: list[Wanted] = []
     for mount in mounts:
         remote, root, keys = _settings(mount)
@@ -179,10 +185,11 @@ def _request(mounts: Sequence[S3Mount], working_dir: str) -> tuple[Request, date
                 'root': root,
                 'read_only': mount.read_only,
                 'keys': keys,
-                'expires_at': mount.expires_at.timestamp(),
+                'expires_at': None if mount.expires_at is None else mount.expires_at.timestamp(),
             }
         )
-    return {'working_dir': working_dir, 'mounts': wanted}, min(mount.expires_at for mount in mounts)
+    expiries = [mount.expires_at for mount in mounts if mount.expires_at is not None]
+    return {'working_dir': working_dir, 'mounts': wanted}, min(expiries, default=None)
 
 
 def _reply(result: CommandResult) -> _Reply:
@@ -302,7 +309,7 @@ class _Mounted(WrapperWorkspace):
                 self._remount_at = datetime.max.replace(tzinfo=UTC)
                 return
             for mount in fresh:
-                if mount.expires_at <= now:
+                if mount.expires_at is not None and mount.expires_at <= now:
                     raise MountError(
                         f'The keys for mount {mount.path!r} have expired. '
                         'Pass `mounts=` as a function that returns fresh keys.'
@@ -315,8 +322,9 @@ class _Mounted(WrapperWorkspace):
                     f'Files written into a mount folder while the bucket was not mounted there were moved to {folder}.',
                     stacklevel=2,
                 )
-            if not self._refreshes:
+            if not self._refreshes or expires_at is None:
                 # Nothing could give a list fresh keys: once they expire, only commands that use the folder fail.
+                # Keys that don't expire need none.
                 self._remount_at = datetime.max.replace(tzinfo=UTC)
                 return
             # Keys too short-lived for the margin are used until they expire, not refreshed on every operation.

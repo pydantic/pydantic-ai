@@ -42,7 +42,7 @@ result = agent.run_sync('Summarize the CSV files in reports/ into reports/summar
 
 `reports/` in the sandbox's working directory now shows the `2026/` prefix of the `acme-reports` bucket; `url='s3://acme-reports/'` shows the whole bucket. The folder is created if it's missing. Each mount needs a folder of its own: two mounts at the same folder, or one inside another, are refused with `UserError`. So is an `S3Mount` whose path leaves the working directory, whose URL is malformed, or whose `expires_at` has no time zone or has passed. `MountError` is for what goes wrong in the sandbox.
 
-`expires_at` is required, and is when the keys stop working. A plain list's keys are used until then. After that the folder stops working, and commands that use it fail with rclone's error, while other commands and file operations carry on; a run that starts after the keys expire raises `MountError`. For runs that may outlast the keys, pass a function instead.
+`expires_at` is when the keys stop working. A plain list's keys are used until then. After that the folder stops working, and commands that use it fail with rclone's error, while other commands and file operations carry on; a run that starts after the keys expire raises `MountError`. For runs that may outlast the keys, pass a function instead. Leave `expires_at` out for long-lived keys, which are used until you revoke them.
 
 ## Fresh keys for each run
 
@@ -119,11 +119,10 @@ The function can be sync or async; a sync one is called from a worker thread. It
 
 ## Cloudflare R2, MinIO and other S3-compatible stores
 
-Set `endpoint` to the store's S3 API, and `region` if it needs one:
+Set `endpoint` to the store's S3 API, and `region` if it needs one. R2 and MinIO API tokens usually don't expire, so this mount has no `expires_at`:
 
 ```python {names="defined"}
 import os
-from datetime import UTC, datetime, timedelta
 
 from pydantic_ai_harness import S3Mount
 
@@ -132,7 +131,6 @@ r2 = S3Mount(
     url='s3://assets/',
     access_key_id=os.environ['R2_ACCESS_KEY_ID'],
     secret_access_key=os.environ['R2_SECRET_ACCESS_KEY'],
-    expires_at=datetime.now(UTC) + timedelta(hours=1),
     endpoint=f'https://{os.environ["R2_ACCOUNT_ID"]}.r2.cloudflarestorage.com',
     region='auto',
 )
@@ -194,9 +192,9 @@ The other sandboxes don't support `mounts=` yet.
 
 ## Security
 
-Code in the sandbox can read the keys, so pass only short-lived keys limited to that bucket, or to the prefix you mount, as in the STS example above. `S3Mount` keeps the keys out of its `repr` and out of the sandbox's durable policy, and `MountError` messages leave them out.
+Code in the sandbox can read the keys, so pass keys limited to that bucket, or to the prefix you mount, and prefer short-lived ones, as in the STS example above. For R2, a token scoped to one bucket is the closest equivalent; revoke it to cut off a sandbox. `S3Mount` keeps the keys out of its `repr` and out of the sandbox's durable policy, and `MountError` messages leave them out.
 
-The keys keep working after the run, through the mount and for anything else code in the sandbox does with them, until they expire. `read_only=True` only refuses writes through the folder.
+The keys keep working after the run, through the mount and for anything else code in the sandbox does with them, until they expire or you revoke them. A folder whose keys don't expire can't be given to another bucket until the sandbox is destroyed. `read_only=True` only refuses writes through the folder.
 
 In a Sprite, the `sprite` user that runs every command can read any file and become root, so it can also ask the rclone daemon for the keys of every mount there.
 

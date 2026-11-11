@@ -80,7 +80,7 @@ def s3(
     url: str = 's3://bucket/reports/',
     *,
     key: str = SECRETS[0],
-    expires_in: timedelta = timedelta(hours=1),
+    expires_in: timedelta | None = timedelta(hours=1),
     endpoint: str | None = None,
     region: str | None = None,
     read_only: bool = False,
@@ -91,7 +91,7 @@ def s3(
         access_key_id=key,
         secret_access_key=SECRETS[1],
         session_token=SECRETS[2],
-        expires_at=NOW + expires_in,
+        expires_at=None if expires_in is None else NOW + expires_in,
         endpoint=endpoint,
         region=region,
         read_only=read_only,
@@ -321,6 +321,28 @@ async def test_fresh_keys_are_fetched_before_the_old_ones_expire(clock: Clock) -
     await workspace.exists('data')
 
     assert [request['mounts'][0]['keys']['access_key_id'] for request in root.requests()] == ['first', 'second']
+
+
+async def test_keys_that_never_expire_are_sent_once_and_never_refreshed(clock: Clock) -> None:
+    root = FakeRoot()
+    workspace = wrap(root, lambda: [s3(expires_in=None)])
+
+    await workspace.exists('data')
+    clock.now = NOW + timedelta(days=365)
+    await workspace.exists('data')
+
+    assert [request['mounts'][0]['expires_at'] for request in root.requests()] == [None]
+
+
+async def test_the_keys_that_expire_first_set_when_all_are_refreshed(clock: Clock) -> None:
+    root = FakeRoot()
+    workspace = wrap(root, lambda: [s3(expires_in=None), s3('other', 's3://other/', expires_in=timedelta(hours=1))])
+
+    await workspace.exists('data')
+    clock.now = NOW + timedelta(minutes=55)
+    await workspace.exists('data')
+
+    assert len(root.calls) == 2
 
 
 async def test_keys_shorter_lived_than_the_margin_are_used_until_they_expire(clock: Clock) -> None:

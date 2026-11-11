@@ -173,7 +173,7 @@ sandbox = SpritesSandbox(
 
 The run's first command or file operation mounts the bucket at `/home/sprite/data`, as root, through `sudo -n`, which the `sprite` user may run without a password. The keys reach the Sprite on stdin, never on a command line. See [Mounting Cloud Storage](https://pydantic.dev/docs/ai/harness/cloud-storage-mounts/) for fresh keys per run, other stores, read-only mounts and how long a mount lasts.
 
-The `sprite` user can already read any file and become root, so every command in the Sprite can read the mounts' keys, including from the rclone daemon that holds them. Pass short-lived keys limited to the bucket or prefix you mount.
+The `sprite` user can already read any file and become root, so every command in the Sprite can read the mounts' keys, including from the rclone daemon that holds them. Pass keys limited to the bucket or prefix you mount, short-lived where the store supports it.
 
 ## Clean up
 
