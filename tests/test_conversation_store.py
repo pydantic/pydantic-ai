@@ -927,6 +927,9 @@ async def test_a_conversation_s_title_and_metadata_change_only_through_update() 
     # The update didn't change the revision, so the conversation saves on, and the save keeps both.
     conversation.messages.append(ModelResponse(parts=[TextPart('two')]))
     await store.save(conversation)
+    saved = await store.read_record(conversation.conversation_id)
+    assert saved is not None
+    assert (saved.title, saved.metadata) == ('Greetings', {'pinned': True})
     cleared = await store.update(conversation.conversation_id, metadata=None, scope='user-1')
     assert (cleared.title, cleared.metadata) == ('Greetings', None)
 
