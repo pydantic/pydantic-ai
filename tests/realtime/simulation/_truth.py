@@ -95,7 +95,7 @@ class ToolCallTruth:
     call_id: str
     response: str
     name: str
-    seq: int = 0
+    seq: int
     """When the server made the call."""
     output_received: bool = False
     cancelled_by_server: bool = False

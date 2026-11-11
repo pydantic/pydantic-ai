@@ -1740,7 +1740,10 @@ def test_eleven_realtime_reply_to_an_interjection_abandons_the_calls_before_it()
 
 
 def test_eleven_realtime_response_with_nothing_new_from_the_user_abandons_no_call() -> None:
-    """A response Eleven Realtime starts with nothing new from the user since a finished response's calls keeps them owed."""
+    """Eleven Realtime gives up on a finished response's calls only once the user says something after them.
+
+    A response it starts with nothing new from the user gives up on none: their results are still owed a reply.
+    """
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
