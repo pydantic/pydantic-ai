@@ -6,7 +6,7 @@ description: "Run Pydantic AI agents on any decision model behind the /v1/system
 
 A [decision model](decision.md) answers typed questions about a text, each with a probability or a distribution over the options, rather than writing text: the fast, one-look "System 1" judgement, next to a language model's step-by-step "System 2" reasoning. TypeSafe's Jev answers these questions over a `POST /v1/systemone` API, and other decision models are available over the same API, such as [Contrastive Language Models](https://huggingface.co/Contrastive-LM/CLM-v0.1-8B) (CLM) and [Laya](https://huggingface.co/convaiinnovations/laya), and [Ollama](#ollama) runs decision models locally over it.
 
-[`SystemOneModel`][pydantic_ai.models.system_one.SystemOneModel] is the Pydantic AI model class for any decision model behind this API, and a subclass of [`DecisionModel`][pydantic_ai.models.decision.DecisionModel], like [`TypeSafeModel`](typesafe.md). An agent built for one runs on the other by changing the model. All it needs is the API's URL, and its key if it has one.
+[`SystemOneModel`][pydantic_ai.models.system_one.SystemOneModel] is the Pydantic AI model class for any decision model behind this API, and a subclass of [`DecisionModel`][pydantic_ai.models.decision.DecisionModel], like [`TypeSafeModel`](typesafe.md). An agent built for one runs on the other by changing the model, as long as it sends no images: `SystemOneModel` accepts text only. All it needs is the API's URL, and its key if it has one.
 
 As with every model in Pydantic AI, the work is split in two:
 
