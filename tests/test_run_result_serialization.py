@@ -557,6 +557,23 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
                 },
                 'conversation_unchecked': {'title': 'Conversation Unchecked', 'type': 'boolean'},
                 'conversation_saved': {'title': 'Conversation Saved', 'type': 'boolean'},
+                'conversation_messages': {
+                    'items': {
+                        'anyOf': [
+                            {
+                                'discriminator': {
+                                    'mapping': {'request': '#/$defs/ModelRequest', 'response': '#/$defs/ModelResponse'},
+                                    'propertyName': 'kind',
+                                },
+                                'oneOf': [{'$ref': '#/$defs/ModelRequest'}, {'$ref': '#/$defs/ModelResponse'}],
+                            },
+                            {'type': 'integer'},
+                        ]
+                    },
+                    'title': 'Conversation Messages',
+                    'type': 'array',
+                },
+                'conversation_run_start': {'title': 'Conversation Run Start', 'type': 'integer'},
                 'metadata': {
                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                     'title': 'Metadata',

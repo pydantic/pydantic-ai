@@ -14259,7 +14259,9 @@ async def _answer_ok(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIte
 @pytest.mark.parametrize(
     ('prompt', 'trim', 'efforts', 'added'),
     [
-        pytest.param('system_prompt', True, [None, None, None], SystemPromptPart, id='trimmed'),
+        # The system prompt the UI adapter reinjects goes on the trimmed history's first request, a copy of the turn,
+        # so the turn is stored as the run added it and the system prompt stays at the head of the stored history.
+        pytest.param('system_prompt', True, [None, None, None], None, id='trimmed'),
         pytest.param('instructions', True, ['low', 'low', 'low'], ModelSettingsDeltaPart, id='trimmed-effort'),
         pytest.param('system_prompt', False, ['low', 'low', 'high'], ModelSettingsDeltaPart, id='effort-change'),
         pytest.param('system_prompt', False, ['low', 'low', 'low'], None, id='same-effort'),
@@ -14304,6 +14306,9 @@ async def test_conversation_store_appends_a_turn_the_run_adds_parts_to(
     last_turn = conversation.messages[-2]
     assert isinstance(last_turn, ModelRequest)
     assert any(isinstance(part, added) for part in last_turn.parts) if added else len(last_turn.parts) == 1
+    head = conversation.messages[0]
+    assert isinstance(head, ModelRequest)
+    assert isinstance(head.parts[0], SystemPromptPart) == (prompt == 'system_prompt')
 
 
 @pytest.mark.parametrize(

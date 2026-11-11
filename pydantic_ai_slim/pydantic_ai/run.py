@@ -59,6 +59,10 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     conversation_unsaved: NotRequired[list[_messages.ModelMessage]]
     conversation_unchecked: NotRequired[bool]
     conversation_saved: NotRequired[bool]
+    # Only when a capability dropped or rewrote messages the run was given or added: the conversation's full
+    # history, where an int stands for the message at that index of `messages`, and where the run's own start.
+    conversation_messages: NotRequired[list[_messages.ModelMessage | int]]
+    conversation_run_start: NotRequired[int]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
 
@@ -82,6 +86,8 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     conversation_unsaved: list[_messages.ModelMessage]
     conversation_unchecked: bool
     conversation_saved: bool
+    conversation_messages: list[_messages.ModelMessage | int]
+    conversation_run_start: int
     metadata: dict[str, Any] | None
     traceparent: str | None
 
@@ -141,6 +147,22 @@ def _keeps_in_order(parts: Sequence[object], kept: Sequence[object]) -> bool:
     """Whether `parts` holds each of `kept`, in the same order, with only other parts added around them."""
     remaining = iter(parts)
     return all(part in remaining for part in kept)
+
+
+def _full_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.ModelMessage], int] | None:
+    """The history the run was given and every message it added, and where those start, if its history lost any of them.
+
+    A capability can drop messages from the history or replace them with rewritten copies, say to keep what the
+    model sees short. Any other message it adds, and filling in or adding to a message as `_rewritten` allows,
+    keeps the history whole.
+    """
+    recorded = state.appended_messages.messages
+    if recorded is None:
+        return None
+    history = iter(state.message_history)
+    if all(any(kept is message or not _rewritten(kept, message) for kept in history) for message in recorded):
+        return None
+    return recorded, state.appended_messages.new_message_index
 
 
 _STATE_KEYS = (
@@ -932,6 +954,24 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return f'<{type(self).__name__} result={result_repr} usage={self.usage}>'
 
 
+def _appended_messages_data(data: dict[str, Any]) -> dict[str, Any]:
+    """The `GraphAgentState.appended_messages` a serialized result's `conversation_messages` and `conversation_run_start` describe.
+
+    An int in `conversation_messages` stands for the message at that index of `messages`; one out of range fails
+    validation.
+    """
+    messages = data.get('messages')
+    history = cast('list[Any]', messages) if isinstance(messages, list) else []
+    full = data['conversation_messages']
+    return {
+        'messages': [
+            history[item] if isinstance(item, int) and 0 <= item < len(history) else item
+            for item in (cast('list[Any]', full) if isinstance(full, list) else [])
+        ],
+        'new_message_index': data.get('conversation_run_start', 0),
+    }
+
+
 def _from_legacy_shape(data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     """The public shape of an `AgentRunResult` serialized with its private fields, `_state` among them.
 
@@ -1018,6 +1058,8 @@ class AgentRunResult(Generic[OutputDataT]):
         for key in _STATE_KEYS:
             if key in data:
                 state_data[key] = data[key]
+        if 'conversation_messages' in data:
+            state_data['appended_messages'] = _appended_messages_data(data)
 
         validated: dict[str, Any] = {
             '_output_tool_name': data.get('output_tool_name'),
@@ -1057,6 +1099,11 @@ class AgentRunResult(Generic[OutputDataT]):
             data['conversation_unchecked'] = True
         if self._state.conversation_saved:
             data['conversation_saved'] = True
+        if (full := _full_history(self._state)) is not None:
+            # The messages the history still holds are referred to by their index in it rather than repeated.
+            positions = {id(message): index for index, message in enumerate(self._state.message_history)}
+            data['conversation_messages'] = [positions.get(id(message), message) for message in full[0]]
+            data['conversation_run_start'] = full[1]
         if 'output' in serialized:
             # Absent when the caller filtered it out: an explicit `exclude={'output'}`, or
             # `exclude_none=True` on a `None` output. The handler applies those filters to the
@@ -1193,10 +1240,20 @@ class AgentRunResult(Generic[OutputDataT]):
         [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index] points at
         the messages the store doesn't have yet: the ones this run added, and any the conversation
         hadn't saved before the run.
+
+        A capability that trims or rewrites the history, like
+        [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory], changes what the model is sent
+        and what [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] returns, not the
+        conversation: when it dropped or rewrote messages this run was given or added, the messages
+        are the history as the run was given it followed by every message the run added, so storing
+        the conversation keeps them all and the capability trims again on the next run. Otherwise
+        they are the same as `all_messages()`, including any message a capability added.
         """
         output = self.output
+        full = _full_history(self._state)
+        messages, new_message_index = full or (self._state.message_history, self._new_message_index)
         conversation = Conversation(
-            messages=list(self.all_messages()),
+            messages=list(messages),
             usage=copy(self.usage),
             conversation_id=self.conversation_id,
             deferred_tool_requests=(
@@ -1208,7 +1265,7 @@ class AgentRunResult(Generic[OutputDataT]):
             ),
             revision=self._state.conversation_revision,
         )
-        index = self._conversation_new_message_index()
+        index = self._conversation_new_message_index(messages, new_message_index)
         if index is not None and self._state.conversation_unchecked:
             # Its store compares the messages before the index with the stored ones instead.
             conversation.new_message_index = index
@@ -1222,17 +1279,19 @@ class AgentRunResult(Generic[OutputDataT]):
         self._state.conversation_unchecked = False
         self._state.conversation_saved = True
 
-    def _conversation_new_message_index(self) -> int | None:
+    def _conversation_new_message_index(
+        self, messages: list[_messages.ModelMessage], new_message_index: int
+    ) -> int | None:
         if self._state.conversation_saved:
-            return len(self._state.message_history)
+            return len(messages)
         unsaved = self._state.conversation_unsaved
         if unsaved is None:
             return None
-        # The unsaved messages the run was given come just before the ones it added, unless a capability rewrote
+        # The unsaved messages the run was given come just before the ones it added, unless the run changed
         # them, in which case the store compares the whole history instead. Filling in what a request it sends
-        # lacks doesn't count as a rewrite.
-        start = self._new_message_index - len(unsaved)
-        carried = self._state.message_history[start : self._new_message_index] if start >= 0 else []
+        # lacks doesn't count as a change.
+        start = new_message_index - len(unsaved)
+        carried = messages[start:new_message_index] if start >= 0 else []
         if len(carried) != len(unsaved) or any(map(_rewritten, carried, unsaved)):
             return None
         return start

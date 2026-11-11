@@ -652,6 +652,7 @@ async def test_retry_without_response_drops_the_request_scoped_prompt():
         ['<system>Reminder: be terse. This is request 2.</system>'],
     ]
     assert request_scoped_texts(result.all_messages()) == ['Reminder: be terse. This is request 2.']
+    assert result.conversation.messages == result.all_messages()
 
 
 @pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
