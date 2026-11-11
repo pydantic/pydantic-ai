@@ -52,8 +52,8 @@ class CancellationToken:
 
     A token is permanently cancelled once [`cancel`][pydantic_ai.CancellationToken.cancel]
     succeeds. The same token may be passed to multiple concurrent runs, in which case all of them
-    are cancelled. If a run's event loop can't be reached from where the token is fired, as inside a
-    Temporal workflow, `cancel()` raises a [`UserError`][pydantic_ai.exceptions.UserError] and the
+    are cancelled. If a run's event loop can't be reached from where the token is fired, as with a run
+    inside a Temporal workflow cancelled from outside it, `cancel()` raises a [`UserError`][pydantic_ai.exceptions.UserError] and the
     token stays uncancelled (see [Temporal cancellation](../durable_execution/temporal.md#cancellation)).
     """
 
