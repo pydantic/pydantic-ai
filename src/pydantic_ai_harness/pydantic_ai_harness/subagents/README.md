@@ -247,10 +247,11 @@ Nested model streaming from the child run is not an event concern; pass an `even
 
 | Attribute | Value |
 | --- | --- |
+| `sub_agents.agent_name` | the delegate's name; for a created agent, whose name the model chose, only as content |
 | `sub_agents.outcome` | the `DelegationOutcome`: `ok`, `timeout`, `budget`, `failed`, `contained`, `cancelled` or `error`; or `max_calls` when the delegate's `max_calls` budget refused the call before the child ran |
-| `sub_agents.model` | the model the child ran on: `<system>:<model name>` for a `Model` instance, or the model string as given; not set for `max_calls` |
+| `sub_agents.model` | the model that answered the child's last request, else the one it was configured to run on: `<system>:<model name>` for a `Model` instance, or the model string as given; absent for `max_calls`, or when there's no model to name |
 
-On `error` the span also records the exception, as for any tool call that raises. Nothing is recorded for a task that moved to the background, which settles after its tool call's span has ended, for a remote task, whose run is on its worker, or inside a durable unit, such as a Temporal activity, whose context carries no tracer.
+On `error` the span also records the exception, as for any tool call that raises. A task in the background settles after its tool call has returned, so its outcome is recorded as the `sub_agents task settled` decision below, with the same attributes, and the same `sub_agents.outcome` filter finds both. A remote task's outcome is not recorded yet: its run is on its worker.
 
 Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer, with `sub_agents.`-prefixed attributes, including `sub_agents.agent_name` (for a created agent, whose name the model chose, only as content) and, for a task, `sub_agents.task_id`:
 
@@ -258,6 +259,7 @@ Task control records its own decisions, which core's spans don't show, as zero-d
 | --- | --- | --- |
 | `sub_agents vetoed` | a listener vetoed a task, message, answer, cancellation, or created agent | `sub_agents.event` (the vetoed event's kind), `sub_agents.veto_reason` |
 | `sub_agents task backgrounded` | a task moved to the background | `sub_agents.reason`: `requested`, `auto`, or `question` |
+| `sub_agents task settled` | a task in the background ended | `sub_agents.outcome`, `sub_agents.model`, as on the delegate span |
 | `sub_agents question answered` | a listener answered a task's question, not the model | `sub_agents.question`, `sub_agents.answer` |
 | `sub_agents task refused` | `max_running_tasks` refused a delegation | `sub_agents.running_tasks`, `sub_agents.max_running_tasks` |
 | `sub_agents task not accepted` | no worker picked a remote task up within `accept_timeout` | `sub_agents.accept_timeout` |

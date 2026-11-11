@@ -10,13 +10,12 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclass_field, replace
 from functools import partial
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Generic, TypeVar
 from uuid import uuid4
 
 import anyio
 
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
-from pydantic_ai._telemetry import current_span
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
 from pydantic_ai.durable_exec import DurableRunContext
@@ -602,7 +601,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         counts[agent_name] = counts.get(agent_name, 0) + 1
         if counts[agent_name] <= sub_agent.max_calls:
             return None
-        _record_outcome(ctx, 'max_calls')
+        self._telemetry(ctx).delegation_ended(agent_name=agent_name, outcome='max_calls', model=None)
         return self._steer(
             sub_agent.on_failure,
             f'Delegate budget for {agent_name!r} is exhausted for this run '
@@ -1266,14 +1265,14 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             run_id=record.run_id if record is not None else None,
         )
         token = _depth.set(_depth.get() + 1)
-        model = _model_run_on(run_model, sub_agent)
         try:
             ended = await self._settle(agent_name, sub_agent, run, own_budget=own_budget, serving_model=serving_model)
         except BaseException as exc:
             outcome: DelegationOutcome = (
                 'cancelled' if isinstance(exc, (asyncio.CancelledError, RunCancelled)) else 'error'
             )
-            _record_outcome(ctx, outcome, model)
+            model = _served_model_label(serving_model, run_model, sub_agent)
+            self._telemetry(ctx).delegation_ended(agent_name=agent_name, outcome=outcome, model=model, record=record)
             if owner is not None:
                 with anyio.move_on_after(5, shield=True):
                     await emit(
@@ -1291,7 +1290,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             _depth.reset(token)
             if child_usage is not None and self._forward_usage:
                 ctx.usage.incr(child_usage)
-        _record_outcome(ctx, ended.outcome, model)
+        model = _served_model_label(serving_model, run_model, sub_agent)
+        self._telemetry(ctx).delegation_ended(agent_name=agent_name, outcome=ended.outcome, model=model, record=record)
         if record is not None:
             record.outcome = ended.outcome
         if emits:
@@ -1490,31 +1490,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         return default
 
 
-def _model_run_on(
-    run_model: Model | KnownModelName | str | None, sub_agent: SubAgent[Any]
-) -> Model | KnownModelName | str | None:
-    """The model a delegation runs on: the one `_run_model` chose, else the sub-agent's own."""
-    return run_model if run_model is not None else sub_agent.agent.model
+def _served_model_label(
+    serving_model: ServingModelRecorder, run_model: Model | KnownModelName | str | None, sub_agent: SubAgent[Any]
+) -> str | None:
+    """The model that served the delegation's last request, else the one it was configured to run on.
 
-
-def _record_outcome(
-    ctx: RunContext[Any],
-    outcome: DelegationOutcome | Literal['max_calls'],
-    model: Model | KnownModelName | str | None = None,
-) -> None:
-    """Record how a delegation ended, and the model it ran on, on the delegation tool call's `execute_tool` span.
-
-    Skipped once that span has ended, as a task moved to the background settles after its tool call returned,
-    and inside a durable unit, whose context carries no tracer: the tool call's span is the workflow's.
+    `None` when there's no model to name: no request was answered, and the sub-agent has no model of its own.
     """
-    if isinstance(ctx, DurableRunContext):
-        return
-    span = current_span(ctx)
-    if not span.is_recording():
-        return
-    span.set_attribute('sub_agents.outcome', outcome)
-    if model is not None:
-        span.set_attribute('sub_agents.model', model_label(model))
+    model = serving_model.model or run_model or sub_agent.agent.model
+    return None if model is None else model_label(model)
 
 
 def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: UsageLimits) -> UsageLimits:

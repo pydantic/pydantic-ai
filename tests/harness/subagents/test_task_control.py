@@ -21,6 +21,7 @@ from opentelemetry.context import Context
 from opentelemetry.sdk.trace import Span, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
@@ -301,9 +302,16 @@ class TestSubAgentsTaskControl:
             'sub_agents task backgrounded',
             {'sub_agents.agent_name': 'researcher', 'sub_agents.reason': 'auto'},
         ) in (decisions(exporter))
-        # The task settled after its tool call returned the receipt, so its span ended without an outcome.
+        # The task settled after its tool call returned the receipt, so its outcome is a decision, not on that span.
         [tool_span] = [span for span in exporter.get_finished_spans() if span.name == 'execute_tool delegate_task']
         assert 'sub_agents.outcome' not in (tool_span.attributes or {})
+        assert [attributes for name, attributes in decisions(exporter) if name == 'sub_agents task settled'] == [
+            {
+                'sub_agents.agent_name': 'researcher',
+                'sub_agents.outcome': 'ok',
+                'sub_agents.model': 'function:function:respond:stream',
+            }
+        ]
 
     async def test_a_listener_failing_on_auto_backgrounding_aborts_the_run(self) -> None:
         gate = Gate()
@@ -512,12 +520,20 @@ class TestSubAgentsTaskControl:
             ),
             capabilities=[controlled(researcher(slow)), recorder],
         )
+        settings, exporter = traced(False)
+        parent.instrument = settings
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert 'outcome="cancelled"' in task_texts(result.all_messages())[-1]
         [cancelled] = recorder.of(TaskCancelledEvent)
         assert cancelled.forced
         assert len(recorder.of(TaskForceCancelEvent)) == 1
+        settled = {
+            'sub_agents.agent_name': 'researcher',
+            'sub_agents.outcome': 'cancelled',
+            'sub_agents.model': 'function:function:respond:stream',
+        }
+        assert ('sub_agents task settled', settled) in decisions(exporter)
 
     async def test_a_resumed_task_continues_its_conversation(self) -> None:
         recorder = Recorder()
@@ -1680,6 +1696,14 @@ class TestTaskControlTelemetry:
                 {'sub_agents.agent_name': 'researcher', 'sub_agents.event': 'sub_agents.task_assigned', **reason},
             ),
             ('sub_agents task backgrounded', {'sub_agents.agent_name': 'researcher', 'sub_agents.reason': 'requested'}),
+            (
+                'sub_agents task settled',
+                {
+                    'sub_agents.agent_name': 'researcher',
+                    'sub_agents.outcome': 'ok',
+                    'sub_agents.model': 'function:function:respond:stream',
+                },
+            ),
             ('sub_agents wait for tasks', {'sub_agents.running_tasks': 1}),
         ]
 
@@ -1745,6 +1769,14 @@ class TestTaskControlTelemetry:
                 {'sub_agents.agent_name': 'researcher', 'sub_agents.event': 'sub_agents.task_answer'},
             ),
             ('sub_agents task backgrounded', {'sub_agents.agent_name': 'researcher', 'sub_agents.reason': 'question'}),
+            (
+                'sub_agents task settled',
+                {
+                    'sub_agents.agent_name': 'researcher',
+                    'sub_agents.outcome': 'ok',
+                    'sub_agents.model': 'function:function:respond:stream',
+                },
+            ),
         ]
 
     async def test_a_refused_task_is_a_span(self) -> None:
@@ -1769,6 +1801,45 @@ class TestTaskControlTelemetry:
             'sub_agents.max_running_tasks': 1,
         }
         assert ('sub_agents task refused', refused) in decisions(exporter)
+
+    def waiting_parent(self, gate: Gate) -> Agent[Any, str]:
+        """A parent that backgrounds a task the gate holds, so its run waits for it."""
+        slow = Agent(scripted(call('pause'), text('slow result')), tools=[gate.pause])
+        return Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Slow.', background=True), text('Waiting.')),
+            capabilities=[controlled(researcher(slow))],
+        )
+
+    async def test_an_error_ending_the_wait_is_recorded_by_type_only_without_content(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # No real failure ends the wait, so one is injected: what is under test is how the span records it.
+        async def fail(self: DelegationTasks, task_id: str | None) -> None:
+            raise RuntimeError('quotes the task')
+
+        monkeypatch.setattr(DelegationTasks, 'wait_children', fail)
+        parent = self.waiting_parent(Gate())
+        settings, exporter = traced(False)
+        parent.instrument = settings
+        with anyio.fail_after(WAIT), pytest.raises(RuntimeError):
+            await parent.run('Go.')
+        [wait] = [span for span in exporter.get_finished_spans() if span.name == 'sub_agents wait for tasks']
+        assert wait.status.status_code == StatusCode.ERROR
+        assert 'quotes the task' not in str([wait.status.description, *(event.attributes for event in wait.events)])
+
+    async def test_a_cancelled_wait_is_not_an_error(self) -> None:
+        # Not the child's gate: the child stays blocked, so the run is cancelled mid-wait.
+        waiting = Gate()
+        parent = self.waiting_parent(Gate())
+        settings, exporter = traced(False, OpensOnWait(waiting))
+        parent.instrument = settings
+        with anyio.fail_after(WAIT):
+            async with anyio.create_task_group() as group:
+                group.start_soon(parent.run, 'Go.')
+                await waiting.opened.wait()
+                group.cancel_scope.cancel()
+        [wait] = [span for span in exporter.get_finished_spans() if span.name == 'sub_agents wait for tasks']
+        assert wait.status.status_code == StatusCode.UNSET
 
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_a_vetoed_created_agent_is_a_span(self, include_content: bool) -> None:

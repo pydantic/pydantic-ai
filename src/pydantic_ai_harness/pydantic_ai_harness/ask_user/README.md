@@ -297,7 +297,8 @@ To serve several UIs, pass one answerer that dispatches to them.
 `AskUser` opens no spans of its own. Core's tool-call span already covers the wait, and the two
 events above carry what was asked and answered. On that `execute_tool ask_user_question` span,
 `ask_user.outcome` says how the call ended, so "how often do users decline or time out" is one query
-whether or not the run records content:
+whether or not the run records content. With `answerer=None` only `deferred` is recorded: the answer
+arrives in a later run, where the tool doesn't run again.
 
 | `ask_user.outcome` | When |
 |---|---|
@@ -307,12 +308,12 @@ whether or not the run records content:
 | `deferred` | there is no answerer, so the call was deferred to the host |
 
 An answerer that raises, or returns a response that doesn't fit the questions, fails the call: the
-span records the error and no outcome. A deferred call answered in a later run gets no outcome there,
-since the tool doesn't run again.
+span records the error and no outcome.
 
 The span also records the tool's arguments and result, which here are the questions and the user's
 answers, custom text included. Notes and attachments appear in the following model request's user
-content; inline answers also record them in the tool span's serialized `ToolReturn`. The `include_content` setting applies to notes as well. Set
+content; inline answers also record them in the tool span's serialized `ToolReturn`. The
+`include_content` setting applies to notes as well. Set
 [`include_content=False`](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-prompts-and-completions) to leave them out.
 
 ## Specs

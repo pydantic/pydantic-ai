@@ -21,7 +21,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.subagents import DynamicAgents, SubAgent, SubAgents
 
 
 def instrumented(*, include_content: bool = False) -> tuple[Instrumentation, InMemorySpanExporter]:
@@ -32,17 +32,22 @@ def instrumented(*, include_content: bool = False) -> tuple[Instrumentation, InM
     return Instrumentation(settings=settings), exporter
 
 
-def delegating(times: int = 1) -> FunctionModel:
-    """A parent model that delegates `do it` to `worker` `times` times, then replies with text."""
+def calling(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
+    """A parent model that makes each `(tool name, arguments)` call in turn, then replies with text."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        calls = sum(isinstance(message, ModelResponse) for message in messages)
-        if calls < times:
-            args = {'agent_name': 'worker', 'task': 'do it'}
-            return ModelResponse(parts=[ToolCallPart('delegate_task', args, tool_call_id=f'c{calls}')])
+        step = sum(isinstance(message, ModelResponse) for message in messages)
+        if step < len(calls):
+            tool_name, args = calls[step]
+            return ModelResponse(parts=[ToolCallPart(tool_name, args, tool_call_id=f'c{step}')])
         return ModelResponse(parts=[TextPart('all done')])
 
     return FunctionModel(respond)
+
+
+def delegating(times: int = 1, agent_name: str = 'worker') -> FunctionModel:
+    """A parent model that delegates `do it` to `agent_name` `times` times, then replies with text."""
+    return calling(*[('delegate_task', {'agent_name': agent_name, 'task': 'do it'})] * times)
 
 
 def delegation_spans(exporter: InMemorySpanExporter) -> list[ReadableSpan]:
@@ -98,7 +103,32 @@ class TestSubAgentsTelemetry:
         await Agent(delegating(), capabilities=[SubAgents(agents=[sub_agent]), instrumentation]).run('go')
 
         [span] = delegation_spans(exporter)
-        assert sub_agents_attributes(span) == {'sub_agents.outcome': outcome, 'sub_agents.model': model}
+        assert sub_agents_attributes(span) == {
+            'sub_agents.agent_name': 'worker',
+            'sub_agents.outcome': outcome,
+            'sub_agents.model': model,
+        }
+
+    async def test_the_model_is_the_one_that_served_the_run(self):
+        # Configured as the string `'test'`; the model that answered names itself `test:test`.
+        worker = SubAgent(Agent('test', name='worker'))
+        instrumentation, exporter = instrumented()
+        await Agent(delegating(), capabilities=[SubAgents(agents=[worker]), instrumentation]).run('go')
+
+        [span] = delegation_spans(exporter)
+        assert sub_agents_attributes(span)['sub_agents.model'] == 'test:test'
+
+    @pytest.mark.parametrize('include_content', [False, True])
+    async def test_a_created_agents_name_is_content(self, include_content: bool):
+        create = ('create_agent', {'name': 'poet', 'description': 'd', 'instructions': 'i'})
+        delegate = ('delegate_task', {'agent_name': 'poet', 'task': 'do it'})
+        sub_agents = SubAgents[object](models={'fast': TestModel()}, dynamic_agents=DynamicAgents(models=['fast']))
+        instrumentation, exporter = instrumented(include_content=include_content)
+        await Agent(calling(create, delegate), capabilities=[sub_agents, instrumentation]).run('go')
+
+        [span] = delegation_spans(exporter)
+        name = {'sub_agents.agent_name': 'poet'} if include_content else {}
+        assert sub_agents_attributes(span) == {**name, 'sub_agents.outcome': 'ok', 'sub_agents.model': 'test:test'}
 
     async def test_a_timeout_is_a_successful_call_and_quotes_nothing_without_content(self):
         worker = SubAgent(Agent(FunctionModel(slow), name='worker'), timeout_seconds=0.01)
@@ -119,6 +149,7 @@ class TestSubAgentsTelemetry:
         [span] = delegation_spans(exporter)
         assert span.status.status_code == StatusCode.ERROR
         assert sub_agents_attributes(span) == {
+            'sub_agents.agent_name': 'worker',
             'sub_agents.outcome': 'error',
             'sub_agents.model': 'function:function:crash:',
         }
@@ -129,7 +160,10 @@ class TestSubAgentsTelemetry:
         await Agent(delegating(times=2), capabilities=[SubAgents(agents=[worker]), instrumentation]).run('go')
 
         assert [sub_agents_attributes(span) for span in delegation_spans(exporter)] == snapshot(
-            [{'sub_agents.outcome': 'ok', 'sub_agents.model': 'test:test'}, {'sub_agents.outcome': 'max_calls'}]
+            [
+                {'sub_agents.agent_name': 'worker', 'sub_agents.outcome': 'ok', 'sub_agents.model': 'test:test'},
+                {'sub_agents.agent_name': 'worker', 'sub_agents.outcome': 'max_calls'},
+            ]
         )
 
     async def test_an_uninstrumented_run_leaves_the_applications_span_alone(self):
