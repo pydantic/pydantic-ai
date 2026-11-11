@@ -813,3 +813,10 @@ def test_vertex_reads_tiff_where_the_gemini_api_does_not():
 
     assert 'image/tiff' not in gemini_api.profile.get('supported_image_media_types', ())
     assert 'image/tiff' in vertex.profile.get('supported_image_media_types', ())
+
+
+@pytest.mark.skipif(not google_available(), reason='google not installed')
+def test_vertex_leaves_a_model_without_an_image_set_judged_by_kind():
+    gemma = GoogleModel('gemma-3-27b-it', provider=GoogleCloudProvider(project='test', location='us-central1'))
+
+    assert 'supported_image_media_types' not in gemma.profile
