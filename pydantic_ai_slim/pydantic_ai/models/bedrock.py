@@ -76,7 +76,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
-from pydantic_ai._gateway_cost import fill_gateway_header_cost
+from pydantic_ai._gateway_cost import fill_gateway_header_cost, gateway_reported_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
@@ -2481,6 +2481,11 @@ class BedrockStreamedResponse(StreamedResponse):
                 raw_finish_reason = message_stop['stopReason']
                 self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                # The gateway reports the stream's cost here. The `metadata` event's usage, which usually comes after,
+                # carries no cost, so adding it keeps this one.
+                response_fields = message_stop.get('additionalModelResponseFields')
+                if (cost := gateway_reported_cost({'usage': response_fields})) is not None:
+                    self._usage.cost = cost
             case {'metadata': metadata}:
                 if 'usage' in metadata:  # pragma: no branch
                     self._add_usage(
