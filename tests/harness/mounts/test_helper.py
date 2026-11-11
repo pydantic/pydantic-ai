@@ -871,7 +871,57 @@ def test_the_state_folder_is_made_private(sandbox: Sandbox) -> None:
     assert state.stat().st_mode & 0o777 == 0o700
 
 
-def test_running_out_of_time_is_a_refusal() -> None:
-    with pytest.raises(helper.MountFailed, match='Mounting took longer than 1800 seconds') as raised:
+def test_running_out_of_time_is_reported_as_json(
+    sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(helper.signal, 'alarm', returns(None))
+    monkeypatch.setattr(helper.signal, 'signal', returns(None))
+
+    def late(request: dict[str, object]) -> dict[str, object]:
         helper.out_of_time(14, None)
-    assert raised.value.code == 'timeout'
+        raise AssertionError('not reached')  # pragma: no cover
+
+    monkeypatch.setattr(helper, 'ensure', late)
+    request = {'working_dir': str(sandbox.root / 'workspace'), 'mounts': [wanted(sandbox)]}
+    monkeypatch.setattr(sys, 'stdin', io.StringIO(f'{json.dumps(request)}\n'))
+
+    helper.main()
+
+    assert json.loads(capsys.readouterr().out) == {
+        'error': 'timeout',
+        'message': 'Mounting took longer than 1800 seconds. Try again.',
+    }
+
+
+@pytest.mark.parametrize('check', ['start_daemon', 'served'])
+def test_running_out_of_time_is_not_taken_for_a_daemon_that_is_not_up(
+    sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, check: str
+) -> None:
+    """The checks for a running daemon treat a failed rclone call as "not up"; the deadline must still stop the helper."""
+
+    def rc(command: str, body: Mapping[str, object] | None = None, timeout: float = 60) -> dict[str, object]:
+        helper.out_of_time(14, None)
+        raise AssertionError('not reached')  # pragma: no cover
+
+    monkeypatch.setattr(helper, 'rc', rc)
+
+    with pytest.raises(helper.OutOfTime):
+        if check == 'start_daemon':
+            START_DAEMON('/usr/bin/rclone')
+        else:
+            helper.served()
+
+
+def test_running_out_of_time_while_mounting_removes_the_marker(
+    sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mount = wanted(sandbox)
+
+    def late(wanted: object, owner: object) -> None:
+        helper.out_of_time(14, None)
+
+    monkeypatch.setattr(helper, 'mount', late)
+
+    with pytest.raises(helper.OutOfTime):
+        ensure(sandbox, mount)
+    assert os.listdir(mount['path']) == []
