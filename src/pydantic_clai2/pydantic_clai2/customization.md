@@ -208,12 +208,29 @@ before reinstalling. Plugin code runs as the user; install only trusted reposito
 The second built-in is ask_user (pydantic_clai2.builtin_plugins.ask_user_menu): the
 harness AskUser capability with an inline numbered picker as its answerer, so
 the model can ask the user multiple-choice questions mid-run through
-ask_user_question. The conversation remains visible, and the question stays pinned
-above its choices while output streams. Enter or a number selects;
+ask_user_question. Pending questions leave composer focus, cursor, undo history,
+draft and attachments intact. F2 explicitly focuses the question's choices;
+F2 returns to the composer. The configured send key (Enter by default) or a number selects;
 for multiple selections it toggles, then Done submits. /plugins disable ask_user removes the tool. To answer the
 questions somewhere other than the terminal, declare ask_user again with a
 module whose Plugin returns AskUser(answerer=...) from get_capabilities with your
 own async answerer; see PLUGINS.md.
+
+Sending a draft while a question waits offers Answer this question or Queue
+follow-up. Remember my choice saves only input.question_submit; /input edits or
+resets it. Each later question in a batch requires review or an explicit routing
+choice. Generic send, steering, queued prompts, custom text and this preference
+never approve tools. Approvals require explicit F2 focus before choosing an
+approval option. The live composer uses one input reader for all these controls;
+standalone answerers keep their exclusive picker handoff.
+
+/input configures send, steer and newline bindings and Mac/PC/neutral labels.
+Labels do not detect key transport or recover modifiers lost over SSH. /input test
+explicitly shows decoded keys/actions without submitting, interrupting, or
+showing draft/paste contents. Ctrl+G closes testing. Ctrl+J is always a newline
+fallback in the composer and custom answers, never question confirmation.
+F4 shows the queue's Edit, Remove and Steer actions. See the reference's
+Keyboard setup and Prompt area sections for the complete controls.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for

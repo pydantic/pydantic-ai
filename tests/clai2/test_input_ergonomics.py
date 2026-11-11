@@ -4,9 +4,13 @@ from pathlib import Path
 
 import anyio
 import pytest
+from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.key_binding import KeyPress
+from prompt_toolkit.keys import Keys
 from pydantic import ValidationError
 from rich.text import Text
 
+from pydantic_ai.messages import BinaryContent
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse, Question, QuestionOption
 from pydantic_clai2 import config
 from pydantic_clai2.builtin_plugins.ask_user_menu import TerminalAnswerer
@@ -15,10 +19,13 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.input_bindings import InputBindings, QuestionSubmit
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins.menus import CloseMenu
+from pydantic_clai2.runtime.permissions import decision
 from pydantic_clai2.ui.menus.input_menu import input_menu
 from pydantic_clai2.ui.prompt.input_setup import KeyTest
+from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
 from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs
 from tests.clai2.test_live_prompt import editor
+from tests.clai2.test_permissions import request as permission_request
 
 
 def test_defaults_aliases_and_collisions() -> None:
@@ -278,4 +285,181 @@ async def test_focused_question_uses_remapped_send_and_ctrl_j_only_inserts_newli
             live.feed('paste', 'line three')
             live.feed('ctrl-s')
         assert responses[0].answers[0].custom_answer == 'line one\nline two\nline three'
+        assert live.queued_messages == ()
+
+
+@pytest.mark.parametrize('preference', ['ask', 'answer', 'follow-up'])
+async def test_approval_requires_explicit_focus_regardless_of_question_preference(preference: QuestionSubmit) -> None:
+    async with editor() as (live, _, _):
+        live.questions.preference = lambda: preference
+        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console)
+        responses: list[AskUserResponse] = []
+
+        async def ask() -> None:
+            responses.append(await answerer.ask_approval(permission_request()))
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await anyio.wait_all_tasks_blocked()
+            live.feed('paste', 'Approve')
+            live.feed('enter')
+            live.feed('enter')
+            live.feed('alt-enter')
+            assert live.questions.menu is not None and responses == []
+            assert live.queued_messages == ('Approve',)
+            live.feed('f2')
+            await anyio.lowlevel.checkpoint()
+            live.feed('ctrl-j')
+            assert responses == []
+            live.feed('down')
+            live.feed('down')
+            live.feed('down')  # Other, whose text always denies approval.
+            live.feed('enter')
+            live.feed('paste', 'Approve')
+            live.feed('enter')
+        result = decision(responses[0])
+        assert not result.approved and not result.remember and result.reason == 'Approve'
+
+
+async def test_visible_queue_edit_keeps_id_order_and_entire_earlier_draft() -> None:
+    async with editor() as (live, _, _):
+        live.submit('first')
+        live.submit('second')
+        first, second = live.queued_prompts()
+        live.buffer.insert('earlier draft')
+        live.buffer.cursor = 3
+        earlier = live.buffer
+        live.feed('f4')
+        await anyio.lowlevel.checkpoint()
+        assert 'e Edit | d Remove | s Steer' in '\n'.join(live.frame())
+        live.feed('down')
+        live.feed('e')
+        assert [entry.id for entry in live.queued_prompts()] == [first.id, second.id]
+        assert await live.read() == 'first'
+        live.buffer.replace('edited second')
+        live.feed('enter')
+        assert live.buffer is earlier and live.buffer.cursor == 3
+        assert live.buffer.text == 'earlier draft'
+        assert await live.read() == 'edited second'
+        assert live.queued_messages == ()
+        live.buffer.undo()
+        assert live.buffer.text == ''
+
+
+async def test_visible_queue_remove_and_steer_cannot_execute_a_finished_entry() -> None:
+    async with editor() as (live, _, _):
+        steered: list[str] = []
+
+        def steer(text: str) -> bool:
+            steered.append(text)
+            return True
+
+        live.steer = steer
+        live.submit('first')
+        live.submit('second')
+        live.buffer.insert('draft')
+        live.feed('f4')
+        await anyio.lowlevel.checkpoint()
+        assert await live.read() == 'first'
+        live.feed('s')  # Selected first already ran; never steer the next entry instead.
+        assert steered == [] and live.queued_messages == ('second',)
+        live.feed('f4')
+        await anyio.lowlevel.checkpoint()
+        live.feed('s')
+        assert steered == ['second'] and live.queued_messages == ()
+        assert live.buffer.text == 'draft'
+        live.submit('remove me')
+        live.feed('f4')
+        await anyio.lowlevel.checkpoint()
+        live.feed('d')
+        assert live.queued_messages == () and live.buffer.text == 'draft'
+
+
+async def test_explicit_focused_approval_still_authorizes_only_its_current_call() -> None:
+    async with editor() as (live, _, _):
+        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console)
+        responses: list[AskUserResponse] = []
+
+        async def ask() -> None:
+            responses.append(await answerer.ask_approval(permission_request()))
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await anyio.wait_all_tasks_blocked()
+            live.feed('f2')
+            live.feed('enter')  # Same decoder batch as focus: cannot authorize.
+            assert not responses
+            await anyio.lowlevel.checkpoint()
+            live.feed('enter')
+        assert decision(responses[0]).approved
+        assert not decision(responses[0]).remember
+
+
+async def test_cancelled_question_keeps_images_and_queue_action_draft_inventory() -> None:
+    async with editor() as (live, _, _):
+        image = BinaryContent(data=b'image bytes', media_type='image/png')
+        marker = live.images.attach([image])
+        live.buffer.insert('caption ' + marker)
+        original = live.buffer
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(live.questions.ask, question_request())
+            await anyio.wait_all_tasks_blocked()
+            live.feed('enter')
+            await anyio.lowlevel.checkpoint()
+            live.feed('a')  # Cannot silently drop an attached image into a text-only answer.
+            assert live.questions.routing
+            assert live.buffer is original and marker.strip() in live.buffer.text
+            tasks.cancel_scope.cancel()
+        assert live.questions.menu is None and live.buffer is original
+        live.submit('queued')
+        live.feed('f4')
+        await anyio.lowlevel.checkpoint()
+        live.feed('e')
+        live.paste('edited')
+        live.images.retain(live.drafts)
+        assert live.images.resolve(original.text)[1] == [image]
+        live.feed('escape')
+        assert live.buffer is original
+        assert live.images.resolve(live.buffer.text)[1] == [image]
+
+
+@pytest.mark.parametrize(
+    ('sequence', 'expected'),
+    [
+        ('\x1b[Q', 'f2'),
+        ('\x1b[S', 'f4'),
+        ('\x1bOQ', 'f2'),
+        ('\x1bOS', 'f4'),
+        ('\x1b[1;1Q', 'f2'),
+        ('\x1b[1;1S', 'f4'),
+    ],
+)
+@pytest.mark.parametrize('split', [False, True])
+async def test_question_and_queue_focus_keys_decode_through_real_input(
+    sequence: str, expected: str, split: bool
+) -> None:
+    received: list[str] = []
+    with create_pipe_input() as pipe:
+        keys = PromptKeys(source=pipe, feed=lambda key, data: received.append(key), eof=lambda: None)
+        try:
+            for chunk in sequence if split else [sequence]:
+                pipe.send_text(chunk)
+                keys.read()
+            assert received == [expected]
+        finally:
+            keys.stop()
+
+
+async def test_calibration_preserves_paste_after_incomplete_escape_and_hides_unsupported_contents() -> None:
+    async with editor() as (live, _, _):
+        live.key_test = KeyTest()
+        live.keys.dispatch(KeyPress(Keys.Escape, '\x1b'))
+        live.keys.dispatch(KeyPress('[', '['))
+        live.keys.dispatch(KeyPress(Keys.BracketedPaste, 'sensitive pasted payload'))
+        assert live.buffer.text == 'sensitive pasted payload'
+        assert 'sensitive' not in '\n'.join(live.frame())
+        live.keys.unknown('\x1b[secret')
+        assert live.key_test is not None
+        assert 'Unsupported terminal key report' in live.key_test.report
+        assert 'secret' not in live.key_test.report
         assert live.queued_messages == ()

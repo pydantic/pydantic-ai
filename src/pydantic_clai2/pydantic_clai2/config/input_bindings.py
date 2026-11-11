@@ -29,7 +29,6 @@ BINDABLE_KEYS: tuple[str, ...] = (
     'ctrl-n',
     'alt-n',
     'f3',
-    'f4',
 )
 
 

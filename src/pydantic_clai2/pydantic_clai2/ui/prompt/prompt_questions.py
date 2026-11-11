@@ -1,4 +1,4 @@
-"""Non-modal questions served by the composer's sole key reader, never tool approvals."""
+"""Non-modal questions and explicitly focused approvals on the composer's sole key reader."""
 
 import asyncio
 from collections.abc import Awaitable, Callable
@@ -134,16 +134,24 @@ class PromptQuestions:
         self, key: str, data: str, *, draft: PromptBuffer, bindings: InputBindings, queue: Callable[[], None]
     ) -> bool:
         """Consume explicitly focused controls; ordinary typing stays in the composer."""
-        if self.menu is None or self._ready.is_set():
+        if self.menu is None:
             return False
+        if self._ready.is_set():
+            return bindings.action(key) in ('send', 'steer')
         if key == 'f2':
             self.focused = not self.focused
             self.routing = False
             self._reviewed = True
             self.arm_later()
             return True
-        if not self._armed or not (self.focused or self.routing):
+        if not (self.focused or self.routing):
             return False
+        if not self._armed:
+            if key == 'paste':
+                draft.insert(data, paste=True)
+            elif len(key) == 1 and key.isprintable():
+                draft.insert(key)
+            return True
         if self.routing:
             return self.route_key(key, draft=draft, queue=queue)
         return self.choose_key(key, data, bindings=bindings)
@@ -152,7 +160,10 @@ class PromptQuestions:
         """Handle only keys explicitly directed to the focused question."""
         assert self.menu is not None
         if key == 'escape':
-            self.focused = False
+            if self.menu.editing_custom:
+                self.menu.choose(key)
+            else:
+                self.focused = False
             return True
         if key == 'ctrl-c':
             self.submit(None)
@@ -186,14 +197,34 @@ class PromptQuestions:
                 queue()
         return True
 
+    def hint(self, *, send_label: str) -> str:
+        """Describe what the effective send key does in the current question context."""
+        if self.focused:
+            return f'{send_label}: choose | F2 composer | Ctrl+J newline'
+        if self.routing:
+            return 'a Answer | q Follow-up | r Remember | Esc cancel'
+        if self.approval:
+            return f'{send_label}: queue | F2 review approval'
+        preference = self.preference()
+        action = (
+            'answer or follow-up'
+            if preference == 'ask' or not self._reviewed
+            else 'answer question'
+            if preference == 'answer'
+            else 'queue follow-up'
+        )
+        return f'{send_label}: {action} | F2 choices | Ctrl+J newline'
+
     def rows(self, *, width: int, height: int, send_label: str = 'Enter') -> tuple[str, ...]:
         """Pending target, focused choices, or an explicit draft routing preview."""
         if self.menu is None:
             return ()
         if self.focused:
+            frame = self.menu.frame(width=width, height=height)
             return (
-                *(row.replace('Enter', send_label) for row in self.menu.frame(width=width, height=height)),
-                truncate('F2/Esc composer; Ctrl+J newline (never confirms)', width),
+                *frame[:-1],
+                frame[-1].replace('Enter', send_label).replace('Esc decline', 'Esc composer'),
+                truncate('F2 composer | Ctrl+J newline | Ctrl-C decline', width),
             )
         if self.routing:
             return (

@@ -57,7 +57,7 @@ class SettingsSource:
                 FieldRow(
                     key=key,
                     description=info.description or '',
-                    default=shown(info.default),
+                    default=shown(Settings().model_dump(mode='json')[field]),
                     choices=choices,
                     note='project' if self._context.from_project(key) else '',
                     preview=preview,

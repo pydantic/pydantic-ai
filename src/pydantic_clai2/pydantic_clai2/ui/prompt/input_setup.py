@@ -11,11 +11,10 @@ class KeyTest:
 
     report: str = 'Press the key to test. Ctrl+G closes; no prompts or interrupts run here.'
 
-    def observe(self, key: str, *, bindings: InputBindings, keyboard: KeyboardLabels) -> None:
+    def observe(self, key: str, *, bindings: InputBindings, keyboard: KeyboardLabels, action: str) -> None:
         """Show key identity and its effective action, never a draft or paste payload."""
-        action = bindings.action(key)
         identity = key if len(key) > 1 else 'text key'
-        self.report = f'Decoded: {identity}; action: {action or "edit"}.'
+        self.report = f'Decoded: {identity}; action: {action}.'
         if key == 'enter':
             self.report += ' Enter/Ctrl+M/Ctrl+Enter share this action; a lost modifier cannot be recovered.'
         if key == 'paste':

@@ -57,7 +57,7 @@ class Settings(BaseModel):
         description='Provider-qualified model for every turn. Overrides the model baked into the agent.',
     )
     input_bindings: InputBindings = Field(
-        default_factory=InputBindings,
+        default=InputBindings(),
         description='Decoded send, steer and newline keys. /input test checks your terminal.',
     )
     keyboard_labels: KeyboardLabels = Field(
@@ -214,9 +214,6 @@ class Settings(BaseModel):
 
 SETTING_FIELDS = {
     'model': 'model',
-    'input.bindings': 'input_bindings',
-    'input.keyboard_labels': 'keyboard_labels',
-    'input.question_submit': 'question_submit',
     'run.request_limit': 'request_limit',
     'display.thinking': 'thinking',
     'display.task_models': 'task_models',
@@ -241,6 +238,9 @@ SETTING_FIELDS = {
     'repo_context.walk_up_roots': 'repo_context_walk_up_roots',
     'repo_context.autoload_symlink_roots': 'repo_context_autoload_symlink_roots',
     'worktrees.remove_commands': 'worktree_remove_commands',
+    'input.bindings': 'input_bindings',
+    'input.keyboard_labels': 'keyboard_labels',
+    'input.question_submit': 'question_submit',
 }
 
 SETTING_KEYS = {name: key for key, name in SETTING_FIELDS.items()}

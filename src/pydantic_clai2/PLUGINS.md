@@ -1414,16 +1414,34 @@ declaration under the same name changes them too:
 The second built-in, `ask_user` (`pydantic_clai2.builtin_plugins.ask_user_menu`), gives
 the model the harness's `AskUser` capability: one tool, `ask_user_question`, for
 asking you one to ten multiple-choice questions when the task is ambiguous. Each
-question appears inline above a compact numbered picker, keeping the conversation
-visible. The question is pinned with its choices, so output streamed meanwhile (a
-delegated task's, say) lands above it instead of between it and the picker. Up/Down or Tab/Shift+Tab moves the highlight; Enter or an option's number selects it.
+question waits above the composer without taking focus or changing the draft,
+cursor, undo history, or attachments. F2 explicitly focuses its numbered picker;
+F2 returns to the composer. While focused, Up/Down or Tab/Shift+Tab moves the
+highlight; the configured send key (Enter by default) or an option's number selects it.
+The question is pinned with its choices while output streams above it.
 For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
-several. Esc or Ctrl-C declines the whole request and lets the model continue.
+several. Ctrl-C while focused declines the whole request and lets the model continue.
+Esc backs out of custom entry, or returns from choices to the composer.
 The plugin's `render` replaces the tool's argument dump with a header that lists
-the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
-the editor's input reader. It keeps the live panel's alternate screen. The draft
-is restored on exit, and the question and your picks are printed to the transcript afterwards.
+the question headers. In the live composer, its existing key reader serves the
+question; no second reader or `host.full_screen()` handoff starts. Standalone
+terminal answerers retain their inline picker and exclusive full-screen handoff.
+The response is printed to the transcript afterwards.
+
+Sending composer text while a question waits offers **Answer this question** or
+**Queue follow-up**. The optional remembered choice is `input.question_submit`,
+editable/resettable through `/input`. Only the interaction preference is saved,
+not answer text or authorization. A successful text answer moves the draft;
+cancellation leaves it intact. Image-bearing drafts must be queued instead.
+Each later question in a batch needs review or an explicit routing choice so
+held Enter or pasted typeahead cannot silently answer it. Ctrl+J inserts a newline
+in custom answers; it never confirms a choice.
+
+`/input` also sets Mac/PC/neutral labels and composer bindings, without detecting
+the remote keyboard. `/input test` explicitly captures decoded keys without
+sending, steering, interrupting, or recording draft/paste contents. Ctrl+G closes
+it. See [Keyboard setup](docs/reference.md#keyboard-setup).
 Drag over the question, its header, or an option to select text; releasing copies it
 to the clipboard without choosing an answer. Transcript text remains selectable too.
 `/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
@@ -1436,7 +1454,10 @@ The same picker asks about the calls [`/permissions`](docs/reference.md#permissi
 command is printed in full above the picker first, since the picker cuts its question to the rows it has
 (`TerminalAnswerer.ask_approval`); a replacement approver should show it in full too. A
 replacement for this plugin that should answer approvals binds `approval_handler` with its own approver; without
-one, held calls are denied.
+one, held calls are denied. In the live composer, approvals wait without taking
+focus and require explicit F2 focus before a choice authorizes a call. Generic
+send, steering, queue actions, custom text, and remembered question routing never
+approve tools.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for

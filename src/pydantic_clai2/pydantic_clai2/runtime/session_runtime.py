@@ -108,6 +108,7 @@ from pydantic_clai2.ui.prompt.input_history import input_history
 from pydantic_clai2.ui.prompt.input_setup import KeyTest
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup
+from pydantic_clai2.ui.prompt.prompt_questions import PromptQuestions
 from pydantic_clai2.ui.prompt.prompt_queue import PromptInbox, QueuedPrompt, can_steer, find_queued, input_kind
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
@@ -726,6 +727,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     """Whether it runs with no terminal of its own, as one the browser opened: it restarts CLAI only while shown."""
     editor: LivePrompt | None = None
     """The terminal's editor, while the terminal shows this session and its console is a terminal."""
+    questions: PromptQuestions = field(init=False)
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
     permissions: tuple[AgentCapability[DepsT], ...] = field(init=False)
@@ -888,6 +890,11 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         telemetry.conversation_selected()
 
     def __post_init__(self) -> None:
+        self.questions = PromptQuestions(
+            paint=lambda: self.editor.paint() if self.editor is not None else None,
+            preference=lambda: self.context.settings.question_submit,
+            remember=lambda preference: self.context.set_setting(['input.question_submit', preference]),
+        )
         self.tasks = Tasks(
             console=self.console,
             conversation_id=lambda: self.session.summary.id,
@@ -1176,6 +1183,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.screen.editor = editor.suspended if editor is not None else None
         self.tasks.wake = editor.wake if editor is not None else None
         if editor is not None:
+            editor.questions = self.questions
             # Input a plugin entered while the editor read for another session, or did not exist yet.
             for entry in self._inbox.take():
                 editor.submit(entry)
