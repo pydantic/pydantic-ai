@@ -1,0 +1,183 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "446"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 512
+        messages:
+        - role: user
+          content:
+          - text: Say hi.
+            type: text
+        model: claude-fable-5-2
+        stream: true
+        system:
+        - type: text
+          text: Reply with one word.
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        thread:
+          type: create
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=56
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-dd6ce2cfb1d18a732ce2597b3cdc4cde-40d2e64049014b28-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-fable-5-2","id":"msg_011CgwjKnvSYzursQBsXdge2","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":388,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":9,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}       }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSmgUKEAgTGAI4AUIIdGhpbmtpbmcSDMA+Or/m0k2+8N0STBoMe7aH+RaWm31mI4g6IjBtCddECuozvmUcSK904DTsDe0glRD0L6lHCSOFhjSkzVV6DNtqfmHjVD1sMH3Qb+wqtwQJvyJISb9m6i/DVPVbzTv6lW/Go8TATNiWlZOQQoc7gQP19vyhPmeqUm1UO1EaASnlO5W5PYtRHberKmj6W4q7t4jwBkwJK4Hu+KGG4Qh51CC1pdjJ0Xoi+J7o89hj/EycEjQg00EtmKSwJP04kJp94hHwwaG6qW66RPXx5vYnm3mTqgd21h71/r8Wo7HjoZn/FKsFf5xu0rr9zVjEk0KKKg5rTf97aE74N5pMGaU21aM8MBYwbHh0eNzgqF3QND6MoxeHqpYKK20umhbh0Q/febx6GVuF8idDw4SUYam3hM1NMg0GeMXz5HiqAtkCPK3zk5uvQxlV3JLw1KAqz9ptFyZ9F/m51q6QcuVU/K29rLQRSxoylsWVa3yADxoTT8NjoTtwC6bIwPvpwOxOf4CZWAzNZZc2FRanR9KY2Q0AnwFSQDkY+yI0yyzQQdvJ6w7w2ATtj8iG6Pp6C5cxBHZ7Jp0ubRDZduwcrVGtLobw59Tb0YzJ3+2Sc/paxtaUyzHJZKsEt1//bTQZa28vW7Dor80AGkJWeFp80WRkBXFMCbr+F/49s93ZSAGqtw5OD0CInJfFsdm1ELV0Lf/YGTT4oNx1aSSlD7TSIvqcls9itrvaxayoxgnyMaxwoVATHJnx8kqzR+c3xifM8DtVZ75rnvEKN7hpiULvMaLBHVVQlBo+cqyk/G5PzCz5RgqHJ8KxnAB1sbdtbeekHpAohB9yx/BSBPe7V+zJWJoTUY+CBfpEyU/QiNsYAQ=="}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hi"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1            }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":388,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":37,"output_tokens_details":{"thinking_tokens":32}}             }
+
+        event: message_stop
+        data: {"type":"message_stop"  }
+
+  recorded_at: 2026-11-11T19:57:00.673554+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "246"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 512
+        messages:
+        - role: user
+          content:
+          - text: Say bye.
+            type: text
+        model: claude-fable-5-2
+        stream: true
+        tool_choice:
+          type: auto
+        thread:
+          type: continue
+          previous_message_id: msg_011CgwjKnvSYzursQBsXdge2
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=53
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ceac2e49a8173347f20d67c1588c27db-e112cd4b462af849-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-fable-5-2","id":"msg_011CgwjKtLNquLD99RyUEhvU","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":434,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}         }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Bye"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0      }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":434,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5,"output_tokens_details":{"thinking_tokens":0}}          }
+
+        event: message_stop
+        data: {"type":"message_stop"           }
+
+  recorded_at: 2026-11-11T19:57:01.670804+00:00

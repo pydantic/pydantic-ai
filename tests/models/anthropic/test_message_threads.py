@@ -1,10 +1,10 @@
 """Tests for Anthropic message threads (`anthropic_thread`).
 
-These run against a mock HTTP transport rather than cassettes: recording needs an Anthropic API key, and the
-failures that make a request replay (`thread_not_found` after a thread expires, `thread_already_continued`) can't be
-triggered reliably against the live API. Each mock response carries the request shape Anthropic documents at
-https://platform.claude.com/docs/en/build-with-claude/message-threads, and the tests assert the request bodies
-the model sent, which a cassette matcher wouldn't check.
+`test_create_then_continue_live` records a create request and a continue request against the live API. The rest
+run against a mock HTTP transport: the failures that make a request replay (`thread_not_found` after a thread
+expires, `thread_already_continued`) can't be triggered reliably against the live API. Each mock response carries
+the request shape Anthropic documents at https://platform.claude.com/docs/en/build-with-claude/message-threads, and
+the tests assert the request bodies the model sent, which a cassette matcher wouldn't check.
 """
 
 from __future__ import annotations as _annotations
@@ -38,7 +38,8 @@ from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
-from ...conftest import try_import
+from ...conftest import RequestCapture, try_import
+from ..conftest import AnthropicModelFactory
 
 with try_import() as otel_sdk_imports_successful:
     from opentelemetry.sdk.trace import TracerProvider
@@ -166,6 +167,43 @@ async def test_create_then_continue(allow_model_requests: None, stream: bool):
     assert 'system' not in cont and 'tools' not in cont
     assert _user_texts(cont) == ['Again']
     assert all(_BETA in betas for betas in api.betas)
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+async def test_create_then_continue_live(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture, stream: bool
+):
+    """Anthropic accepts a create request and then a continue request sent through `Agent`, streamed or not.
+
+    Recorded against the live API, unlike the tests above. The continue request sends only the new prompt, with the
+    first response's ID in `thread` and without `system` or `tools`, and its response records the same fingerprint.
+    """
+    agent = Agent(
+        anthropic_model('claude-fable-5-2', capture=True),
+        instructions='Reply with one word.',
+        tools=[get_weather],
+        model_settings=AnthropicModelSettings(max_tokens=512, anthropic_thread=True),
+    )
+    first = await _run(agent, 'Say hi.', [], stream)
+    second = await _run(agent, 'Say bye.', first, stream)
+
+    first_response, second_response = first[-1], second[-1]
+    assert isinstance(first_response, ModelResponse)
+    assert isinstance(second_response, ModelResponse)
+    created, continued = request_capture.bodies('/v1/messages')
+    assert created['thread'] == {'type': 'create'}
+    assert 'system' in created
+    assert 'tools' in created
+    assert continued['thread'] == {'type': 'continue', 'previous_message_id': first_response.provider_response_id}
+    assert 'system' not in continued
+    assert 'tools' not in continued
+    assert continued['messages'] == snapshot([{'role': 'user', 'content': [{'text': 'Say bye.', 'type': 'text'}]}])
+    assert all(_BETA in headers['anthropic-beta'] for headers in request_capture.headers)
+    first_details = first_response.provider_details or {}
+    second_details = second_response.provider_details or {}
+    assert second_details['thread_fingerprint'] == first_details['thread_fingerprint']
+    assert second_response.history_digest is not None
 
 
 @pytest.mark.parametrize('stream', [False, True])

@@ -1,0 +1,179 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "447"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 512
+        messages:
+        - role: user
+          content:
+          - text: Say hi.
+            type: text
+        model: claude-fable-5-2
+        stream: false
+        system:
+        - type: text
+          text: Reply with one word.
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_weather
+          description: Get the weather for a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        thread:
+          type: create
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=1241
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-68b0dba9a2e4eb994b472c599b252065-6587c69d1b42adf8-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-fable-5-2
+        id: msg_011CgwjKZ5FNrS64Gu2myjD9
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: ""
+          signature: >-
+            CAQSmwUKEAgTGAI4AUIIdGhpbmtpbmcSDLn8+2wy4aWn3L0M8xoM/CKAMmJ/etHXYflYIjDUnXIbsUxn4/tENoOb4XdaR+mZwmZzSsVjFXTXsde1mzBb92MnZsHwkrjoGFbJVSsquATVb1ZCta9/5slT++LBtTvnaRGFbLZDXlULgTa08b7YLGUbVEpuHHJs1PRuesnO/WQHB8ZVp8/yy05Q7QVSFI8RI7Vl/qU33olEN5mhUs2BZ9951H/QCNqF/zqKm5xG6787NWrrrf/q3qCYowPUeZwr9lo59p42qHfh0CGxv/Nn8amRbDxubETaNHcxJgTOFwMvJskWGtSVUfTmRR9DKE0bfqBll+9TvwuK3nP9l/IC9D5thzhCpMN7uxyOSJZm7YalU2t+eAxYk3DyF21xXFtc/hMfAyVemLEch5zNSi8vDSHuYpONW5Op4JG4HMvdcuJw7fOHDZfIvWZERB6sGgoqeJvvSkvYBI19diGRnj4XepQXBsqxYTbnTyQiS5lByAMpTQs7Ym15kBEk+pXZp+9f7xkHg4TReLDvk98TFjxC4q2hz3kP01jfJ3QJ8YzvzG1aEehAS91/D6aCJ3+j7q+FEh4aHaf5uLXo/toOMY5PjjtQdbIkwuk+rEQgbUJdTADR/sYip03VeBLLz0DBvRtpTH9+wEbJeaBDWmpZ9S9I3BxgzVIbKROmG3yapT53IrkZWueeO7hOITtLc+3UbqFRrlqTj9Tczy2GFl6dJ7vAfXs1mZehAVdceAEZbL3YVmNJtPwdYu5nQNT9EeS18Sh9Xc7yBcWknASB3N1Pt2sthTElPFa6GiO0F99Hhq0bMRKMkskiA0k2gmOWXOpww2TG04oIc9SdZ3pzmBFvKbpxtLtR0HE1++ZRGAE=
+        - type: text
+          text: Hi.
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 388
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 37
+          output_tokens_details:
+            thinking_tokens: 31
+          service_tier: standard
+          inference_geo: global
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-11-11T19:56:57.671869+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "247"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 512
+        messages:
+        - role: user
+          content:
+          - text: Say bye.
+            type: text
+        model: claude-fable-5-2
+        stream: false
+        tool_choice:
+          type: auto
+        thread:
+          type: continue
+          previous_message_id: msg_011CgwjKZ5FNrS64Gu2myjD9
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=944
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-16814623be72f7e6afa297c7f50a2991-a9c0789882e637f2-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-fable-5-2
+        id: msg_011CgwjKgQXroM81LGrUP19c
+        type: message
+        role: assistant
+        content:
+        - type: text
+          text: Bye.
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 434
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 6
+          output_tokens_details:
+            thinking_tokens: 0
+          service_tier: standard
+          inference_geo: global
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-11-11T19:56:58.925586+00:00
