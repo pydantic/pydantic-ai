@@ -635,6 +635,24 @@ def test_openai_gpt_5_reasoning_context(model_name: str):
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name,max_side,max_pixels',
+    [
+        ('gpt-5.4', 2560, 2560 * 1440),
+        ('gpt-5.5', 1920, 1920 * 1200),
+        ('gpt-5.5-pro', 1920, 1920 * 1200),
+        ('gpt-5.6-sol', 2560, 2560 * 1440),
+    ],
+)
+def test_openai_computer_use_screenshot_limits(model_name: str, max_side: int, max_pixels: int):
+    """Not a VCR test: gpt-5.5 misses clicks on screenshots larger than 1920x1200, measured live."""
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('computer_use_screenshot_max_side') == max_side
+    assert profile.get('computer_use_screenshot_max_pixels') == max_pixels
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['openai/gpt-5.4', 'openai/gpt-5.5', 'openai/gpt-5.6-sol', 'openai/gpt-6-astra'])
 def test_openrouter_openai_gpt_5_reasoning_context(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
