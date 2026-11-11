@@ -8,6 +8,7 @@ import os
 import re
 import sys
 from collections.abc import Mapping, Set
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -129,17 +130,25 @@ class ReviewChecksGitHub(Protocol):
     def posted_finding_keys(self) -> set[str]: ...
 
 
-def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> bool:
-    """Return whether this event reviews the head; every other outcome writes its own status."""
+@dataclass(frozen=True)
+class GateDecision:
+    """Whether this event reviews its head, and for a review, whether the author is a user with write access."""
+
+    review: bool
+    author_is_trusted: bool = False
+
+
+def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> GateDecision:
+    """Decide whether this event reviews the head; every other outcome writes its own status."""
     url = run_url(env)
     if group := env.get('MERGE_GROUP_SHA'):
         github.status(group, 'success', 'Admission-only: every pull request head is reviewed before the queue.', url)
-        return False
+        return GateDecision(review=False)
     head = env['HEAD_SHA']
     pull = github.pull_request()
     if pull.state != 'open' or pull.head.sha != head:
         print('PR closed or moved; the event for its new head decides.')
-        return False
+        return GateDecision(review=False)
     labels = {label.name for label in pull.labels}
     action, label, sender = env['EVENT_ACTION'], env.get('EVENT_LABEL', ''), env['EVENT_SENDER']
     if action == 'labeled' and label == ACCEPTED_LABEL:
@@ -148,19 +157,19 @@ def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> bool:
         if env['EVENT_SENDER_TYPE'] != 'User' or github.permission(sender) not in TRUSTED_PERMISSIONS:
             raise GateError(f'Only a user with write access can apply `{ACCEPTED_LABEL}`.')
         github.status(head, 'success', f'Findings accepted by @{sender} for this head.', url)
-        return False
-    author_trusted = pull.user.type == 'User' and github.permission(pull.user.login) in TRUSTED_PERMISSIONS
-    if action == 'labeled' and label == RUN_LABEL and author_trusted:
+        return GateDecision(review=False)
+    author_is_trusted = pull.user.type == 'User' and github.permission(pull.user.login) in TRUSTED_PERMISSIONS
+    if action == 'labeled' and label == RUN_LABEL and author_is_trusted:
         print(f'The author has write access, so `{RUN_LABEL}` changes nothing.')
-        return False
+        return GateDecision(review=False)
     # An acceptance covers only the status it replaced, so every new status for the head ends it.
     if ACCEPTED_LABEL in labels:
         github.remove_label(ACCEPTED_LABEL)
-    if not author_trusted and not _run_label_trusted(github, labels):
+    if not author_is_trusted and not _run_label_trusted(github, labels):
         github.status(head, 'failure', f'Awaiting maintainer: a user with write access adds `{RUN_LABEL}`.', url)
-        return False
+        return GateDecision(review=False)
     github.status(head, 'pending', 'Reviewing this head.', url)
-    return True
+    return GateDecision(review=True, author_is_trusted=author_is_trusted)
 
 
 def _run_label_trusted(github: ReviewChecksGitHub, labels: set[str]) -> bool:
@@ -381,9 +390,10 @@ def main() -> None:
     env = os.environ
     github = ReviewChecksGhCli(env['GITHUB_REPOSITORY'], int(env.get('PR_NUMBER') or '0'))
     if sys.argv[1] == 'gate':
-        review = gate(github, env)
+        decision = gate(github, env)
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
-            output.write(f'review={str(review).lower()}\n')
+            output.write(f'review={str(decision.review).lower()}\n')
+            output.write(f'author_is_trusted={str(decision.author_is_trusted).lower()}\n')
     else:
         publish(github, env)
 

@@ -14,7 +14,7 @@ CI already fails `tests/cost_guards.py` violations, orphan or partly played cass
 - A secret in a cassette: an authorization or API-key header that is not a placeholder, an organization, account or project identifier, or an internal hostname. Name the field and never quote the value. A module-level `vcr_config` that replaces the root one, instead of extending it with `{**vcr_config, ...}`, records cassettes without the scrubbing filters.
 - A requirement changed in a `pyproject.toml` without the same change in `uv.lock`: the member's `requires-dist`, or the `[manifest]` `constraints` and `overrides`, with the same name, marker and specifier.
 - A dependency floor raised with no reason in a comment next to the requirement.
-- A dependency change in `src/pydantic_ai_harness/pyproject.toml` when the pull request body in `pr-details.json` links no issue.
+- A dependency change in `src/pydantic_ai_harness/pyproject.toml` when `pr-details.json` has `"author_is_trusted": false` and its pull request body links no issue. Only an author without write access must link an issue.
 - Lockfile content written by hand: conflict markers, a version bump whose artifact URLs, hashes and `upload-time` did not change, or a wheel filename that disagrees with its `version`.
 
 ### `medium`: everything else this check covers

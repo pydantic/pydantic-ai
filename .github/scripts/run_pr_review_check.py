@@ -36,7 +36,7 @@ _TSV_ESCAPES: dict[str, str] = {'\\': '\\', 't': '\t', 'n': '\n', 'r': '\r'}
 _SLACK_ESCAPES = str.maketrans({'&': '&amp;', '<': '&lt;', '>': '&gt;'})
 PRIVATE_REPORT_LIMIT = 3000
 
-_EVENT = TypeAdapter(dict[str, object])
+_JSON_OBJECT = TypeAdapter(dict[str, object])
 _TOKENS = TypeAdapter(dict[str, float | dict[str, float]])
 
 
@@ -77,11 +77,13 @@ def strip_instructions(head: Path) -> None:
                 (Path(directory) / name).unlink()
 
 
-def write_context(check: str, files: list[str], workspace: Path, *, base: str, head: str) -> Path:
-    """Copy only this check's diffs and file list next to the PR details."""
+def write_context(check: str, files: list[str], workspace: Path, *, base: str, head: str, author_is_trusted: bool) -> Path:
+    """Copy only this check's diffs and file list next to the PR details, marked with whether the gate trusted the author."""
     context = workspace / '.github' / '.pr-review-checks' / check
     (context / 'diff' / 'git').mkdir(parents=True)
-    shutil.copy(workspace / REVIEW_CONTEXT / 'pr-details.json', context / 'pr-details.json')
+    details = _JSON_OBJECT.validate_json((workspace / REVIEW_CONTEXT / 'pr-details.json').read_bytes())
+    details['author_is_trusted'] = author_is_trusted
+    (context / 'pr-details.json').write_text(json.dumps(details), encoding='utf-8')
     unseen = set(files)
     rows: list[str] = []
     # Rows end only at LF, and jq's `@tsv` escapes a backslash, tab, newline or CR inside a path.
@@ -161,10 +163,10 @@ def build_prompt(check: ReviewCheck, context: Path, workspace: Path, *, pr_numbe
 def step_tokens(line: str) -> int | None:
     """Return the tokens a `step_finish` event reports, or None for any other event."""
     try:
-        event = _EVENT.validate_json(line)
+        event = _JSON_OBJECT.validate_json(line)
         if event.get('type') != 'step_finish':
             return None
-        part = _EVENT.validate_python(event.get('part'))
+        part = _JSON_OBJECT.validate_python(event.get('part'))
         tokens = _TOKENS.validate_python(part.get('tokens', {}))
     except ValidationError:
         # A validation error repeats its input, a stream line can hold model text, and job logs are public.
@@ -328,7 +330,14 @@ def main() -> None:
     strip_instructions(head)
     check_symlinks(workspace, skip_pr_head=True)
     check_symlinks(head)
-    context = write_context(check.name, files, workspace, base=env['BASE_SHA'], head=env['HEAD_SHA'])
+    context = write_context(
+        check.name,
+        files,
+        workspace,
+        base=env['BASE_SHA'],
+        head=env['HEAD_SHA'],
+        author_is_trusted=env['AUTHOR_IS_TRUSTED'] == 'true',
+    )
     prompt = build_prompt(check, context, workspace, pr_number=pr_number, repository=repository)
     api_key = env['OPENCODE_API_KEY']
     if not api_key:
