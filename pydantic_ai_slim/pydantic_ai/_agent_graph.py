@@ -959,10 +959,11 @@ def _check_compaction_result(result: CompactionResult, given: Sequence[_messages
         ),
         None,
     )
-    if latest is None or latest[1] != part:
+    # By identity: the record locates the part in the committed history by it.
+    if latest is None or latest[1] is not part:
         raise exceptions.UserError(
-            f'The history compacted by {handler!r} must contain its `CompactionResult.part`, as its latest '
-            '`CompactionPart`: that is where the compacted history starts.'
+            f'The history compacted by {handler!r} must contain its `CompactionResult.part` object itself, as its '
+            'latest `CompactionPart`: that is where the compacted history starts.'
         )
     if _is_empty_summary(part):
         raise exceptions.UnexpectedModelBehavior(

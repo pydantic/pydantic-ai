@@ -7802,6 +7802,10 @@ class CompactionRecord(_SerializesItself):
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
+    def __getstate__(self) -> dict[str, Any]:
+        # Pickling, as DBOS does with a run result, would otherwise write the replaced history it's held without.
+        return {**self.__dict__, 'replaced': None}
+
 
 @dataclass(repr=False, kw_only=True)
 class CompactionEndEvent(_SerializesItself):
