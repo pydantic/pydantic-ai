@@ -234,6 +234,23 @@ runs close to it can stop at a different point on replay and cause a `Nondetermi
 
 The [Logfire](https://pydantic.dev/logfire) trace is the best way to see what a workflow did. Each sub-agent run appears nested under the `run_workflow` span, and the span carries the exact `code` argument the model wrote, so you can read the script it actually ran. To watch sub-agent runs inside the one tool call, set `event_stream_handler` on each sub-agent `Agent`.
 
+## Telemetry
+
+When the run is instrumented, each `run_workflow` call records how its script ended on the call's
+`execute_tool run_workflow` span. It opens no span of its own: the tool call and each sub-agent run
+are already spanned.
+
+| Attribute | Value |
+|---|---|
+| `dynamic_workflow.budget_exhausted` | whether this call hit `max_agent_calls`, set on every call. A script that hits it ends with the terminal budget result even if it catches the error |
+| `dynamic_workflow.error_kind` | set when the script failed: `type` (the type check, which also reports syntax errors), `runtime` (an uncaught exception, including a failed sub-agent), `resource_limit`, `crashed` (the sandbox worker died), or `panic` (Monty aborted inside the sandbox) |
+| `dynamic_workflow.limit` | with `resource_limit`, the limit that stopped the script: `max_duration_secs`, `max_memory`, or `max_suspensions` (Monty's own cap on host interactions) |
+
+A script that fails after exhausting the budget records both its `error_kind` and
+`budget_exhausted=true`, so a query on the budget alone finds every call that ran out. The script,
+the error message and the traceback stay out of these attributes. The limit is read from Monty's
+error the same way [Code Mode](code-mode.md#failure-attributes) reads it.
+
 ## API
 
 ```python

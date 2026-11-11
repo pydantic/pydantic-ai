@@ -24,7 +24,7 @@ from ._streaming import (
     closed_statements,
     decode_partial_args,
 )
-from ._toolset import CodeModeToolset, RunCodeExecution
+from ._toolset import CodeModeToolset, RunCodeExecution, record_failure
 
 
 @dataclass(kw_only=True)
@@ -369,12 +369,15 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             )
 
         await self.execution.drain(call)
-        if call.error is not None:
-            raise call.error
-
-        tail = '\n'.join(lines[call.fed_line_count :])
-        async with self.execution.feed_lock:
-            result = await self._execute_code(tail, ctx, run_code_tool, call.execution)
+        try:
+            if call.error is not None:
+                raise call.error
+            tail = '\n'.join(lines[call.fed_line_count :])
+            async with self.execution.feed_lock:
+                result = await self._execute_code(tail, ctx, run_code_tool, call.execution)
+        finally:
+            # A statement fed while the call streamed failed outside this span, so record it here.
+            record_failure(ctx, call.execution.failure)
         return await self._complete(ctx, call.execution, result)
 
     async def feed_fragment(

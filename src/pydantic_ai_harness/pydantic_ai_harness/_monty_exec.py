@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 import sys
 from collections.abc import Awaitable, Callable, Container, Coroutine
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 import anyio
 from anyio.from_thread import BlockingPortal, start_blocking_portal
@@ -47,6 +48,7 @@ try:
         ExternalSettledResult,
         MontyComplete,
         MontyRefusedError,
+        MontyRuntimeError,
         OsFunction,
         OsHandler,
         OSPolicy,
@@ -229,6 +231,34 @@ class PendingCall:
 
     call: asyncio.Task[Any] | Coroutine[Any, Any, Any]
     context: otel_context.Context
+
+
+SandboxLimit = Literal['max_duration_secs', 'max_memory', 'max_suspensions']
+"""A Monty resource limit that can stop a snippet, named by its `ResourceLimits` key."""
+
+
+def exceeded_sandbox_limit(error: MontyRuntimeError) -> SandboxLimit | None:
+    """The Monty resource limit that stopped the code with `error`, or `None` when the code failed on its own.
+
+    Monty has no typed marker for a limit, so this reads its wording, backed by a structural
+    signal wherever one exists, because a nested tool can fail with the same words:
+
+    - Duration: the limit interrupts execution rather than failing at an operation, so Monty
+      attaches no frame to it, at top level and three calls deep alike. A tool's exception that
+      Monty re-raised at the call site keeps at least the module frame.
+    - Memory: a `MemoryError`, with no frame or with Monty's wording. Monty cannot tell every
+      heap-limit failure from a callback's own `MemoryError`, so this errs toward the limit.
+    - Suspensions: a `RuntimeError` whose whole message is Monty's.
+    """
+    message = error.display(format='msg')
+    exception = error.exception()
+    if not error.traceback() and 'time limit exceeded' in message:
+        return 'max_duration_secs'
+    if isinstance(exception, MemoryError) and (not error.traceback() or 'memory limit exceeded' in message):
+        return 'max_memory'
+    if isinstance(exception, RuntimeError) and re.fullmatch(r'suspension limit [0-9]+ exceeded', message):
+        return 'max_suspensions'
+    return None
 
 
 def is_sandbox_panic(exc: BaseException) -> bool:

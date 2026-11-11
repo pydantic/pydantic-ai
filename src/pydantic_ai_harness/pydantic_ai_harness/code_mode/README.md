@@ -760,6 +760,29 @@ for msg in result.all_messages():
             tool_returns = metadata['tool_returns']  # dict[str, ToolReturnPart]
 ```
 
+### Failure attributes
+
+A failed `run_code` call ends in a retry, so on its own the trace shows only `retry.cause=model_retry`.
+When the run is instrumented, CodeMode also records why on the call's `execute_tool run_code` span. It
+opens no span of its own: the tool call is already spanned, and the failure happens inside it.
+
+| Attribute | Value |
+|---|---|
+| `code_mode.error_kind` | `syntax`, `type` (the first snippet's type check, which also reports its syntax errors), `runtime` (an uncaught exception in the snippet, including a nested tool's error), `resource_limit`, `crashed` (the sandbox worker died), `disconnected` (a remote worker's stream ended), `panic` (Monty aborted inside the sandbox), or `host` (a failure in the host-side bindings) |
+| `code_mode.limit` | with `resource_limit`, the limit that stopped the code: `max_duration_secs`, `max_memory`, `max_suspensions`, or `max_tool_calls`. A worker the sandbox stopped for running too long, including a remote worker's turn deadline, is `max_duration_secs` |
+| `code_mode.session_reset` | whether the failure discarded the REPL session, so the next snippet starts without the variables and imports the earlier ones defined |
+
+A successful call records none of these. A call that ends the run on `UsageLimitExceeded` records
+none either, since core's error on the span already says why. The code, the error message and the
+traceback stay out of these attributes. Eager execution can fail before the `run_code` span opens; the failure is then
+recorded on that span when the call is dispatched.
+
+Monty has no typed marker for a resource limit, so the limit is read from its error, backed by a
+structural signal where one exists (a duration stop has no traceback). A nested tool that raises a
+`MemoryError`, or a `RuntimeError` reading exactly `suspension limit N exceeded`, is recorded as that
+limit. A snippet that catches the `max_tool_calls` refusal and then fails on something else is
+recorded as `max_tool_calls`, since the budget still ran out.
+
 ## Recognizing `run_code` calls
 
 The `run_code` tool declares the `'code_mode.run_code'` [tool kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts), so its call parts are promoted to `RunCodeCallPart` (from `pydantic_ai_harness.code_mode`). A hook or history processor can recognize them with `isinstance` instead of matching the tool's name, and read the submitted code from `code` (or all its arguments, validated as `RunCodeArgs`, from `typed_args`):

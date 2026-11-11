@@ -16,11 +16,13 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import Annotated, Any, Generic, Literal, Self, cast
 
+from opentelemetry.trace import Span
 from pydantic import Field, TypeAdapter
 from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
+from pydantic_ai._telemetry import current_span
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
@@ -49,6 +51,7 @@ from pydantic_ai_harness._monty_exec import (
     MontyExecutor,
     MontyRunState,
     PrintCapture,
+    exceeded_sandbox_limit,
     in_temporal_workflow,
     is_sandbox_panic,
 )
@@ -404,6 +407,16 @@ def _completed_workflow_result(
             completed_dispatches=completed_dispatches,
         )
     return _workflow_result(completed_output, printed)
+
+
+def _record_runtime_error(span: Span, error: MontyRuntimeError) -> None:
+    """Record a script that raised as a resource limit when one stopped it, else as a runtime error."""
+    limit = exceeded_sandbox_limit(error)
+    if limit is None:
+        span.set_attribute('dynamic_workflow.error_kind', 'runtime')
+    else:
+        span.set_attribute('dynamic_workflow.error_kind', 'resource_limit')
+        span.set_attribute('dynamic_workflow.limit', limit)
 
 
 def _dispatched_task(agent_name: str, kwargs: Mapping[str, object]) -> str:
@@ -788,6 +801,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         code = tool_args['code']
+        # The `execute_tool run_workflow` span; sub-agent spans have closed by the time a script fails.
+        span = current_span(ctx)
         budget_exhausted = False
         completed_dispatches: list[_CompletedDispatch] = []
 
@@ -823,12 +838,15 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 max_sleep_secs=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))
         except MontyTypingError as e:
+            span.set_attribute('dynamic_workflow.error_kind', 'type')
             raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(e.display())}') from e
         # Backstop: the type checker parses the code first. `lax` because the errors handled below
         # are still matched against this clause.
         except MontySyntaxError as e:  # pragma: lax no cover
+            span.set_attribute('dynamic_workflow.error_kind', 'syntax')
             raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(e.display())}') from e
         except MontyRuntimeError as e:
+            _record_runtime_error(span, e)
             if budget_exhausted:
                 # The script may catch the budget error and fail later on something else, so
                 # the flag -- not the displayed error -- proves this script hit the budget;
@@ -847,6 +865,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             # The worker died mid-script (e.g. resource exhaustion or request timeout);
             # the pool replaces it transparently. Completed sub-agent results are listed
             # so the retry can reuse them as plain values.
+            span.set_attribute('dynamic_workflow.error_kind', 'crashed')
             return _worker_crash_result(
                 crash=e,
                 budget_exhausted=budget_exhausted,
@@ -858,6 +877,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             # anything else (CancelledError, ...) re-raises unchanged.
             if not is_sandbox_panic(e):
                 raise
+            span.set_attribute('dynamic_workflow.error_kind', 'panic')
             if budget_exhausted:
                 return _budget_terminal_result(
                     max_agent_calls=self.max_agent_calls,
@@ -869,6 +889,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 f'{_completed_retry_section(completed_dispatches)}'
             ) from e
         finally:
+            span.set_attribute('dynamic_workflow.budget_exhausted', budget_exhausted)
             _in_workflow.reset(in_workflow_token)
             await monty.close()
 
