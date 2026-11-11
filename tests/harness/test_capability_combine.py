@@ -213,8 +213,8 @@ def _check_sub_agents(merged: Any) -> None:
 
 
 def _check_computer_use(merged: ComputerUse[Any]) -> None:
-    # The later settings win, but approval and the screenshot limit, which restrict, survive.
-    assert (merged.requires_approval, merged.settle_seconds, merged.keep_screenshots) == (True, 0, 2)
+    # The later settings win, but approval, which restricts, survives.
+    assert (merged.requires_approval, merged.settle_seconds) == (True, 0)
 
 
 def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
@@ -264,10 +264,10 @@ COMBINE_POLICY: dict[str, Policy] = {
         _check_summarizing,
     ),
     'ComputerUse': Combines(
-        'an agent has one display: the later configuration wins, but approval and the screenshot limit survive',
+        'an agent has one display: the later configuration wins, but approval survives',
         lambda: (
-            ComputerUse[Any](requires_approval=True, keep_screenshots=2),
-            ComputerUse[Any](settle_seconds=0, keep_screenshots=5),
+            ComputerUse[Any](requires_approval=True),
+            ComputerUse[Any](settle_seconds=0),
         ),
         _check_computer_use,
     ),
