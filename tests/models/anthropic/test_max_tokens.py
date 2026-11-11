@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -147,7 +147,7 @@ async def test_max_tokens_is_left_alone_with_an_output_extending_beta(
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='391', type='text')], BetaUsage(input_tokens=5, output_tokens=2))
     )
-    cast(MockAnthropic, mock_client).default_headers.update(default_headers)
+    mock_client.default_headers.update(default_headers)
     agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client)))
     await agent.run('What is 17 * 23?', model_settings={**model_settings, 'max_tokens': 300_000})
 
