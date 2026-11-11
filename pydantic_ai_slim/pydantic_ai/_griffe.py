@@ -145,6 +145,8 @@ def _main_desc_with_returns(
     return return_xml
 
 
+# The header of a Google section or admonition, as griffe's Google parser matches it.
+_GOOGLE_SECTION_HEADER = re.compile(r'^[\w][\s\w-]*:(\s+[^\s].*)?\s*$')
 _GOOGLE_RETURNS_HEADER = re.compile(r'^returns:(\s|$)', re.IGNORECASE)
 _GOOGLE_WARNS_HEADER = re.compile(r'^(warns|warnings):(\s|$)', re.IGNORECASE)
 
@@ -155,32 +157,36 @@ def _google_section_blocks(doc: str, header: re.Pattern[str]) -> list[tuple[str,
     Griffe's parsed entries can't always be joined back into the written text: e.g. before the first colon of a
     returns entry, it strips parentheses and normalizes the text as a type expression. Sections are found the way
     griffe's Google parser finds them: a header line outside a code fence, after a blank line, with an indented line
-    below.
+    below. A section's indented block is skipped as a whole, so a code fence inside it doesn't carry past it.
     """
     # Clean the same text griffe parses, so trailing whitespace can't differ.
     lines = cleandoc(doc.rstrip()).splitlines()
     blocks: list[tuple[str, str]] = []
     in_fence = False
-    for i, line in enumerate(lines):
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        i += 1
         if line.lstrip(' ').startswith('```'):
             in_fence = not in_fence
         elif (
             not in_fence
-            and header.match(line)
-            and (i == 0 or not lines[i - 1].strip())
-            and (block := _indented_block(lines[i + 1 :]))
+            and _GOOGLE_SECTION_HEADER.match(line)
+            and (i == 1 or not lines[i - 2].strip())
+            and (block := _indented_block(lines[i:]))
         ):
-            blocks.append((line, block))
+            if header.match(line):
+                blocks.append((line, '\n'.join(block).rstrip('\n')))
+            i += len(block)
     return blocks
 
 
-def _indented_block(lines: list[str]) -> str:
-    """The dedented block of indented lines directly at the start of `lines`, as griffe's Google parser reads a section."""
+def _indented_block(lines: list[str]) -> list[str]:
+    """The dedented lines of the indented block directly at the start of `lines`, as griffe's Google parser reads it."""
     indent = len(lines[0]) - len(lines[0].lstrip()) if lines and lines[0].strip() else 0
     if not indent:
-        return ''
-    block = takewhile(lambda line: line.startswith(' ' * indent) or not line.strip(), lines)
-    return '\n'.join(line[indent:] for line in block).rstrip('\n')
+        return []
+    return [line[indent:] for line in takewhile(lambda line: line.startswith(' ' * indent) or not line.strip(), lines)]
 
 
 def _parser_options(docstring_style: DocstringStyle) -> GoogleOptions | NumpyOptions | SphinxOptions:

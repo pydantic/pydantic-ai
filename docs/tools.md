@@ -273,10 +273,12 @@ Even better, Pydantic AI extracts the docstring from functions and (thanks to [g
 Four parts of the docstring reach the model: the description text, the parameter descriptions (including
 those under `Keyword Args` or `Other Parameters`), the first entry of the returns section, and recognized
 admonition sections, such as `Warning:`, `Warnings:`, `Note:` and `Important:`, with their header as written.
-Other sections Griffe can parse, such as `Raises`, `Warns`, `Examples` and `Yields`, are dropped, so anything the model needs to act on
+Other sections Griffe can parse, such as `Raises`, `Examples`, `Yields` and `Warns` (which lists the warning
+classes a function emits, unlike a `Warnings:` admonition), are dropped, so anything the model needs to act on
 belongs in the description text, a parameter description, the first returns entry, or an admonition section.
-When a function has a return annotation, the whole text of a Google-style `Returns:` section is the return
-description; without one, text before the first colon is treated as the return type.
+When a function has a return annotation, the whole text of a Google-style `Returns:` section, including any
+`type:` prefix, is the return description and no separate return type is sent; without one, text before the
+first colon is treated as the return type.
 
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 

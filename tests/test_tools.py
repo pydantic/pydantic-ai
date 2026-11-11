@@ -6185,8 +6185,8 @@ Returns:
 """)
 
 
-def test_returns_written_text_falls_back_to_parsed_text():
-    """If the written `Returns:` section can't be located, the parsed type and description are joined instead.
+def test_returns_written_text_after_unclosed_fence_in_section():
+    """An unclosed code fence inside an earlier section doesn't hide the written `Returns:` section, as for griffe.
 
     Not a VCR test: the tool description is built from the docstring before any request is made.
     """
@@ -6194,14 +6194,13 @@ def test_returns_written_text_falls_back_to_parsed_text():
     def fetch_ad_rows(account_id: str) -> list[dict[str, str]]:
         return []
 
-    # The unbalanced fence inside `Examples:` hides the `Returns:` header from the scan, but not from griffe.
     fetch_ad_rows.__doc__ = """Fetch ad rows for an account.
 
     Examples:
         ```
 
     Returns:
-        Rows: one.
+        Rows (in UTC): one.
     """
     test_model = TestModel()
     agent = Agent(test_model)
@@ -6212,7 +6211,7 @@ def test_returns_written_text_falls_back_to_parsed_text():
     assert params.function_tools[0].description == snapshot("""\
 <summary>Fetch ad rows for an account.</summary>
 <returns>
-<description>Rows: one.</description>
+<description>Rows (in UTC): one.</description>
 </returns>\
 """)
 
