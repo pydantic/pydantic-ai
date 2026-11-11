@@ -13,6 +13,7 @@ from pydantic_ai._utils import is_str_dict, replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    Authority,
     CompactionPart,
     DataCapabilityPart,
     ModelMessage,
@@ -338,14 +339,21 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         elif self.walk_up == 'all':
             top = Path(working_dir.anchor)
         symlink_roots = await self._autoload_symlink_roots(workspace)
-        discovered = await discover_instruction_files(
-            workspace, working_dir, top, self.filenames, autoload_symlink_roots=symlink_roots
-        )
         walk_up = _walk_up_view(workspace, working_dir, top, symlink_roots)
+        levels: dict[Path, Authority] = {}
+
+        async def authority_of(path: Path) -> Authority:
+            if path not in levels:
+                levels[path] = await walk_up.authority_of(path.as_posix())
+            return levels[path]
+
+        discovered = await discover_instruction_files(
+            workspace, working_dir, top, self.filenames, autoload_symlink_roots=symlink_roots, authority_of=authority_of
+        )
         self._context_files = []
         for context_file in discovered:
             path = context_file.path.as_posix()
-            if await walk_up.authority_of(path) == 'operator':
+            if await authority_of(context_file.path) == 'operator':
                 self._context_files.append(context_file)
             elif context_file.directory == working_dir:
                 self._unloaded_file = context_file
