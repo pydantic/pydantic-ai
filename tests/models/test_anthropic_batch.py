@@ -503,6 +503,33 @@ async def test_anthropic_batch_results_read_every_result_type(allow_model_reques
             model.batch_decode(results[status], requests[status])
 
 
+async def test_anthropic_batch_result_reports_inference_geo(allow_model_requests: None) -> None:
+    """A batched request that set `anthropic_inference_geo` reports where it ran, as it would outside a batch.
+
+    Anthropic echoes `usage.inference_geo` on every result, so a request without the setting doesn't report it.
+    """
+    message = _message(
+        [{'type': 'text', 'text': 'Hi!'}], usage={'input_tokens': 10, 'output_tokens': 5, 'inference_geo': 'us'}
+    )
+    api = _FakeBatchAPI(
+        results=[{'set': {'type': 'succeeded', 'message': message}, 'unset': {'type': 'succeeded', 'message': message}}]
+    )
+    model = _fake_model(api)
+    requests = {
+        'set': _request('set', AnthropicModelSettings(anthropic_inference_geo='us')),
+        'unset': _request('unset'),
+    }
+    batch = await model.batch_create([await model.batch_encode(request) for request in requests.values()])
+    results = {result.custom_id: result for result in await model.batch_results(await model.batch_status(batch))}
+
+    reported = model.batch_decode(results['set'], requests['set']).provider_details
+    assert reported is not None
+    assert reported['inference_geo'] == 'us'
+    unreported = model.batch_decode(results['unset'], requests['unset']).provider_details
+    assert unreported is not None
+    assert 'inference_geo' not in unreported
+
+
 async def test_anthropic_batch_status_of_an_unknown_status_keeps_waiting(allow_model_requests: None) -> None:
     api = _FakeBatchAPI(status='paused')
     model = _fake_model(api)
