@@ -99,10 +99,6 @@ def _default_bands() -> list[Band]:
     return [Band(over=_DEFAULT_THRESHOLD, action=Spill(then=Truncate()))]
 
 
-_CONTENT_SUFFIX = '.content'
-"""Handle suffix of a `ToolReturn`'s `content`, so it spills apart from the `return_value` of the same call."""
-
-
 @dataclass
 class _Unit:
     """One reducible piece of a tool return: its `return_value` or its `content`.
@@ -115,6 +111,11 @@ class _Unit:
     data: bytes
     value: ToolReturnContent
     suffix: str
+    attribute_prefix: str
+    """Prefix of the span attributes that record this unit's reduction."""
+
+
+_ActionName = Literal['truncate', 'spill', 'summarize']
 
 
 @dataclass
@@ -122,9 +123,11 @@ class _Reduction:
     """What an action replaced a unit with, and which action that was after any fallbacks."""
 
     text: str
-    action: Literal['truncate', 'spill', 'summarize']
+    action: _ActionName
     handle: str | None = None
     """The spill handle, set only when `action` is `'spill'`."""
+    fallback_from: _ActionName | None = None
+    """The band's action, when it could not run and a `then` fallback produced `text` instead."""
 
 
 @dataclass
@@ -363,7 +366,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return original
 
         bands = self._per_tool.get(call.tool_name, self._bands)
-        value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
+        value_unit = self._make_unit(
+            return_value, tool_name=call.tool_name, suffix='', attribute_prefix='tool_output_limits'
+        )
         value_reduction = await self._reduce(ctx, call, bands, value_unit)
         content_reduction = await self._reduce_content(ctx, call, bands, content)
 
@@ -414,10 +419,17 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return spilled_out
         return value_reduction.text
 
-    def _make_unit(self, value: ToolReturnContent, *, tool_name: str, suffix: str) -> _Unit:
+    def _make_unit(self, value: ToolReturnContent, *, tool_name: str, suffix: str, attribute_prefix: str) -> _Unit:
         """Pre-render a value into the text / bytes the reduction pipeline needs."""
         if is_binary(value):
-            return _Unit(binary=True, text=None, data=to_bytes(value), value=value, suffix=suffix)
+            return _Unit(
+                binary=True,
+                text=None,
+                data=to_bytes(value),
+                value=value,
+                suffix=suffix,
+                attribute_prefix=attribute_prefix,
+            )
         if self.serializer is not None and not isinstance(value, str):
             try:
                 text = _ensure_text(self.serializer(value))
@@ -434,7 +446,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             text = to_text(value)
         if self.strip_ansi:
             text = strip_ansi(text)
-        return _Unit(binary=False, text=text, data=text.encode('utf-8'), value=value, suffix=suffix)
+        return _Unit(
+            binary=False,
+            text=text,
+            data=text.encode('utf-8'),
+            value=value,
+            suffix=suffix,
+            attribute_prefix=attribute_prefix,
+        )
 
     async def _reduce(
         self,
@@ -453,7 +472,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if action is None:
             return None
         reduction = await self._apply(ctx, call, action, unit)
-        if reduction is not None:
+        # A `Truncate` whose `max_chars` the text already fits returns it unchanged: nothing was cut.
+        if reduction is not None and reduction.text != unit.text:
             self._record_reduction(ctx, unit, size, reduction)
         return reduction
 
@@ -471,8 +491,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         else:
             size_unit = 'tokens' if self.over_tokens else 'chars'
             reduced_size = measure(reduction.text, over_tokens=self.over_tokens, tokenizer=self.tokenizer)
-        # A `ToolReturn`'s `content` is reduced on its own, so it gets its own attributes.
-        prefix = 'tool_output_limits.content' if unit.suffix == _CONTENT_SUFFIX else 'tool_output_limits'
+        prefix = unit.attribute_prefix
         span.set_attributes(
             {
                 f'{prefix}.action': reduction.action,
@@ -481,6 +500,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 f'{prefix}.size_unit': size_unit,
             }
         )
+        if reduction.fallback_from is not None:
+            span.set_attribute(f'{prefix}.fallback_from', reduction.fallback_from)
         if reduction.handle is not None:
             set_content_attribute(ctx, span, f'{prefix}.handle', reduction.handle)
 
@@ -496,7 +517,12 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return None
         if isinstance(content, str):
             return await self._reduce(
-                ctx, call, bands, self._make_unit(content, tool_name=call.tool_name, suffix=_CONTENT_SUFFIX)
+                ctx,
+                call,
+                bands,
+                self._make_unit(
+                    content, tool_name=call.tool_name, suffix='.content', attribute_prefix='tool_output_limits.content'
+                ),
             )
 
         text = ''.join(part for part in content if isinstance(part, str))
@@ -523,7 +549,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
         if isinstance(action, Truncate):
             if unit.binary:
-                return await self._fallback(ctx, call, action.then, unit)
+                return await self._fallback(ctx, call, action, unit)
             assert unit.text is not None
             text = truncate_text(unit.text, action.max_chars, action.strategy, keep_tail_lines=action.keep_tail_lines)
             return _Reduction(text, 'truncate')
@@ -537,13 +563,17 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         call: ToolCallPart,
-        then: Action | None,
+        failed: Truncate | Spill | Summarize,
         unit: _Unit,
     ) -> _Reduction | None:
-        """Run the fallback action, or keep the unit unchanged when there is none."""
-        if then is None:
+        """Run the `then` of an action that could not run, or keep the unit unchanged when there is none."""
+        if failed.then is None:
             return None
-        return await self._apply(ctx, call, then, unit)
+        reduction = await self._apply(ctx, call, failed.then, unit)
+        if reduction is not None:
+            # Set on the way out of a chain of fallbacks, so the outermost, the band's own action, is kept.
+            reduction.fallback_from = _action_name(failed)
+        return reduction
 
     async def _spill(
         self,
@@ -561,7 +591,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             payload = unit.text
         handle = await self._write_spill(ctx, call.tool_name, key, payload, unit.binary, _fallback_label(action.then))
         if handle is None:
-            return await self._fallback(ctx, call, action.then, unit)
+            return await self._fallback(ctx, call, action, unit)
 
         preview = _build_spill_preview(
             handle, unit, action.preview_chars, over_tokens=self.over_tokens, read_hint=self._read_hint(ctx, handle)
@@ -604,7 +634,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         unit: _Unit,
     ) -> _Reduction | None:
         if unit.binary:
-            return await self._fallback(ctx, call, action.then, unit)
+            return await self._fallback(ctx, call, action, unit)
         assert unit.text is not None
         try:
             if action.summarize is not None:
@@ -619,7 +649,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             raise
         except Exception as exc:
             _log_fallback('Summarizing', call.tool_name, _fallback_label(action.then), exc)
-            return await self._fallback(ctx, call, action.then, unit)
+            return await self._fallback(ctx, call, action, unit)
         return _Reduction(summary, 'summarize')
 
     @durable_operation('summarize')
@@ -705,6 +735,14 @@ async def _reads_a_spill(ctx: RunContext[Any], tool_def: ToolDefinition, args: d
         return False
     spill_dir = posixpath.join(await workspace.working_dir(), METADATA_DIR, SPILL_DIR)
     return (await workspace.resolve(path)).startswith(spill_dir + '/')
+
+
+def _action_name(action: Truncate | Spill | Summarize) -> _ActionName:
+    if isinstance(action, Truncate):
+        return 'truncate'
+    if isinstance(action, Spill):
+        return 'spill'
+    return 'summarize'
 
 
 def _next_action(action: Action) -> Action | None:

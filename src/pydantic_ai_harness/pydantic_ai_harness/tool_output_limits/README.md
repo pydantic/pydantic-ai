@@ -377,12 +377,14 @@ its own: the tool call is already spanned, and the reduction happens inside it.
 | `tool_output_limits.original_size` | the measured size of the return, the number its band was matched on |
 | `tool_output_limits.reduced_size` | the size of what the model gets instead, in the same unit |
 | `tool_output_limits.size_unit` | `chars`, `tokens` (with `over_tokens=True`), or `bytes` for a binary return |
-| `tool_output_limits.handle` | the spill handle, only when `trace_include_content` is on, since it names a path in the workspace |
+| `tool_output_limits.fallback_from` | the band's own action, `spill`, `summarize`, or `truncate`, when it could not run and its `then` produced the result; absent otherwise |
+| `tool_output_limits.handle` | the spill handle, only when the run captures content (`include_content=True`), since it names a path in the workspace |
 
 A `ToolReturn`'s text `content` is reduced on its own, so its reduction is recorded under
-`tool_output_limits.content.*` with the same names. A return under every band, or one whose
-fallback chain ends without reducing it, records nothing. When the default `Spill(then=Truncate())`
-can't write to its store, `action` is `truncate`, which is how a failing store shows up in a trace.
+`tool_output_limits.content.*` with the same names. Nothing is recorded for a return under every
+band, a `Truncate` whose `max_chars` the text already fits, or a fallback chain that ends without
+reducing the return. When the default `Spill(then=Truncate())` can't write to its store, `action`
+is `truncate` and `fallback_from` is `spill`, which is how a failing store shows up in a trace.
 
 ## Edge cases
 

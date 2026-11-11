@@ -45,6 +45,16 @@ def limits_attributes(exporter: InMemorySpanExporter) -> dict[str, Any]:
     return {key: value for key, value in (span.attributes or {}).items() if key.startswith('tool_output_limits.')}
 
 
+class FailingStore:
+    """An `OverflowStore` that can't take a write."""
+
+    async def write(self, key: str, data: bytes) -> str:
+        raise OSError('disk full')
+
+    async def read(self, handle: str) -> bytes:  # pragma: no cover - nothing is ever written
+        raise FileNotFoundError(handle)
+
+
 TRUNCATE = ToolOutputLimits[object](bands=[Band(over=100, action=Truncate(max_chars=50))])
 
 
@@ -67,6 +77,62 @@ class TestToolOutputLimitsTelemetry:
         await agent_with_tool(TRUNCATE, 'small', instrumentation).run('go')
 
         assert limits_attributes(exporter) == {}
+
+    async def test_a_truncate_that_cuts_nothing_records_nothing(self):
+        """The band matches, but the text already fits `max_chars`, so the model gets it unchanged."""
+        limits = ToolOutputLimits[object](bands=[Band(over=100, action=Truncate(max_chars=1_000))])
+        instrumentation, exporter = instrumented()
+        await agent_with_tool(limits, 'x' * 500, instrumentation).run('go')
+
+        assert limits_attributes(exporter) == {}
+
+    async def test_sizes_are_in_tokens_with_over_tokens(self):
+        limits = ToolOutputLimits[object](
+            bands=[Band(over=100, action=Truncate(max_chars=100))],
+            over_tokens=True,
+            tokenizer=lambda text: len(text) // 4,
+        )
+        instrumentation, exporter = instrumented()
+        await agent_with_tool(limits, 'x' * 2_000, instrumentation).run('go')
+
+        assert limits_attributes(exporter) == snapshot(
+            {
+                'tool_output_limits.action': 'truncate',
+                'tool_output_limits.original_size': 500,
+                'tool_output_limits.reduced_size': 25,
+                'tool_output_limits.size_unit': 'tokens',
+            }
+        )
+
+    async def test_a_failed_spill_records_the_truncate_it_fell_back_to(self):
+        limits = ToolOutputLimits[object](
+            bands=[Band(over=100, action=Spill(then=Truncate(max_chars=50)))], store=FailingStore()
+        )
+        instrumentation, exporter = instrumented(include_content=True)
+        await agent_with_tool(limits, 'x' * 500, instrumentation).run('go')
+
+        assert limits_attributes(exporter) == snapshot(
+            {
+                'tool_output_limits.action': 'truncate',
+                'tool_output_limits.original_size': 500,
+                'tool_output_limits.reduced_size': 50,
+                'tool_output_limits.size_unit': 'chars',
+                'tool_output_limits.fallback_from': 'spill',
+            }
+        )
+
+    async def test_binary_that_cannot_be_truncated_records_the_spill_it_fell_back_to(self, tmp_path: Path):
+        limits = ToolOutputLimits[object](
+            bands=[Band(over=100, action=Truncate(then=Spill()))], store=LocalFileStore(base_dir=tmp_path)
+        )
+        instrumentation, exporter = instrumented()
+        await agent_with_tool(limits, b'\x00' * 500, instrumentation).run('go')
+
+        attributes = limits_attributes(exporter)
+        assert (attributes['tool_output_limits.action'], attributes['tool_output_limits.fallback_from']) == (
+            'spill',
+            'truncate',
+        )
 
     async def test_content_reduced_on_its_own_gets_its_own_attributes(self):
         instrumentation, exporter = instrumented()
