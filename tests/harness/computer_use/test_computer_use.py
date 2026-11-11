@@ -14,6 +14,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import (
     Agent,
+    ApprovalRequired,
     DeferredToolRequests,
     DeferredToolResults,
     ModelMessage,
@@ -26,7 +27,14 @@ from pydantic_ai import (
     ToolReturnPart,
     UserError,
 )
-from pydantic_ai.capabilities import AbstractCapability, ModelFallback, PrefixTools, SelectModel
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Hooks,
+    ModelFallback,
+    PrefixTools,
+    SelectModel,
+    ValidatedToolArgs,
+)
 from pydantic_ai.computer_use import (
     _SAFETY_CHECKS,  # pyright: ignore[reportPrivateUsage]
     COMPUTER_KIND,
@@ -283,12 +291,12 @@ You can see and control a computer screen with the `computer` tool. Each call ru
             '(0, 0) is the top left corner and (999, 999) the bottom right.',
         )
 
-    async def test_requires_approval_lets_looking_through_and_defers_acting(self) -> None:
+    async def test_a_hook_can_ask_before_acting_and_let_looking_through(self) -> None:
         provider = ScreenProvider()
         agent = Agent(
             # A batch that looks and then acts is deferred whole.
             _scripted([{'type': 'screenshot'}], [{'type': 'screenshot'}, {'type': 'click', 'x': 1, 'y': 1}]),
-            capabilities=[provider.capability(), ComputerUse(requires_approval=True, settle_seconds=0)],
+            capabilities=[provider.capability(), ComputerUse(settle_seconds=0), _ask_before_acting()],
             output_type=[str, DeferredToolRequests],
         )
         result = await agent.run('Go.')
@@ -342,7 +350,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert struct.unpack('>II', zoomed.data[16:24]) == zoomed_size
         assert pointer == 'The pointer is at (500, 500).'
 
-    async def test_a_call_its_provider_flagged_waits_for_approval_without_requires_approval(self) -> None:
+    async def test_a_call_its_provider_flagged_waits_for_approval(self) -> None:
         provider = ScreenProvider()
         check = {'id': 'sc_1', 'code': 'malicious_instructions', 'message': 'The page asks for a password.'}
 
@@ -852,7 +860,8 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                 # An app's own `computer_use` metadata key must not be taken for the call's record.
                 _AppLabel(),
                 # The record is found by the tool's kind, whatever the tool is called.
-                PrefixTools(ComputerUse(requires_approval=True, settle_seconds=0), prefix='screen'),
+                PrefixTools(ComputerUse(settle_seconds=0), prefix='screen'),
+                _ask_before_acting(),
             ],
             output_type=[str, DeferredToolRequests],
         )
@@ -869,7 +878,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         provider = ScreenProvider()
         agent = Agent(
             _scripted([{'type': 'click', 'x': 1, 'y': 1}, {'type': 'type', 'text': 'rm -rf /'}]),
-            capabilities=[provider.capability(), ComputerUse(requires_approval=True, settle_seconds=0)],
+            capabilities=[provider.capability(), ComputerUse(settle_seconds=0), _ask_before_acting()],
             output_type=[str, DeferredToolRequests],
         )
         paused = await agent.run('Go.')
@@ -1085,7 +1094,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         provider = ScreenProvider()
         agent = Agent(
             _scripted([{'type': 'click', 'x': 500, 'y': 300}]),
-            capabilities=[provider.capability(), ComputerUse(requires_approval=True, settle_seconds=0)],
+            capabilities=[provider.capability(), ComputerUse(settle_seconds=0), _ask_before_acting()],
             output_type=[str, DeferredToolRequests],
         )
         paused = await agent.run('Go.')
@@ -1143,7 +1152,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                     computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000
                 ),
             ),
-            capabilities=[provider.capability(), ComputerUse(requires_approval=True, settle_seconds=0)],
+            capabilities=[provider.capability(), ComputerUse(settle_seconds=0), _ask_before_acting()],
             output_type=[str, DeferredToolRequests],
         )
         paused = await agent.run('Go.')
@@ -1264,6 +1273,23 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert tool_return.result == {'performed': 1, 'error': error, 'screenshot_size': (1280, 800)}
         assert tool_return.screenshot == SCREENSHOT
         assert provider.actions == [Click(x=1, y=1)]
+
+
+def _ask_before_acting() -> Hooks[Any]:
+    """The docs' recipe for asking a person before any call that does more than look."""
+    hooks = Hooks[Any]()
+
+    @hooks.on.before_tool_execute
+    async def ask_before_acting(
+        ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        looking = {'screenshot', 'zoom', 'wait', 'cursor_position'}
+        if isinstance(call, ComputerCallPart) and not ctx.tool_call_approved:
+            if any(action.type not in looking for action in call.actions or []):
+                raise ApprovalRequired
+        return args
+
+    return hooks
 
 
 class _AppLabel(AbstractCapability[Any]):
