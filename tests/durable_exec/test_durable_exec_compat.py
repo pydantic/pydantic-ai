@@ -73,8 +73,12 @@ from pydantic_ai.exceptions import RunCancelled, RunTimedOut
 from pydantic_ai.messages import (
     BinaryContent,
     CapabilityEvent,
+    CapabilityLoadDeltaEvent,
+    CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     CustomEvent,
+    DataCapabilityPart,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     EnqueuedMessagesEvent,
@@ -98,6 +102,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    OperatorSource,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -284,6 +289,11 @@ DBOS_OPERATION_NAMES = {
     'compat__dynamic_toolset__dynamic.call_tool',
     'compat__dynamic_toolset__dynamic.validate_args',
     'compat__capability__compat.operation',
+}
+
+DBOS_CHILD_WORKFLOW_NAMES = {
+    'compat__function_toolset__<agent>.call_tool__child_workflow',
+    'compat__function_toolset__functions.call_tool__child_workflow',
 }
 
 RENDER_TASK_NAMES = {
@@ -520,6 +530,22 @@ def test_dbos_operation_name_matrix_and_assembly_completeness() -> None:
     assert backend is not None
     registered_names = {cast(Any, registration).dbos_function_name for registration in backend.registrations()}
     assert registered_names == DBOS_OPERATION_NAMES
+    # Child workflows are registered only for toolsets that can select one.
+    assert durability._child_workflow_toolsets == {}  # pyright: ignore[reportPrivateUsage]
+    child_workflow_agent = Agent(
+        TestModel(),
+        name='compat',
+        toolsets=list(_synthetic_toolsets()),
+        capabilities=[SetToolMetadata(dbos={'child_workflow': {}}), DBOSDurability()],
+    )
+    child_workflow_durability = DBOSDurability.from_agent(child_workflow_agent)
+    assert child_workflow_durability is not None
+    child_workflow_names = {
+        registration.dbos_function_name
+        for toolset in child_workflow_durability._child_workflow_toolsets.values()  # pyright: ignore[reportPrivateUsage]
+        for registration in toolset.durable_registrations
+    }
+    assert child_workflow_names == DBOS_CHILD_WORKFLOW_NAMES
 
     with_workspace = Agent(
         TestModel(),
@@ -766,6 +792,7 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
                     'cost': None,
                 },
                 'model_name': None,
+                'model_id': None,
                 'timestamp': '2020-01-01T00:00:00Z',
                 'kind': 'response',
                 'provider_name': None,
@@ -909,6 +936,9 @@ def test_model_request_context_projection_is_exhaustive() -> None:
         # The live wrapper a capability's `get_wrapper_model` built around `model`, with the model it wraps; the
         # durable unit re-applies the hook to the model it rebuilds, so it's never carried across.
         '_serving_wrapper',
+        # The request's messages as the hooks left them, set caller-side after every hook has run, for readers of
+        # the request (such as `TrajectoryJudge`) in `after_model_request`; a durable hook never sees it.
+        '_hooked_messages',
     }
     projected = {field.name for field in fields(ModelRequestContextProjection)}
     context_fields = {field.name for field in fields(ModelRequestContext)}
@@ -952,6 +982,11 @@ class GoldenProgressEvent(CustomEvent, name='golden_progress'):
 
 @dataclass(kw_only=True)
 class GoldenCheckpointEvent(CapabilityEvent, namespace='golden', name='checkpoint'):
+    label: str
+
+
+@dataclass(kw_only=True)
+class GoldenReportPart(DataCapabilityPart, namespace='golden', name='report', tag='report', attributes=('label',)):
     label: str
 
 
@@ -1010,10 +1045,12 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         ToolReturnPart('tool', 'result', tool_call_id='call'),
         RetryFeedbackPart('retry', retry=RetryInfo('model_retry')),
         ToolAvailabilityDeltaPart(),
+        CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='call'),
         ModelSettingsDeltaPart(settings={'thinking': 'high'}),
         InstructionDeltaPart(id=None, content='delta'),
         InstructionBaselinePart(instructions=[InstructionPart('baseline')]),
         CompactionPart(content='summary'),
+        GoldenReportPart(content='report', source=OperatorSource(), label='l'),
     ]
     response_parts: list[ModelResponsePart] = [
         TextPart('text'),
@@ -1044,6 +1081,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         FunctionToolCallEvent(part=ToolCallPart('tool', tool_call_id='call')),
         FunctionToolResultEvent(part=ToolReturnPart('tool', 'result', tool_call_id='call')),
         ToolAvailabilityDeltaEvent(part=ToolAvailabilityDeltaPart()),
+        CapabilityLoadDeltaEvent(part=CapabilityLoadDeltaPart(loaded=['refunds'])),
         ModelSettingsDeltaEvent(part=ModelSettingsDeltaPart(settings={'thinking': 'high'})),
         OutputToolCallEvent(part=ToolCallPart('final_result', tool_call_id='output')),
         OutputToolResultEvent(part=ToolReturnPart('final_result', 'done', tool_call_id='output')),
@@ -1065,12 +1103,14 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
     # `RetryPromptPart` stays in the union for type checking and the published JSON schema: the
     # discriminator translates a legacy payload into one of its replacements, so it never
     # round-trips as itself. Parts and deltas match by exact type, since several members subclass
-    # another member; events match by `isinstance`, as `CustomEvent` and `CapabilityEvent` are
-    # covered by registered subclasses.
+    # another member, except `CapabilityPart`, which is covered by a registered subclass; events match
+    # by `isinstance`, as `CustomEvent` and `CapabilityEvent` are covered by registered subclasses.
     assert {
         member.__name__
         for member in _union_members(ModelRequestPart)
-        if not any(type(part) is member for part in request_parts)
+        if not any(
+            isinstance(part, member) if member is CapabilityPart else type(part) is member for part in request_parts
+        )
     } == {'RetryPromptPart'}
     assert [
         member.__name__

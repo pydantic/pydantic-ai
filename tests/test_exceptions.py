@@ -11,6 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import ModelRetry, ToolFailed
+from pydantic_ai._json_schema import InlinedSchemaTooLargeError
 from pydantic_ai._model_errors import transport_phase
 from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai.exceptions import (
@@ -248,6 +249,10 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
             },
         ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
+        (
+            lambda: InlinedSchemaTooLargeError("The JSON schema of tool 'x'", 'Leave it out.'),
+            {'subject': "The JSON schema of tool 'x'", 'remedy': 'Leave it out.'},
+        ),
     ],
     ids=[
         'ModelRetry',
@@ -276,6 +281,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-with-model-suggestion-and-hint',
         'ModelHTTPError-ModelNotFoundError-with-model-suggestion',
         'IncompleteToolCall',
+        'InlinedSchemaTooLargeError',
     ],
 )
 def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], check_attrs: dict[str, Any]):
@@ -606,7 +612,7 @@ def test_model_http_error_headers_provider_openai():
 
 @pytest.mark.parametrize(
     'model_name',
-    ['gpt-5', 'claude-sonet-4-5'],
+    ['gpt-5.6-sol', 'claude-sonet-5-5'],
     ids=['requested-known-model', 'different-provider-model'],
 )
 def test_model_http_error_does_not_suggest_an_unusable_match(model_name: str):

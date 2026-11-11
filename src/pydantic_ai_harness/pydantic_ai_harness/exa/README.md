@@ -7,6 +7,8 @@ tasks to the Exa Agent API as deferred tool calls.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/exa/)
 
+![The model calls tools added by ExaSearch. web_search calls Exa search and returns the top five hits with title, URL and excerpts; get_page calls Exa get_contents for one URL, capped at 10,000 characters; the opt-in deep_search calls Exa search with type deep and returns one cited answer. The separate ExaAgent capability adds exa_agent, which creates an Exa Agent run and defers until it completes. Every tool returns a ToolReturn: the text goes to the model and the sources entry of its metadata holds ExaSource records for your app.](https://pydantic.dev/docs/ai/img/harness/exa-search.svg)
+
 ## Installation
 
 uv:
@@ -31,8 +33,8 @@ Search tools that return only titles and snippets force a second round of
 fetching before the agent can judge a source, while search tools that return
 full page text flood the context with pages the agent will discard. Wiring a
 search API together with a page fetcher, budgeting what each tool returns, and
-prompting the agent to research methodically is boilerplate every research
-agent reinvents.
+prompting the agent to research methodically has to be done for each research
+agent.
 
 ## The solution
 
@@ -471,8 +473,7 @@ from pydantic_ai_harness import ExaAgent, ExaSearch
 agent = Agent.from_file('agent.yaml', custom_capability_types=[ExaSearch, ExaAgent])
 ```
 
-Pass `custom_capability_types` so the spec loader knows how to instantiate the
-capabilities. The `client` and `runs` fields are not spec-serializable;
+The `client` and `runs` fields are not spec-serializable;
 spec-loaded instances always build the default client from `EXA_API_KEY`. In
 specs, `output_schema` takes the JSON-schema dict form; Pydantic model
 classes are only available when constructing the capability in Python.

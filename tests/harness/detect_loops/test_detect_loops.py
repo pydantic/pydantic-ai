@@ -25,12 +25,13 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai_harness import ClearToolResults, DetectLoops, SlidingWindowCompaction
-from pydantic_ai_harness.detect_loops import DetectedLoop, LoopDetectedError
+from pydantic_ai_harness.detect_loops import DetectedLoop, LoopDetectedError, LoopNudgePart
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 
@@ -83,13 +84,13 @@ def _collect() -> tuple[list[DetectedLoop], DetectLoops[object]]:
     return loops, DetectLoops(action=lambda ctx, loop: loops.append(loop))
 
 
-def _nudges(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
+def _nudges(messages: Sequence[ModelMessage]) -> list[LoopNudgePart]:
     return [
         part
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart)
+        if isinstance(part, LoopNudgePart)
     ]
 
 
@@ -119,19 +120,20 @@ class TestDetectLoops:
         assert result.output == 'missing.txt does not exist.'
         assert _responses_before_each_nudge(result.all_messages()) == [3]
         [nudge] = _nudges(result.all_messages())
-        assert (nudge.content, nudge.metadata, nudge.scope) == snapshot(
+        assert (nudge.content, nudge.pattern, nudge.tool_names, nudge.scope) == snapshot(
             (
                 'Your last 3 calls to `read_file` used the same arguments and returned the same result, so calling it again will not change the outcome. Change your approach, or explain what is blocking you.',
-                {
-                    'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
-                    'pattern': 'repeated_result',
-                    'tool_names': ['read_file'],
-                },
+                'repeated_result',
+                ('read_file',),
                 'conversation',
             )
         )
-        # The model sees the nudge on the request that follows the third result.
+        # The model sees the nudge on the request that follows the third result, in the application's voice: a
+        # `<system>` block, as `FunctionModel` has no mid-conversation system role.
         assert len(seen) == 4
+        assert [part.content for part in seen[-1][-1].parts if isinstance(part, UserPromptPart)] == [
+            f'<system>{nudge.content}</system>'
+        ]
 
     async def test_repeated_call_with_changing_results(self):
         loops, detector = _collect()
@@ -329,7 +331,14 @@ class TestDetectLoops:
 
         result = await _agent([[_call()]] * 3, DetectLoops(action=steer)).run('Read it')
 
-        assert [nudge.content for nudge in _nudges(result.all_messages())] == ['Stop calling read_file.']
+        steering = [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, SystemPromptPart)
+        ]
+        assert steering == ['Stop calling read_file.']
 
     async def test_handler_can_stop_the_run(self):
         def stop(ctx: RunContext[object], loop: DetectedLoop) -> None:

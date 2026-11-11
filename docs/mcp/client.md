@@ -96,7 +96,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 - The model is called again with the return value of running the `add` tool (12)
 - The model returns the final answer
 
-You can visualise this clearly, and even see the tool call, by adding three lines of code to instrument the example with [logfire](https://logfire.pydantic.dev/docs):
+To visualise this clearly and see the tool call, run `uvx logfire-cli wizard --task pydantic-ai` once from your project. It [sets up Logfire](../logfire.md#using-logfire) and has your coding agent add these three lines:
 
 ```python {title="mcp_streamable_http_client_logfire.py" test="skip"}
 import logfire
@@ -367,9 +367,9 @@ toolset = MCPToolset('http://localhost:8000/mcp', id='docs', include_instruction
 agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
-On `MCPToolset` this is off by default because the server writes this text, and the model receives it with the same authority as the instructions you write yourself. Only enable it for servers you trust. The [`MCP`](../capabilities/mcp.md) capability turns it on for the local toolset it builds, so only point an `MCP` capability at servers you trust, or pass your own `local=MCPToolset(...)`.
+On `MCPToolset` this is off by default because the server writes this text, and the model receives it with the same authority as the instructions you write yourself. Only enable it for servers you trust. The [`MCP`](../capabilities/mcp.md) capability turns it on for the local toolset it builds, so for a server you don't trust, pass [`include_instructions=False`](../capabilities/mcp.md#server-instructions) to the capability.
 
-The instructions are read each time the toolset connects, which by default is once per agent run, and on a toolset with an [`id`][pydantic_ai.mcp.MCPToolset.id] they [append their changes](../agent.md#appending-instruction-changes). If the server sends different instructions on a later connection, as when it's redeployed between turns of a conversation, the new text is appended to the conversation rather than rewriting the instruction prefix that the provider has cached. The model receives them in a `<context id="toolset:<id>">` element, so it can tell which server they came from.
+The instructions are read each time the toolset connects, which by default is once per agent run, and on a toolset with an [`id`][pydantic_ai.mcp.MCPToolset.id] they [append their changes](../agent.md#appending-instruction-changes). If the server sends different instructions on a later connection, as when it's redeployed between turns of a conversation, the new text is appended to the conversation rather than rewriting the instruction prefix that the provider has cached. The model receives them in a `<pyai:context id="toolset:<id>">` element, so it can tell which server they came from.
 
 A toolset for a server URL that you don't give an `id` takes the URL's hostname as its `id`, as in `toolset:localhost`, with `-` in place of the `:`s of an IPv6 address. Only an `id` you choose is stamped as the `toolset_id` of the server's tool definitions, and [durable execution](../durable_execution/overview.md) doesn't accept a derived one: name the toolset with `id=` there. If two toolsets would take the same hostname, as for two servers on one host, neither keeps it for its instructions, which then rewrite the prefix as plain text, with a warning suggesting a distinct `id=` for each. A stdio or in-process server without an `id` has nothing to key its instructions by either, so pass `id=` to append them.
 
@@ -584,6 +584,8 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 Each run then connects to the server in an MCP session of its own, opened with the credentials the function returned, so concurrent runs on behalf of different users never share a session. The function can be sync or async, and can return anything a fixed `auth` accepts except `'oauth'`. `headers` accepts a function in the same way, for credentials the server expects in a different header.
 
+Each session also gets an HTTP client of its own, unless you pass the toolset an [`http_client`](#custom-tls-ssl-configuration): every run's session then sends its requests through that one client, so they share its cookie jar, and a cookie the server sets in response to one user's run is sent with the requests of the runs after it, whichever user they're for. Don't share an `http_client` between runs on behalf of different users. To configure TLS, pass the toolset's `verify` argument instead, which accepts an [`ssl.SSLContext`][ssl.SSLContext] that can also hold a client certificate.
+
 Because the toolset only knows which credentials to use once a run has started, it only connects to the server as part of an agent run: entering it with `async with toolset:` or `async with agent:` doesn't open a connection, and calling one of its methods like `list_tools()` directly raises a [`UserError`][pydantic_ai.exceptions.UserError]. Outside of an agent run, use the copy a run would use instead, which you get with [`await toolset.for_run(ctx)`][pydantic_ai.toolsets.AbstractToolset.for_run].
 
 !!! note "Why each user needs a session of their own"
@@ -622,7 +624,7 @@ toolset = MCPToolset('http://localhost:3001/sse', http_client=http_client)  # (1
 agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
-1. When you supply `http_client`, Pydantic AI reuses this client for every request. Anything supported by HTTPX (`verify`, `cert`, custom proxies, timeouts, etc.) therefore applies to all MCP traffic. The toolset never closes the client, so it can be reused across runs and you are responsible for closing it. On FastMCP 3, build the client with legacy `httpx` instead.
+1. When you supply `http_client`, Pydantic AI reuses this client for every request. Anything supported by HTTPX (`verify`, `cert`, custom proxies, timeouts, etc.) therefore applies to all MCP traffic. The toolset never closes the client, so it can be reused across runs and you are responsible for closing it. Every run shares the client's cookie jar, so don't pass one to a toolset whose runs act for [different users](#per-user-authentication). On FastMCP 3, build the client with legacy `httpx` instead.
 
 ## Client identification
 

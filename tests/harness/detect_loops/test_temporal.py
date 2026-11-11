@@ -12,7 +12,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelResponse,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
 )
@@ -28,7 +27,7 @@ from temporalio.worker import Replayer, Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
-from pydantic_ai_harness.detect_loops import DetectLoops
+from pydantic_ai_harness.detect_loops import DetectLoops, LoopNudgePart
 from tests.harness._temporal import ignore_source_reads_left_open, skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -108,14 +107,13 @@ async def test_detection_runs_inside_a_workflow_and_survives_replay() -> None:
     messages = ModelMessagesTypeAdapter.validate_json(dumped)
     assert isinstance(messages[-1], ModelResponse)
     assert messages[-1].text == 'missing.txt does not exist.'
-    nudges = [part.metadata for message in messages for part in message.parts if isinstance(part, SystemPromptPart)]
-    assert nudges == [
-        {
-            'origin': 'pydantic-ai-harness.detect_loops.nudge.v1',
-            'pattern': 'repeated_result',
-            'tool_names': ['_read_file'],
-        }
+    nudges = [
+        (part.pattern, part.tool_names)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, LoopNudgePart)
     ]
+    assert nudges == [('repeated_result', ('_read_file',))]
     # Replaying the recorded history re-runs detection in workflow code; a different decision would be
     # a nondeterminism error.
     replayer = Replayer(workflows=[LoopingWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=runner)

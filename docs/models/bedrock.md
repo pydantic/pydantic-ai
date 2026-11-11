@@ -40,7 +40,7 @@ pip/uv-add "pydantic-ai-slim[bedrock]"
 
 To use [AWS Bedrock](https://aws.amazon.com/bedrock/), you'll need an AWS account with Bedrock enabled and appropriate credentials. You can use either AWS credentials directly or a pre-configured boto3 client.
 
-[`BedrockModelName`][pydantic_ai.models.bedrock.BedrockModelName] contains a list of available Bedrock models, including models from Anthropic, Amazon, Cohere, Meta, and Mistral.
+[`BedrockModelName`][pydantic_ai.models.bedrock.BedrockModelName] lists the latest Bedrock models for autocomplete, one id per model, including models from Anthropic, Amazon, Meta, Mistral and OpenAI. Any other model id Bedrock accepts works too.
 
 ### Data retention
 
@@ -107,6 +107,10 @@ agent = Agent(model=model, model_settings=bedrock_model_settings)
 ```
 
 When `trace` is set to `'enabled'` in the guardrail configuration (as in the example above), the guardrail assessment returned by Bedrock is stored verbatim under the `'trace'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], e.g. `result.all_messages()[-1].provider_details['trace']`.
+
+### Video input
+
+The Converse API takes video only on Amazon Nova. On every other family, including models that read video on other platforms (Qwen3-VL, Kimi and Nemotron Nano VL reject it on Bedrock, as do Claude, Llama 4 and Pixtral), video in the prompt raises an error, and video a tool returns is replaced by a note saying the model can't read it. A model ID the provider doesn't recognize keeps the default and is sent video.
 
 ### Output token limit
 

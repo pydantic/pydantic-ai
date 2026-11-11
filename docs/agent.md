@@ -501,6 +501,7 @@ async def main():
                     cost=Decimal('0.000182'), input_tokens=56, output_tokens=7
                 ),
                 model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -571,6 +572,7 @@ async def main():
                         cost=Decimal('0.000182'), input_tokens=56, output_tokens=7
                     ),
                     model_name='{{ openai:medium.name }}',
+                    model_id='{{ openai:medium }}',
                     timestamp=datetime.datetime(...),
                     run_id='...',
                     conversation_id='...',
@@ -1156,9 +1158,22 @@ A run that reaches its `request_limit` raises instead of returning output, even 
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext, SystemPromptPart, ToolDefinition, UsageLimits
+from pydantic_ai import (
+    Agent,
+    InstructionCapabilityPart,
+    OperatorSource,
+    OperatorText,
+    RunContext,
+    ToolDefinition,
+    UsageLimits,
+)
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
+
+
+@dataclass(kw_only=True)
+class WrapUpPart(InstructionCapabilityPart, namespace='wrap_up'):
+    pass
 
 
 def requests_left(ctx: RunContext[Any]) -> int | None:
@@ -1178,9 +1193,12 @@ class WrapUpNearRequestLimit(AbstractCapability[Any]):
         left = requests_left(ctx)
         if left is not None and left <= self.warn_at:
             ctx.enqueue(  # (2)!
-                SystemPromptPart(
-                    f'{left} model request(s) left in this run: '
-                    'produce your final output now, using what you have.',
+                WrapUpPart(
+                    content=OperatorText(
+                        f'{left} model request(s) left in this run: '
+                        'produce your final output now, using what you have.'
+                    ),
+                    source=OperatorSource(),
                     scope='request',
                 )
             )
@@ -1210,7 +1228,7 @@ async def main():
 ```
 
 1. A request is counted when its response arrives, so `ctx.usage.requests` doesn't include the request being prepared, and `left` is `1` on the last request the limit allows. With no `usage_limits`, a run gets the default [`UsageLimits`][pydantic_ai.usage.UsageLimits], whose `request_limit` is 50.
-2. A [request-scoped prompt](message-history.md#request-scoped-system-prompts) is shown to the model with this request only, so each request sees the current count and the prompt cache survives the changing text.
+2. A [capability part](capabilities/custom.md#capability-parts) in the system voice, [request-scoped](message-history.md#request-scoped-system-prompts): it's shown to the model with this request only, so each request sees the current count and the prompt cache survives the changing text.
 3. [`prepare_tools`](capabilities/custom.md#tool-preparation) receives function tools only. Output tools stay available, so an agent with a structured `output_type` can still call its output tool, and one with text output answers in text.
 
 If the model's last output fails validation, no request is left for the retry and the run still raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded].
@@ -1651,7 +1669,7 @@ print(prompts)
 
 The first value stays where it was, and a changed value is added to the history as a new `SystemPromptPart` at the start of the run that saw it, so the start of the conversation stays the same. A run in which the value is unchanged adds nothing. Returning `None` or an empty string withdraws the prompt. The function still runs once per run, not before every request.
 
-The model gets the prompt with the same replacement semantics as [appending instruction changes](#appending-instruction-changes). Each statement is sent inside a `<context id="system_prompt:<name>">` element, and the model is told once per request that a later element with the same id replaces the earlier one. A change is sent as a new element with that id, and a withdrawal as an element saying the prompt is withdrawn. The model sees this id: `<name>` is the function's `__name__` unless you pass `name=` (which has no effect without `on_change='append'`), and must be unique among the agent's appending system prompts. Each part records its id as [`SystemPromptPart.context_id`][pydantic_ai.messages.SystemPromptPart.context_id], so an agent that continues the history without the function sends the parts the same way.
+The model gets the prompt with the same replacement semantics as [appending instruction changes](#appending-instruction-changes). Each statement is sent inside a `<pyai:context id="system_prompt:<name>">` element, and the model is told once per request that a later element with the same id replaces the earlier one. A change is sent as a new element with that id, and a withdrawal as an element saying the prompt is withdrawn. The model sees this id: `<name>` is the function's `__name__` unless you pass `name=` (which has no effect without `on_change='append'`), and must be unique among the agent's appending system prompts. Each part records its id as [`SystemPromptPart.context_id`][pydantic_ai.messages.SystemPromptPart.context_id], so an agent that continues the history without the function sends the parts the same way.
 
 Like any dynamic system prompt, the prompt is tied to existing histories by its function's `__qualname__` (recorded as [`SystemPromptPart.dynamic_ref`][pydantic_ai.messages.SystemPromptPart.dynamic_ref]), whether or not you pass `name=`. Renaming or moving the function disconnects it from them: the old part keeps its last value, and the renamed function isn't sent in conversations that continue them.
 
@@ -1697,7 +1715,7 @@ def add_the_users_name(ctx: RunContext[str]) -> str:
     return f"The user's name is {ctx.deps}."
 
 
-@agent.instructions
+@agent.instructions(name='date', on_change='append')
 def add_the_date() -> str:  # (4)!
     return f'The date is {date.today()}.'
 
@@ -1712,7 +1730,7 @@ print(result.output)
 3. Dynamic instructions defined via a decorator with [`RunContext`][pydantic_ai.tools.RunContext],
    this is called just after `run_sync`, not when the agent is created, so can benefit from runtime
    information like the dependencies used on that run.
-4. Another dynamic instruction, instructions don't have to have the `RunContext` parameter.
+4. Another dynamic instruction, instructions don't have to have the `RunContext` parameter. The date changes between runs of a conversation, so [`on_change='append'`](#appending-instruction-changes) adds the new date to the history instead of rewriting the instructions, and the provider can keep reusing the conversation it cached.
 
 _(This example is complete, it can be run "as is")_
 
@@ -1801,7 +1819,7 @@ Two consequences worth knowing before you key configuration on an id:
 
 Use `on_change='append'` on a named instruction function or an [`InstructionPart`][pydantic_ai.messages.InstructionPart] when changing state should reach the model without rewriting earlier instructions. This is useful for todo lists, memory, and other state a tool updates during a run, or that changes between runs of a conversation. The default, `on_change='rewrite'`, keeps replacing the instruction prefix on each request.
 
-We recommend append mode for instructions built from operator-controlled state that changes partway through a conversation. Never build instructions from untrusted text: see [Keep untrusted text out of instructions](#untrusted-instruction-text). The instruction prefix, and the conversation cached behind it, stays the same; the cost is that each change adds the block's complete new text to the history, which stays there (it may be sent to the model as a diff, as described below). An instruction that never changes within a conversation doesn't benefit from it, since it never produces a replacement. Opting in does change how the instruction is rendered from the first request: it's sent inside a `<context id="...">` element, as described below.
+We recommend append mode for instructions built from operator-controlled state that changes partway through a conversation. Never build instructions from untrusted text: see [Keep untrusted text out of instructions](#untrusted-instruction-text). The instruction prefix, and the conversation cached behind it, stays the same; the cost is that each change adds the block's complete new text to the history, which stays there (it may be sent to the model as a diff, as described below). An instruction that never changes within a conversation doesn't benefit from it, since it never produces a replacement. Opting in does change how the instruction is rendered from the first request: it's sent inside a `<pyai:context id="...">` element, as described below.
 
 ```python {title="instruction_changes.py"}
 from dataclasses import dataclass
@@ -1944,16 +1962,16 @@ Persist the complete [message history](message-history.md), including these base
 
 The guarantee concerns instruction-induced prefix changes between baseline resets, with other request inputs unchanged. Changes to tools, models, provider caching rules, or cache expiry can still prevent cache reuse. History written by a newer Pydantic AI version with an instruction source this version doesn't know also starts a fresh baseline.
 
-Each block is sent as a `<context id="...">` element, and the last of them is followed once by the sentence "A later `<context>` element with the same id replaces the earlier one and stays in effect until replaced again." Each replacement or withdrawal is sent as a new element with that id. When a replacement differs from the text the model already has by less than its full length, as when one line of a long memory file is edited, it's sent as a `<context_diff id="...">` element holding a unified diff instead. History still records the complete replacement, along with a hash of the text it replaces: if a [history processor](message-history.md#processing-message-history) removed an earlier change, so the model never saw the text a diff would apply to, the model gets the complete replacement. Closing `</context>`, `</context_diff>` and `</system>` tags in a block's text are escaped, so the text can't end its element early. Models that support mid-conversation system messages receive the replacements that way; other models receive them as `<system>`-tagged user text, and their standing prompt says what that tag means ([details](message-history.md#mid-conversation-system-prompts)). History stores only the content, so the prefix is the same on every request and for every model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel].
+Each block is sent as a `<pyai:context id="...">` element, and the last of them is followed once by the sentence "A later `<pyai:context>` element with the same id replaces the earlier one and stays in effect until replaced again." Each replacement or withdrawal is sent as a new element with that id. When a replacement differs from the text the model already has by less than its full length, as when one line of a long memory file is edited, it's sent as a `<pyai:context_diff id="...">` element holding a unified diff instead. Like `<system>`, these elements speak in the application's voice, so a `<pyai:context` or `<pyai:context_diff` tag in user, tool or file text gets a [note](message-history.md#framework-frames-and-content-fidelity) saying whose text it is. History still records the complete replacement, along with a hash of the text it replaces: if a [history processor](message-history.md#processing-message-history) removed an earlier change, so the model never saw the text a diff would apply to, the model gets the complete replacement. A block's text goes into its element as written. Models that support mid-conversation system messages receive the replacements that way; other models receive them as `<system>`-tagged user text, and their instructions start with a short fixed announcement of what that tag means ([details](message-history.md#mid-conversation-system-prompts)). History stores only the content, so the prefix is the same on every request and for every model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel].
 
 Whether a model accepts and follows an update is model-dependent: preserving the prefix doesn't suppress provider refusals. See the provider pages for known issues, such as [refusals on repeated prompts](models/anthropic.md#refusals-on-repeated-prompts) on Anthropic.
 
 Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) compute themselves append their changes by default: the catalog of [on-demand capabilities](capabilities/on-demand.md) that the `load_capability` tool loads (keyed `capability:deferred_capabilities`), and the Harness [`SubAgents`](harness/subagents.md) listing (`capability:sub_agents`, or the capability's `id`), [`RepoContext`](harness/repo-context.md) context files (`capability:repo_context`, or the capability's `id`), and [`ManagedPrompt`](harness/managed-prompt.md) prompts (`capability:managed-prompt-<name>`, or the capability's `id`). [MCP server instructions](mcp/client.md#server-instructions) that an [`MCPToolset`][pydantic_ai.mcp.MCPToolset] includes do the same (`toolset:<id>`, where a URL toolset's `id` defaults to the server's hostname). A skill added to the workspace, a new sub-agent definition, an edited `AGENTS.md`, a new version of a managed prompt or a server's new instructions between runs of a conversation then extends the cached prompt rather than rewriting it. Instructions you write keep the `'rewrite'` default until you opt in.
 
 !!! note "Scope and trust"
-    Append delivery supports always-on agent, capability, and toolset instruction sources. A loaded [on-demand capability](capabilities/on-demand.md)'s instructions are stated in history, in the system voice, after the `load_capability` tool result rather than in the prefix, and their changes are always appended, whatever their `on_change` policy. Realtime sessions warn when given this opt-in and retain their existing delivery behavior; the framework's own appending blocks fall back to rewriting there without a warning. A dynamic system prompt can append its changes too: see [appending system prompt changes](#appending-system-prompt-changes).
+    Append delivery supports always-on agent, capability, and toolset instruction sources. A loaded [on-demand capability](capabilities/on-demand.md)'s instructions are stated in history, in the system voice, after the `load_capability` tool result rather than in the prefix, and their changes are always appended, whatever their `on_change` policy. A [realtime session](realtime/capabilities.md#instructions-that-change) appends every change, whatever the block's policy. A dynamic system prompt can append its changes too: see [appending system prompt changes](#appending-system-prompt-changes).
 
-    [UI adapters](ui/overview.md) keep instruction baselines and changes in trusted server-side history. Client-submitted instruction delta and baseline parts are stripped with system prompts. Browser-only history therefore starts a new baseline; matching an old value to current text does not authenticate its origin.
+    [UI adapters](ui/overview.md) keep instruction baselines and changes in trusted server-side history. Client-submitted instruction delta and baseline parts are stripped with system prompts. Browser-only history therefore starts a new baseline; matching an old value to current text does not authenticate its origin. A loaded capability's instructions are stated again on the request holding its load, where server-held history states them, with the capability's current text: the client's history decides only which loads it holds.
 
     Append delivery does not make instruction callbacks durable. In [durable execution](durable_execution/overview.md), callbacks must be deterministic or obtain changing external values through a [durable capability operation](capabilities/custom.md#durable-capability-operations) or the engine's durable units. Registering a bound async capability method decorated with `@durable_operation` through `capability.instructions(name='state', on_change='append')(capability.read_state)` records its result before history changes are computed. Replay then uses recorded values rather than fresh external reads.
 
@@ -2038,6 +2056,8 @@ We recommend [Pydantic Logfire](https://logfire.pydantic.dev/docs/), which has b
 
 ### Tracing with Logfire
 
+Run `uvx logfire-cli wizard --task pydantic-ai` once from your project. It signs you in, picks or creates a project, and has your coding agent add the following instrumentation. See [Using Logfire](logfire.md#using-logfire) for details.
+
 ```python
 import logfire
 
@@ -2082,7 +2102,7 @@ Evals let you define test cases, run them against your agent, and score the resu
 
 Pydantic AI's instrumentation is built on [OpenTelemetry](https://opentelemetry.io/), so you can send traces to any compatible backend. Even if you use the Logfire SDK for its convenience, you can configure it to send data to other backends. See [alternative backends](logfire.md#using-opentelemetry) for setup instructions.
 
-[Full Logfire integration guide →](logfire.md)
+[Full Logfire integration guide →](logfire.md#using-logfire)
 
 ## Model errors
 
@@ -2144,6 +2164,7 @@ with capture_run_messages() as messages:  # (2)!
                     cost=Decimal('0.000164'), input_tokens=62, output_tokens=4
                 ),
                 model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',
@@ -2175,6 +2196,7 @@ with capture_run_messages() as messages:  # (2)!
                     cost=Decimal('0.000216'), input_tokens=68, output_tokens=8
                 ),
                 model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
                 timestamp=datetime.datetime(...),
                 run_id='...',
                 conversation_id='...',

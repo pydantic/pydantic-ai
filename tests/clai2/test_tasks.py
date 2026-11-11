@@ -809,9 +809,7 @@ async def test_background_completion_continues_parent_without_user_input(
             child_started.set()
             await release.wait()
             yield 'Admiral Fluff commands the cheese fleet.'
-        elif any(
-            is_task_report(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
-        ):
+        elif any(task_texts(message) for message in messages if isinstance(message, ModelRequest)):
             captured.append(messages)
             yield 'Pirate hamster reporting for duty.'
             continued.set()
@@ -940,15 +938,14 @@ async def test_consumed_background_report_does_not_start_another_turn(
 
 
 def task_texts(request: ModelMessage) -> list[str]:
-    """The task reports and questions a request carries."""
+    """The task reports and questions a request carries, as the model sees them framed."""
     assert isinstance(request, ModelRequest)
-    return [
-        item.content
+    texts = [
+        ''.join(item.content for item in part.content if isinstance(item, TextContent))
         for part in request.parts
-        if is_task_report(part)
-        for item in part.content
-        if isinstance(item, TextContent)
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
     ]
+    return [text for text in texts if text.startswith(('<task_output ', '<task_question '))]
 
 
 @pytest.mark.parametrize('timing', ['idle', 'active'])

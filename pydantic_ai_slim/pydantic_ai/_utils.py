@@ -5,11 +5,13 @@ import asyncio
 import copy
 import functools
 import inspect
+import math
 import re
 import sys
 import textwrap
 import time
 import uuid
+import warnings
 from builtins import BaseExceptionGroup as BaseExceptionGroup
 from collections.abc import (
     AsyncGenerator,
@@ -27,11 +29,13 @@ from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from enum import Enum
+from functools import partial
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
+    Literal,
     TypeAlias,
     TypeGuard,
     get_args,
@@ -41,7 +45,7 @@ from typing import (
 
 import anyio
 from anyio.to_thread import run_sync
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter
 from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeIs, TypeVar, is_typeddict
@@ -180,10 +184,25 @@ def abandon_threads_on_cancel() -> Generator[None]:
 
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    def call_with_sync_agent_guard() -> _R:
+    @overload
+    def call_with_sync_agent_guard(return_outcome: Literal[False] = False) -> _R: ...
+
+    @overload
+    def call_with_sync_agent_guard(
+        return_outcome: Literal[True],
+    ) -> tuple[Literal[True], _R] | tuple[Literal[False], BaseException]: ...
+
+    def call_with_sync_agent_guard(
+        return_outcome: bool = False,
+    ) -> _R | tuple[Literal[True], _R] | tuple[Literal[False], BaseException]:
         token = _in_sync_callback.set(True)
         try:
-            return func(*args, **kwargs)
+            value = func(*args, **kwargs)
+            return (True, value) if return_outcome else value
+        except BaseException as exc:
+            if return_outcome:
+                return False, exc
+            raise
         finally:
             _in_sync_callback.reset(token)
 
@@ -196,7 +215,15 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         ctx = copy_context()
         return await loop.run_in_executor(executor, ctx.run, call_with_sync_agent_guard)
 
-    return await run_sync(call_with_sync_agent_guard, abandon_on_cancel=_abandon_on_cancel.get())
+    # AnyIO's worker future retains a raised error in its own traceback. Relay an outcome only here:
+    # ThreadPoolExecutor needs a propagated exception to clear its worker frame.
+    outcome = await run_sync(partial(call_with_sync_agent_guard, True), abandon_on_cancel=_abandon_on_cancel.get())
+    try:
+        if outcome[0] is True:
+            return outcome[1]
+        raise outcome[1]
+    finally:
+        del outcome
 
 
 def is_model_like(type_: Any) -> bool:
@@ -229,7 +256,7 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
             ref.startswith(prefix)
             and (resolved := schema.get('$defs', {}).get(ref[len(prefix) :]))
             and resolved.get('type') == 'object'
-            and not _contains_ref(resolved)
+            and not contains_ref(resolved)
         ):
             return resolved
         return schema
@@ -237,16 +264,13 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
         raise UserError('Schema must be an object')
 
 
-def _contains_ref(obj: JsonSchemaValue | list[JsonSchemaValue]) -> bool:
-    """Recursively check if an object contains any $ref keys."""
-    items: Iterable[JsonSchemaValue]
-    if isinstance(obj, dict):
-        if '$ref' in obj:
-            return True
-        items = obj.values()
-    else:
-        items = obj
-    return any(isinstance(item, dict | list) and _contains_ref(item) for item in items)  # pyright: ignore[reportUnknownArgumentType]
+def contains_ref(node: JsonValue) -> bool:
+    """Whether a `$ref` appears anywhere in `node`."""
+    if isinstance(node, dict):
+        return '$ref' in node or any(contains_ref(value) for value in node.values())
+    if isinstance(node, list):
+        return any(contains_ref(value) for value in node)
+    return False
 
 
 T = TypeVar('T')
@@ -327,6 +351,123 @@ async def cancel_and_drain(*tasks: asyncio.Task[Any], msg: object = None) -> Non
     # then can finish normal async `finally` cleanup before we re-raise.
     with anyio.CancelScope(shield=True):
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def in_cancelled_anyio_scope() -> bool:
+    """Whether the current task is inside a cancelled `anyio` cancel scope that no shield stops."""
+    # `anyio` reports a cancelled enclosing scope as a deadline of minus infinity.
+    return anyio.current_effective_deadline() == -math.inf
+
+
+class ScopedTask(Generic[T]):
+    """An `asyncio` task that takes its awaiter's cancellation in the form it arrived, so `anyio` shields in it hold.
+
+    The task runs its awaitable under an `anyio` cancel scope it owns, outside the awaiter's `anyio` cancel scopes. A
+    plain `await task` would forward each cancellation of the awaiter into it natively, and on asyncio a native
+    cancellation goes through `anyio` shields: a cancelled `anyio` scope re-cancels the awaiter every loop iteration,
+    so shielded work in the task would be cut short. Wait for the task with `wait()` or `result()` instead.
+    """
+
+    def __init__(self, awaitable: Awaitable[T]):
+        # `run()` must not close over `self`: a cancelled task keeps its `CancelledError`, whose traceback holds
+        # `run()`'s frame, so a reference to `self` there cycles back through `self.task` and keeps the run's frames,
+        # and the run's `deps`, alive until garbage collection.
+        self._scope = scope = anyio.CancelScope()
+        self._native_cancel_passed_on = False
+
+        async def run() -> T:
+            with scope:
+                return await awaitable
+            # The scope caught the cancellation passed on to it: end cancelled, as a native cancellation would.
+            raise asyncio.CancelledError
+
+        self.task = asyncio.create_task(run())
+
+    async def wait(self) -> None:
+        """Wait for the task to finish and discard its outcome, then re-raise the awaiter's cancellation, if any.
+
+        Each cancellation of the awaiter is passed on to the task. An `anyio` cancellation is passed on as a cancel of
+        the task's own scope, so shielded work in the task finishes and the rest is cut, as in the awaiter; so is a
+        native one that arrives first while the awaiter is in a cancelled `anyio` scope. Every other native
+        cancellation, including one after an `anyio` cancellation, is passed on as one native cancel with its message,
+        and a later `anyio` cancellation, such as a deadline, still reaches the task's scope. The first cancellation is
+        the one re-raised.
+
+        The outcome is read before it's discarded: until it's read, a cancelled task keeps its `CancelledError`, whose
+        traceback holds the task's frames.
+        """
+        cancellation = await self.wait_passing_on_cancellation()
+        with suppress(asyncio.CancelledError):
+            self.task.exception()
+        if cancellation is not None:
+            try:
+                raise cancellation
+            finally:
+                del cancellation
+
+    async def result(self) -> T:
+        """Wait for the task like `wait()` and return its result.
+
+        An error the task raised wins over a cancellation of the awaiter, and so does a result it returned after
+        absorbing a native cancellation passed on to it: the awaiter can record it before `raise_if_cancelling`
+        re-asserts the cancellation. A cancellation that arrives once the task has returned is re-raised instead of the
+        result, as from a plain `await`. After `anyio` cancellations alone, the awaiter's cancellation is re-raised
+        instead of a result, since finalizing under the cancelled scope would raise a `CancelledError` the scope doesn't
+        catch. An awaiter that must keep that result reads it from `task`.
+        """
+        cancellation = await self.wait_passing_on_cancellation()
+        if cancellation is not None and (
+            self.task.cancelled() or (self.task.exception() is None and not self._native_cancel_passed_on)
+        ):
+            # Read the task's outcome before re-raising the awaiter's cancellation instead, as `wait()` does.
+            with suppress(asyncio.CancelledError):
+                self.task.exception()
+            try:
+                raise cancellation
+            finally:
+                del cancellation
+        # On some CPython versions, such as 3.12.15 and 3.13.3, the cancellation's traceback keeps the frame of
+        # `wait_passing_on_cancellation()` linked to this one through `f_back`, so a local that keeps the cancellation
+        # here would cycle with it after the task absorbed it and returned.
+        del cancellation
+        return self.task.result()
+
+    async def wait_passing_on_cancellation(self) -> asyncio.CancelledError | None:
+        """Wait for the task to finish, pass each cancellation of the awaiter on to it, and return the first one.
+
+        It returns the cancellation instead of raising it, so callers can read the task's outcome outside this `except`
+        block: a `CancelledError` the task raised, which may be the run's own error, would otherwise be chained to the
+        awaiter's through `__context__`. A caller must `del` the returned cancellation in the frame that raises it or
+        returns: the cancellation's traceback can reach that frame, so a local that keeps it there would cycle with it
+        and keep the task's frames alive until garbage collection.
+        """
+        try:
+            await asyncio.wait((self.task,))
+        except asyncio.CancelledError as cancellation:
+            message = self._cancellation_message(cancellation)
+            shielded = False
+            while not self.task.done():
+                if not shielded and in_cancelled_anyio_scope():
+                    # A cancelled scope re-cancels the awaiter every loop iteration, so from here wait out the task
+                    # shielded. Only a native cancel gets through the shield.
+                    self._scope.cancel()
+                    shielded = True
+                else:
+                    # Keep waiting after a native cancel, so a later cancellation of the awaiter still reaches the task.
+                    self.task.cancel(message)
+                    self._native_cancel_passed_on = True
+                with anyio.CancelScope(shield=shielded):
+                    try:
+                        await asyncio.wait((self.task,))
+                    except asyncio.CancelledError as exc:
+                        message = self._cancellation_message(exc)
+            return cancellation
+        return None
+
+    @staticmethod
+    def _cancellation_message(cancellation: asyncio.CancelledError) -> object:
+        """The message a cancellation was raised with, to pass on with it."""
+        return cancellation.args[0] if cancellation.args else None
 
 
 def raise_if_cancelling() -> None:
@@ -444,6 +585,75 @@ async def aclose_all(streams: Iterable[AsyncIterable[Any]]) -> None:
         raise BaseExceptionGroup('Errors closing async iterables', errors)
 
 
+@dataclass
+class _TemporalGroupsContext(Generic[T]):
+    """The iterator `group_by_temporal` groups, with the pending pull its cleanup cancels."""
+
+    aiterator: AsyncIterator[T]
+    # we might wait for the next item more than once, so we store the task to await next time
+    task: asyncio.Task[T] | None = None
+
+
+async def _ungrouped_items(context: _TemporalGroupsContext[T]) -> AsyncIterator[list[T]]:
+    async for item in context.aiterator:
+        yield [item]
+
+
+async def _debounced_groups(context: _TemporalGroupsContext[T], soft_max_interval: float) -> AsyncIterator[list[T]]:
+    assert soft_max_interval >= 0, 'soft_max_interval must be a positive number'
+    buffer: list[T] = []
+    group_start_time: float | None = None
+
+    while True:
+        done = await _wait_for_next_item(context, soft_max_interval, group_start_time)
+
+        if done:
+            # the one task we waited for completed
+            try:
+                item = done.pop().result()
+            except StopAsyncIteration:
+                # if the task raised StopAsyncIteration, we're done iterating
+                if buffer:
+                    yield buffer
+                context.task = None
+                break
+            else:
+                # we got an item, add it to the buffer and set task to None to get the next item
+                buffer.append(item)
+                context.task = None
+                # if this is the first item in the group, set the group start time
+                if group_start_time is None:
+                    group_start_time = time.monotonic()
+        elif buffer:
+            # otherwise if the task timeout expired and we have items in the buffer, yield the buffer
+            yield buffer
+            # clear the buffer and reset the group start time ready for the next group
+            buffer = []
+            group_start_time = None
+
+
+async def _wait_for_next_item(
+    context: _TemporalGroupsContext[T], soft_max_interval: float, group_start_time: float | None
+) -> set[asyncio.Task[T]]:
+    """Wait for the next item until the group's interval is up, and return the pull if it finished."""
+    if group_start_time is None:
+        # group hasn't started, we just wait for the maximum interval
+        wait_time = soft_max_interval
+    else:
+        # wait for the time remaining in the group
+        wait_time = soft_max_interval - (time.monotonic() - group_start_time)
+
+    # if there's no current task, we get the next one
+    if context.task is None:
+        # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
+        # so far, this doesn't seem to be a problem
+        context.task = asyncio.create_task(anext(context.aiterator))  # pyright: ignore[reportArgumentType]
+
+    # we use asyncio.wait to avoid cancelling the coroutine if it's not done
+    done, _ = await asyncio.wait((context.task,), timeout=wait_time)
+    return done
+
+
 @asynccontextmanager
 async def group_by_temporal(
     aiterable: AsyncIterable[T], soft_max_interval: float | None
@@ -472,72 +682,11 @@ async def group_by_temporal(
     Returns:
         A context manager usable as an async iterable of lists of items produced by the input async iterable.
     """
-    # we might wait for the next item more than once, so we store the task to await next time
-    task: asyncio.Task[T] | None = None
-    aiterator = aiter(aiterable)
-
-    if soft_max_interval is None:
-
-        async def async_iter_groups() -> AsyncIterator[list[T]]:
-            async for item in aiterator:
-                yield [item]
-
-    else:
-
-        async def async_iter_groups() -> AsyncIterator[list[T]]:
-            nonlocal task
-
-            assert soft_max_interval is not None and soft_max_interval >= 0, (
-                'soft_max_interval must be a positive number'
-            )
-            buffer: list[T] = []
-            group_start_time: float | None = None
-
-            while True:
-                if group_start_time is None:
-                    # group hasn't started, we just wait for the maximum interval
-                    wait_time = soft_max_interval
-                else:
-                    # wait for the time remaining in the group
-                    wait_time = soft_max_interval - (time.monotonic() - group_start_time)
-
-                # if there's no current task, we get the next one
-                if task is None:
-                    # anext(aiter) returns an Awaitable[T], not a Coroutine which asyncio.create_task expects
-                    # so far, this doesn't seem to be a problem
-                    task = asyncio.create_task(anext(aiterator))  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
-
-                # we use asyncio.wait to avoid cancelling the coroutine if it's not done
-                done, _ = await asyncio.wait((task,), timeout=wait_time)
-
-                if done:
-                    # the one task we waited for completed
-                    try:
-                        item = done.pop().result()
-                    except StopAsyncIteration:
-                        # if the task raised StopAsyncIteration, we're done iterating
-                        if buffer:
-                            yield buffer
-                        task = None
-                        break
-                    else:
-                        # we got an item, add it to the buffer and set task to None to get the next item
-                        buffer.append(item)
-                        task = None
-                        # if this is the first item in the group, set the group start time
-                        if group_start_time is None:
-                            group_start_time = time.monotonic()
-                elif buffer:
-                    # otherwise if the task timeout expired and we have items in the buffer, yield the buffer
-                    yield buffer
-                    # clear the buffer and reset the group start time ready for the next group
-                    buffer = []
-                    group_start_time = None
-
+    context = _TemporalGroupsContext(aiter(aiterable))
     try:
-        yield async_iter_groups()
+        yield _ungrouped_items(context) if soft_max_interval is None else _debounced_groups(context, soft_max_interval)
     finally:
-        await _cleanup_temporal_group(task, aiterator)
+        await _cleanup_temporal_group(context.task, context.aiterator)
 
 
 def sync_anext(iterator: Iterator[T]) -> T:
@@ -972,27 +1121,29 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             new_name = name_mapping.get(original_name, original_name)
             s['$ref'] = f'#/$defs/{new_name}'
 
+    for subschema in _mapped_json_subschemas(s):
+        _update_mapped_json_schema_refs(subschema, name_mapping)
+
+
+def _mapped_json_subschemas(s: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """The subschemas directly under `s` whose `$ref`s `_update_mapped_json_schema_refs` updates."""
     # Handle keywords whose values map names to schemas.
     for keyword in ['properties', 'patternProperties', 'dependentSchemas']:
         if keyword in s:
             props: dict[str, dict[str, Any]] = s[keyword]
-            for prop in props.values():
-                if isinstance(prop, dict):
-                    _update_mapped_json_schema_refs(prop, name_mapping)
+            yield from (prop for prop in props.values() if isinstance(prop, dict))
 
     # Handle single-subschema keywords, including conditionals and array containment.
     for keyword in ['items', 'additionalProperties', 'propertyNames', 'not', 'contains', 'if', 'then', 'else']:
         subschema = s.get(keyword)
         if isinstance(subschema, dict):
-            _update_mapped_json_schema_refs(subschema, name_mapping)  # pyright: ignore[reportUnknownArgumentType]
+            yield subschema
 
     # Handle schema arrays, including the legacy tuple form of items.
     for keyword in ['prefixItems', 'anyOf', 'oneOf', 'allOf', 'items']:
         keyword_items: dict[str, Any] | list[dict[str, Any] | bool] | None = s.get(keyword)
         if isinstance(keyword_items, list):
-            for item in keyword_items:
-                if isinstance(item, dict):
-                    _update_mapped_json_schema_refs(item, name_mapping)
+            yield from (item for item in keyword_items if isinstance(item, dict))
 
 
 def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:
@@ -1038,23 +1189,8 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
                 renames[name] = _unique_def_name(name, schema, all_defs)
                 all_defs[renames[name]] = def_schema
 
-        # A def equal to an earlier schema's def ("shared") can reuse it only if none of the defs it
-        # transitively references were renamed; otherwise its `$ref`s resolve differently and it needs
-        # its own copy. Iterate to a fixpoint before keeping any shared def, so the result does not
-        # depend on the order of `$defs`.
         shared = [name for name in defs if name not in renames and name not in new_names]
-        changed = True
-        while changed:
-            changed = False
-            for name in shared:
-                if name in renames:
-                    continue
-                updated = copy.deepcopy(defs[name])
-                _update_mapped_json_schema_refs(updated, renames)
-                if updated != defs[name]:
-                    renames[name] = _unique_def_name(name, schema, all_defs)
-                    all_defs[renames[name]] = defs[name]
-                    changed = True
+        _rename_shared_defs_with_renamed_refs(shared, defs, renames, schema, all_defs)
 
         # Rewrite the refs of every def this schema contributes. Shared defs left under their
         # name only reference unrenamed defs, so the earlier schema's copy is already correct.
@@ -1065,6 +1201,34 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
         rewritten_schemas.append(schema)
 
     return rewritten_schemas, all_defs
+
+
+def _rename_shared_defs_with_renamed_refs(
+    shared: list[str],
+    defs: dict[str, dict[str, Any]],
+    renames: dict[str, str],
+    schema: dict[str, Any],
+    all_defs: dict[str, dict[str, Any]],
+) -> None:
+    """Give each of `merge_json_schema_defs`'s `shared` defs that references a renamed def a unique name of its own.
+
+    A def equal to an earlier schema's def ("shared") can reuse it only if none of the defs it
+    transitively references were renamed; otherwise its `$ref`s resolve differently and it needs
+    its own copy. Iterate to a fixpoint before keeping any shared def, so the result does not
+    depend on the order of `$defs`.
+    """
+    changed = True
+    while changed:
+        changed = False
+        for name in shared:
+            if name in renames:
+                continue
+            updated = copy.deepcopy(defs[name])
+            _update_mapped_json_schema_refs(updated, renames)
+            if updated != defs[name]:
+                renames[name] = _unique_def_name(name, schema, all_defs)
+                all_defs[renames[name]] = defs[name]
+                changed = True
 
 
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\r?\n(\{.*?\})\s*(?:\r?\n?```|\Z)', flags=re.DOTALL)
@@ -1110,7 +1274,12 @@ def get_union_args(tp: Any, *, unwrap_members: bool = True) -> tuple[Any, ...]:
 
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
-        event_loop = asyncio.get_event_loop()
+        with warnings.catch_warnings():
+            # With no current loop in the main thread, Python 3.12 and 3.13 create one and warn that this will
+            # change; 3.14 raises `RuntimeError` instead, handled below. Either way, the loop handling here stays
+            # the same.
+            warnings.simplefilter('ignore', DeprecationWarning)
+            event_loop = asyncio.get_event_loop()
     except RuntimeError:
         event_loop = None
 
@@ -1123,6 +1292,15 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
 def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
     return isinstance(obj, dict)
+
+
+def is_google_files_api_url(url: str) -> bool:
+    """Whether a URL uses the Google Files API prefix recognized by the Google adapters.
+
+    This is a literal, case-sensitive prefix check, not URL validation: the bare prefix and
+    suffixes without a path separator also match.
+    """
+    return url.startswith('https://generativelanguage.googleapis.com/v1beta/files')
 
 
 def is_text_like_media_type(media_type: str) -> bool:
@@ -1189,12 +1367,13 @@ def enum_member_docstrings(cls: type[Enum]) -> dict[str, str]:
             continue
         # A member is a plain or an annotated assignment; a string after anything else describes no option,
         # and neither does one after a name that is not a member, such as `_ignore_`.
-        if isinstance(previous, ast.Assign):
-            targets = previous.targets
-        elif isinstance(previous, ast.AnnAssign):
-            targets = [previous.target]
-        else:
-            continue
+        match previous:
+            case ast.Assign():
+                targets = previous.targets
+            case ast.AnnAssign():
+                targets = [previous.target]
+            case _:
+                continue
         for name in [target.id for target in targets if isinstance(target, ast.Name) and target.id in cls.__members__]:
             docstrings[name] = inspect.cleandoc(node.value.value)
     return docstrings

@@ -30,11 +30,11 @@ interactions:
         system:
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund policy tools.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -168,11 +168,11 @@ interactions:
         system:
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund policy tools.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -324,11 +324,11 @@ interactions:
         system:
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - refunds: Refund policy tools.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -533,11 +533,11 @@ interactions:
         - role: user
           content: And what about order-456?
         instructions: |-
-          <context id="capability:deferred_capabilities">
+          <pyai:context id="capability:deferred_capabilities">
           The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
           - refunds: Refund policy tools.
-          </context>
-          A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         reasoning:
           context: all_turns
         tool_choice: auto
@@ -595,11 +595,11 @@ interactions:
         frequency_penalty: 0.0
         incomplete_details: null
         instructions: |-
-          <context id="capability:deferred_capabilities">
+          <pyai:context id="capability:deferred_capabilities">
           The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
           - refunds: Refund policy tools.
-          </context>
-          A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.4-2026-03-05
@@ -768,11 +768,11 @@ interactions:
           call_id: call_CDqPA49J2eYaWjSBOYZUDljf
           output: "order-456: refund allowed for 30 days"
         instructions: |-
-          <context id="capability:deferred_capabilities">
+          <pyai:context id="capability:deferred_capabilities">
           The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
           - refunds: Refund policy tools.
-          </context>
-          A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         reasoning:
           context: all_turns
         tool_choice: auto
@@ -830,11 +830,11 @@ interactions:
         frequency_penalty: 0.0
         incomplete_details: null
         instructions: |-
-          <context id="capability:deferred_capabilities">
+          <pyai:context id="capability:deferred_capabilities">
           The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
           - refunds: Refund policy tools.
-          </context>
-          A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.4-2026-03-05

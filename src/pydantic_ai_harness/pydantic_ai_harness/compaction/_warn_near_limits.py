@@ -7,10 +7,12 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
-    SystemPromptPart,
+    OperatorSource,
+    OperatorText,
     TextContent,
     UserPromptPart,
 )
@@ -33,6 +35,17 @@ _WARNING_METADATA = 'pydantic-ai-harness.warn-near-limits.v1'
 """Metadata on the user-prompt warnings older versions sent, which is how they're recognized and stripped."""
 
 
+@dataclass(kw_only=True)
+class LimitWarningPart(InstructionCapabilityPart, namespace='warn_near_limits', name='limit_warning'):
+    """The request-scoped warning `WarnNearLimits` enqueues when the run approaches a configured limit.
+
+    Find warnings in history by this type.
+    """
+
+    kinds: tuple[WarningKind, ...] = ()
+    """The limits the warning is about, in the order it lists them. Never sent to the model."""
+
+
 @dataclass(frozen=True)
 class _Warning:
     kind: WarningKind
@@ -44,9 +57,10 @@ class _Warning:
 class WarnNearLimits(AbstractCapability[AgentDepsT]):
     """Warns the model when the run approaches configured limits.
 
-    Each warning is enqueued as a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope]
-    system prompt: the model sees it for the request it's part of only, and it stays in the
-    message history, so the cached prefix and the model's earlier reasoning stay valid.
+    Each warning is enqueued as a [request-scoped][pydantic_ai.messages.CapabilityPart.scope]
+    `LimitWarningPart`, in the application's voice: the model sees it for the request it's part of
+    only, and it stays in the message history, so the cached prefix and the model's earlier
+    reasoning stay valid.
 
     Older versions sent the warning as a user prompt marked with metadata instead. Those are
     stripped from the request when a history still holds them; a user prompt that quotes a
@@ -139,17 +153,20 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
                 'or max_total_tokens must be set.'
             )
 
-        if self.warn_on is None:
-            self._active_kinds = tuple(k for k in _WARNING_ORDER if configured[k])
-        else:
-            if not self.warn_on:
-                raise ValueError('warn_on must not be empty.')
-            for kind in self.warn_on:
-                if not configured[kind]:
-                    raise ValueError(f'{kind!r} requires its corresponding max_* limit to be configured.')
-            self._active_kinds = tuple(dict.fromkeys(self.warn_on))
+        self._active_kinds = self._resolve_active_kinds(configured)
 
     # -- internal helpers --
+
+    def _resolve_active_kinds(self, configured: dict[WarningKind, bool]) -> tuple[WarningKind, ...]:
+        """The kinds to warn about: each `warn_on` kind once, which must be *configured*, else every configured kind."""
+        if self.warn_on is None:
+            return tuple(k for k in _WARNING_ORDER if configured[k])
+        if not self.warn_on:
+            raise ValueError('warn_on must not be empty.')
+        for kind in self.warn_on:
+            if not configured[kind]:
+                raise ValueError(f'{kind!r} requires its corresponding max_* limit to be configured.')
+        return tuple(dict.fromkeys(self.warn_on))
 
     @staticmethod
     def _is_warning_part(part: ModelRequestPart) -> bool:
@@ -280,5 +297,13 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
         if active:
             order = {k: i for i, k in enumerate(_WARNING_ORDER)}
             active.sort(key=lambda w: order[w.kind])
-            ctx.enqueue(SystemPromptPart(self._format_warning(active), scope='request'))
+            ctx.enqueue(
+                LimitWarningPart(
+                    # The capability's own wording, with only counts filled in.
+                    content=OperatorText(self._format_warning(active)),
+                    source=OperatorSource(),
+                    scope='request',
+                    kinds=tuple(w.kind for w in active),
+                )
+            )
         return request_context

@@ -383,6 +383,7 @@ class TestXSearchCapability:
                     ],
                     usage=RequestUsage(input_tokens=55, output_tokens=6),
                     model_name='function:outer_model_fn:',
+                    model_id='function:function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -404,6 +405,7 @@ class TestXSearchCapability:
                     parts=[TextPart(content='done')],
                     usage=RequestUsage(input_tokens=59, output_tokens=7),
                     model_name='function:outer_model_fn:',
+                    model_id='function:function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1046,6 +1048,60 @@ class TestMCPCapability:
         returns = iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
         assert [(part.tool_name, part.content) for part in returns] == [('docs_search', 'results for a')]
 
+    @pytest.mark.parametrize('include_instructions', [True, False])
+    async def test_mcp_include_instructions(self, include_instructions: bool):
+        """`include_instructions` decides whether the server's instructions reach the model."""
+        # `FastMCP` needs server deps; the `mcp` extra only pulls `fastmcp-slim[client]`.
+        pytest.importorskip('fastmcp.server')
+        from fastmcp import FastMCP
+
+        server = FastMCP('docs-server', instructions='Always search the docs first.')
+        instructions: list[str | None] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            instructions='Be brief.',
+            capabilities=[MCP(local=server, id='docs', include_instructions=include_instructions)],
+        )
+        await agent.run('hi')
+        if include_instructions:
+            assert instructions == snapshot(
+                [
+                    """\
+Be brief.
+
+<pyai:context id="toolset:docs">
+Always search the docs first.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+"""
+                ]
+            )
+        else:
+            assert instructions == snapshot(['Be brief.'])
+
+    @pytest.mark.parametrize('include_instructions', [True, False])
+    def test_mcp_include_instructions_url(self, include_instructions: bool):
+        """`include_instructions` reaches the local toolset built from `url=` and from a `local=` URL override."""
+        from pydantic_ai.mcp import MCPToolset
+
+        for cap in [
+            MCP[object](url='https://mcp.example.com/api', include_instructions=include_instructions),
+            MCP[object](
+                url='https://mcp.example.com/api',
+                native=True,
+                local='https://relay.example.com/api',
+                include_instructions=include_instructions,
+            ),
+        ]:
+            local = cast('MCPToolset[object]', cap.local)
+            assert isinstance(local, MCPToolset)
+            assert local.include_instructions is include_instructions
+
     def test_mcp_tool_prefix_true_uses_explicit_id(self):
         """`tool_prefix=True` prefixes with the explicit `id`, and the local toolset keeps that `id`."""
         from pydantic_ai.mcp import MCPToolset
@@ -1264,6 +1320,7 @@ class TestPrepareToolsCapability:
                     parts=[ToolCallPart(tool_name='secret_tool', args={}, tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1287,6 +1344,7 @@ class TestPrepareToolsCapability:
                     parts=[TextPart(content='done')],
                     usage=RequestUsage(input_tokens=61, output_tokens=3),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1397,6 +1455,7 @@ class TestOverrideWithSpec:
                     parts=[TextPart(content='instructions: from spec')],
                     usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1433,6 +1492,7 @@ class TestOverrideWithSpec:
                     parts=[TextPart(content='instructions: explicit')],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1469,6 +1529,7 @@ class TestOverrideWithSpec:
                         parts=[TextPart(content='instructions: from-spec-instructions')],
                         usage=RequestUsage(input_tokens=51, output_tokens=2),
                         model_name='function:model_fn:',
+                        model_id='function:function:model_fn:',
                         timestamp=IsDatetime(),
                         run_id=IsStr(),
                         conversation_id=IsStr(),
@@ -1530,6 +1591,7 @@ also from spec\
                     ],
                     usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1555,6 +1617,7 @@ also from spec\
                     parts=[TextPart(content='success (no tool calls)')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
+                    model_id='test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
@@ -1592,6 +1655,7 @@ also from spec\
                     parts=[TextPart(content='max_tokens=100 temperature=0.5')],
                     usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1625,6 +1689,7 @@ also from spec\
                     parts=[TextPart(content='instructions: be helpful')],
                     usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1695,6 +1760,7 @@ from-spec\
                     ],
                     usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1731,6 +1797,7 @@ from-spec\
                     parts=[TextPart(content='ok')],
                     usage=RequestUsage(input_tokens=51, output_tokens=1),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1807,6 +1874,7 @@ class TestGetModelHook:
                     parts=[TextPart(content='success (no tool calls)')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
+                    model_id='test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
@@ -2903,6 +2971,7 @@ class TestGetWrapperToolsetHook:
                     parts=[TextPart(content="tools: ['cap_my_tool']")],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3001,6 +3070,7 @@ class TestGetWrapperToolsetHook:
                     parts=[TextPart(content="tools: ['my_tool']")],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3047,6 +3117,7 @@ class TestGetWrapperToolsetHook:
                     parts=[TextPart(content="tools: ['a_b_tool']")],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3093,6 +3164,7 @@ class TestGetWrapperToolsetHook:
                     parts=[TextPart(content="tools: ['runtime_my_tool']")],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3141,6 +3213,7 @@ class TestGetWrapperToolsetHook:
                     parts=[TextPart(content="tools: ['cap_my_tool'], descs: ['[prepared] Original.']")],
                     usage=RequestUsage(input_tokens=51, output_tokens=6),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),

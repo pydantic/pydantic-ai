@@ -4,6 +4,8 @@ Replace individual tool calls with a single sandboxed Python execution environme
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/code_mode/)
 
+![Two lanes compare the same task. With tool calling, the model makes three requests: it calls list_items, then get_item ten times, then answers, and every tool result is sent back to the model on each later request. With Code Mode, the model makes two requests: its first writes one run_code program, which runs in the Monty sandbox, calls list_items and then get_item ten times in parallel, filters the items in Python, and returns only the names that match; the second request answers.](https://pydantic.dev/docs/ai/img/harness/code-mode.svg)
+
 ## The problem
 
 Standard tool calling often needs another model turn for each dependent batch of tool calls. An agent
@@ -63,7 +65,7 @@ The [harness Quick start](../../README.md#quick-start) wires `CodeMode` up again
 
 <!-- Trace screenshot removed until it is Tinified: https://github.com/pydantic/pydantic-ai/issues/8824 -->
 
-**[See the full Logfire trace ->](https://logfire-us.pydantic.dev/public-trace/84bcf123-2106-49da-9f6f-5c26395339bb?spanId=7650806a0785b946)** Each `run_code` span fans out into the tool calls the model issued from inside the sandbox -- the easiest way to understand what code mode actually did. See the [Pydantic AI Logfire docs](https://ai.pydantic.dev/logfire/) for setup details.
+**[See the full Logfire trace ->](https://logfire-us.pydantic.dev/public-trace/84bcf123-2106-49da-9f6f-5c26395339bb?spanId=7650806a0785b946)** Each `run_code` span fans out into the tool calls the model issued from inside the sandbox. See the [Pydantic AI Logfire docs](https://ai.pydantic.dev/logfire/) for setup details.
 
 ## Code Mode or IPython Code Mode
 
@@ -78,7 +80,7 @@ The [harness Quick start](../../README.md#quick-start) wires `CodeMode` up again
 | State | Per run, plus an optional `repl_store` | A kernel per run, or one `IPythonKernel` kept across runs |
 
 > [!WARNING]
-> **Use Code Mode for anything web-facing.** IPython Code Mode runs model-written code with the permissions of the user running the agent. Do not run it in a webserver, or anywhere it handles untrusted input, without a sandbox around the agent. For production and web-facing agents, Code Mode is strongly recommended.
+> **Use Code Mode for anything web-facing.** IPython Code Mode runs model-written code with the permissions of the user running the agent. Do not run it in a webserver, or anywhere it handles untrusted input, without a sandbox around the agent.
 
 ## Installation
 
@@ -106,7 +108,10 @@ surfaces count as code-execution tools: `Shell`'s `run_command` and `start_comma
 to quote a shell command inside a generated Python string. `CapabilityCreation`'s
 `author_capability` stays native for the same reason: its argument is a complete Python module.
 Their non-command tools (`read_file`, `check_command`, and so on) are folded into `run_code` like
-any other tool. You can control which eligible tools go through the sandbox:
+any other tool. A host that wants a code-execution tool folded anyway sets `FOLD_INTO_CODE_MODE` (`'fold_into_code_mode'`, from
+`pydantic_ai_harness.code_mode`) to `True` in its metadata, for example from `prepare_tools`; the tool keeps
+its `code_arg_name`, so instrumentation and other capabilities still see it as code. You can control which
+eligible tools go through the sandbox:
 
 ```python
 from pydantic_ai_harness import CodeMode
@@ -127,7 +132,7 @@ Tools that match the selector are wrapped inside `run_code`. Non-matching tools 
 
 When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](https://ai.pydantic.dev/tools-advanced/#tool-search)), `CodeMode` keeps them out of `run_code` while they're undiscovered and leaves their discovery to Tool Search; how they're offered until then depends on `dynamic_catalog`, below. `CodeMode` uses `RunContext.is_tool_available` to follow that reveal state. Once the model discovers a tool -- or loads the deferred capability that owns it -- `CodeMode` folds it into `run_code` like any other tool from then on, so it's callable from generated code. (The tool keeps `defer_loading=True`, which records what its author asked for; what changes is its availability for the run.)
 
-By default (`dynamic_catalog=True`), a discovery appends to the conversation instead of rewriting it, so the prompt cache survives it. The catalog of sandboxed-tool signatures goes into the agent instructions rather than `run_code`'s description, as a dynamic [`InstructionPart`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.InstructionPart) with the id `toolset:code_mode:catalog` and [`on_change='append'`](https://ai.pydantic.dev/agent/#appending-instruction-changes): when a discovery adds a function, the updated catalog is appended to the message history. When Tool Search found the tool, a short system prompt part sent through [`ctx.enqueue`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.enqueue) also names the new functions; loading a capability appends only the catalog update. Deferred tools that `run_code` will take over are kept off the wire until they're found: the model finds them with the local `search_tools` tool, or by loading the capability that owns them, and from then on calls them from `run_code` only. The tool definitions and the instructions of earlier requests stay as they were sent.
+By default (`dynamic_catalog=True`), a discovery appends to the conversation instead of rewriting it, so the prompt cache survives it. The catalog of sandboxed-tool signatures goes into the agent instructions rather than `run_code`'s description, as a dynamic [`InstructionPart`](https://ai.pydantic.dev/api/messages/#pydantic_ai.messages.InstructionPart) with the id `toolset:code_mode:catalog` and [`on_change='append'`](https://ai.pydantic.dev/agent/#appending-instruction-changes): when a discovery adds a function, the updated catalog is appended to the message history. When Tool Search found the tool, a short `DiscoveryAnnouncementPart` (a [capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts) in the application's voice, whose `tools` field lists the tools it announces) sent through [`ctx.enqueue`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.enqueue) also names the new functions; loading a capability appends only the catalog update. Deferred tools that `run_code` will take over are kept off the wire until they're found: the model finds them with the local `search_tools` tool, or by loading the capability that owns them, and from then on calls them from `run_code` only. The tool definitions and the instructions of earlier requests stay as they were sent.
 
 The catalog renders tool definitions into the instructions, including the names, descriptions and schemas an MCP server supplies. Tool definitions are trusted operator configuration: the model already receives them in the request's tool definitions with the same authority, so moving them into instructions gives them no authority they didn't have. Connect only MCP servers you trust. The discovery announcement names functions only by their Python identifiers, and keeps the tool names as found in its metadata.
 
@@ -254,9 +259,8 @@ denied. Calls that did not finish are included rather than filtered out, since a
 before it stops. That detail is bounded -- arguments and results are previewed, and the list stops
 at a size cap and says how many entries it left out -- so a large payload cannot inflate the
 retry. The reported total stays exact whether or not the list was cut, which is what tells the
-model some calls are missing from what it can see. The list is context for the model, not a guard:
-nothing stops it from calling those tools again, so treat it as informing the next attempt rather
-than preventing a repeat.
+model some calls are missing from what it can see. Nothing stops the model from calling those
+tools again.
 
 Override them with `resource_limits={'max_duration_secs': 10, 'max_memory': 134_217_728, 'max_suspensions': 10_000}` and
 `max_tool_calls=25`. Pass `resource_limits='unlimited'` only when another execution boundary
@@ -577,9 +581,9 @@ If these checks pass, inspect the generated code and launch events. Oversized st
 and exhausted parser-work budgets also stop stream scanning; speculation is an optimization,
 not a guarantee that every eligible call starts early.
 
-## Remote workers over WebSockets
+## Remote workers
 
-Set `monty_sandbox` to a `ws://` or `wss://` URL to run sandboxed code on a remote Monty worker
+Set `monty_sandbox` to the root URL of a Monty server to run sandboxed code on a remote worker
 instead of a local subprocess:
 
 ```python
@@ -588,23 +592,81 @@ from pydantic_ai_harness import CodeMode
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
-    capabilities=[CodeMode(monty_sandbox='wss://sandbox.example.com/monty')],
+    capabilities=[CodeMode(monty_sandbox='https://sandbox.example.com')],
 )
 ```
 
-A URL connects without a key. To send headers or set other pool options, pass a sync or async
-function that returns a `pydantic_monty.AsyncMontyWebsocket` instead; Code Mode builds a pool from
-it for each run. That pool's `request_timeout`, 10 seconds by default, limits how long code runs
-between tool calls, in place of `max_duration_secs`.
+Each worker is a gRPC stream to the server. The client always calls the same method at the server
+root, so a URL with a path, query, or fragment raises a `UserError` when the run starts.
+`ws://` and `wss://` URLs from earlier releases still work at the server root, because Monty reads
+them as `http://` and `https://`. Remove any path they carry, such as `/monty`.
 
-Use `wss://` unless the server is on a network you trust: the connection carries your agent's tool
+A URL connects without a key. To send metadata such as an `authorization` header, or to set other
+pool options, pass a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`
+instead; Code Mode builds a pool from it for each run:
+
+```python {test="skip"}
+from pydantic_monty import AsyncMontyRemote
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+
+def sandbox_pool() -> AsyncMontyRemote:
+    return AsyncMontyRemote(
+        'https://sandbox.example.com',
+        metadata=lambda: {'authorization': 'Bearer my-key'},
+    )
+
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_sandbox=sandbox_pool)])
+```
+
+That pool's `request_timeout`, 10 seconds by default, adds a per-turn transport deadline.
+The configured `max_duration_secs` still applies outside Temporal. Inside a Temporal workflow,
+Code Mode disables that execution timer for deterministic replay; the transport deadline still applies.
+
+Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's
+instructions or tool arguments.
+
+Use `https://` unless the server is on a network you trust: the connection carries your agent's tool
 calls and their results.
 
 Only code execution moves to the worker. Your tools, `mount` directories, `os_access`, and `print`
 output stay in your process, and REPL state persists across `run_code` calls as it does locally.
 
-The `run_code` description lists the standard library modules Monty 1.4 can import, so run the
-worker on `pydantic-monty>=1.4.0`.
+Run the Monty server on `pydantic-monty>=1.5.0`. Earlier servers speak WebSockets, which this
+client no longer uses. The `run_code` description lists the modules Monty 1.5 can import.
+
+### Error handling
+
+Pool creation, connection, and session checkout errors propagate to the code calling the agent. These
+include missing or invalid credentials, an invalid server URL, and exceptions raised by a pool factory.
+They are not sent to the model as `ModelRetry`: the model cannot fix sandbox configuration. A checkout
+refused with `caller_cap`, `capacity`, or `worker_unavailable` is retried once after a short backoff;
+if it still fails, the error propagates to the caller.
+Inside a Temporal workflow, the exception reaches workflow code and follows the
+[workflow failure policy](#temporal-durability), not the model retry policy.
+
+Errors the model can act on are returned as model retries:
+
+- Syntax, type, and ordinary runtime errors include the sandbox's diagnostic.
+- Execution time limits, including a pool's `request_timeout` and a remote `turn_timeout`, reset the
+  session and ask the model to do less work per call.
+- Remote `session_timeout` and `idle_timeout` errors explain that the session ended and state is lost.
+- A sandbox memory-limit error or a `MemoryError` without a traceback resets the session and asks
+  the model to use less memory, for example by processing smaller batches. Other `MemoryError`s
+  raised by the snippet or a nested tool keep the session. Errors that cannot be distinguished
+  from a sandbox memory-limit failure also reset it: Monty does not guarantee heap integrity after
+  a memory limit fires, even if the worker stays alive.
+  Exceeding the 10 MiB printed-output cap also resets the session: Monty exposes the same diagnostic
+  for this host-side limit and a sandbox heap limit.
+- A worker crash, a lost connection, or an unexpected execution failure reports the session reset.
+  Remote host-side error details are omitted from model retries because they can contain pool URLs
+  or credentials. The original exception remains the retry's cause for application-side diagnostics.
+
+After a reset, the model must re-run imports and recreate state. The retry lists nested calls that
+already started so the model can avoid repeating their side effects; Code Mode does not replay them.
 
 ## Temporal durability
 
@@ -649,6 +711,14 @@ Model requests and, by default, nested tool calls cross Temporal activity bounda
 `asyncio.gather` can schedule nested tool activities concurrently. The REPL is process-local state
 for one agent run, not durable storage. Replay reconstructs it by running the recorded snippets
 again against recorded activity results.
+
+Setup errors keep their original types in workflow code. `PydanticAIPlugin` treats `UserError` as a
+workflow failure. Other setup errors, such as `RuntimeError` and `MontyRefusedError`, follow Temporal's
+default: an uncaught error fails the workflow task, not the workflow. Temporal retries the task while
+the workflow remains running, so a client awaiting its result keeps waiting if setup keeps failing. The original
+error is available in the failed task's history and worker logs, not in a model retry.
+To end the workflow instead, catch the expected setup exceptions in your workflow and raise
+`temporalio.exceptions.ApplicationError(..., non_retryable=True)` from the original exception.
 
 Keep workflow-side code deterministic. `mount` reads and writes, `os_access` callbacks, and
 host-clock calls happen again during replay; changing their results can change which activities the
@@ -785,7 +855,7 @@ CodeMode(os_access=my_os)
 The callback takes keyword arguments and may be `async`. The older positional form, `my_os(name, args, kwargs)`,
 still works but is deprecated and will be removed in the next breaking release.
 
-Your callback's return value decides the call's fate, and the two outcomes are easy to confuse:
+Your callback's return value decides the call's fate:
 
 - **Return any value** -- including `None`, `''`, or `0` -- and that becomes the result the sandbox
   sees. `os.getenv` returning `None` looks exactly like a normal unset variable, so the agent's code
@@ -812,8 +882,8 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 - No third-party imports (allowed stdlib: `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
   `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`,
-  `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `hashlib`,
-  `os.path`, `tomllib`)
+  `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`,
+  `hashlib`, `os.path`, `tomllib`, `annotationlib`)
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation
   and wait APIs are unavailable
 - No clock or randomness by default (`datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, unseeded `random`) -- they become available when an `os_access` handler implements them (the built-in `OSAccess` does); `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer
@@ -821,6 +891,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv`/`os.environ` need an `os_access` handler
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
 - Tool results reach the sandbox in the JSON shape their generated stub declares, since the stub is derived from the tool's JSON schema: `Decimal`, `UUID` and `datetime` arrive as strings, and mapping keys are stringified, so a `dict[int, str]` of `{1: 'a'}` arrives as `{'1': 'a'}`. `bytes` and `bytearray` are the exception: Monty carries binary natively, so they cross unchanged even though the stub declares `str` for them
+- A sandboxed tool can't take the name of a Python builtin such as `list`, `open` or `print`: code would call the builtin instead. `CodeMode` raises `UserError` for such a name. Rename the tool, or give a toolset whose names you don't control a prefix with `toolset.prefixed(...)`
 - A tool without a return schema is still callable, but its generated signature shows `-> Any`, so the model has to guess the result's shape. `CodeMode` names such tools in one `CodeModeReturnSchemaWarning` (a `UserWarning` subclass) per run. Give a function tool a return annotation, or have your MCP server declare an `outputSchema`; when the server is not yours, silence just this category with `warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)`
 
 ## API
@@ -840,7 +911,7 @@ CodeMode(
     resource_limits=None, # sandbox time and memory caps; 'unlimited' removes them
     eager=False,          # run statements while the run_code call is still streaming
     speculate=None,       # read-only tool names, or 'declared', to start while run_code streams
-    monty_sandbox=None,     # a ws:// or wss:// URL, or a function that returns the pool
+    monty_sandbox=None,   # an http(s):// server root URL, or a function that returns the pool
     repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
     dynamic_catalog=True,
 )

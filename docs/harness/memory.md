@@ -9,6 +9,8 @@ Give an agent a persistent notebook that it can update, search, and reuse across
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model gets four tools, write_memory, read_memory, delete_memory and search_memory, over a notebook of Markdown files kept in a store such as FileStore, SqliteMemoryStore or PostgresMemoryStore. Your code picks the namespace, such as the user ID from the run dependencies, so the model cannot reach another user's files, and writes are compare-and-swap. On the first request of a run, Memory adds a <memory> block with an excerpt of MEMORY.md and the names of the other files next to the user's prompt, only when memory changed, within max_tokens.](../img/harness/memory.svg)
+
 ## Notebook model
 
 Memory gives each agent a notebook made of Markdown files:
@@ -44,7 +46,7 @@ The namespace is resolved by application code, not supplied to the tools. The mo
 
 ### Reading memory with `FileSystem`
 
-When the store is a `FileStore` that keeps its files in the run's workspace (no `workspace=` of its own, and a relative `directory` inside the working directory) and `FileSystem` is on the agent, `read_memory` steps aside for `FileSystem`'s `read_file`. The tool is marked with [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. Keep `FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet ([#10927](https://github.com/pydantic/pydantic-ai/issues/10927)). With a `store_resolver`, the store it returns for the run decides. The guidance in the instructions doesn't name a reader, so it is the same in every run and stays in the cached prefix. An instruction block of its own, named `directory`, says where this scope's files are, for example "Memory files are in `.agent-memory/main/` in the workspace; read them with the file-reading tool.", so the model knows even in a run that records no snapshot. The block is there from the first request, empty while no file reader is on the run, and appended to the history when one joins. Its text counts against `max_tokens` with the guidance and the snapshot: when it doesn't fit, `read_memory` stays and the block says nothing; the injected `<memory>` block says so too, and the notices that pointed at `read_memory` (lines left out of the injected notebook, an `old_text` that was not found) name a `read_file` call on the file's path instead.
+When the store is a `FileStore` that keeps its files in the run's workspace (no `workspace=` of its own, and a relative `directory` inside the working directory) and `FileSystem` is on the agent, `read_memory` steps aside for `FileSystem`'s `read_file`. The tool is marked with [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. With a `store_resolver`, the store it returns for the run decides. The guidance in the instructions doesn't name a reader, so it is the same in every run and stays in the cached prefix. An instruction block of its own, named `directory`, says where this scope's files are, for example "Memory files are in `.agent-memory/main/` in the workspace; read them with the file-reading tool.", so the model knows even in a run that records no snapshot. The block is there from the first request, empty while no file reader is on the run, and appended to the history when one joins. Its text counts against `max_tokens` with the guidance and the snapshot: when it doesn't fit, `read_memory` stays and the block says nothing; the injected `<memory>` block says so too, and the notices that pointed at `read_memory` (lines left out of the injected notebook, an `old_text` that was not found) name a `read_file` call on the file's path instead.
 
 `InMemoryStore`, `SqliteMemoryStore`, `PostgresMemoryStore` and a `FileStore` with a `workspace=` of its own keep their files where `FileSystem` cannot see them, so with those `read_memory` stays. With `inject_memory=False`, or when the guidance alone fills `max_tokens` so no snapshot fits, `read_memory` stays too: the injected `<memory>` block is where the model learns the files' directory.
 
@@ -73,15 +75,11 @@ The snapshot is added to the conversation's message history, so every later requ
 
 New or changed memory is not added after tool results, where a model could read it as a new message from the user. The one exception is restoring the run's own snapshot when compaction drops it in the middle of a tool loop, described below. Memory that changes during a run, through `write_memory` or an external update, reaches the model with the next user prompt; the model's own writes are already in the conversation as its tool calls. A snapshot is only added before the model has responded in the run, so a run that starts without a prompt from history ending in tool results or a response (resuming after a deferred tool approval, or continuing a provider-suspended response), or a `Memory` loaded mid-run with `defer_loading=True`, adds none, even if a hook retries its first request; if compaction drops the snapshot such a run started with, that same snapshot is enqueued again, even when the history has none yet: memory reaches the model with the next prompt. A run with no prompt and no tool results, such as `agent.run()` on an empty history, gets its snapshot on that request. If an earlier capability's `before_model_request` retries the run's first request, the snapshot follows the retry feedback, still ahead of any response. Every snapshot is enqueued, so UI adapters stream it as an `EnqueuedMessagesEvent`.
 
-Stored memory and the listed file names go into the snapshot as data: the framework's framing tags in them, such as `<system>`, and `<memory>` itself are escaped, so memory can't close its block or read as the application speaking.
+Stored memory and the listed file names go into the snapshot as data, with a note in the application's voice that the agent wrote it in an earlier run, not the user or the application. They go in as stored: text in them that looks like the framework's framing tags, such as `<system>`, or opens or closes `<memory>` itself, gets a further note saying the agent wrote it, so memory can't close its block or read as the application speaking.
 
-Snapshots are part of the conversation history and reach UI clients: UI adapters stream each new one as it is added and include it in the history they send. Keep that in mind when memory holds anything the user of the UI should not see.
-
-Snapshots are recognized by the metadata on their `TextContent`, `{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ..., 'id': ...}` (the hashed scope and the capability's `id`), never by their text. A history that loses that metadata on the way through a UI client, as a Vercel AI round trip does, gets a fresh snapshot on every run, and its earlier snapshots then look like user messages to `SummarizingCompaction`, which keeps them with `keep_user_messages`. Keep the history on the server when that matters. Snapshots saved by earlier releases, which marked them with a plain string, are recognized and kept.
+Each snapshot is a `MemorySnapshotPart`, a [capability part](../capabilities/custom.md#capability-parts) holding data the agent wrote in an earlier run, never trusted, and recognized by its type and its `scope_hash` and `memory_id` fields (the hashed scope and the capability's `id`), never by its text. The UI adapters keep capability parts on the server, so a history that goes through a UI client comes back without its snapshots and gets a fresh one on every run. Keep the history on the server when that matters. Snapshots saved by earlier releases, as user text marked with metadata or a plain string, are recognized and kept.
 
 When combining it with compaction, list compaction before `Memory`, so `Memory` sees the history compaction leaves. If compaction drops the snapshot a run started with, `Memory` enqueues that same snapshot again on the same request, without reading the store again. It lands at the end of the request being sent, after its tool results, which is the one place every compaction keeps, native compaction included; on a later run's first request it records the current memory again if needed.
-
-A `FileStore` whose files are in an [untrusted workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/#untrusted-workspaces) (`trusted=False`) is not injected: its files reach the model only when it reads them with a tool. A store with a trusted `workspace=` of its own is injected as usual.
 
 Set `inject_memory=False` to keep memory out of the conversation entirely. The tools remain available, and the model can fetch memory only when it needs it. Snapshots that earlier runs added stay in the history:
 
@@ -106,6 +104,7 @@ Every `read` call passes a finite `max_chars` and every `list_paths` call a fini
 | `FileStore(directory)` | Markdown files in the run's workspace, or in `workspace=`. Versions are content hashes, and receipts for recent mutations are kept beside the files. One writer per directory. |
 | `SqliteMemoryStore(database=...)` | Durable single-host storage; compare-and-swap and idempotency are enforced in database transactions. Receipts accumulate in the `memory_operations` table until you delete old rows. |
 | `PostgresMemoryStore(pool)` | Durable shared storage; compare-and-swap and idempotency are enforced in database transactions. Receipts accumulate in the `{table}_operations` table until you delete old rows. The caller owns the pool lifecycle. |
+| `PixeltableMemoryStore(table_name=...)` | Durable shared storage in a Pixeltable catalog; receipts and table history are retained. Install `[pixeltable]` on Python 3.11 to 3.14. See the [Pixeltable guide](pixeltable.md). |
 
 ```python
 from pydantic_ai_harness import Memory
@@ -127,7 +126,7 @@ If a memory path resolves outside its store, the tool asks the model to correct 
 pip/uv-add asyncpg
 ```
 
-```python {typecheck="skip - asyncpg's pooled connections are untyped proxies, see #10853"}
+```python
 import asyncpg
 
 from pydantic_ai_harness import Memory
@@ -233,7 +232,7 @@ Metadata describes the write that produced the current version:
 - The bundled stores accept string keys and values without NUL characters, at most 4,096 characters as JSON, and `Memory` checks a fixed `write_metadata` mapping when it is constructed. An empty mapping is no metadata. It stays out of the model's context, the memory spans, and the memory snapshot a durable engine journals.
 - `PostgresMemoryStore` keeps it in a `write_metadata JSONB` column of its table, so the application can query it, for example `WHERE write_metadata->>'updated_by' = 'ui'`. `SqliteMemoryStore` keeps it as JSON text in a `write_metadata` column. Both add the column to an existing table on first use, and rows written before then read as `metadata=None`.
 
-`Memory(write_metadata=...)` raises `UserError` at construction, or when the run starts for a `store_resolver`, if the store does not implement `MetadataMemoryStore`, rather than drop the metadata. `FileStore` does not implement it: a sidecar file could not change in one atomic step with the Markdown, and the model's file tools could edit it.
+`Memory(write_metadata=...)` raises `UserError` at construction, or when the run starts for a `store_resolver`, if the store does not implement `MetadataMemoryStore`, rather than drop the metadata. `FileStore` does not implement it: a sidecar file could not change in one atomic step with the Markdown, and the model's file tools could edit it. `PixeltableMemoryStore` does not implement it either.
 
 A store records write metadata when it has a `write_with_metadata` method, so a custom store opts in by implementing the one `MetadataMemoryStore` declares. It must store the metadata in the same atomic step as the content, and the store's `write` must record none, as the bundled stores' `write` does by calling `write_with_metadata` with `metadata=None`. A custom store that implements only `MemoryStore` keeps working as before without metadata. A subclass of a bundled store that overrides `write` keeps working too; with `write_metadata` set, `Memory` calls `write_with_metadata` instead, so override that method as well.
 
@@ -301,6 +300,7 @@ Memory(
     injection_errors='ignore',         # or 'raise'
     guidance=None,                     # None uses the default notebook guidance
     write_metadata=None,               # needs a MetadataMemoryStore; see Write metadata
+    scanner=None,                      # an ArtifactScanner; see Scanning memory
 )
 ```
 
@@ -340,9 +340,30 @@ Each model request that uses automatic snapshot loading records one bounded snap
 
 ## Security and provenance
 
-Memory is model-written, untrusted content that can re-enter future prompts. Keeping it in a delimited user-role part lowers its authority relative to model instructions, but this is not a hard prompt-injection boundary. In stored content, the `<` of a `<memory>` or `</memory>` tag, in any case or spacing, is injected as `&lt;`, so stored text cannot end the block early. Use `inject_memory=False` when less-trusted actors can write to the store, and expose memory only through application-controlled retrieval when stronger isolation is required. Do not store secrets unless the backend, retention policy, and access controls are appropriate. Sanitize content before rendering it into another trust domain.
+Memory is model-written, untrusted content that can re-enter future prompts. Keeping it in a delimited user-role part lowers its authority relative to model instructions, but this is not a hard prompt-injection boundary. Stored content goes in as written, and a `<memory>` or `</memory>` tag in it gets a note saying the agent wrote it, not the application, so stored text cannot end the block early. Use `inject_memory=False` when less-trusted actors can write to the store, and expose memory only through application-controlled retrieval when stronger isolation is required. Do not store secrets unless the backend, retention policy, and access controls are appropriate. Sanitize content before rendering it into another trust domain.
 
 Memory records do not carry source citations. To record who wrote a file, such as the user in your product or the agent, use [write metadata](#write-metadata) with a `MetadataMemoryStore` rather than a header in the note. Metadata records which writer produced the current version; it does not establish that a remembered claim is true, and neither does optimistic concurrency, which prevents lost updates.
+
+### Scanning memory
+
+Pass an [`ArtifactScanner`](artifact-scanning.md) to check what the model writes, and what later sessions load, for prompt injection, credential exfiltration, HTML comments, and invisible characters:
+
+```python
+from pydantic_ai_harness import ArtifactScanner, Memory
+
+memory = Memory(scanner=ArtifactScanner())
+```
+
+With a scanner set:
+
+- `write_memory` refuses flagged text with a tool failure that names the threats but does not quote the text, and stores nothing. Only the text being written is scanned, so a correction that removes a passage still succeeds.
+- A flagged `MEMORY.md` is left out of the injected snapshot, with a notice in its place, so the model can tell the user. The list of other files is still shown.
+- `read_memory` refuses a flagged file, and `search_memory` replaces a flagged snippet with a notice.
+- Each decision records a zero-duration `artifact_scan flagged` span, and the `memory.inject` span gains `memory.main_withheld`.
+
+The scan runs outside the durable operations `Memory` routes its tools through, so under Temporal, Prefect, or DBOS a refusal fails the tool call rather than an operation the engine would retry.
+
+Files that `FileSystem`'s `read_file` reads in place of `read_memory`, or that other tools open, are not scanned. The scan is pattern matching: it misses paraphrased instructions and can flag a note that quotes an attack, so treat it as one layer next to `inject_memory=False` for less-trusted writers.
 
 ## API reference
 

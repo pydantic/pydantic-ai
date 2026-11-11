@@ -9,11 +9,12 @@ import subprocess
 import sys
 from collections.abc import AsyncGenerator, Callable, Collection
 from contextlib import asynccontextmanager, suppress
+from functools import partial
 from pathlib import Path
 from types import TracebackType
 from urllib.parse import unquote, urlsplit
 
-from anyio import CancelScope, fail_after
+from anyio import CancelScope, fail_after, move_on_after, to_thread
 
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import canonical_plugin_id
@@ -21,6 +22,8 @@ from pydantic_clai2.runtime.processes import kill_process_tree
 
 ADD_USAGE = 'Usage: /plugins add GIT_URL or /plugins add ID MODULE[:ATTR] [JSON]'
 CHECKOUTS_DIR = '_git'
+CANCEL_DRAIN_GRACE = 1.0
+"""How long cancellation cleanup drains Git's stderr, which a descendant that survived the kill may hold open."""
 
 _SCP_URL = re.compile(r'[\w.-]+@[\w.-]+:[^:\s].*')
 _PLUGIN_ID = re.compile(r'[A-Za-z][A-Za-z0-9_]*')
@@ -65,9 +68,9 @@ async def install_git_plugin(
     if name in names:
         raise ValueError(f'Plugin {name} already exists; choose a repository with a different name.')
     # Keep incomplete checkouts out of drop-in discovery, including in other running CLAI sessions.
-    destination = checkout_dir(plugins_dir, name)
+    destination = await to_thread.run_sync(checkout_dir, plugins_dir, name)
     try:
-        destination.mkdir(parents=True)
+        await to_thread.run_sync(partial(destination.mkdir, parents=True))
     except FileExistsError as exc:
         raise ValueError(f'Plugin checkout already exists at {destination}; it has not been changed.') from exc
     try:
@@ -83,17 +86,19 @@ async def install_git_plugin(
         if returncode:
             detail = stderr.decode(errors='replace').strip()
             raise ValueError(f'Could not clone the plugin repository: {detail}')
-        entry = next(
-            (path for filename in ('__init__.py', 'plugin.py') if (path := destination / filename).is_file()),
-            None,
+        entry = await to_thread.run_sync(
+            lambda: next(
+                (path for filename in ('__init__.py', 'plugin.py') if (path := destination / filename).is_file()),
+                None,
+            )
         )
-        if entry is None or entry.is_symlink():
+        if entry is None or await to_thread.run_sync(entry.is_symlink):
             raise ValueError('A plugin repository must contain a regular __init__.py or plugin.py at its root.')
         yield PluginSettings(id=name, factory=name, path=str(entry))
     except BaseException:
         # Cleanup must not replace the installation error or cancellation.
-        with suppress(OSError):
-            remove_checkout(destination)
+        with suppress(OSError), CancelScope(shield=True):
+            await to_thread.run_sync(remove_checkout, destination)
         raise
 
 
@@ -146,9 +151,10 @@ def git_executable(*, windows: bool = os.name == 'nt') -> str:
 
 async def clone_repository(url: str, destination: Path) -> tuple[int, bytes]:
     """Own Git's process group until cloning finishes or cancellation cleanup completes."""
+    executable = await to_thread.run_sync(git_executable)
     spawn = asyncio.create_task(
         asyncio.create_subprocess_exec(
-            git_executable(),
+            executable,
             '-c',
             'credential.interactive=false',
             'clone',
@@ -174,7 +180,12 @@ async def clone_repository(url: str, destination: Path) -> tuple[int, bytes]:
         with CancelScope(shield=True):
             process = await spawn
             await kill_process_tree(process)
-            await process.communicate()
+            # Windows kills only Git itself when `taskkill` fails, leaving descendants that hold its stderr.
+            with move_on_after(CANCEL_DRAIN_GRACE) as drain:
+                await process.communicate()
+            if drain.cancelled_caught:
+                # Release the pipe instead of holding it until that descendant exits.
+                process._transport.close()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
         raise
     assert process.returncode is not None and stderr is not None
     return process.returncode, stderr

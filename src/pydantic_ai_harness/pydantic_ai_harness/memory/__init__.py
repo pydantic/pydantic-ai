@@ -1,6 +1,10 @@
 """Memory capability: a persistent, injected notebook plus on-demand memory files."""
 
-from pydantic_ai_harness.memory._capability import Memory, WriteMetadataFunc
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from pydantic_ai_harness.memory._capability import Memory, MemorySnapshotPart, WriteMetadataFunc
 from pydantic_ai_harness.memory._file import FileStore
 from pydantic_ai_harness.memory._in_memory import InMemoryStore
 from pydantic_ai_harness.memory._postgres import PostgresConnection, PostgresMemoryStore, PostgresPool
@@ -39,6 +43,7 @@ __all__ = [
     'MemorySearchMatchResult',
     'MemorySearchResponse',
     'MemorySearchResult',
+    'MemorySnapshotPart',
     'MemoryStore',
     'MemoryToolset',
     'MemoryWriteResult',
@@ -50,3 +55,15 @@ __all__ = [
     'SqliteMemoryStore',
     'WriteMetadataFunc',
 ]
+
+
+if TYPE_CHECKING:
+    from pydantic_ai_harness.memory._pixeltable import PixeltableMemoryStore as PixeltableMemoryStore
+
+
+def __getattr__(name: str) -> object:
+    if name == 'PixeltableMemoryStore':
+        from pydantic_ai_harness.memory._pixeltable import PixeltableMemoryStore
+
+        return PixeltableMemoryStore
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

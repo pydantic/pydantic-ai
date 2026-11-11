@@ -98,6 +98,7 @@ def test_assistant_text():
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
+                model_id='MCP:mcp-sampling',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -139,6 +140,7 @@ def test_assistant_text_history():
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
+                model_id='MCP:mcp-sampling',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -153,6 +155,7 @@ def test_assistant_text_history():
             ModelResponse(
                 parts=[TextPart(content='text content')],
                 model_name='test-model',
+                model_id='MCP:mcp-sampling',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -293,9 +296,9 @@ def test_output_retry_history():
                     'type': 'text',
                     'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Try again
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                 },
             },
@@ -355,9 +358,9 @@ def test_framework_tool_history():
                 'content': {
                     'type': 'text',
                     'text': """\
-<system><context id="capability:forecast">
+<system><pyai:context id="capability:forecast">
 This context has been withdrawn, and the withdrawal stays in effect until replaced again.
-</context></system>\
+</pyai:context></system>\
 """,
                 },
             },
@@ -399,11 +402,11 @@ async def test_append_instruction_baseline_is_tagged_like_its_updates():
     first = await agent.run('Continue.', deps='A')
     await agent.run('Continue.', deps='B', message_history=first.all_messages())
     assert create_message.call_args.kwargs['system_prompt'] == snapshot("""\
-<context id="agent:state">
+<pyai:context id="agent:state">
 A
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.<context id="agent:state">
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.<pyai:context id="agent:state">
 A
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
