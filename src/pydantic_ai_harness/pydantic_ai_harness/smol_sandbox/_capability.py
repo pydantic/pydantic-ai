@@ -11,6 +11,7 @@ import smol
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces._telemetry import destroy_span
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
     check_working_dir,
@@ -70,7 +71,8 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
         """
         _backend.check_ref(ref)
         require_asyncio(_backend.ASYNCIO_ONLY)
-        await _backend.settled(_backend.start_lifecycle(ref.id, lambda: _delete(ref.id)))
+        with destroy_span(ref):
+            await _backend.settled(_backend.start_lifecycle(ref.id, lambda: _delete(ref.id)))
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it boots or attaches on first use."""

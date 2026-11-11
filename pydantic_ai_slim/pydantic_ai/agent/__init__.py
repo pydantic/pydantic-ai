@@ -82,6 +82,7 @@ from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
+from .._telemetry import publish_run_telemetry
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -344,10 +345,14 @@ async def _run_lifecycle_hooks(  # noqa: C901
     run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
 
     outer_context = contextvars.copy_context()
+    # Code without a `RunContext`, such as a workspace, reads the run's telemetry from the context `wrap_run`'s task
+    # and the run body inherit.
+    wrap_context = outer_context.copy()
+    wrap_context.run(publish_run_telemetry, run_ctx.tracer, include_content=run_ctx.trace_include_content)
     # Teardown after the run body returns, raises, or exits early waits for `wrap_run` through `ScopedTask`, so a
     # cancellation of the caller reaches it in the form it arrived: shielded cleanup in `wrap_run` finishes under a
     # cancelled `anyio` scope, and `on_run_error` is still reached. `_SHUTDOWN_EXCEPTIONS` cancel and drain it instead.
-    _wrap = _utils.ScopedTask(run_capability.wrap_run(run_ctx, handler=_do_run))
+    _wrap = wrap_context.run(_utils.ScopedTask, run_capability.wrap_run(run_ctx, handler=_do_run))
     # Wait for handler to start or wrap_run to complete (short-circuit).
     _ready_waiter = asyncio.create_task(_run_ready.wait())
     try:

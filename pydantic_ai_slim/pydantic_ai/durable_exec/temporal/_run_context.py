@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, overload
 
+from opentelemetry.trace import get_current_span
 from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import CapabilityEventT, CustomEventT
+from pydantic_ai._telemetry import publish_run_telemetry
+from pydantic_ai.durable_exec._base import agent_instrumentation_settings
 from pydantic_ai.durable_exec._run_context import DurableRunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
@@ -73,8 +76,21 @@ def deserialize_run_context(
     deps: Any,
     agent: AbstractAgent[Any, Any] | None,
 ) -> RunContext[Any]:
-    """Deserialize a run context inside a Temporal activity and attach the agent instance.
+    """Deserialize a run context inside a Temporal activity, attach the agent instance, and trace its workspace calls.
 
     See [`DurableRunContext.restore`][pydantic_ai.durable_exec.DurableRunContext.restore].
     """
-    return run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=TEMPORAL_ENGINE_SPEC)
+    ctx = run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=TEMPORAL_ENGINE_SPEC)
+    if agent is not None:
+        _publish_run_telemetry(ctx, agent)
+    return ctx
+
+
+def _publish_run_telemetry(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> None:
+    """Publish the worker agent's tracer as the run's telemetry, as the run's tracer can't cross into the activity.
+
+    Content is captured only if the run captures it too.
+    """
+    settings = agent_instrumentation_settings(agent)
+    if settings is not None and get_current_span().is_recording():
+        publish_run_telemetry(settings.tracer, include_content=settings.include_content and ctx.trace_include_content)

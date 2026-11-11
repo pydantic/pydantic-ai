@@ -296,9 +296,15 @@ The house pattern:
 
 - Start spans on `ctx.tracer` (`RunContext`). It is a no-op tracer unless core's
   instrumentation is active, so an uninstrumented run pays nothing.
-- A helper that runs outside a `RunContext` takes `tracer: Tracer | None = None`
-  and falls back to `NoOpTracer()`, so the standalone path emits the same span
-  shape as the in-run path (`compaction`'s `compact_messages`).
+- Code that runs during a run but has no `RunContext`, such as a backend, store
+  or session that runs can share, opens spans with `pydantic_ai._telemetry`'s
+  `open_span` and records content with its `set_content`. Both read the calling
+  run's tracer and content policy when called. Never store a tracer on such an
+  object: a run sharing it would trace to another run's tracer
+  (`workspaces/_telemetry.py` is the example).
+- A standalone helper that users call outside any run takes
+  `tracer: Tracer | None = None` and falls back to `NoOpTracer()`, so it emits the
+  same span shape as the in-run path (`compaction`'s `compact_messages`).
 - Use `start_as_current_span` for work that has a duration and can fail, and a
   zero-duration `start_span(...).end()` to mark a decision that took no time.
 - Compute attributes under `if span.is_recording()`.
