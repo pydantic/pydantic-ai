@@ -1,11 +1,17 @@
 """Local image attachments for the prompt editor, not a plugin extension point."""
 
+import os
+import platform
 import re
 import shlex
+import shutil
+import sys
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from uuid import uuid4
 
+import anyio
 from PIL import Image, ImageGrab
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 
@@ -70,7 +76,13 @@ def pasted_paths(text: str) -> list[Path]:
 
 def clipboard_images() -> list[BinaryContent]:
     """Use Pillow's native macOS/Windows and wl-paste/xclip Linux backends."""
-    content = ImageGrab.grabclipboard()
+    try:
+        content = ImageGrab.grabclipboard()
+    except (NotImplementedError, ChildProcessError) as exc:
+        if sys.platform != 'linux':
+            raise
+        guidance = clipboard_guidance(exc)
+        raise type(exc)(f'{exc}. {guidance}') from exc
     if isinstance(content, Image.Image):
         with content:
             return [encode_image(content)]
@@ -79,14 +91,77 @@ def clipboard_images() -> list[BinaryContent]:
     raise ValueError('No image in the clipboard. Copy an image or paste an image file path.')
 
 
+def clipboard_guidance(exc: NotImplementedError | ChildProcessError) -> str:
+    """Explain a failed Linux backend without probing or replacing its transport."""
+    remote = (
+        'Run in an accessible graphical session, check your remote clipboard bridge if using SSH, '
+        'or paste an image file path accessible on this machine.'
+    )
+    if isinstance(exc, ChildProcessError):
+        return remote
+    if os.environ.get('WAYLAND_DISPLAY'):
+        binary, package = 'wl-paste', 'wl-clipboard'
+    elif os.environ.get('DISPLAY'):
+        binary, package = 'xclip', 'xclip'
+    else:
+        return remote
+    if shutil.which(binary):
+        return remote
+    try:
+        release = platform.freedesktop_os_release()
+    except OSError:
+        release = {}
+    distributions = {release.get('ID', ''), *release.get('ID_LIKE', '').split()}
+    installers = (
+        ({'debian', 'ubuntu'}, 'apt-get', 'sudo apt-get install'),
+        ({'fedora', 'rhel', 'centos'}, 'dnf', 'sudo dnf install'),
+        ({'arch'}, 'pacman', 'sudo pacman -S'),
+        ({'alpine'}, 'apk', 'sudo apk add'),
+    )
+    for family, manager, command in installers:
+        if distributions & family and shutil.which(manager):
+            return f'Install `{package}` with `{command} {package}`. {remote}'
+    return f"Install `{package}` using your distribution's package manager. {remote}"
+
+
 class ImageInput:
     """Own pending bytes until their visible markers are submitted or discarded."""
 
     def __init__(self) -> None:
         """Start with no clipboard access and no attachments."""
         self.pending: dict[str, BinaryContent] = {}
-        self.notice = ''
+        self._notice = ''
+        self._error_expires: float | None = None
+        self._error_clock: Callable[[], float] = time.monotonic
         self.retry_text = ''
+
+    @property
+    def notice(self) -> str:
+        """Paste feedback; only errors expire, leaving attachments untouched."""
+        self.expire_notice()
+        return self._notice
+
+    @notice.setter
+    def notice(self, value: str) -> None:
+        self._notice = value
+        self._error_expires = None
+
+    def paste_failed(self, exc: Exception, *, clock: Callable[[], float] = time.monotonic) -> None:
+        """Give each paste error its own thirty-second lifetime."""
+        self.notice = f'Image paste failed: {exc}'
+        self._error_clock = clock
+        self._error_expires = clock() + 30
+
+    def expire_notice(self) -> bool:
+        """Return whether an expired paste error was cleared, so a live editor can repaint."""
+        if self._error_expires is not None and self._error_clock() >= self._error_expires:
+            self.notice = ''
+            return True
+        return False
+
+    def notice_remaining(self) -> float:
+        """Bound the existing repaint wait by the paste error's deadline."""
+        return max(0, self._error_expires - self._error_clock()) if self._error_expires is not None else float('inf')
 
     def attach(self, images: Sequence[BinaryContent]) -> str:
         """Stage all images atomically; the editor inserts these removable markers."""
@@ -128,6 +203,10 @@ class ImageInput:
         def paste(event: KeyPressEvent) -> None:
             insert(event=event, text=event.data)
 
+        async def expire_feedback(event: KeyPressEvent) -> None:
+            await anyio.sleep(30)
+            event.app.invalidate()
+
         def insert(*, event: KeyPressEvent, text: str | None) -> None:
             buffer = event.current_buffer
             self.retain([buffer.text, *queued()])
@@ -144,7 +223,8 @@ class ImageInput:
                 buffer.insert_text(self.attach(images))
                 self.notice = ATTACHED
             except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
-                self.notice = f'Image paste failed: {exc}. Linux requires wl-paste (Wayland) or xclip (X11).'
+                self.paste_failed(exc)
+                event.app.create_background_task(expire_feedback(event))
             finally:
                 event.app.invalidate()
 

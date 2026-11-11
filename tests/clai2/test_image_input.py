@@ -2,6 +2,7 @@
 
 import base64
 import io
+import subprocess
 from array import array
 from collections.abc import Sequence
 from pathlib import Path
@@ -118,6 +119,155 @@ def test_clipboard_backend(image_path: Path, monkeypatch: pytest.MonkeyPatch, ki
     else:
         with pytest.raises(ValueError, match='No image'):
             clipboard_images()
+
+
+@pytest.mark.parametrize(
+    'display,binaries,distribution,stderr,expected',
+    [
+        ('wayland', ['apt-get'], 'ubuntu', None, 'sudo apt-get install wl-clipboard'),
+        ('x11', ['apt-get'], 'debian', None, 'sudo apt-get install xclip'),
+        ('x11', ['dnf'], 'fedora', None, 'sudo dnf install xclip'),
+        ('x11', ['pacman'], 'arch', None, 'sudo pacman -S xclip'),
+        ('wayland', ['apk'], 'alpine', None, 'sudo apk add wl-clipboard'),
+        ('x11', ['apt-get'], 'unknown', None, "distribution's package manager"),
+        ('x11', [], 'ubuntu', None, "distribution's package manager"),
+        ('headless', [], 'ubuntu', None, 'remote clipboard bridge'),
+        ('headless', ['xclip'], 'ubuntu', b"Error: Can't open display: (null)", 'remote clipboard bridge'),
+        ('wayland', ['wl-paste'], 'ubuntu', b'Failed to connect to a Wayland server', 'graphical session'),
+        ('x11', ['xclip'], 'ubuntu', b'target image/png not available', 'No image in the clipboard'),
+        ('x11', ['xclip'], 'ubuntu', b'No selection', 'No image in the clipboard'),
+        ('x11', ['xclip'], 'ubuntu', b'', 'cannot identify image file'),
+    ],
+)
+async def test_clipboard_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    display: str,
+    binaries: list[str],
+    distribution: str,
+    stderr: bytes | None,
+    expected: str,
+) -> None:
+    """Exercise Pillow's backend selection and errors without reading the user's clipboard."""
+    monkeypatch.setattr(image_input.sys, 'platform', 'linux')
+    monkeypatch.delenv('DISPLAY', raising=False)
+    monkeypatch.delenv('WAYLAND_DISPLAY', raising=False)
+    if display != 'headless':
+        monkeypatch.setenv('WAYLAND_DISPLAY' if display == 'wayland' else 'DISPLAY', 'test-display')
+
+    def which(name: str) -> str | None:
+        return f'/bin/{name}' if name in binaries else None
+
+    monkeypatch.setattr(image_input.shutil, 'which', which)
+    monkeypatch.setattr(image_input.platform, 'freedesktop_os_release', lambda: {'ID': distribution})
+
+    def run(args: list[str], *, capture_output: bool) -> subprocess.CompletedProcess[bytes]:
+        assert args[0] in binaries and capture_output
+        return subprocess.CompletedProcess(args, int(bool(stderr)), stdout=b'not a PNG', stderr=stderr or b'')
+
+    monkeypatch.setattr(image_input.ImageGrab.subprocess, 'run', run)
+    with pytest.raises((OSError, ValueError, NotImplementedError)) as raised:
+        await anyio.to_thread.run_sync(clipboard_images)
+    message = str(raised.value)
+    assert expected in message
+    if stderr and 'No image' not in expected:
+        assert stderr.decode() in message
+    if stderr is not None or display == 'headless':
+        assert 'Install' not in message
+    if distribution == 'unknown':
+        assert 'sudo' not in message
+    if 'No image' in expected or 'cannot identify' in expected:
+        assert 'remote clipboard bridge' not in message
+
+
+async def test_headless_clipboard_shim_keeps_pillow_argv(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(image_input.sys, 'platform', 'linux')
+    monkeypatch.delenv('DISPLAY', raising=False)
+    monkeypatch.delenv('WAYLAND_DISPLAY', raising=False)
+
+    def which(name: str) -> str | None:
+        return '/shim/xclip' if name == 'xclip' else None
+
+    monkeypatch.setattr(image_input.shutil, 'which', which)
+    data = image_path.read_bytes()
+
+    def run(args: list[str], *, capture_output: bool) -> subprocess.CompletedProcess[bytes]:
+        assert args == ['xclip', '-selection', 'clipboard', '-t', 'image/png', '-o']
+        assert capture_output
+        return subprocess.CompletedProcess(args, 0, stdout=data, stderr=b'')
+
+    monkeypatch.setattr(image_input.ImageGrab.subprocess, 'run', run)
+    assert await anyio.to_thread.run_sync(clipboard_images) == [read_image(image_path)]
+
+
+@pytest.mark.parametrize('system', ['darwin', 'win32'])
+def test_native_clipboard_errors_get_no_linux_advice(system: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(image_input.sys, 'platform', system)
+
+    def grab() -> None:
+        raise ChildProcessError('native clipboard unavailable')
+
+    monkeypatch.setattr(image_input.ImageGrab, 'grabclipboard', grab)
+    with pytest.raises(ChildProcessError, match=r'^native clipboard unavailable$'):
+        clipboard_images()
+
+
+@pytest.mark.parametrize('replacement', ['', 'Image attached', 'Another notice'])
+def test_paste_feedback_lifetime(replacement: str) -> None:
+    now = 0.0
+    images = ImageInput()
+    images.paste_failed(ValueError('first error'), clock=lambda: now)
+    now = 29.999
+    assert images.notice == 'Image paste failed: first error'
+    images.paste_failed(ValueError('new error'), clock=lambda: now)
+    now = 30
+    assert images.notice == 'Image paste failed: new error'
+    if replacement:
+        images.notice = replacement
+    now = 59.999
+    assert images.notice == replacement
+
+
+@pytest.mark.parametrize('release_error', [False, True])
+def test_missing_backend_without_distro_command(monkeypatch: pytest.MonkeyPatch, release_error: bool) -> None:
+    monkeypatch.setattr(image_input.sys, 'platform', 'linux')
+    monkeypatch.setenv('DISPLAY', ':test')
+    monkeypatch.delenv('WAYLAND_DISPLAY', raising=False)
+
+    def release() -> dict[str, str]:
+        if release_error:
+            raise OSError('No os-release')
+        return {'ID': 'custom', 'ID_LIKE': 'debian'}
+
+    def which(name: str) -> str | None:
+        return '/bin/apt-get' if name == 'apt-get' else None
+
+    monkeypatch.setattr(image_input.platform, 'freedesktop_os_release', release)
+    monkeypatch.setattr(image_input.shutil, 'which', which)
+    with pytest.raises(NotImplementedError) as raised:
+        clipboard_images()
+    assert ('sudo apt-get install xclip' in str(raised.value)) is not release_error
+    assert 'xclip' in str(raised.value)
+
+
+def test_existing_backend_does_not_get_install_advice(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(image_input.sys, 'platform', 'linux')
+    monkeypatch.setenv('DISPLAY', ':test')
+    monkeypatch.delenv('WAYLAND_DISPLAY', raising=False)
+
+    def which(name: str) -> str:
+        return '/bin/xclip'
+
+    monkeypatch.setattr(image_input.shutil, 'which', which)
+
+    def grab() -> None:
+        raise NotImplementedError('backend unavailable')
+
+    monkeypatch.setattr(image_input.ImageGrab, 'grabclipboard', grab)
+    with pytest.raises(NotImplementedError) as raised:
+        clipboard_images()
+    assert 'backend unavailable' in str(raised.value)
+    assert 'remote clipboard bridge' in str(raised.value)
+    assert 'Install' not in str(raised.value)
 
 
 def test_decode_images(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
