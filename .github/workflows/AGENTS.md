@@ -311,6 +311,27 @@ provider's key. The job log names the model that served the run, and on a fallba
 the error message, which can repeat the provider's response. A DeepInfra run sends DeepInfra the same content a
 Go run sends Go, fork pull request content included. Start any new CI OpenCode run through `run_with_fallback`.
 
+# A copy of the repository picks the `CI` Linux runner
+
+The `CI_LINUX_RUNNER` repository variable sets the runner label of `check` and of every Linux job
+it depends on, including the jobs of `clai2-web.yml` and `latest-versions-canary.yml`. Those two
+reusable workflows read it wherever they run, so it also moves the build that `clai2-bleeding.yml`
+publishes and the scheduled canary of `latest-versions-canary-nightly.yml`. A fork or other copy
+sets it when GitHub's standard runners are too small or unavailable for those jobs.
+Leave it unset in pydantic/pydantic-ai: unset, each job runs on its fallback label,
+`ubuntu-24.04` for `test-all-extras` and `ubuntu-latest` for the rest.
+
+- Set it to one static label. Each job's `runs-on` reads the value as that job's only label.
+- Choose a runner that matches GitHub's Ubuntu 24.04 image. `test-all-extras` starts the
+  image's PostgreSQL 16, and several harness integration jobs start Docker containers.
+- GitHub passes no configuration variables to a run for a pull request from a fork. Those runs
+  use the fallback labels.
+- The Linux leg of `test-clai2-clipboard` reads the variable. Its macOS and Windows legs stay on
+  GitHub's runners.
+
+The release and docs-deploy jobs run only in pydantic/pydantic-ai, so a tag pushed to a copy
+starts none of them.
+
 # Code owners review dependency, CI config and durable runtime changes
 
 `.github/CODEOWNERS` owns three scopes:
