@@ -289,7 +289,8 @@ def test_time_budget_stop_is_not_retried(tmp_path: Path, monkeypatch: pytest.Mon
             pass
 
     monkeypatch.setattr(run_pr_review_check.threading, 'Timer', ImmediateTimer)
-    _fake_opencode(tmp_path, monkeypatch, 'sleep 30')
+    # `exec`, so the kill reaches the process that holds the stream open.
+    _fake_opencode(tmp_path, monkeypatch, 'exec sleep 30')
     # The timer kills Go before its script can record the launch; returning Go shows DeepInfra never started.
     usage, provider = _review(tmp_path)
     assert (provider, usage.stopped) == (OPENCODE_GO, True)
