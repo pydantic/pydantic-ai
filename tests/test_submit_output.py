@@ -28,8 +28,10 @@ from pydantic_ai import (
     ModelRetry,
     NativeOutput,
     PromptedOutput,
+    RetryModelRequest,
     RunContext,
     RunUsage,
+    SkipModelRequest,
     TextPart,
     ToolCallPart,
     ToolOutput,
@@ -44,6 +46,7 @@ from pydantic_ai.capabilities import (
     NodeResult,
     PrepareOutputTools,
     ValidatedToolArgs,
+    WrapModelRequestHandler,
     WrapRunHandler,
     WrapToolExecuteHandler,
 )
@@ -1232,3 +1235,145 @@ async def test_submission_is_discarded_when_a_later_hook_skips_the_call():
     assert result.usage.requests == 2
     [tool_return, _] = tool_returns(result.all_messages())
     assert (tool_return.content, tool_return.outcome) == ('Blocked by policy.', 'success')
+
+
+async def _run_in_mode(agent: Agent[None, Invoice], mode: str) -> tuple[Invoice, list[ModelMessage]]:
+    if mode == 'run_stream':
+        async with agent.run_stream('go') as stream:
+            return await stream.get_output(), stream.all_messages()
+
+    async def handle_events(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    result = await agent.run('go', event_stream_handler=handle_events if mode == 'event_stream_handler' else None)
+    return result.output, result.all_messages()
+
+
+@pytest.mark.parametrize('mode', ['run', 'event_stream_handler'])
+async def test_submission_from_a_response_a_later_hook_rejects_is_discarded(mode: str):
+    """`ModelRetry` from a hook after the one that submitted rejects the response the submission was built from."""
+
+    class SubmitFromResponse(AbstractCapability[None]):
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            if ctx.run_step == 1:
+                await ctx.submit_output('final_result', {'order_id': 'from_rejected_response', 'total': 1})
+            return response
+
+    class RejectFirstResponse(AbstractCapability[None]):
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            if ctx.run_step == 1:
+                raise ModelRetry('Try again.')
+            return response
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('final_result', {'order_id': 'from_model', 'total': 2})])
+
+    async def stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"order_id": "from_model", "total": 2}')}
+
+    agent = Agent(
+        FunctionModel(model, stream_function=stream_model),
+        output_type=Invoice,
+        capabilities=[SubmitFromResponse(), RejectFirstResponse()],
+        deps_type=type(None),
+    )
+
+    output, messages = await _run_in_mode(agent, mode)
+
+    assert output == Invoice(order_id='from_model', total=2)
+    assert sum(isinstance(m, ModelResponse) for m in messages) == 2
+
+
+async def test_submission_from_a_response_another_attempt_replaces_is_discarded():
+    class SubmitThenAttemptAgain(AbstractCapability[None]):
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            if request_context.attempt == 1:
+                await ctx.submit_output('final_result', {'order_id': 'from_replaced_attempt', 'total': 1})
+                raise RetryModelRequest()
+            return response
+
+    agent = Agent(
+        FunctionModel(
+            lambda m, i: ModelResponse(parts=[ToolCallPart('final_result', {'order_id': 'from_model', 'total': 2})])
+        ),
+        output_type=Invoice,
+        capabilities=[SubmitThenAttemptAgain()],
+        deps_type=type(None),
+    )
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id='from_model', total=2)
+
+
+@pytest.mark.parametrize('mode', ['run', 'event_stream_handler', 'run_stream'])
+async def test_submission_before_a_step_ends_the_run_before_its_request_hooks(mode: str):
+    """A guard in `wrap_model_request` doesn't run, since the request it would guard isn't sent."""
+    wrapped: list[int] = []
+
+    class SubmitBeforeRun(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            await ctx.submit_output('final_result', {'order_id': 'before_run', 'total': 1})
+
+    class Guard(AbstractCapability[None]):
+        async def wrap_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            wrapped.append(ctx.run_step)  # pragma: no cover
+            raise SkipModelRequest(ModelResponse(parts=[TextPart('Refused.')]))  # pragma: no cover
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('no request should be sent')  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(model), output_type=Invoice, capabilities=[SubmitBeforeRun(), Guard()], deps_type=type(None)
+    )
+
+    output, messages = await _run_in_mode(agent, mode)
+
+    assert output == Invoice(order_id='before_run', total=1)
+    assert wrapped == []
+    assert [m.kind for m in messages] == ['request']
+
+
+@pytest.mark.parametrize('mode', ['run', 'event_stream_handler'])
+async def test_submission_before_a_request_a_later_hook_retries_is_discarded(mode: str):
+    class SubmitBeforeRequest(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if ctx.run_step == 1:
+                await ctx.submit_output('final_result', {'order_id': 'from_retried_step', 'total': 1})
+            return request_context
+
+    class RetryFirstRequest(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if ctx.run_step == 1:
+                raise ModelRetry('Not yet.')
+            return request_context
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('final_result', {'order_id': 'from_model', 'total': 2})])
+
+    async def stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"order_id": "from_model", "total": 2}')}
+
+    agent = Agent(
+        FunctionModel(model, stream_function=stream_model),
+        output_type=Invoice,
+        capabilities=[SubmitBeforeRequest(), RetryFirstRequest()],
+        deps_type=type(None),
+    )
+
+    output, _ = await _run_in_mode(agent, mode)
+
+    assert output == Invoice(order_id='from_model', total=2)

@@ -2246,9 +2246,31 @@ class _OutputSubmitted(Exception):
     """
 
 
+def _short_circuited_response(task: asyncio.Task[_messages.ModelResponse]) -> _messages.ModelResponse:
+    """The response of a `wrap_model_request` that returned without calling its handler, or skipped the request."""
+    try:
+        return task.result()
+    except exceptions.SkipModelRequest as e:
+        return e.response
+
+
+def _output_submitted(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> bool:
+    return (submission := ctx.deps.run_submission) is not None and submission.status == 'accepted'
+
+
 def _raise_if_output_submitted(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
-    if (submission := ctx.deps.run_submission) is not None and submission.status == 'accepted':
+    if _output_submitted(ctx):
         raise _OutputSubmitted
+
+
+def _discard_output_submitted_during_step(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
+    """Drop the output submitted outside a tool call while the request step was running, as it's being retried.
+
+    A submission made before the step ends it before its request hooks run, so an accepted one here came from a
+    hook during the step, like `after_model_request` building it from a response that a later hook rejected.
+    """
+    if _output_submitted(ctx):
+        ctx.deps.run_submission = None
 
 
 async def _outside_attempts(awaitable: Awaitable[T]) -> T:
@@ -2387,6 +2409,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         assert not self._did_stream, 'stream() should only be called once per node'
 
         request_context, run_context = await self._prepare_request(ctx, streaming=True)
+        if _output_submitted(ctx):
+            # Submitted before this step, from a run or node hook: the request isn't sent, so no request hook runs.
+            self._did_stream = True
+            self._end_with_submitted_output(ctx)
+            async with self._empty_agent_stream(ctx, request_context.model_request_parameters) as agent_stream:
+                yield agent_stream
+            return
 
         # Cooperative hand-off between this coroutine and the wrap_model_request task:
         # 1. The task runs capability middleware, then calls _streaming_handler which opens the stream.
@@ -2560,10 +2589,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if wrap.task.done() and not stream_ready.is_set():
             # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
             try:
-                try:
-                    model_response = wrap.task.result()
-                except exceptions.SkipModelRequest as e:
-                    model_response = e.response
+                model_response = _short_circuited_response(wrap.task)
             except (_OutputSubmitted, exceptions.ModelRetry) as e:
                 self._did_stream = True
                 await self._end_step_without_response(ctx, e)
@@ -2778,6 +2804,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return self._result  # pragma: no cover
 
         request_context, run_context = await self._prepare_request(ctx, streaming=False)
+        if _output_submitted(ctx):
+            # Submitted before this step, from a run or node hook: the request isn't sent, so no request hook runs.
+            return self._end_with_submitted_output(ctx)
 
         state = _HandlerState()
         _handler_called = False
@@ -3612,6 +3641,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         In place because outer `wrap_model_request` wrappers hold this object: mutating it is how
         instrumentation and other wrappers observe which model actually served the request.
         """
+        _discard_output_submitted_during_step(ctx)
         if request_context.attempt >= MAX_MODEL_REQUEST_ATTEMPTS:
             raise exceptions.UserError(
                 f'Model request was attempted more than the maximum of {MAX_MODEL_REQUEST_ATTEMPTS} times: '
@@ -3859,6 +3889,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         Increments the retry counter and creates a new request with a `RetryFeedbackPart`.
         """
         self._emit_capability_load_records(ctx)
+        _discard_output_submitted_during_step(ctx)
         m = _messages.RetryFeedbackPart(content=error.message, retry=_messages.RetryInfo(cause='model_retry'))
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error, feedback=m)
         # A retry without a response gives up on this step, so its request-scoped parts go with it. When the
