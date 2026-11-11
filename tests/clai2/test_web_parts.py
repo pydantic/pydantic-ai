@@ -818,7 +818,7 @@ def test_web_flag_reads_a_private_token_file(
     elsewhere = tmp_path / 'checkout'
     elsewhere.mkdir()
 
-    def enter_worktree(*, name: str, headless: bool) -> Worktree:
+    def enter_worktree(*, name: str, headless: bool, store: object) -> Worktree:
         os.chdir(elsewhere)
         return Worktree(path=elsewhere, branch='clai-x', head='0', created=False)
 

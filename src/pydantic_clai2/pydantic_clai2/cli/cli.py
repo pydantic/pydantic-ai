@@ -128,7 +128,7 @@ def run(*, splash: Splash | None = None) -> None:
             raise SystemExit(asyncio.run(_update(settings.update_channel)))
         agent = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
-            worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
+            worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web, store=store)
         project = load_project_settings(Path.cwd(), store=store)
         _continue_session(args, store)
         model = args.model or os.getenv('CLAI_MODEL')
@@ -323,9 +323,12 @@ def _settings_for(
     return settings_for
 
 
-def _enter_worktree(*, name: str, headless: bool) -> 'Worktree':
-    """Open the `--worktree` checkout and change into it, marking it for exit cleanup when that will run."""
-    from pydantic_clai2.runtime.worktrees import open_worktree
+def _enter_worktree(*, name: str, headless: bool, store: 'SettingsStore') -> 'Worktree':
+    """Open the `--worktree` checkout and change into it, marking it for exit cleanup when that will run.
+
+    A checkout a saved choice keeps, or whose choice cannot be read, is not marked for removal once pushed.
+    """
+    from pydantic_clai2.runtime.worktrees import kept_checkout, open_worktree
 
     worktree = open_worktree(name=name)
     if headless:
@@ -333,7 +336,12 @@ def _enter_worktree(*, name: str, headless: bool) -> 'Worktree':
         print(worktree.notice, file=sys.stderr)
     else:
         # Exit cleanup needs a terminal; piped input keeps even an unchanged checkout.
-        worktree = replace(worktree, remove_if_unchanged=worktree.created and sys.stdin.isatty())
+        terminal = sys.stdin.isatty()
+        worktree = replace(
+            worktree,
+            remove_if_unchanged=worktree.created and terminal,
+            remove_if_pushed=terminal and kept_checkout(worktree.path, store=store) is False,
+        )
     os.chdir(worktree.path)
     return worktree
 
@@ -345,16 +353,27 @@ def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':
     worktree = current_worktree()
     if worktree is None or relaunched is None:
         return worktree
-    head, _, new_branch = relaunched.partition(' ')
+    first, _, second = relaunched.partition(' ')
+    created, terminal = first != 'reopened', sys.stdin.isatty()
     return replace(
-        worktree, head=head, created=True, new_branch=new_branch == 'new-branch', remove_if_unchanged=sys.stdin.isatty()
+        worktree,
+        head=first if created else second,
+        created=created,
+        new_branch=second == 'new-branch',
+        remove_if_unchanged=created and terminal,
+        remove_if_pushed=terminal,
     )
 
 
 def _remember_worktree(worktree: 'Worktree | None') -> None:
-    """Hand a checkout exit would remove to the relaunched build, which starts without `--worktree`."""
-    if worktree is not None and worktree.remove_if_unchanged:
-        os.environ[_RELAUNCH_WORKTREE] = f'{worktree.head} new-branch' if worktree.new_branch else worktree.head
+    """Hand a checkout exit may remove to the relaunched build, which starts without `--worktree`."""
+    if worktree is None or not (worktree.remove_if_unchanged or worktree.remove_if_pushed):
+        return
+    head = worktree.head
+    # An older build takes the first word as the commit of a checkout it created; `reopened` never matches, so it asks.
+    os.environ[_RELAUNCH_WORKTREE] = (
+        f'{head} new-branch' if worktree.new_branch else head if worktree.created else f'reopened {head}'
+    )
 
 
 def relaunch_argv(

@@ -2634,18 +2634,29 @@ On normal interactive exit, CLAI checks the linked worktree for changes:
 uncommitted or untracked files, or a different commit checked out than at launch.
 Ignored files do not count. If nothing changed in a worktree this launch created,
 CLAI removes it without asking, and deletes its `clai-NAME` branch too when this
-launch created that branch and Git agrees it is merged (`git branch -d`). This
-still applies after `/update now` restarts CLAI in the worktree. An
-unchanged worktree that CLAI reopened, or one you launched inside, is kept without
-asking.
+launch created that branch and Git agrees it is merged (`git branch -d`).
 
-If the worktree changed, CLAI asks **Remove this worktree?** with an inline picker:
+CLAI also removes, without asking, a worktree opened with `--worktree`, created or
+reopened, that has no uncommitted or untracked files and whose commits are all on
+a remote-tracking branch, even if a different commit is checked out than at launch.
+It keeps the branch and prints the
+removed path. Pushed commits are judged from the local remote-tracking branches;
+CLAI does not fetch. Ignored files are deleted with the worktree. To keep a
+worktree anyway, lock it with `git worktree lock PATH`, which makes Git refuse the
+removal. Both rules still apply after `/update now` restarts CLAI in the worktree.
+
+A linked worktree you launched CLAI inside without `--worktree` is never removed
+without asking. If it is unchanged, CLAI keeps it without asking, as it does a
+reopened worktree that is unchanged and has unpushed commits.
+
+Otherwise, if the worktree changed, CLAI asks **Remove this worktree?** with an inline picker:
 **Yes**, **No** (selected by default), or **No, don't ask again for this worktree**.
 The path and removal details appear dimmed below the question. The complete
 details are also available in the transcript before you choose; use PageUp and
 PageDown to inspect long commands. Enter on **No**,
 Esc, Ctrl-C, or EOF keeps it; select **Yes** to confirm removal. The third choice
-keeps it and saves the preference in your settings database for this checkout.
+keeps it and saves the preference in your settings database for this checkout,
+which also keeps it once its commits are pushed.
 There is no command to undo this choice for the same checkout.
 A new checkout at the same path is asked again. By default, removal keeps
 the branch and uses Git without `--force`, so dirty or locked worktrees are kept
@@ -2700,7 +2711,7 @@ does not fall back to Git. If the saved configuration cannot be read or validate
 on exit, CLAI warns and offers the existing Git cleanup prompt instead. If Git
 metadata cannot be read to prepare a registered command, CLAI keeps the checkout
 and reports the error. `.clai/settings.json` cannot set `worktree_remove_commands`;
-CLAI refuses to start if it does. Automatic removal of unchanged worktrees and
+CLAI refuses to start if it does. Automatic removal and
 `/workspaces destroy` continue to use Git.
 
 When you no longer need the checkout, use Git's own cleanup commands from your
@@ -3406,6 +3417,8 @@ including `pydantic_ai_harness`. `/reload` refreshes CLAI only, not Harness or c
 even when their source has changed in the same checkout. If new CLAI code imports
 a symbol the running dependency does not have, restart with the same launch options
 and `--resume` to continue the saved session. Keep the worktree if asked to remove it.
+Exit removes a clean `--worktree` checkout with no unpushed commits without asking;
+run `git worktree lock .` in it first to keep it.
 `/reload` does not rerun the CLI or recursively reload third-party packages. Import-time side effects
 still cannot be undone. Use `/plugins reload NAME` when you only want to reload one
 plugin.
