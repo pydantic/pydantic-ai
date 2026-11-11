@@ -223,7 +223,8 @@ def test_azure_provider_model_profile(mocker: MockerFixture):
     [
         ('gpt-5.5', True),
         ('gpt-6-sol', True),
-        ('gpt-5.5-pro', False),
+        ('gpt-5.5-pro', True),
+        ('gpt-5.3-codex', False),
         ('gpt-5.4-nano', False),
         ('gpt-5.2', False),
         ('o4-mini', False),
