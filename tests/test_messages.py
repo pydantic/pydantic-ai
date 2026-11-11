@@ -437,6 +437,11 @@ def test_binary_content_video(media_type: str, format: str):
         ('text/html', 'html'),
         ('text/markdown', 'md'),
         ('application/vnd.ms-excel', 'xls'),
+        ('application/vnd.openxmlformats-officedocument.presentationml.presentation', 'pptx'),
+        ('application/vnd.oasis.opendocument.text', 'odt'),
+        # Known only to `mimetypes`
+        ('application/zip', 'zip'),
+        ('application/octet-stream', 'bin'),
     ],
 )
 def test_binary_content_document(media_type: str, format: str):
@@ -509,6 +514,17 @@ _url_formats = [
     ),
     pytest.param(DocumentUrl('foobar.html'), 'text/html', 'html', id='html'),
     pytest.param(DocumentUrl('foobar.xls'), 'application/vnd.ms-excel', 'xls', id='xls'),
+    pytest.param(
+        DocumentUrl('foobar.pptx'),
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'pptx',
+        id='pptx',
+    ),
+    pytest.param(DocumentUrl('foobar.ods'), 'application/vnd.oasis.opendocument.spreadsheet', 'ods', id='ods'),
+    pytest.param(DocumentUrl('foobar.odp'), 'application/vnd.oasis.opendocument.presentation', 'odp', id='odp'),
+    # Known only to `mimetypes`
+    pytest.param(DocumentUrl('foobar.py'), 'text/x-python', 'py', id='py'),
+    pytest.param(DocumentUrl('foobar.xml'), 'application/xml', 'xml', id='xml'),
 ]
 if sys.version_info > (3, 11):  # pragma: no branch
     # This solves an issue with MIMEType on MacOS + python < 3.12. mimetypes.py added the text/markdown in 3.12, but on
@@ -527,14 +543,27 @@ def test_document_url_invalid():
     with pytest.raises(ValueError, match=re.escape('Could not infer media type from document URL: foobar.potato')):
         DocumentUrl('foobar.potato').media_type
 
-    with pytest.raises(ValueError, match='Unknown document media type: text/x-python'):
-        DocumentUrl('foobar.py').format
+    with pytest.raises(ValueError, match='Unknown document media type: application/custom'):
+        DocumentUrl('foobar', media_type='application/custom').format
 
 
 def test_binary_content_unknown_media_type():
+    binary_content = BinaryContent(data=b'Hello, world!', media_type='application/custom')
+    # No extension is known for it, so it is no document: the model adapter refuses it as it did before
+    assert binary_content.is_document is False
     with pytest.raises(ValueError, match='Unknown media type: application/custom'):
-        binary_content = BinaryContent(data=b'Hello, world!', media_type='application/custom')
         binary_content.format
+
+
+def test_binary_content_text_like_is_not_a_document():
+    """Text-like content outside the known document types is left to the model adapter, which inlines it as text."""
+    json_content = BinaryContent(data=b'{}', media_type='application/json')
+    assert json_content.is_document is False
+    assert json_content.format == 'json'
+    xml_content = BinaryContent(data=b'<a/>', media_type='application/xml')
+    assert xml_content.is_document is False
+    # `mimetypes` lists `xsl` first for XML; the extension spelling the subtype wins
+    assert xml_content.format == 'xml'
 
 
 def test_binary_content_is_methods():
@@ -745,7 +774,7 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
 def test_thinking_part_delta_callable_provider_details_serializable():
     # Reproduce the real streaming path: OpenAI's gpt-oss raw-CoT handler passes a callable
     # `provider_details` to `handle_thinking_delta`, which emits it verbatim inside a `PartDeltaEvent`
-    # (see `_make_raw_content_updater` in models/openai.py). Such an event must still serialize, e.g.
+    # (see `make_raw_content_updater` in models/openai/_responses_streaming.py). Such an event must still serialize, e.g.
     # when crossing a Temporal activity boundary in durable execution.
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     list(manager.handle_thinking_delta(vendor_part_id='t', content='reasoning', provider_details={'raw_content': ['']}))
@@ -1366,6 +1395,7 @@ def test_deferred_tool_events_serialization_roundtrip():
                     'approval_2': {'message': 'Not allowed', 'kind': 'tool-denied'},
                 },
                 'metadata': {'call_1': {'foo': 'bar'}},
+                'answered_by': {},
             },
             'event_kind': 'deferred_tool_results',
         }

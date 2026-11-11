@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -140,6 +140,16 @@ class Issue:
 
 
 @dataclass(frozen=True)
+class PullRequest:
+    """The validated pull-request fields that retire a task incident."""
+
+    number: int
+    state: str
+    merged: bool
+    head_sha: str
+
+
+@dataclass(frozen=True)
 class GitHubResponse:
     """A decoded GitHub REST response and the metadata the job log records."""
 
@@ -166,6 +176,8 @@ class RunResult:
     trigger_event: str
     run_attempt: int
     failure: Failure | None
+    # Set only from the host-written record: a host-side Z.ai check observed the provider-wide failure itself.
+    provider_confirmed: bool = False
 
     def __post_init__(self) -> None:
         if _positive_attempt(self.run_attempt) is None:
@@ -539,7 +551,9 @@ class GitHubClient:
 
     def send(self, method: str, path: str, payload: object | None = None) -> GitHubResponse:
         body = json.dumps(payload).encode() if payload is not None else None
-        request = urllib.request.Request(f'{API_ROOT}/repos/{self.repo}/{path}', data=body, method=method)
+        # GitHub answers the repository URL with a trailing slash with 404.
+        url = f'{API_ROOT}/repos/{self.repo}/{path}' if path else f'{API_ROOT}/repos/{self.repo}'
+        request = urllib.request.Request(url, data=body, method=method)
         request.add_header('Authorization', f'Bearer {self.token}')
         request.add_header('Accept', 'application/vnd.github+json')
         request.add_header('X-GitHub-Api-Version', '2022-11-28')
@@ -634,6 +648,19 @@ def _issue(value: object) -> Issue | None:
     if state is None or url is None:
         return None
     return Issue(number, title, body, state, url, _iso_time(data.get('created_at')))
+
+
+def _pull_request(value: object) -> PullRequest | None:
+    data = _mapping(value)
+    head = _mapping(data.get('head')) if data is not None else None
+    if data is None or head is None:
+        return None
+    number = data.get('number')
+    state = _object_string(data, 'state')
+    head_sha = _object_string(head, 'sha')
+    if isinstance(number, bool) or not isinstance(number, int) or state is None or head_sha is None:
+        return None
+    return PullRequest(number, state, data.get('merged_at') is not None, head_sha)
 
 
 def _marker_from_body(body: str) -> IncidentMarker | None:
@@ -779,11 +806,38 @@ def _failure_from(value: object) -> Failure | None:
 
 def _run_result_from(value: object) -> RunResult | None:
     data = _mapping(value)
-    if data is None or data.get('type') != 'result':
-        return None
-    data = _mapping(data.get('provider_health'))
     if data is None:
         return None
+    if data.get('type') == 'session.result':
+        terminal = _mapping(data.get('data'))
+        if terminal is None:
+            return None
+        data = _mapping(terminal.get('metadata'))
+        if data is None:
+            return None
+    elif data.get('type') != 'result':
+        return None
+    data = _mapping(data.get('provider_health'))
+    return _run_result_fields(data) if data is not None else None
+
+
+def _host_run_result(path: Path) -> RunResult | None:
+    """Return the terminal result the host-side record step wrote, with its provider confirmation."""
+    try:
+        data = _mapping(json.loads(path.read_text(encoding='utf-8')))
+    except (json.JSONDecodeError, RecursionError, UnicodeDecodeError):
+        return None
+    version = data.get('version') if data is not None else None
+    if data is None or isinstance(version, bool) or not isinstance(version, int) or version != 1:
+        return None
+    result = _run_result_fields(data)
+    confirmed = data.get('provider_confirmed')
+    if result is None or not isinstance(confirmed, bool):
+        return None
+    return replace(result, provider_confirmed=confirmed)
+
+
+def _run_result_fields(data: dict[str, object]) -> RunResult | None:
     workflow = _object_string(data, 'workflow')
     task_key = _object_string(data, 'task_key')
     trigger_event = _object_string(data, 'trigger_event')
@@ -828,14 +882,19 @@ def parse_run_result(path: Path, expected_attempt: int | None = None) -> RunResu
     """Return one unambiguous terminal record from downloaded agent artifacts."""
     if not path.exists():
         return None
-    if path.is_file() and path.name != 'agent-stdio.log':
+    if path.is_file() and path.name not in ('agent-stdio.log', 'agent-session.jsonl'):
         return None
     if path.is_dir():
-        eligible = sorted(
-            file
-            for file in path.rglob('agent-stdio.log')
+        directories = {
+            file.parent
+            for file in path.rglob('*')
             if file.is_file()
+            and file.name in ('agent-stdio.log', 'agent-session.jsonl')
             and (file.parent.name == 'agent' or re.fullmatch(r'[0-9a-fA-F]{8,64}-agent', file.parent.name) is not None)
+        }
+        eligible = sorted(
+            directory / ('agent-session.jsonl' if (directory / 'agent-session.jsonl').is_file() else 'agent-stdio.log')
+            for directory in directories
         )
         if expected_attempt is None:
             if len(eligible) != 1:
@@ -863,13 +922,16 @@ def parse_run_result(path: Path, expected_attempt: int | None = None) -> RunResu
     return next(iter(results)) if len(results) == 1 else None
 
 
+def _claims_provider_scope(failure: Failure) -> bool:
+    return failure.kind in ('authentication', 'plan_limit') or failure.http_status in (401, 403)
+
+
 def _scope_for(result: RunResult) -> tuple[Scope, str, str]:
     failure = result.failure
     if failure is None:
         return 'workflow', result.workflow, 'execution'
-    if failure.kind == 'authentication' or failure.http_status in (401, 403):
-        return 'provider', 'zai', failure.kind
-    if failure.kind == 'plan_limit':
+    # A provider incident needs the host's own Z.ai check to confirm the failure; otherwise the rules below apply.
+    if result.provider_confirmed and _claims_provider_scope(failure):
         return 'provider', 'zai', failure.kind
     if result.trigger_event == 'schedule' and failure.kind not in ('timeout', 'time_limit'):
         return 'workflow', result.workflow, failure.kind
@@ -1017,7 +1079,7 @@ def _monitor_workflow_outcome(
         return 0
     if triage:
         return _defer_incident_reconciliation()
-    reason = health.reason if not health.ready else _failure_reason(result.failure)
+    reason = health.reason if not health.ready else _failure_reason(result)
     marker_override = None
     if result.failure is None and failed_stage is not None:
         scope, key = (
@@ -1028,7 +1090,7 @@ def _monitor_workflow_outcome(
         marker_override = IncidentMarker(scope, key, failed_stage, str(args.run_id), None, failed_stage, run_attempt)
         reason = f'Agent workflow failed during the trusted {failed_stage} stage'
     if health.ready and result.failure is not None:
-        reason = _failure_reason(result.failure)
+        reason = _failure_reason(result)
     _create_or_reuse_incident(
         client,
         result,
@@ -1049,7 +1111,8 @@ def _defer_incident_reconciliation() -> int:
     return 0
 
 
-def _failure_reason(failure: Failure | None) -> str:
+def _failure_reason(result: RunResult) -> str:
+    failure = result.failure
     if failure is None:
         return 'Agent execution failed before a typed provider result was available'
     reasons: dict[FailureKind, str] = {
@@ -1062,7 +1125,11 @@ def _failure_reason(failure: Failure | None) -> str:
         'other': 'The provider request failed with a typed error',
     }
     reason = reasons[failure.kind]
-    return f'{reason} (HTTP {failure.http_status})' if failure.http_status is not None else reason
+    if failure.http_status is not None:
+        reason = f'{reason} (HTTP {failure.http_status})'
+    if _claims_provider_scope(failure) and not result.provider_confirmed:
+        reason += '; no host-side Z.ai check confirmed a provider-wide failure'
+    return reason
 
 
 def _incident_body(marker: IncidentMarker, workflow: str, task_key: str, run_id: str, repo: str, reason: str) -> str:
@@ -1230,6 +1297,42 @@ def _check_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _record_command(args: argparse.Namespace) -> int:
+    """Write the run's terminal result from the host, confirming any provider-wide failure with a Z.ai check."""
+    run_attempt = _run_attempt_from_env()
+    identity = (
+        os.environ.get('GITHUB_WORKFLOW', ''),
+        os.environ.get('PYDANTIC_AI_TASK_KEY', ''),
+        os.environ.get('PYDANTIC_AI_TRIGGER_EVENT', ''),
+    )
+    result = parse_run_result(args.agent_session, run_attempt)
+    if result is None or (result.workflow, result.task_key, result.trigger_event) != identity:
+        print('No terminal agent result matches this run; recording none')
+        return 0
+    failure = result.failure
+    confirmed = False
+    if failure is not None and _claims_provider_scope(failure):
+        quota = _fetch_zai_quota(os.environ.get('ZAI_API_KEY', ''))
+        # Confirm only what this check observes itself: the same credential rejected, or the plan's quota exhausted.
+        if failure.kind == 'authentication' or failure.http_status in (401, 403):
+            confirmed = quota.http_status in (401, 403)
+        else:
+            confirmed = quota.status == 'exhausted'
+    payload: dict[str, object] = {
+        'version': 1,
+        'workflow': result.workflow,
+        'task_key': result.task_key,
+        'trigger_event': result.trigger_event,
+        'run_attempt': result.run_attempt,
+        'failure': asdict(failure) if failure is not None else None,
+        'provider_confirmed': confirmed,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+    print(f'Recorded terminal result: {failure.kind if failure else "no failure"}; provider confirmed: {confirmed}')
+    return 0
+
+
 def _monitor_command(args: argparse.Namespace, *, triage: bool = False) -> int:
     repo = args.repository or os.environ.get('GITHUB_REPOSITORY', '')
     token = os.environ.get('GITHUB_TOKEN', '')
@@ -1248,7 +1351,10 @@ def _monitor_command(args: argparse.Namespace, *, triage: bool = False) -> int:
         raise ValueError('provider-health artifact run attempt does not match the triggering workflow_run attempt')
     if health.run_id is not None and health.run_id != str(args.run_id):
         raise ValueError('provider-health artifact run id does not match the triggering workflow_run')
-    result = parse_run_result(args.agent_artifact, run_attempt) if args.agent_artifact is not None else None
+    # Without a valid host record, fall back to the agent artifact, which never confirms a provider failure.
+    result = _host_run_result(args.run_result) if args.run_result is not None and args.run_result.is_file() else None
+    if result is None and args.agent_artifact is not None:
+        result = parse_run_result(args.agent_artifact, run_attempt)
     if result is not None and (
         result.workflow != health.workflow
         or result.task_key != health.task_key
@@ -1300,6 +1406,92 @@ def _recover_issue(
     return True
 
 
+def _task_retirement(client: GitHubClient, marker: IncidentMarker) -> str | None:
+    """Why a task incident can never block a run again, or `None` while it can or its key names no PR head or dispatch.
+
+    The key ends in `<event>:<PR number, head branch under workflow_run, or ref>:<head SHA>:<id>`. The incident
+    blocks only runs with that exact key, so once its PR closes or moves to another head it blocks nothing.
+    A dispatch's id is its run ID, so its incident blocks only re-runs of that run, and nothing once it concludes.
+    GitHub deletes only a run that completed or is more than two weeks old, and a deleted run cannot be re-run.
+    """
+    parts = marker.key.rsplit(':', 3)
+    if len(parts) != 4:
+        return None
+    prefix, target, head_sha, task_id = parts
+    event = prefix.rpartition(':')[2]
+    if event == 'workflow_dispatch' and task_id.isdecimal():
+        try:
+            response = client.request('GET', f'actions/runs/{task_id}')
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return f'Dispatch run {task_id} no longer exists.'
+            raise
+        run = _mapping(response)
+        if run is None:
+            raise ValueError('GitHub returned an invalid workflow run')
+        if run.get('status') != 'completed':
+            return None
+        return f'Dispatch run {task_id} concluded `{run.get("conclusion")}`.'
+    if event.startswith('pull_request') and target.isdecimal():
+        payloads: list[object] = [client.request('GET', f'pulls/{target}')]
+    elif event == 'workflow_run' and target:
+        head = urllib.parse.quote(f'{client.repo.partition("/")[0]}:{target}', safe='')
+        # Newest first, so a branch reused by several PRs is judged by its latest one.
+        response = client.request('GET', f'pulls?state=all&head={head}&per_page=100')
+        if not isinstance(response, list):
+            raise ValueError('GitHub returned an invalid pull-request list')
+        payloads = []
+        entry: object
+        for entry in response:  # pyright: ignore[reportUnknownVariableType]
+            payloads.append(entry)  # pyright: ignore[reportUnknownArgumentType]
+    else:
+        return None
+    pulls = [pull for payload in payloads if (pull := _pull_request(payload)) is not None]
+    if not pulls:
+        return None
+    pull = next((pull for pull in pulls if pull.state == 'open'), pulls[0])
+    if pull.state != 'open':
+        return f'PR #{pull.number} is {"merged" if pull.merged else "closed without merging"}.'
+    if pull.head_sha != head_sha:
+        return f'PR #{pull.number} moved from `{head_sha}` to `{pull.head_sha}`.'
+    return None
+
+
+def _retire_task_incidents(client: GitHubClient, issues: list[Issue], *, dry_run: bool) -> None:
+    """Close task incidents whose PR closed or moved on, or whose dispatch run concluded, with the evidence as a comment."""
+    for issue in issues:
+        marker = _marker_from_body(issue.body)
+        if marker is None or marker.scope != 'task':
+            continue
+        # One unreadable PR or run, or one failed write, must not stop the provider recovery that follows.
+        try:
+            reason = _task_retirement(client, marker)
+            if reason is None:
+                continue
+            if dry_run:
+                print(f'DRY RUN: would retire task incident #{issue.number}: {reason}')
+                continue
+            # A run that commented but could not close left its comment; post it once. Incident reuse adds
+            # no comments, so the first page holds it unless people have left about 100.
+            listed = client.request('GET', f'issues/{issue.number}/comments?per_page=100')
+            if not isinstance(listed, list):
+                raise ValueError('GitHub returned an invalid comment list')
+            if not any(
+                str((_mapping(entry) or {}).get('body')).startswith('Retired: ')  # pyright: ignore[reportUnknownArgumentType]
+                for entry in listed  # pyright: ignore[reportUnknownVariableType]
+            ):
+                comment = (
+                    f'Retired: {reason} This incident blocked only runs with its task key, so it no longer blocks '
+                    'anything. It did not record a recovery of the failed run.'
+                )
+                client.request('POST', f'issues/{issue.number}/comments', {'body': comment})
+            client.close_issue(issue.number)
+        except (OSError, ValueError) as exc:
+            print(f'Could not retire task incident #{issue.number}: {exc}')
+            continue
+        print(f'Retired task incident #{issue.number}: {reason}')
+
+
 def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
     issues = client.open_incidents()
     if args.recover_issue is not None:
@@ -1322,6 +1514,7 @@ def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
         now = _now()
         _recover_issue(client, issue, marker, quota, now, dry_run=args.dry_run, automatic=False)
         return 0
+    _retire_task_incidents(client, issues, dry_run=args.dry_run)
     api_key = os.environ.get('ZAI_API_KEY', '')
     quota = _fetch_zai_quota(api_key) if api_key else _unknown_quota('missing_api_key')
     now = _now()
@@ -1382,12 +1575,17 @@ def main(argv: list[str] | None = None) -> int:
     check = commands.add_parser('check', help='check incident state and provider quota before inference')
     check.add_argument('--output', type=Path, default=Path('provider-health.json'))
     check.set_defaults(handler=_check_command)
+    record = commands.add_parser('record', help='record the terminal agent result on the host after inference')
+    record.add_argument('--agent-session', type=Path, required=True)
+    record.add_argument('--output', type=Path, required=True)
+    record.set_defaults(handler=_record_command)
     monitor = commands.add_parser('monitor', help='reconcile a completed agent workflow or provider recovery')
     monitor.add_argument('--repository')
     monitor.add_argument('--run-id', type=int)
     monitor.add_argument('--run-attempt', type=int)
     monitor.add_argument('--conclusion')
     monitor.add_argument('--health-artifact', type=Path)
+    monitor.add_argument('--run-result', type=Path)
     monitor.add_argument('--agent-artifact', type=Path)
     monitor.add_argument('--recover-issue', type=int)
     monitor.add_argument('--dry-run', action='store_true')
@@ -1400,6 +1598,7 @@ def main(argv: list[str] | None = None) -> int:
     triage.add_argument('--run-attempt', type=int, required=True)
     triage.add_argument('--conclusion')
     triage.add_argument('--health-artifact', type=Path, required=True)
+    triage.add_argument('--run-result', type=Path)
     triage.add_argument('--agent-artifact', type=Path)
     triage.set_defaults(handler=functools.partial(_monitor_command, triage=True))
     args = parser.parse_args(argv)

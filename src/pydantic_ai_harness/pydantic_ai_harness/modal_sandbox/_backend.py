@@ -25,6 +25,7 @@ import sys
 import time
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -206,6 +207,13 @@ async def _file_entry(backend: ModalSandboxBackend, entry: modal.types.FileInfo,
     return FileEntry(name=entry.name, path=path, is_dir=is_dir, size=size)
 
 
+def _check_image(image: str | modal.Image | None) -> None:
+    if image is not None and not isinstance(image, str):
+        modal_sdk = importlib.import_module('modal')
+        if not isinstance(image, modal_sdk.Image):
+            raise TypeError('image must be a registry tag or modal.Image')
+
+
 # Subclassing the structural protocols makes a signature drift fail the type check on this class.
 class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     """A Modal sandbox implementing Pydantic AI's `WorkspaceBackend` protocol.
@@ -261,10 +269,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         # Checked here, as `ModalSandbox` does, so a bad value fails before any app lookup or image build.
         if idle_timeout is not None and (type(idle_timeout) is not int or idle_timeout < 1):
             raise ValueError('idle_timeout must be a positive integer or None')
-        if image is not None and not isinstance(image, str):
-            modal_sdk = importlib.import_module('modal')
-            if not isinstance(image, modal_sdk.Image):
-                raise TypeError('image must be a registry tag or modal.Image')
+        _check_image(image)
         check_env_types(env)
         self._ref = ref if sandbox is None else WorkspaceRef(provider='modal', id=sandbox.object_id)
         self._sandbox: modal.Sandbox | None = sandbox
@@ -511,19 +516,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         except Exception as error:
             if create_attempted and (recovered := await self._recover_create(name)) is not None:
                 return recovered
-            message = f'Could not start Modal sandbox: {error}'
-            mapped = _translate(error, context=message, unavailable=message)
-            # SDK releases disagree on whether image build errors live in modal.exception.
-            if type(error).__name__ == 'ImageBuildError':
-                raise WorkspaceUnavailableError(message) from error
-            if mapped is None:
+            if (failure := _create_failure(error)) is None:
                 raise
-            # Modal refused the request itself: an unknown app or image, or an invalid argument
-            # such as a `sandbox_timeout` above its limit. Retrying cannot fix that, so it ends
-            # the run rather than going back to the model.
-            raise (
-                mapped if isinstance(mapped, WorkspaceUnavailableError) else WorkspaceUnavailableError(message)
-            ) from error
+            raise failure from error
         if sandbox is None:
             if create_attempted and (recovered := await self._recover_create(name)) is not None:
                 return recovered
@@ -614,7 +609,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 self._setsid_available = await probe.wait.aio() == 0
         return self._setsid_available
 
-    async def run(  # noqa: C901 - deadline, cancellation and Modal exit classification share the same process state
+    async def run(
         self,
         command: WorkspaceCommand,
         *,
@@ -670,41 +665,10 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             pid_file,
             *argv,
         ]
-        # dash's builtin kill rejects `--`; the negative PID addresses the group. Give TERM
-        # a short grace period, then KILL survivors (including TERM-ignoring descendants).
-        # A pid marker proves the start already happened, so the tombstone is no longer needed.
-        target = '-"$pid"' if isolated else '"$pid"'
-        stop_script = (
-            'touch "$1"; if test -f "$2"; then '
-            f'pid=$(cat "$2"); kill -TERM {target} 2>/dev/null || true; '
-            f'i=0; while kill -0 {target} 2>/dev/null && test "$i" -lt 5; do '
-            'sleep 0.2; i=$((i+1)); done; '
-            f'if kill -0 {target} 2>/dev/null; then kill -KILL {target} 2>/dev/null || true; fi; '
-            'rm -f "$1"; fi; rm -f "$2"'
-        )
+        stop_script = _stop_script(isolated)
 
         stop_errors: list[Exception] = []
-
-        async def stop() -> None:
-            try:
-                stopper = await sandbox.exec.aio(
-                    'sh',
-                    '-c',
-                    stop_script,
-                    'modal-stop',
-                    cancel_file,
-                    pid_file,
-                    timeout=2,
-                    # The working directory may have been deleted by the command itself.
-                    workdir='/',
-                    text=False,
-                )
-                await _check_stop(stopper, sandbox.object_id)
-            except Exception as error:
-                # Stop can fail when the sandbox is already gone; preserve the original
-                # cancellation/error and leave its ref available for explicit cleanup.
-                stop_errors.append(error)
-                logger.warning('Could not stop Modal command in sandbox %s', sandbox.object_id, exc_info=True)
+        stop = partial(_stop_command, sandbox, stop_script, cancel_file, pid_file, stop_errors)
 
         snapshots = ['', '']
 
@@ -733,9 +697,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             group.start_soon(collect)
             try:
                 async with command_deadline(
-                    None if timeout is None else max(0.001, timeout - (time.monotonic() - started_at)),
-                    stop=stop,
-                    output=captured,
+                    _remaining(timeout, started_at, at_least=0.001), stop=stop, output=captured
                 ):
                     await exit_event.wait()
             except WorkspaceTimeoutError as error:
@@ -744,8 +706,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 group.cancel_scope.cancel()
             else:
                 # Once the process exits, output gets a short grace past its command deadline to drain.
-                remaining = None if timeout is None else timeout - (time.monotonic() - started_at)
-                with anyio.move_on_after(None if remaining is None else max(2, remaining)) as drain_scope:
+                with anyio.move_on_after(_remaining(timeout, started_at, at_least=2)) as drain_scope:
                     await done_event.wait()
                 if drain_scope.cancelled_caught:
                     group.cancel_scope.cancel()
@@ -764,13 +725,27 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             # The process may still be running when its output or exit status cannot be read,
             # or when it passed the output limit.
             await stop_shielded(stop)
-            if isinstance(errors[0], WorkspaceOutputLimitError):
-                raise errors[0]
-            mapped = await _failure(sandbox, errors[0], 'Could not read the command result')
-            if mapped is not None:
+            if (
+                not isinstance(errors[0], WorkspaceOutputLimitError)
+                and (mapped := await _failure(sandbox, errors[0], 'Could not read the command result')) is not None
+            ):
                 raise mapped from errors[0]
             raise errors[0]
-        stdout, stderr, exit_code, exited_at = results[0]
+        return await self._classify_exit(
+            sandbox, results[0], started_at=started_at, deadline=deadline, timed_out=timed_out, workdir=workdir
+        )
+
+    async def _classify_exit(
+        self,
+        sandbox: modal.Sandbox,
+        result: tuple[str, str, int, float],
+        *,
+        started_at: float,
+        deadline: int | None,
+        timed_out: str,
+        workdir: str | None,
+    ) -> CommandResult:
+        stdout, stderr, exit_code, exited_at = result
 
         timed_out_by_modal = deadline is not None and (
             exit_code == _CLIENT_DEADLINE_EXIT or (exit_code == _SIGKILL_EXIT and exited_at - started_at >= deadline)
@@ -873,6 +848,50 @@ async def _collect_output(
     return stdout, stderr, exit_code, exited_at
 
 
+def _remaining(timeout: float | None, started_at: float, *, at_least: float) -> float | None:
+    """What is left of `timeout` since `started_at`, and at least `at_least`; `None` without a timeout."""
+    return None if timeout is None else max(at_least, timeout - (time.monotonic() - started_at))
+
+
+def _stop_script(isolated: bool) -> str:
+    # dash's builtin kill rejects `--`; the negative PID addresses the group. Give TERM
+    # a short grace period, then KILL survivors (including TERM-ignoring descendants).
+    # A pid marker proves the start already happened, so the tombstone is no longer needed.
+    target = '-"$pid"' if isolated else '"$pid"'
+    return (
+        'touch "$1"; if test -f "$2"; then '
+        f'pid=$(cat "$2"); kill -TERM {target} 2>/dev/null || true; '
+        f'i=0; while kill -0 {target} 2>/dev/null && test "$i" -lt 5; do '
+        'sleep 0.2; i=$((i+1)); done; '
+        f'if kill -0 {target} 2>/dev/null; then kill -KILL {target} 2>/dev/null || true; fi; '
+        'rm -f "$1"; fi; rm -f "$2"'
+    )
+
+
+async def _stop_command(
+    sandbox: modal.Sandbox, stop_script: str, cancel_file: str, pid_file: str, errors: list[Exception]
+) -> None:
+    try:
+        stopper = await sandbox.exec.aio(
+            'sh',
+            '-c',
+            stop_script,
+            'modal-stop',
+            cancel_file,
+            pid_file,
+            timeout=2,
+            # The working directory may have been deleted by the command itself.
+            workdir='/',
+            text=False,
+        )
+        await _check_stop(stopper, sandbox.object_id)
+    except Exception as error:
+        # Stop can fail when the sandbox is already gone; preserve the original
+        # cancellation/error and leave its ref available for explicit cleanup.
+        errors.append(error)
+        logger.warning('Could not stop Modal command in sandbox %s', sandbox.object_id, exc_info=True)
+
+
 async def _check_stop(process: modal.container_process.ContainerProcess[bytes], sandbox_id: str) -> None:
     if await process.wait.aio() != 0:
         logger.warning('Modal command stop exited nonzero in sandbox %s', sandbox_id)
@@ -935,6 +954,21 @@ async def _failure(sandbox: modal.Sandbox, error: Exception, context: str, path:
     ):
         return await _probe(sandbox, exec_probe=isinstance(error, modal.exception.SandboxFilesystemError)) or mapped
     return mapped
+
+
+def _create_failure(error: Exception) -> WorkspaceUnavailableError | None:
+    """Translate a failed sandbox create, or `None` to let it propagate."""
+    message = f'Could not start Modal sandbox: {error}'
+    mapped = _translate(error, context=message, unavailable=message)
+    # SDK releases disagree on whether image build errors live in modal.exception.
+    if type(error).__name__ == 'ImageBuildError':
+        return WorkspaceUnavailableError(message)
+    if mapped is None:
+        return None
+    # Modal refused the request itself: an unknown app or image, or an invalid argument
+    # such as a `sandbox_timeout` above its limit. Retrying cannot fix that, so it ends
+    # the run rather than going back to the model.
+    return mapped if isinstance(mapped, WorkspaceUnavailableError) else WorkspaceUnavailableError(message)
 
 
 async def _probe(sandbox: modal.Sandbox, *, exec_probe: bool) -> WorkspaceUnavailableError | None:

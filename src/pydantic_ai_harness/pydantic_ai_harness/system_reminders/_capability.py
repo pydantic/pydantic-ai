@@ -294,26 +294,28 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         # tail is a suspended `ModelResponse`, and that exact history is echoed to the provider
         # verbatim to continue the turn -- adding to it would corrupt the continuation. So
         # only a real `ModelRequest` tail carries a reminder, and only such a turn spends a
-        # cadence slot (the counter advances inside the guard, not before it).
-        if messages and isinstance(messages[-1], ModelRequest):
-            self._request_count += 1
-            # Select which reminders fire before mutating any state: `_eligible_static` is
-            # pure, and `_collect_dynamic` can raise (a user callback, a model call). Fire
-            # state and `on_fire` are committed only once the reminder is actually added, so
-            # a raising dynamic reminder never leaves a static reminder's `max_fires` budget
-            # spent or reports a fire that never reached the model.
-            fired = self._eligible_static(ctx)
-            dynamic_texts = await self._collect_dynamic(ctx)
-            reminders: list[str | _StaticText | GeneratedReminder] = [*(text for _, text in fired), *dynamic_texts]
-            if reminders:
-                ctx.enqueue(*_reminder_parts(reminders))
-                for key, _ in fired:
-                    self._fire_counts[key] = self._fire_counts.get(key, 0) + 1
-                for reminder in reminders:
-                    await ctx.emit(ReminderFiredEvent(text=str(reminder)))
-                if self.on_fire is not None:
-                    for reminder in reminders:
-                        self.on_fire(str(reminder))
+        # cadence slot (the counter advances after the guard, not before it).
+        if not messages or not isinstance(messages[-1], ModelRequest):
+            return request_context
+        self._request_count += 1
+        # Select which reminders fire before mutating any state: `_eligible_static` is
+        # pure, and `_collect_dynamic` can raise (a user callback, a model call). Fire
+        # state and `on_fire` are committed only once the reminder is actually added, so
+        # a raising dynamic reminder never leaves a static reminder's `max_fires` budget
+        # spent or reports a fire that never reached the model.
+        fired = self._eligible_static(ctx)
+        dynamic_texts = await self._collect_dynamic(ctx)
+        reminders: list[str | _StaticText | GeneratedReminder] = [*(text for _, text in fired), *dynamic_texts]
+        if not reminders:
+            return request_context
+        ctx.enqueue(*_reminder_parts(reminders))
+        for key, _ in fired:
+            self._fire_counts[key] = self._fire_counts.get(key, 0) + 1
+        for reminder in reminders:
+            await ctx.emit(ReminderFiredEvent(text=str(reminder)))
+        if self.on_fire is not None:
+            for reminder in reminders:
+                self.on_fire(str(reminder))
         return request_context
 
     def _eligible_static(self, ctx: RunContext[AgentDepsT]) -> list[tuple[int, _StaticText]]:
@@ -350,11 +352,11 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         # mutate the public sequence while this request is in progress.
         self._dynamic_snapshot = tuple(self.dynamic_reminders)
         for index, dynamic in enumerate(self._dynamic_snapshot):
-            if (
-                isinstance(dynamic, LLMReminder) and type(dynamic).__call__ is LLMReminder.__call__  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-            ):
-                if not dynamic._is_due(self._request_count):  # pyright: ignore[reportPrivateUsage]
-                    continue
+            if not _is_builtin_llm_reminder(dynamic):
+                result = await _awaited(dynamic(ctx))
+            elif not dynamic._is_due(self._request_count):  # pyright: ignore[reportPrivateUsage]
+                continue
+            else:
                 try:
                     transcript = _build_compact_transcript(ctx.messages, dynamic.max_context_messages)
                     result, error_type = await self._generate_reminder(ctx, index, transcript)
@@ -364,10 +366,6 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                     )
                     result, error_type = None, 'DurabilityError'
                 result = GoalReanchor[AgentDepsT]()(ctx) if error_type is not None else dynamic._frame(result)  # pyright: ignore[reportPrivateUsage]
-            else:
-                result = dynamic(ctx)
-            if isinstance(result, Awaitable):
-                result = await result
             if result is not None:
                 texts.append(result)
         return texts
@@ -553,6 +551,13 @@ class LLMReminder(Generic[AgentDepsT]):
         return None if text is None else GeneratedReminder(text, _model_label(self.model))
 
 
+async def _awaited(
+    result: str | GeneratedReminder | None | Awaitable[str | GeneratedReminder | None],
+) -> str | GeneratedReminder | None:
+    """A dynamic reminder's result, awaited when the reminder is async."""
+    return await result if isinstance(result, Awaitable) else result
+
+
 def _model_label(model: Model | KnownModelName | str) -> str:
     return model.model_name if isinstance(model, Model) else model
 
@@ -565,6 +570,15 @@ def _request_reserved_for_parent(ctx: RunContext[AgentDepsT]) -> bool:
 
 def _is_llm_reminder(value: object) -> TypeGuard[LLMReminder[AgentDepsT]]:
     return isinstance(value, LLMReminder)
+
+
+def _is_builtin_llm_reminder(value: object) -> TypeGuard[LLMReminder[AgentDepsT]]:
+    """Whether `value` is an `LLMReminder` with the built-in `__call__`, whose generation `SystemReminders` runs itself.
+
+    A subclass that overrides `__call__` is called like any other dynamic reminder.
+    """
+    # `isinstance` narrows `value` to `LLMReminder[Unknown]`, so `__call__` takes a `RunContext[Unknown]`.
+    return isinstance(value, LLMReminder) and type(value).__call__ is LLMReminder.__call__  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
 
 
 def _should_fire(reminder: Reminder[AgentDepsT], count: int) -> bool:
@@ -641,13 +655,14 @@ def _is_reminder_data(part: UserPromptPart) -> bool:
 
 
 def _first_user_text(messages: Sequence[ModelMessage]) -> str | None:
-    for msg in messages:
-        if isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if isinstance(part, UserPromptPart) and not _is_reminder_data(part):
-                    text = user_prompt_text(part)
-                    if text:
-                        return text
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in message.parts:
+            if not isinstance(part, UserPromptPart) or _is_reminder_data(part):
+                continue
+            if text := user_prompt_text(part):
+                return text
     return None
 
 
@@ -686,8 +701,8 @@ def _opening_compaction(window: Sequence[ModelMessage]) -> CompactionPart | None
 def _recent_texts(messages: Sequence[ModelMessage], max_messages: int) -> list[str]:
     """The recent user and assistant texts, each quoted in a `<message>` element with its role."""
     fragments: list[str] = []
-    for msg in messages:
-        for part in msg.parts:
+    for message in messages:
+        for part in message.parts:
             if isinstance(part, UserPromptPart) and not _is_reminder_data(part):
                 text = user_prompt_text(part)
                 if text:
@@ -707,7 +722,7 @@ _HARNESS_TAG_OPENERS = re.compile(
 """The `<` of an opening or closing reminder tag in every spelling, matched the way core matches its own."""
 
 
-def _quote(tag: str, body: str, **attrs: str) -> str:
+def _quote(tag: str, body: str, **attributes: str) -> str:
     """Quote `body` as data in a `<tag>` element it can't end early, open another frame in, or speak as the system from.
 
     The `<` of every opening and closing spelling of every core framing tag (`system`, `context` and
@@ -716,5 +731,5 @@ def _quote(tag: str, body: str, **attrs: str) -> str:
     """
     # TODO: switch to the public `pydantic_ai.framing.wrap()` with registered tags (#10957).
     escaped = _HARNESS_TAG_OPENERS.sub('&lt;', neutralize_tags(body))
-    attributes = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items())
-    return f'<{tag}{attributes}>\n{escaped}\n</{tag}>'
+    rendered_attributes = ''.join(f' {name}="{html.escape(value)}"' for name, value in attributes.items())
+    return f'<{tag}{rendered_attributes}>\n{escaped}\n</{tag}>'

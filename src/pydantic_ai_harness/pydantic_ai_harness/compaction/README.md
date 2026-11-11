@@ -209,7 +209,7 @@ window, and only observes:
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import ReportContextUsage, SummarizingCompaction
-from pydantic_ai_harness.compaction import ContextUsageEvent
+from pydantic_ai_harness.compaction import ContextUsageMeasuredEvent
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
@@ -219,7 +219,7 @@ agent = Agent(
     ],
 )
 
-@agent.on_event(ContextUsageEvent)
+@agent.on_event(ContextUsageMeasuredEvent)
 async def show(ctx, event):
     print(f'{event.fraction:.0%}')
 ```
@@ -227,7 +227,7 @@ async def show(ctx, event):
 Each reading carries `used_tokens`, `window_tokens`, and `resolved` -- `False` when the window is the
 fallback rather than the model's real one, so a gauge can show that the percentage is a guess.
 Migration: `on_usage` remains supported but is deprecated. Move its callback body to a
-`ContextUsageEvent` subscription.
+`ContextUsageMeasuredEvent` subscription.
 
 Order matters: register the monitor *after* a compaction capability to observe the corrected current
 history after same-cycle compaction, or before it to see what triggered the compaction.
@@ -433,6 +433,9 @@ agent = Agent(
 A part is clamped only when it is oversized *and* the clamp actually shrinks it, so keep
 `keep_head_chars + keep_tail_chars` well below your per-part threshold.
 
+A clamped part also loses its item ID (`TextPart.id`, `ToolCallPart.id`): the OpenAI Responses API uses its stored copy
+of an item sent with its ID and ignores the content sent alongside, so the clamp wouldn't reach the model.
+
 It clamps two kinds of part inside each `ModelResponse`:
 
 - **Response text** (`TextPart`) -- the critical case, a runaway model-response text part.
@@ -535,7 +538,8 @@ the newest message, the request being answered.
 
 `ClearToolResults` keeps the last `keep_pairs` intact. A retried return, which asks the model to make
 the call again, is never cleared and doesn't count toward `keep_pairs`. Set `clear_tool_inputs=True` to also blank the
-arguments of the cleared calls. A `load_capability` call keeps its argument, because Pydantic AI reads from
+arguments of the cleared calls. A cleared call also loses its item ID (`ToolCallPart.id`), for the same
+reason a clamped part does. A `load_capability` call keeps its argument, because Pydantic AI reads from
 it which capability is loaded. Set `exclude_tools` to a set of tool names whose results are never
 cleared. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
 left intact (a small token floor), because their structured content is re-parsed on later requests and

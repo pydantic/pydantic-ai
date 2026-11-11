@@ -56,6 +56,8 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunPytest
     monkeypatch.delenv(BUDGET_ENV_VAR, raising=False)
     monkeypatch.delenv(COLLECT_BUDGET_ENV_VAR, raising=False)
     monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
+    # An inner session that sets the collection budget would otherwise import the real shared dependencies.
+    monkeypatch.setattr(cost_guards, 'SHARED_DEPENDENCIES', ())
     pytester.makeini(
         """
         [pytest]
@@ -287,7 +289,7 @@ def test_a_failing_marked_test_is_not_judged(run: RunPytest):
 
 
 @pytest.mark.subprocess(reason='checks the guard and the stale-marker verdict across pytest-xdist workers')
-def test_guards_work_under_xdist(run: RunPytest, monkeypatch: pytest.MonkeyPatch):
+def test_guards_work_under_xdist(run: RunPytest, pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(COLLECT_BUDGET_ENV_VAR, '0.05')
     # Workers import `tests.cost_guards` from a fresh interpreter, and xdist replaces their `sys.path` with the one
     # this process started with (ignoring `PYTHONPATH`), which only has the repo root when an editable install adds it.
@@ -296,9 +298,23 @@ def test_guards_work_under_xdist(run: RunPytest, monkeypatch: pytest.MonkeyPatch
         '_sys_path',
         [str(Path(__file__).parent.parent), *xdist.workermanage._sys_path],  # pyright: ignore[reportPrivateUsage]
     )
+    # Workers load this conftest before collecting, so they preload a local module rather than paying for the real
+    # shared dependencies. It also runs in this process, where the `run` fixture's `monkeypatch` restores the tuple.
+    pytester.makepyfile(shared_dependency='')
+    pytester.makeconftest(
+        """
+        from tests import cost_guards
+
+        cost_guards.SHARED_DEPENDENCIES = ('shared_dependency',)
+        """
+    )
     result = run(
         f"""
+        PRELOADED = 'shared_dependency' in sys.modules
         time.sleep(0.1)
+
+        def test_preloaded_on_the_worker():
+            assert PRELOADED
 
         @pytest.mark.subprocess(reason='used to launch Python')
         def test_stale():
@@ -312,14 +328,14 @@ def test_guards_work_under_xdist(run: RunPytest, monkeypatch: pytest.MonkeyPatch
         '-n',
         '2',
     )
-    result.assert_outcomes(passed=1, failed=1)
+    result.assert_outcomes(passed=2, failed=1)
     result.stdout.fnmatch_lines(
         [
             '*`test_guarded.py::test_unmarked` launched a Python interpreter during call:*',
             '*test_guarded.py::test_stale: no test covered by its `@pytest.mark.subprocess`*',
             '*slow test module collection*',
             'test_guarded.py took *s to collect, over the 0.05s per-module budget (PYTEST_COLLECT_BUDGET_SECONDS).',
-            '*worker startup and collection of 2 tests took *s (slowest worker collected in *s)',
+            '*worker startup and collection of 3 tests took *s (slowest worker collected in *s)',
         ]
     )
 
@@ -423,3 +439,27 @@ def test_a_module_within_the_collection_budget_passes(run: RunPytest, monkeypatc
     result = run('def test_nothing():\n    pass\n')
     assert result.ret == pytest.ExitCode.OK
     assert 'slow test module collection' not in result.stdout.str()
+
+
+@pytest.mark.parametrize(('budget', 'preloaded'), [('5', True), ('', False)])
+def test_the_collection_budget_imports_shared_dependencies_before_collection(
+    run: RunPytest,
+    pytester: pytest.Pytester,
+    monkeypatch: pytest.MonkeyPatch,
+    budget: str,
+    preloaded: bool,
+):
+    """So no module is charged for being the first to import one; a dependency that isn't installed is skipped."""
+    pytester.makepyfile(shared_dependency='')
+    pytester.syspathinsert()
+    monkeypatch.setattr(cost_guards, 'SHARED_DEPENDENCIES', ('shared_dependency', 'not_an_installed_dependency'))
+    monkeypatch.setenv(COLLECT_BUDGET_ENV_VAR, budget)
+    result = run(
+        f"""
+        PRELOADED = 'shared_dependency' in sys.modules
+
+        def test_preloaded():
+            assert PRELOADED is {preloaded}
+        """
+    )
+    result.assert_outcomes(passed=1)

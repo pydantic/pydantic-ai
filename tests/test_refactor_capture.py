@@ -7,30 +7,58 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypeAlias
+from unittest.mock import Mock
 
 import pytest
 from inline_snapshot import snapshot
 
 import pydantic_ai
-from pydantic_ai.models import StreamedResponse
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import BatchModelRequests
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.models import StreamedResponse, override_allow_model_requests
+from pydantic_ai.models.test import TestModel
 
-from .conftest import try_import
+from .batch_utils import FAST_BATCH_SETTINGS
+from .conftest import IsStr, try_import
 
 with try_import() as imports_successful:
+    import httpx
+    import httpx2
+    from anthropic import AsyncAnthropicBedrock
+
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
     from . import refactor_capture
-    from .refactor_capture import CAPTURE_OPTION, SDK_MOCKS, SOURCE_FILE, RefactorCapture, compare, normalized
+    from .refactor_capture import (
+        CAPTURE_OPTION,
+        SDK_MOCKS,
+        SOURCE_FILE,
+        RefactorCapture,
+        bedrock_canary_model,
+        compare,
+        main,
+        normalized,
+    )
 
 pytest_plugins = ['pytester']
 
 pytestmark = [
-    # The plugin imports `httpx`, `groq` and `anthropic`; the `REQUESTS` sessions import `openai` too.
+    # The plugin imports `httpx`, `groq`, `anthropic` and `boto3`; the `REQUESTS` sessions import `openai` too.
     pytest.mark.skipif(
         not imports_successful() or importlib.util.find_spec('openai') is None,
-        reason='`httpx`, `groq`, `anthropic` or `openai` not installed',
+        reason='`httpx`, `groq`, `anthropic`, `boto3` or `openai` not installed',
     ),
     # A capture of this session would record the streams of the sessions these tests run inside it.
     pytest.mark.skipif(
@@ -117,17 +145,23 @@ def test_no_stream():
 REQUESTS = """
 import asyncio
 import random
+import time
+import uuid
 from contextlib import suppress
 
 import httpx
 import httpx2
+from anthropic import AsyncAnthropic
 from openai.types.chat import ChatCompletionMessage
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -156,13 +190,35 @@ def test_sdk_mock():
 
 async def send_with_beta():
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: httpx2.Response(400))) as client:
-        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='secret', http_client=client))
+        # Keep the captured target stable across SDK versions that add or omit this query parameter.
+        sdk_client = AsyncAnthropic(api_key='secret', http_client=client, default_query=dict(beta='true'))
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=sdk_client))
         with override_allow_model_requests(True), suppress(ModelHTTPError):
             await Agent(model).run('hi', model_settings=dict(anthropic_betas=[{text!r}]))
 
 
 def test_anthropic_beta():
     asyncio.run(send_with_beta())
+
+
+def test_function_model():
+    agent = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('hi')])), instructions='be brief')
+    agent.run_sync({text!r}, model_settings=dict(temperature=0.5))
+
+
+def values_that_change_between_runs():
+    return dict(
+        path='/tmp/pytest-of-ci/pytest-%d/popen-gw%d/test_x0' % (uuid.uuid4().int % 1000, uuid.uuid4().int % 8),
+        id=uuid.uuid4().hex,
+        capability='<thinking:%s>' % uuid.uuid4().hex[:6],
+        latency_ms=time.perf_counter(),
+    )
+
+
+def test_test_model():
+    agent = Agent(TestModel())
+    agent.tool_plain(values_that_change_between_runs)
+    agent.run_sync('hi')
 """
 
 
@@ -185,7 +241,7 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
 
 
 def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
-    run(tmp_path).assert_outcomes(passed=9)
+    run(tmp_path).assert_outcomes(passed=11)
 
     assert json.loads((tmp_path / SOURCE_FILE).read_text()) == {'pydantic_ai': pydantic_ai.__file__}
     lines = (tmp_path / 'main.jsonl').read_text().splitlines()
@@ -255,15 +311,17 @@ def test_capture_records_each_request_per_test(run: RunCapture, tmp_path: Path):
 
     `random` is seeded per test, so the value `test_json_over_httpx` draws is the same in every capture.
     """
-    run(tmp_path).assert_outcomes(passed=9)
+    run(tmp_path).assert_outcomes(passed=11)
 
     lines = (tmp_path / 'main.jsonl').read_text().splitlines()
-    # `test_anthropic_beta`'s request is checked by `test_compare_flags_a_changed_request_header`.
+    # `test_anthropic_beta`'s request is checked by `test_compare_flags_a_changed_request_header`, and the calls on
+    # in-process models by `test_capture_records_each_in_process_model_call`.
     records = [
         record
         for line in lines
         if (record := json.loads(line))['kind'] == 'request'
         and record['node'] != 'test_requests.py::test_anthropic_beta'
+        and 'model_request_parameters' not in record
     ]
     assert [
         (record['node'], record['target'], record.get('body'), record.get('kwargs', {}).get('messages'))
@@ -299,6 +357,71 @@ notes\r
     )
 
 
+def test_capture_records_each_in_process_model_call(run: RunCapture, tmp_path: Path):
+    """A call on `FunctionModel` or `TestModel`, streamed or not, is recorded with what the model is handed.
+
+    The values `values_that_change_between_runs` returns reach `TestModel`'s second call normalized.
+    """
+    run(tmp_path, '-k', 'test_text or function_model or test_model').assert_outcomes(passed=3, deselected=8)
+
+    lines = (tmp_path / 'main.jsonl').read_text().splitlines()
+    calls = [record for line in lines if 'model_request_parameters' in (record := json.loads(line))]
+    assert [
+        (
+            call['node'],
+            call['target'],
+            [part['part_kind'] for message in call['messages'] for part in message['parts']],
+            call['messages'][0]['instructions'],
+            call['model_settings'],
+            [tool['name'] for tool in call['model_request_parameters']['function_tools']],
+        )
+        for call in calls
+    ] == snapshot(
+        [
+            (
+                'test_requests.py::test_function_model',
+                'pydantic_ai.models.function.FunctionModel.request',
+                ['user-prompt'],
+                'be brief',
+                {'temperature': 0.5},
+                [],
+            ),
+            (
+                'test_requests.py::test_test_model',
+                'pydantic_ai.models.test.TestModel.request',
+                ['user-prompt'],
+                None,
+                None,
+                ['values_that_change_between_runs'],
+            ),
+            (
+                'test_requests.py::test_test_model',
+                'pydantic_ai.models.test.TestModel.request',
+                ['user-prompt', 'tool-call', 'tool-return'],
+                None,
+                None,
+                ['values_that_change_between_runs'],
+            ),
+            (
+                'test_streams.py::test_text',
+                'pydantic_ai.models.function.FunctionModel.request_stream',
+                ['user-prompt'],
+                None,
+                None,
+                [],
+            ),
+        ]
+    )
+    assert calls[2]['messages'][-1]['parts'][0]['content'] == snapshot(
+        {
+            'path': '/tmp/pytest-of-ci/pytest-N/test_x0',
+            'id': 'UUID',
+            'capability': '<thinking:ID>',
+            'latency_ms': 'LATENCY',
+        }
+    )
+
+
 def test_capture_needs_the_plugin_and_its_directory(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch):
     """Each half of `-p tests.refactor_capture --refactor-capture=DIR` without the other stops the run."""
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
@@ -327,13 +450,153 @@ def test_capture_stops_the_run_when_it_misses_the_canary_stream(tmp_path: Path):
 def test_capture_stops_the_run_when_it_misses_a_canary_request(tmp_path: Path):
     """A canary request the capture doesn't see fails the run instead of the capture recording nothing.
 
-    The capture's `send` wrappers aren't installed, standing in for SDKs that moved to an HTTP client they don't reach.
+    The capture's request wrappers aren't installed, standing in for SDKs that moved to an HTTP client they don't reach.
     """
     with pytest.raises(
         pytest.UsageError,
-        match='with `GroqModel` over `httpx` and `AnthropicModel` over `httpx2` was not recorded',
+        match=(
+            'with `GroqModel` over `httpx` and `AnthropicModel` over `httpx2` and `BedrockConverseModel` over `botocore` '
+            'was not recorded'
+        ),
     ):
         RefactorCapture(tmp_path).check_request_hook()
+
+
+async def test_capture_records_a_request_botocore_sends(tmp_path: Path):
+    """A request a botocore client sends is recorded unsigned, with the extra headers the model adds."""
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        with override_allow_model_requests(True), suppress(ModelHTTPError):
+            await Agent(bedrock_canary_model()).run('hello', model_settings={'extra_headers': {'x-canary': 'yes'}})
+    finally:
+        capture.pytest_unconfigure()
+
+    assert capture.records == snapshot(
+        [
+            {
+                'kind': 'request',
+                'node': None,
+                'target': 'POST https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse',
+                'headers': {'Content-Type': 'application/json', 'User-Agent': IsStr(), 'x-canary': 'yes'},
+                'body': {
+                    'messages': [{'role': 'user', 'content': [{'text': 'hello'}]}],
+                    'system': [],
+                    'inferenceConfig': {},
+                },
+            }
+        ]
+    )
+
+
+async def test_capture_leaves_out_a_sigv4_session_token(tmp_path: Path):
+    """A request SigV4 signs with a session token is recorded without the token, which is a credential."""
+    sent: list[httpx2.Request] = []
+
+    def answer_400(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request)
+        return httpx2.Response(400)
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(answer_400)) as http_client:
+            client = AsyncAnthropicBedrock(
+                aws_access_key='canary',
+                aws_secret_key='canary',
+                aws_session_token='canary-session-token',
+                aws_region='us-east-1',
+                http_client=http_client,
+            )
+            model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+            with override_allow_model_requests(True), suppress(ModelHTTPError):
+                await Agent(model).run('hello')
+    finally:
+        capture.pytest_unconfigure()
+
+    assert [request.headers['x-amz-security-token'] for request in sent] == ['canary-session-token']
+    assert len(capture.records) == 1
+    assert 'canary-session-token' not in json.dumps(capture.records)
+
+
+@pytest.mark.skipif(importlib.util.find_spec('prefect') is None, reason='`prefect` not installed')
+async def test_capture_records_a_prefect_request_once_and_not_the_ones_prefect_sends_itself(tmp_path: Path):
+    """Prefect's client retries a request by sending it again, which the capture records once.
+
+    The log batches, server version checks and CSRF token fetches it sends of its own accord aren't recorded at all. When
+    its test server is busy, the client retries, and its background worker sends logs, checks the version and fetches a
+    token in whichever test is running.
+    """
+    from prefect.client.orchestration import PrefectClient
+
+    sent: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request.url.path)
+        if request.url.path == '/api/csrf-token':
+            # What a server without CSRF tokens answers, so the client stops asking for one.
+            return httpx.Response(404)
+        if sent.count(request.url.path) == 1:
+            return httpx.Response(503, headers={'Retry-After': '0'})
+        return httpx.Response(200, json={})
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        async with PrefectClient(
+            'http://127.0.0.1:4200/api', httpx_settings={'transport': httpx.MockTransport(answer)}
+        ) as client:
+            assert await client.api_healthcheck() is None
+            await client.api_version()
+            await client.create_logs([])
+    finally:
+        capture.pytest_unconfigure()
+
+    assert sent == snapshot(
+        [
+            '/api/health',
+            '/api/health',
+            '/api/admin/version',
+            '/api/admin/version',
+            '/api/csrf-token',
+            '/api/logs/',
+            '/api/logs/',
+        ]
+    )
+    assert [record['target'] for record in capture.records] == snapshot(['GET http://127.0.0.1:PORT/api/health'])
+
+
+async def test_capture_normalizes_the_custom_id_of_an_in_memory_batch_request(tmp_path: Path):
+    """`TestModel`'s batches encode each request as a random token, which the `custom_id` it's sent with hashes."""
+    agent = Agent(TestModel(), capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)])
+
+    @agent.tool_plain
+    def pick() -> str:
+        return 'a'
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        await agent.run('hello')
+    finally:
+        capture.pytest_unconfigure()
+
+    # The second request carries the first response, which the batch answered.
+    assert re.findall(r'"(?:custom_id|provider_response_id)": "[^"]*"', json.dumps(capture.records)) == snapshot(
+        ['"custom_id": "CUSTOM_ID"', '"provider_response_id": "batch:batch_UUID:CUSTOM_ID"']
+    )
+
+
+def test_capture_stops_the_run_when_it_misses_a_canary_model_call(tmp_path: Path):
+    """A canary call on an in-process model the capture doesn't see fails the run instead of recording nothing.
+
+    The capture's model wrappers aren't installed, standing in for an agent that stopped calling models through them.
+    """
+    with pytest.raises(pytest.UsageError, match='were not recorded') as error:
+        RefactorCapture(tmp_path).check_model_hook()
+    assert str(error.value) == snapshot(
+        'The calls a canary agent run made on `pydantic_ai.models.function.FunctionModel.request`, `pydantic_ai.models.function.FunctionModel.request_stream`, `pydantic_ai.models.test.TestModel.request`, `pydantic_ai.models.test.TestModel.request_stream` were not recorded, so the capture would miss what in-process models are handed. Update `tests/refactor_capture.py` to the methods an agent calls them through now.'
+    )
 
 
 def test_capture_stops_the_run_when_a_listed_mock_is_gone(
@@ -362,7 +625,7 @@ def test_sdk_mocks_exist():
 def test_capture_refuses_to_append_to_an_earlier_capture(
     run: RunCapture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    run(tmp_path).assert_outcomes(passed=9)
+    run(tmp_path).assert_outcomes(passed=11)
 
     result = run(tmp_path)
     assert result.ret == pytest.ExitCode.USAGE_ERROR
@@ -370,15 +633,15 @@ def test_capture_refuses_to_append_to_an_earlier_capture(
 
     # `pytest-xdist` workers write alongside the controller, which made the check.
     monkeypatch.setenv('PYTEST_XDIST_WORKER', 'gw0')
-    run(tmp_path).assert_outcomes(passed=9)
+    run(tmp_path).assert_outcomes(passed=11)
     assert sorted(path.name for path in tmp_path.glob('*.jsonl')) == ['gw0.jsonl', 'main.jsonl']
 
 
 def test_compare_flags_a_changed_event_or_request(run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     base, same, changed = tmp_path / 'base', tmp_path / 'same', tmp_path / 'changed'
-    run(base).assert_outcomes(passed=9)
-    run(same).assert_outcomes(passed=9)
-    run(changed, '-k', 'not fails', text='goodbye').assert_outcomes(passed=8, deselected=1)
+    run(base).assert_outcomes(passed=11)
+    run(same).assert_outcomes(passed=11)
+    run(changed, '-k', 'not fails', text='goodbye').assert_outcomes(passed=10, deselected=1)
     capsys.readouterr()
 
     assert compare(base, tmp_path / 'missing') == 2
@@ -386,7 +649,7 @@ def test_compare_flags_a_changed_event_or_request(run: RunCapture, tmp_path: Pat
     assert compare(base, same) == 2
     assert capsys.readouterr().err.startswith('Both captures imported `pydantic_ai` from the same file')
     nothing = tmp_path / 'nothing'
-    run(nothing, '-k', 'no_stream').assert_outcomes(passed=1, deselected=8)
+    run(nothing, '-k', 'no_stream').assert_outcomes(passed=1, deselected=10)
     (nothing / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{nothing}/pydantic_ai/__init__.py'}))
     assert compare(base, nothing) == 2
     assert capsys.readouterr().err.startswith('Nothing recorded in')
@@ -398,43 +661,45 @@ def test_compare_flags_a_changed_event_or_request(run: RunCapture, tmp_path: Pat
     assert compare(base, same) == 0
     assert compare(base, changed) == 1
     assert capsys.readouterr().out == snapshot("""\
-nodes: base 8, head 8
-records: base 8, head 8
+nodes: base 10, head 10
+records: base 14, head 14
 stream events: head 11
-requests: head 4
+requests: head 10
 nodes per stream module, head:
   pydantic_ai.models.function: 3
   test_streams: 1
 nodes per request target, head:
   POST http://127.0.0.1:PORT/v1/upload: 2
   POST https://api.anthropic.com/v1/messages?beta=true: 1
+  pydantic_ai.models.function.FunctionModel.request: 1
+  pydantic_ai.models.function.FunctionModel.request_stream: 3
+  pydantic_ai.models.test.TestModel.request: 1
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
-nodes that recorded no request, head: 5
-  test_streams.py::test_fails_mid_stream
-  test_streams.py::test_fallback_peeks_the_first_event
+nodes that recorded no request, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
-  test_streams.py::test_text
 only in base: 0, only in head: 0, differing: 0
-nodes: base 8, head 7
-records: base 8, head 7
+nodes: base 10, head 9
+records: base 14, head 12
 stream events: head 9
-requests: head 4
+requests: head 9
 nodes per stream module, head:
   pydantic_ai.models.function: 2
   test_streams: 1
 nodes per request target, head:
   POST http://127.0.0.1:PORT/v1/upload: 2
   POST https://api.anthropic.com/v1/messages?beta=true: 1
+  pydantic_ai.models.function.FunctionModel.request: 1
+  pydantic_ai.models.function.FunctionModel.request_stream: 2
+  pydantic_ai.models.test.TestModel.request: 1
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
-nodes that recorded no request, head: 4
-  test_streams.py::test_fallback_peeks_the_first_event
+nodes that recorded no request, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
-  test_streams.py::test_text
-only in base: 1, only in head: 0, differing: 5
+only in base: 1, only in head: 0, differing: 6
   only in base: test_streams.py::test_fails_mid_stream
   differing: test_requests.py::test_anthropic_beta
+  differing: test_requests.py::test_function_model
   differing: test_requests.py::test_json_over_httpx
   differing: test_requests.py::test_sdk_mock
   differing: test_streams.py::test_fallback_peeks_the_first_event
@@ -445,8 +710,8 @@ only in base: 1, only in head: 0, differing: 5
 def test_compare_flags_a_changed_request_header(run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     """Request headers are recorded without credentials, so a changed `anthropic-beta` header is flagged."""
     base, head = tmp_path / 'base', tmp_path / 'head'
-    run(base, '-k', 'anthropic_beta', text='files-api-2025-04-14').assert_outcomes(passed=1, deselected=8)
-    run(head, '-k', 'anthropic_beta', text='code-execution-2025-08-25').assert_outcomes(passed=1, deselected=8)
+    run(base, '-k', 'anthropic_beta', text='files-api-2025-04-14').assert_outcomes(passed=1, deselected=10)
+    run(head, '-k', 'anthropic_beta', text='code-execution-2025-08-25').assert_outcomes(passed=1, deselected=10)
     (record,) = [json.loads(line) for line in (base / 'main.jsonl').read_text().splitlines()]
     assert record['headers']['anthropic-beta'] == snapshot('files-api-2025-04-14')
     assert {'x-api-key', 'authorization'}.isdisjoint(record['headers'])
@@ -465,7 +730,7 @@ def test_compare_names_the_nodes_that_recorded_no_request(
     """A selected node that recorded no request is listed, whether it recorded a stream or nothing, without failing."""
     base, head = tmp_path / 'base', tmp_path / 'head'
     for capture_dir in (base, head):
-        run(capture_dir, '-k', 'test_text or no_stream or json').assert_outcomes(passed=3, deselected=6)
+        run(capture_dir, '-k', 'subclass or no_stream or json').assert_outcomes(passed=3, deselected=8)
     (head / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{head}/pydantic_ai/__init__.py'}))
     capsys.readouterr()
 
@@ -474,10 +739,61 @@ def test_compare_names_the_nodes_that_recorded_no_request(
         [
             'nodes that recorded no request, head: 2',
             '  test_streams.py::test_no_stream',
-            '  test_streams.py::test_text',
+            '  test_streams.py::test_subclass_defined_after_the_capture_started',
             'only in base: 0, only in head: 0, differing: 0',
         ]
     )
+
+
+def test_main_extracts_the_base_commit_where_no_symlink_leads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Each pytest session is handed paths that go through no symlink, though the temporary directory is reached by one.
+
+    DBOS resolves a workflow function's file with `os.path.realpath`, which reads a symlink on the way with
+    `os.readlink`, and blockbuster raises on that in the event loop. On macOS the temporary directory is reached through
+    `/var`, a symlink, so DBOS tests failed on the base side alone.
+    """
+    (tmp_path / 'real').mkdir()
+    (tmp_path / 'link').symlink_to(tmp_path / 'real')
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path / 'link'))
+    monkeypatch.delenv('PYTHONPATH', raising=False)
+    # `main` extracts each workspace package on `sys.path`; only `pydantic_graph`, the smallest, is left there.
+    repo, venv = Path(refactor_capture.__file__).resolve().parent.parent, Path(sys.prefix).resolve()
+    kept = [
+        entry
+        for entry in sys.path
+        if not (path := Path(entry).resolve()).is_relative_to(repo) or path == repo or path.is_relative_to(venv)
+    ]
+    monkeypatch.setattr(sys, 'path', [*kept, str(repo / 'pydantic_graph')])
+    run_git = subprocess.run
+    sessions: list[tuple[list[str], str]] = []
+
+    def run(
+        command: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str] | None = None,
+        check: bool = False,
+        capture_output: bool = False,
+    ) -> subprocess.CompletedProcess[bytes]:
+        if env is None:
+            return run_git(command, cwd=cwd, check=check, capture_output=capture_output)
+        sessions.append((command, env['PYTHONPATH']))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, 'run', run)
+
+    # Neither pytest session ran, so there's no capture to compare.
+    assert main(['HEAD', 'tests/test_nothing.py']) == 2
+
+    (out,) = (tmp_path / 'real').iterdir()
+    sources = out / 'base-src' / 'pydantic_graph'
+    assert (sources / 'pydantic_graph' / '__init__.py').is_file()
+    pytest_command = [sys.executable, '-m', 'pytest', '-p', 'tests.refactor_capture']
+    assert sessions == [
+        ([*pytest_command, f'{CAPTURE_OPTION}={out / "base"}', 'tests/test_nothing.py'], str(sources)),
+        ([*pytest_command, f'{CAPTURE_OPTION}={out / "head"}', 'tests/test_nothing.py'], ''),
+    ]
+    assert os.path.realpath(out) == str(out)
 
 
 def test_normalized_replaces_values_that_change_between_runs():
@@ -491,11 +807,55 @@ def test_normalized_replaces_values_that_change_between_runs():
             'tool_call_id': f'pyd_ai_{"0" * 32}',
             'uuid': '12345678-1234-5678-1234-567812345678',
             'repr': object(),
+            'mock_repr': Mock(name='mock.service_tier'),
             'history_digest': '0' * 64,
             'duration': timedelta(seconds=1.5),
             'url': 'http://127.0.0.1:8123/v1',
             'multipart': '--0123456789abcdef0123456789abcdef--',
             'content-type': 'multipart/form-data; boundary=0123456789abcdef0123456789abcdef',
+            'tmp_path': '/tmp/pytest-of-ci/pytest-12/test_x0/notes.txt',
+            'xdist_tmp_path': '/tmp/pytest-of-ci/pytest-12/popen-gw3/test_x0',
+            'uuid4_hex': '12345678123441238123123456789abc',
+            'other_hex': '0123456789abcdef0123456789abcdef',
+            'capability_key': '<thinking:0a1b2c>',
+            'latency_ms': 12.5,
+            'plan': 'Current plan:\n1. [ ] [0a1b2c3d] a\n2. [x] [4e5f6a7b] b',
+            'added_step': "Added step 'a' with id: 0a1b2c3d",
+            'echoed_step_id': {'task_id': '0a1b2c3d'},
+            'amz_date': now.strftime('%Y%m%dT%H%M%SZ'),
+            'recorded_amz_date': '20240101T000000Z',
+            'botocore_error': (
+                "ModelHTTPError: status_code: 400, body: {'ResponseMetadata': {'HTTPStatusCode': 400, 'HTTPHeaders': "
+                "{'date': 'Mon, 01 Jan 2024 00:00:00 GMT', 'content-type': 'application/json', 'connection': "
+                "'keep-alive'}, 'RetryAttempts': 0}}"
+            ),
+            # The trace ID has the shape of a version 4 UUID without dashes.
+            'mcp_meta': {'traceparent': '00-12345678123441238123123456789abc-0123456789abcdef-01', 'progressToken': 2},
+            'prefect_labels': {'__OTEL_TRACEPARENT': '00-01a1cb2f55a38937d7e2c3ba122f0f00-367bccfae831323d-01'},
+            'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-095f908e', 'dynamic_key': '0'},
+            'in_memory_ticket': {
+                'custom_id': '52a31e60e1afe0ff4a1058d5fcf539a6-1',
+                'batch': {'id': 'batch_12345678123441238123123456789abc', 'model_name': 'test'},
+            },
+            'in_memory_response': {
+                'provider_details': {
+                    'batch': {
+                        'id': 'batch_12345678123441238123123456789abc',
+                        'custom_id': '12345678123441238123123456789abc',
+                    }
+                },
+                'provider_response_id': 'batch:batch_12345678123441238123123456789abc:52a31e60e1afe0ff4a1058d5fcf539a6',
+            },
+            # A provider's batch ID isn't a UUID, so the `custom_id` it was sent, which hashes the request, stays.
+            'provider_response': {
+                'provider_details': {
+                    'batch': {
+                        'id': 'batch_6ad154c0fd50819086f8336d5b30addb',
+                        'custom_id': '400d94ba99d83e31c153e0e49776c1a5',
+                    }
+                },
+                'provider_response_id': 'batch:batch_6ad154c0fd50819086f8336d5b30addb:400d94ba99d83e31c153e0e49776c1a5',
+            },
         }
     ) == snapshot(
         {
@@ -506,10 +866,44 @@ def test_normalized_replaces_values_that_change_between_runs():
             'tool_call_id': 'pyd_ai_ID',
             'uuid': 'UUID',
             'repr': '<object object at 0x?>',
+            'mock_repr': "<Mock name='mock.service_tier' id='ID'>",
             'history_digest': 'DIGEST',
             'duration': 'DURATION',
             'url': 'http://127.0.0.1:PORT/v1',
             'multipart': '--BOUNDARY--',
             'content-type': 'multipart/form-data; boundary=BOUNDARY',
+            'tmp_path': '/tmp/pytest-of-ci/pytest-N/test_x0/notes.txt',
+            'xdist_tmp_path': '/tmp/pytest-of-ci/pytest-N/test_x0',
+            'uuid4_hex': 'UUID',
+            'other_hex': '0123456789abcdef0123456789abcdef',
+            'capability_key': '<thinking:ID>',
+            'latency_ms': 'LATENCY',
+            'plan': 'Current plan:\n1. [ ] [STEP_ID] a\n2. [x] [STEP_ID] b',
+            'added_step': "Added step 'a' with id: STEP_ID",
+            'echoed_step_id': {'task_id': '0a1b2c3d'},
+            'amz_date': 'NOW',
+            'recorded_amz_date': '20240101T000000Z',
+            'botocore_error': (
+                "ModelHTTPError: status_code: 400, body: {'ResponseMetadata': {'HTTPStatusCode': 400, 'HTTPHeaders': "
+                "{'connection': 'keep-alive', 'content-type': 'application/json', 'date': 'Mon, 01 Jan 2024 00:00:00 "
+                "GMT'}, 'RetryAttempts': 0}}"
+            ),
+            'mcp_meta': {'traceparent': '00-TRACE_ID-SPAN_ID-01', 'progressToken': 2},
+            'prefect_labels': {'__OTEL_TRACEPARENT': '00-TRACE_ID-SPAN_ID-01'},
+            'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-CODE_HASH', 'dynamic_key': '0'},
+            'in_memory_ticket': {'custom_id': 'CUSTOM_ID-1', 'batch': {'id': 'batch_UUID', 'model_name': 'test'}},
+            'in_memory_response': {
+                'provider_details': {'batch': {'id': 'batch_UUID', 'custom_id': 'CUSTOM_ID'}},
+                'provider_response_id': 'batch:batch_UUID:CUSTOM_ID',
+            },
+            'provider_response': {
+                'provider_details': {
+                    'batch': {
+                        'id': 'batch_6ad154c0fd50819086f8336d5b30addb',
+                        'custom_id': '400d94ba99d83e31c153e0e49776c1a5',
+                    }
+                },
+                'provider_response_id': 'batch:batch_6ad154c0fd50819086f8336d5b30addb:400d94ba99d83e31c153e0e49776c1a5',
+            },
         }
     )

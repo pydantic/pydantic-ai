@@ -43,6 +43,7 @@ from pydantic_ai.capabilities.abstract import (
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.external_events import _refuse_unsupported_external_events  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import (
     KnownModelName,
@@ -81,7 +82,6 @@ from ._capability_operation import (
     collect_capability_operations,
     recover_capability,
 )
-from ._codec import IDENTITY_CODEC
 from ._operation import (
     CacheIdentity,
     CapabilityOperationId,
@@ -103,7 +103,6 @@ from ._operation import (
     ToolsetGetToolsParams,
     ToolsetKind,
     ToolsetValidateToolArgumentsId,
-    TypedResultCodec,
 )
 from ._operation_backend import (
     BoundDurableOperation,
@@ -671,9 +670,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     handler=handler,
                     parameter_transport=backend.parameter_transports.capability_operation(declaration),
                     cache_identity=CapabilityCacheIdentity(),
-                    result_codec=TypedResultCodec(
+                    result_codec=self._typed_result_codec(
                         capability_operation_result_type(declaration.result_type),
-                        mode='identity' if self.engine_spec.codec is IDENTITY_CODEC else 'json',
                     ),
                     config_role='capability',
                 )
@@ -1161,12 +1159,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Force sequential tool execution when required by a sequence-keyed durable engine."""
+        """Refuse external-event waits the engine can't record, and force sequential tool execution when required by a sequence-keyed durable engine.
+
+        An engine that supports waiting for external events installs its own waiter with
+        `external_event_scope` before calling this, and that waiter is kept.
+        """
+        if not self.in_durable_context:
+            return await handler()
         agent = self._agent
-        if not self.engine_spec.sequential_tools_in_durable_context or agent is None or not self.in_durable_context:
-            return await handler()
-        with agent.parallel_tool_call_execution_mode('sequential'):
-            return await handler()
+        with _refuse_unsupported_external_events(self.engine_name):
+            if not self.engine_spec.sequential_tools_in_durable_context or agent is None:
+                return await handler()
+            with agent.parallel_tool_call_execution_mode('sequential'):
+                return await handler()
 
     def _normalize_unit_config(self, config: Any) -> Any:
         """Post-process a resolved config (e.g. Prefect/Temporal ensure non-retryable errors)."""
