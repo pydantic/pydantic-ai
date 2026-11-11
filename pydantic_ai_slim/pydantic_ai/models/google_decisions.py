@@ -33,7 +33,7 @@ from .decision import (
 
 try:
     from google.genai import Client, errors
-    from google.genai.types import HttpOptionsDict
+    from google.genai.types import HttpOptionsDict, PartMediaResolution, PartMediaResolutionLevel
 
     from ..providers.google import GoogleProvider
     from .google import (
@@ -115,7 +115,7 @@ class GoogleDecisionsModel(DecisionModel[Client]):
         self,
         model_name: GoogleDecisionsModelName,
         *,
-        provider: Literal['google'] | GoogleProvider = 'google',
+        provider: Literal['google', 'google-decisions'] | GoogleProvider = 'google',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -125,7 +125,8 @@ class GoogleDecisionsModel(DecisionModel[Client]):
             model_name: The name of the Gemini decision model to use, such as `gemini-decision-1`.
             provider: The provider to use for the API's URL and key: a
                 [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider], as for
-                [`GoogleModel`][pydantic_ai.models.google.GoogleModel], or `'google'` (the default), which creates one.
+                [`GoogleModel`][pydantic_ai.models.google.GoogleModel], or `'google'` (the default) or `'google-decisions'`,
+                either of which creates one.
             profile: The model profile to use. Defaults to a decision model's profile for the model name.
             settings: Model-specific settings used as defaults for this model.
         """
@@ -270,8 +271,11 @@ def _input(request: DecisionRequest) -> str | list[_TextBlock | _ImageBlock]:
     blocks: list[_TextBlock | _ImageBlock] = [_TextBlock(type='text', text=text)]
     for index, image in enumerate(request.images, start=1):
         image_block = _ImageBlock(type='image', data=image.base64, mime_type=image.media_type)
-        if (resolution := (image.vendor_metadata or {}).get('resolution')) is not None:
-            image_block['resolution'] = resolution
+        # `GoogleModel`'s per-part `media_resolution`, so one image carries its resolution to both models.
+        if (media_resolution := (image.vendor_metadata or {}).get('media_resolution')) is not None:
+            level = PartMediaResolution.model_validate(media_resolution).level
+            if level is not None and level != PartMediaResolutionLevel.MEDIA_RESOLUTION_UNSPECIFIED:
+                image_block['resolution'] = level.value.removeprefix('MEDIA_RESOLUTION_').lower()
         blocks.extend((_TextBlock(type='text', text=f'<image {index}>:'), image_block))
     return blocks
 

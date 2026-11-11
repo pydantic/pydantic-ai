@@ -43,6 +43,8 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsStr, RequestCapture, TestEnv, try_import
 
 with try_import() as imports_successful:
+    from google.genai.types import PartMediaResolution, PartMediaResolutionLevel
+
     from pydantic_ai.models.google_decisions import GoogleDecisionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -263,11 +265,15 @@ async def test_image_input(
     request_capture: RequestCapture,
     image_content: BinaryImage,
 ):
-    """An image goes inline after its `<image N>` label, with its `resolution` from `vendor_metadata`."""
+    """An image goes inline after its `<image N>` label, with the `media_resolution` `GoogleModel` reads as its `resolution`."""
     agent = Agent(
         capture_model, output_type=Literal['kiwi', 'apple', 'banana'], instructions='Which fruit is in the photo?'
     )
-    image = BinaryContent(image_content.data, media_type='image/jpeg', vendor_metadata={'resolution': 'low'})
+    image = BinaryContent(
+        image_content.data,
+        media_type='image/jpeg',
+        vendor_metadata={'media_resolution': {'level': 'MEDIA_RESOLUTION_LOW'}},
+    )
 
     result = await agent.run(['Photo from the customer:', image])
 
@@ -345,6 +351,44 @@ async def test_question_mapping(allow_model_requests: None):
                     'q2': {'type': 'score', 'instructions': 'How urgent?', 'criteria': [None, '["today", "now"]']},
                 },
             }
+        ]
+    )
+
+
+async def test_media_resolution_levels(allow_model_requests: None):
+    """`media_resolution`, as a dict or as the SDK's type, is sent as its level's name, and an unset level is left out.
+
+    Called through `decide`: each shape `GoogleModel` takes maps to the same wire value, which one recording can't show.
+    """
+    endpoint = Captured(answering())
+    resolutions: list[object] = [
+        {'level': 'MEDIA_RESOLUTION_UNSPECIFIED'},
+        {'num_tokens': 64},
+        PartMediaResolution(level=PartMediaResolutionLevel.MEDIA_RESOLUTION_ULTRA_HIGH),
+    ]
+    images = (
+        BinaryContent(b'a', media_type='image/png'),
+        *(BinaryContent(b'b', media_type='image/png', vendor_metadata={'media_resolution': r}) for r in resolutions),
+    )
+    request = DecisionRequest(
+        state='Four photos', questions={'blurry': NoulQuestion(instructions='Is one blurry?')}, images=images
+    )
+
+    await mock_model(endpoint).decide(request, DecisionModelSettings())
+
+    body = endpoint.bodies[0]
+    assert isinstance(body, dict)
+    assert body['input'] == snapshot(
+        [
+            {'type': 'text', 'text': 'Four photos'},
+            {'type': 'text', 'text': '<image 1>:'},
+            {'type': 'image', 'data': 'YQ==', 'mime_type': 'image/png'},
+            {'type': 'text', 'text': '<image 2>:'},
+            {'type': 'image', 'data': 'Yg==', 'mime_type': 'image/png'},
+            {'type': 'text', 'text': '<image 3>:'},
+            {'type': 'image', 'data': 'Yg==', 'mime_type': 'image/png'},
+            {'type': 'text', 'text': '<image 4>:'},
+            {'type': 'image', 'data': 'Yg==', 'mime_type': 'image/png', 'resolution': 'ultra_high'},
         ]
     )
 
