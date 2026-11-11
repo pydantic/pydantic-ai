@@ -166,9 +166,9 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import (
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
-        _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
-        _response_error_type,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.openai._errors import response_error_type
+    from pydantic_ai.models.openai._native_tools import resolve_openai_image_generation_size
     from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
@@ -1196,7 +1196,7 @@ async def test_parallel_tool_calls_not_sent_without_tools(allow_model_requests: 
 
 
 async def test_openai_responses_tool_choice_list_unsupported_raises_error(allow_model_requests: None) -> None:
-    """Tuple-resolved forcing must consult `_support_tool_forcing` in the Responses tuple branch too.
+    """Tuple-resolved forcing must consult `support_openai_tool_forcing` in the Responses tuple branch too.
 
     Same regression as the Chat-side test — a list[str] `tool_choice` resolved to `('required', {names})`
     used to be sent without checking the model profile.
@@ -1276,27 +1276,27 @@ def test_openai_responses_image_generation_tool_aspect_ratio_mapping(
     expected_size: Literal['1024x1024', '1024x1536', '1536x1024'],
 ) -> None:
     tool = ImageGenerationTool(aspect_ratio=aspect_ratio, size=explicit_size)
-    assert _resolve_openai_image_generation_size(tool) == expected_size
+    assert resolve_openai_image_generation_size(tool) == expected_size
 
 
 def test_openai_responses_image_generation_tool_aspect_ratio_invalid() -> None:
     tool = ImageGenerationTool(aspect_ratio='16:9')
 
     with pytest.raises(UserError, match='OpenAI image generation only supports `aspect_ratio` values'):
-        _resolve_openai_image_generation_size(tool)
+        resolve_openai_image_generation_size(tool)
 
 
 def test_openai_responses_image_generation_tool_aspect_ratio_conflicts_with_size() -> None:
     tool = ImageGenerationTool(aspect_ratio='1:1', size='1536x1024')
 
     with pytest.raises(UserError, match='cannot combine `aspect_ratio` with a conflicting `size`'):
-        _resolve_openai_image_generation_size(tool)
+        resolve_openai_image_generation_size(tool)
 
 
 def test_openai_responses_image_generation_tool_unsupported_size_raises_error() -> None:
     tool = ImageGenerationTool(size='2K')
     with pytest.raises(UserError, match='OpenAI image generation only supports `size` values'):
-        _resolve_openai_image_generation_size(tool)
+        resolve_openai_image_generation_size(tool)
 
 
 async def test_openai_responses_image_generation_tool_options(allow_model_requests: None) -> None:
@@ -15011,7 +15011,7 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
 def test_map_file_search_tool_call():
     from openai.types.responses.response_file_search_tool_call import ResponseFileSearchToolCall
 
-    from pydantic_ai.models.openai import _map_file_search_tool_call  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openai._native_tools import map_file_search_tool_call
 
     item = ResponseFileSearchToolCall.model_validate(
         {
@@ -15030,7 +15030,7 @@ def test_map_file_search_tool_call():
         }
     )
 
-    call_part, return_part = _map_file_search_tool_call(item, 'openai')
+    call_part, return_part = map_file_search_tool_call(item, 'openai')
     assert (call_part, return_part) == snapshot(
         (
             NativeToolCallPart(
@@ -16416,8 +16416,8 @@ def test_response_error_type_declared_or_extra():
         type: str | None = None
 
     error = {'code': 'server_error', 'message': 'No capacity.', 'type': 'too_many_requests'}
-    assert _response_error_type(resp.ResponseError.model_validate(error)) == 'too_many_requests'
-    assert _response_error_type(DeclaredTypeResponseError.model_validate(error)) == 'too_many_requests'
+    assert response_error_type(resp.ResponseError.model_validate(error)) == 'too_many_requests'
+    assert response_error_type(DeclaredTypeResponseError.model_validate(error)) == 'too_many_requests'
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
@@ -19330,7 +19330,7 @@ async def test_stream_sets_suspended_state_for_pending_statuses(
 
 
 async def test_request_stream_model_response_with_parts(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
-    """`_ModelResponseStreamedResponse` should handle pre-built `ModelResponse` with parts."""
+    """`ModelResponseStreamedResponse` should handle pre-built `ModelResponse` with parts."""
     mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
@@ -19579,7 +19579,7 @@ async def test_cursorless_background_resume_stream_cancel_is_noop(allow_model_re
     """Cancelling a cursor-less background-resume stream is a clean no-op, not a `NotImplementedError`.
 
     A suspended history without a `last_sequence_number` cursor resumes via a non-stream `retrieve()`
-    wrapped in a `_ModelResponseStreamedResponse` — there's no live SSE connection to stream. Its
+    wrapped in a `ModelResponseStreamedResponse` — there's no live SSE connection to stream. Its
     `cancel()`/teardown (also driven by the continuation composite's `close_stream()`) must no-op rather
     than inherit the base `StreamedResponse.close_stream()` that raises `NotImplementedError`: the
     server-side job is cancelled via `cancel_suspended_response`, not by closing a connection that
@@ -20634,7 +20634,7 @@ async def test_no_session_affinity_on_standard_model(allow_model_requests: None)
 async def test_unsupported_settings_cover_request_param_fields(allow_model_requests: None, unsupported: bool):
     """`parallel_tool_calls`, `openai_truncation`, and `openai_context_management` ride on the
     request params rather than the create call, so `openai_unsupported_model_settings` must be
-    honored in the builder itself: `_drop_unsupported_params` runs after the params are built."""
+    honored in the builder itself: `drop_unsupported_params` runs after the params are built."""
     response = resp.Response.model_validate(_MINIMAL_RESPONSE)
     mock_client = MockOpenAIResponses.create_mock(response)
     profile = (

@@ -283,9 +283,14 @@ details.
 uv run clai2
 ```
 
-Run `/login github-copilot`, then open `/model add` and choose `github-copilot`.
-The provider menu also starts login when no credentials exist. No application
-registration or client ID configuration is required. CLAI supplies the same
+Run `/login github-copilot`. Login adds every model your account's catalog lists
+to `/model` and, when you have not chosen a model, selects a recent strong one, such
+as Claude Opus 5.5 or Gemini 4 Argon; a model you chose stays selected. To switch,
+open `/model add` and choose `github-copilot`. The provider menu also starts login
+when no credentials exist. If listing the models fails, the login stays saved and
+CLAI reports why.
+
+No application registration or client ID configuration is required. CLAI supplies the same
 [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
 and requests `read:user` access to your GitHub profile. This identifies the existing
 Copilot OAuth application, not a separately registered CLAI application.
@@ -297,8 +302,8 @@ Login prints a code and `https://github.com/login/device`, then starts polling.
 Open the link on this or another device and approve only your own session's code.
 CLAI does not launch a browser, so a text browser cannot block login or take over
 an SSH terminal. Ctrl-C stops polling; GitHub controls expiry. There is no localhost callback.
-GitHub authorization does not establish Copilot access: the menu queries your
-account's catalog and keeps only picker-enabled `/chat/completions` models.
+GitHub authorization does not establish Copilot access: login and the menu query
+your account's catalog and keep only picker-enabled `/chat/completions` models.
 The shared model menu includes details and `Ctrl+S` settings. Subscription and
 organization policy still control inference access. A known ID also works with
 `/model github-copilot:claude-haiku-4.5`.
@@ -419,7 +424,8 @@ CLAI2 exits; AoE removes the directory when it stops the session.
 **Conversation.** The current conversation ID goes to `session_id` beside the status
 file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
 `~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
-CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--resume`,
+CLAI2 starts empty, so the plugin resumes the conversation recorded there and shows its
+history, as `/resume ID` does; `--resume`,
 `--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
 (`SessionStart.conversation_chosen`). It is resumed also when it was saved in another
 directory, such as after AoE renamed or moved a worktree, and continues in the pane's
@@ -766,7 +772,7 @@ and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
    Server instructions      Include
    Save & close
 
- type to filter - Enter edit - R reset - Esc close
+ / search - Space cycle - Enter edit - R reset - Esc close
 ```
 
 | Row | Choices | Default |
@@ -776,7 +782,10 @@ and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
 | Access | read-only, or read and write | read-only |
 | Server instructions | pass Linear's own MCP instructions to the agent, or leave them out | include |
 
-Enter edits a row, R resets it to the default, and Esc backs out of a picker
+Outside search, Space cycles **Server instructions**, Enter edits a row, and `R`
+resets it to the default. Access uses Enter because it can require sign-in.
+Press `/` to search; Enter keeps the matches and restores these
+actions, and Esc clears the filter first. Esc backs out of a picker
 without changing anything. Each change is saved as you make it, so **Save & close**
 and Esc both just leave the menu, and the plugin is reloaded with the new settings.
 The same rows show in the [web UI](#web-this-session-in-your-browser)'s plugins
@@ -824,7 +833,8 @@ change pages.
 `/plugins enable notion` loads it and opens its settings menu. To change the
 settings later, run `/plugins configure notion` or press `c` on it in
 `/plugins`; you never need to reinstall it. The menu is the shared field editor
-`/set` uses: type to filter, Enter to edit a row, `R` to reset one, Esc to close.
+`/set` uses: `/` to search; outside search, Space cycles eligible choices, Enter edits
+a row, and `R` resets one. Esc clears a filter first, then closes.
 Each change is saved as soon as you make it, and the plugin loads again when the
 menu closes, so the next turn uses the new settings. The same menu also opens in
 the [web UI](#web-this-session-in-your-browser)'s plugins panel, where picking
@@ -894,10 +904,13 @@ opens its settings menu; reopen the menu any time with
 the [web UI](#web-this-session-in-your-browser)'s plugins panel, where **API key**
 and **Which Logfire** open their pickers and fields as dialogs in the page.
 
-Every row saves as soon as you change it, so **Save & close** (or Esc) just leaves
-the menu, and the plugin loads again with the new settings. Esc backs out of any
-picker or text field without changing anything; `R` resets the highlighted row to
-its default.
+Press `/` to search; Enter ends search and retains the matches. Outside search,
+Space cycles the declared choices for **Tools**, **Server instructions**, and
+**Browser sign-in**. Enter edits any row, including the action-backed **API key**
+and **Which Logfire** rows; `R` resets the highlighted row. Esc clears a filter
+first, then closes; in a picker or text field, Esc backs out without changes.
+Every change saves immediately, so **Save & close** only leaves the menu, and
+the plugin loads again with the new settings.
 
 | Row | Setting | Default | Does |
 |---|---|---|---|
@@ -1110,7 +1123,8 @@ which can retain globals removed from source; initialize plugin state explicitly
 
 `/reload` refreshes CLAI code, not Harness or core. After changing those packages,
 restart with the same launch options and `--resume` to continue the saved session.
-Keep the worktree if asked to remove it.
+Keep the worktree if asked to remove it. Exit removes a clean `--worktree` checkout with no
+unpushed commits without asking; run `git worktree lock .` in it first to keep it.
 
 Plugins are trusted code running as you. Only install what you trust.
 
@@ -1125,9 +1139,11 @@ that directory before reading project settings or activating plugins. Relative p
 and `repo_context` therefore refer to that checkout. User plugins and settings
 still load from the same database directory, even with a relative `--database`
 path. Only committed project files reach the new checkout. After interactive
-shutdown and plugin cleanup, CLAI offers to remove the linked worktree, defaulting
-to keep. This includes existing linked worktrees. The inline picker also offers
-**No, don't ask again for this worktree**, saved for this checkout only. By default, removal uses Git
+shutdown and plugin cleanup, CLAI removes the `--worktree` checkout if it is clean and has
+no unpushed commits, and otherwise offers to remove a changed linked worktree, defaulting
+to keep. The offer includes existing linked worktrees you launch CLAI inside. The inline picker also offers
+**No, don't ask again for this worktree**, saved for this checkout only, which
+also stops the automatic removal. By default, removal uses Git
 without `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
 and `/reload` keep the checkout in use, except under `clai2 --web`, where opening a session saved
@@ -1154,6 +1170,7 @@ settings using the former import paths are redirected to the new modules.
 | `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads the instruction files (`AGENTS.md`, else `CLAUDE.md`) of the launch directory and its ancestors into the instructions, and a subdirectory's as the agent works there |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
+| `refinement` | `pydantic_clai2.builtin_plugins.refinement` | `{}` | `/refine`: the model reviews and revises its last answer |
 | `hooks` | `pydantic_clai2.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
 | `slack` (off until enabled) | `pydantic_clai2.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
@@ -1532,7 +1549,7 @@ turn (`LiveSession.steer`), as at the terminal's prompt, and the input queued be
 above the composer from
 `LiveSession.queue`, which the terminal's own queue is: the page edits or removes an entry with
 `edit_queued` and `remove_queued`, and hears of every change through `host.live.subscribe`. Edit and Retry on a
-prompt rewind its conversation while it is not `LiveSession.busy`. A steered
+prompt rewind its conversation while it is not `LiveSession.busy`, which the `live` message tells the page. A steered
 message shows in the transcript once core delivers it (`EnqueuedMessagesEvent`). The process's working directory never changes: each session reads its own as
 `host.workspace`. `/resume ID` typed in a session still moves that session to the directory `ID`
 was saved in, and `/workspace DIRECTORY` (an existing absolute path) starts a new conversation
@@ -1908,8 +1925,9 @@ press `c` on it in `/plugins`. The same menu opens in the web UI's plugins
 panel, with the sign-in, key, and host steps shown as dialogs in the page.
 You never need to reinstall it.
 
-The menu is the shared field editor that `/set` uses: type to filter, Enter to
-edit a row, `R` to reset one, Esc or **Save & close** to close. Each change is
+The menu is the [shared field editor](#offer-a-settings-menu-def-settings_menuself)
+that `/set` uses: `/` to search, Space to cycle eligible choices outside search,
+Enter to edit a row, `R` to reset one, and **Save & close** to close. Each change is
 saved as soon as you make it. When the menu closes, the plugin loads again, so the next turn uses the
 new settings.
 
@@ -1984,9 +2002,9 @@ its settings menu. Open it again later with `c` in `/plugins`,
 /google_workspace
 ```
 
-The settings menu is full-screen with one row per setting. Up/Down moves, Enter
-edits a row, `r` puts a row back to its default, and **Save & close** or Esc
-leaves. Each change is saved to the plugin's declaration as soon as you make it and applies
+The settings menu is full-screen with one row per setting. Up/Down moves, Space
+cycles eligible choices, Enter edits a row, `r` puts a row back to its default, and
+**Save & close** or Esc leaves. Each change is saved to the plugin's declaration as soon as you make it and applies
 from the next turn, without reloading. Run `/google_workspace` again at any time
 to change a setting or pick a different key. The same rows show in the
 [web UI](#web-this-session-in-your-browser)'s plugins panel, where Access token key
@@ -2053,8 +2071,9 @@ in, so only Member and Admin users with Pylon's `MCP Access` role can use it.
 Turning the plugin on opens its settings menu, like any plugin with a
 [settings menu](#offer-a-settings-menu-def-settings_menuself). `c` in
 `/plugins`, `/plugins configure pylon`, and `/pylon` reopen it at any time to
-change anything, including the key. Type to filter the rows. Enter edits a row,
-`R` restores its default, and **Save & close** or Esc leaves the menu. Each
+change anything, including the key. Press `/` to search the rows. Outside search,
+Space cycles eligible choices, Enter edits a row, and `R` restores its default.
+**Save & close** leaves the menu; Esc clears a filter first, then leaves. Each
 change is saved to the plugin's settings as soon as you make it and applies from
 the next run, with no reinstall. The same rows show in the
 [web UI](#web-this-session-in-your-browser)'s plugins panel, where the Sign-in
@@ -2120,8 +2139,9 @@ server's name for it. It needs a paid Day AI Agent tier.
 
 `/plugins enable day_ai` loads it and opens its settings menu. Reopen the menu
 at any time with `/plugins configure day_ai`, or `c` on `day_ai` in `/plugins`.
-Type to filter the rows, press Enter to change one, `R` to reset it to its
-default, and Esc to close. Each change is saved as soon as you make it, and the
+Press `/` to search the rows; outside search, Space cycles **Server instructions**,
+Enter edits a row, and `R` resets it to its default. Esc clears a filter first,
+then closes. Each change is saved as soon as you make it, and the
 plugin loads again with the new settings when the menu closes. The same menu
 shows in the [web UI](#web-this-session-in-your-browser)'s Plugins panel, where
 the Sign-in row's **Change…** button asks for a key or runs the browser sign-in
@@ -2184,8 +2204,9 @@ catalog entry, that choice carries over to this plugin.
 Set it up in its settings menu. Turning it on (Space in `/plugins`,
 `/plugins enable ordinal`, or `/plugins add`) opens the menu, and so do `/plugins configure ordinal` and `c` in `/plugins`
 later, so you can change anything without reinstalling. It is the same field
-editor `/set` uses: type to filter, Enter edits a row, `R` resets it, and
-**Save & close** or Esc closes.
+editor `/set` uses: `/` starts search; outside search, Space cycles **Server instructions**,
+Enter edits a row, and `R` resets it. **Save & close** closes; Esc clears a filter
+first, then closes.
 Each change is saved as soon as you make it, and the plugin loads again when the
 menu closes. The same menu also opens in the [web UI](#web-this-session-in-your-browser)'s
 plugins panel, where the `/keys` picker, the masked token input, and the browser
@@ -2238,8 +2259,9 @@ settings is left as it is.
 
 Turning it on (Space in `/plugins`, `/plugins enable slack`, or `/plugins add`),
 or pressing `c` on it in `/plugins`, opens its settings menu. `/plugins configure slack`
-reopens it later, with no reinstall. The list is searchable, Enter edits the
-highlighted row, `R` resets it, and **Save & close** or Esc closes. The same menu
+reopens it later, with no reinstall. Press `/` to search. Outside search, Space
+cycles eligible choices, Enter edits the highlighted row, and `R` resets it.
+**Save & close** closes; Esc clears a filter first, then closes. The same menu
 shows in the [web UI](#web-this-session-in-your-browser)'s Plugins panel, where
 the User token, Slack app, and Browser sign-in rows have a **Change…** button and
 their steps (the key picker, the Client ID, the sign-in's waiting screen) open as
@@ -2325,8 +2347,9 @@ the server's name for it. It starts disabled.
 settings later, run `/plugins configure posthog` or press `c` on it in
 `/plugins`. You never need to reinstall it.
 
-The menu is the shared field editor that `/set` uses: type to filter, Enter to
-edit a row, `R` to reset one, **Save & close** or Esc to leave. Each change is
+The menu is the [shared field editor](#offer-a-settings-menu-def-settings_menuself)
+that `/set` uses: `/` to search, Space to cycle eligible choices outside search,
+Enter to edit a row, `R` to reset one, and **Save & close** to leave. Each change is
 saved as soon as you make it. When the menu closes, the plugin loads again, so the next turn uses the
 new settings. The same menu also opens in the [web UI](#web-this-session-in-your-browser)'s
 plugins panel, where the `/keys` picker, the masked key input, the feature-group
@@ -2392,8 +2415,8 @@ settings menu. Until you have closed the menu in the terminal once, changed a
 setting, or chosen the token source, loading it prints a line pointing there.
 
 `/grain`, `c` in `/plugins`, or `/plugins configure grain` opens the settings
-menu. Enter edits a row, `r` resets it to its default, and Esc or **Save &
-close** leaves the menu. Each change is saved to the plugin's settings at once
+menu. Space cycles eligible choices, Enter edits a row, `r` resets it to its default,
+and Esc or **Save & close** leaves the menu. Each change is saved to the plugin's settings at once
 and applies to the next prompt. Reopen it any time to change a setting or pick a
 different key. The same menu shows in the [web UI](#web-this-session-in-your-browser)'s
 plugins panel, where the Token row's **Change…** button asks its steps (the key
@@ -2589,7 +2612,7 @@ With `uv tool`, extra packages installed using `--with` must be added again afte
 `/update now`. See [Updating](docs/reference.md#updating) for how CLAI installs updates.
 
 ```text
-/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"max_results": 8}'
 ```
 
 The JSON is passed to the constructor, so any keyword `ExaSearch` accepts that
@@ -2612,7 +2635,7 @@ from pydantic_clai2.plugins import Plugin
 
 class Search(Plugin):
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (ExaSearch(num_results=8, text_summary=True),)
+        return (ExaSearch(max_results=8, text_summary=True),)
 ```
 
 A plugin is a subclass of `Plugin`, declared the way a Pydantic AI
@@ -2717,8 +2740,8 @@ the terminal; the shell has already printed them.
 
 `on_task_progress` receives a `TaskProgress` for everything a task the agent delegated does, and its
 descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the event
-from the task's own run (text, thinking, tool calls and results), its `DelegationStartEvent` or
-`DelegationEndEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
+from the task's own run (text, thinking, tool calls and results), its `DelegationStartedEvent` or
+`DelegationFinishedEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
 its parent, or `None` when only the task changed, such as when it started, finished, or began
 waiting for an answer. Its own run's events never reach the main run's hooks: they are the feed
 `/tasks` shows. Its `sub_agents` task events also go into the stream of the run that delegated it,
@@ -2838,7 +2861,7 @@ class WriteLog(Plugin):
 A capability class of your own can do the same with core's `@on_event(EventClass)`
 method decorator. Some events let you say no. If the event has a `cancel()`
 method, calling it stops the action before it happens (for example
-`FileChangeRequestEvent`).
+`FileChangeRequestedEvent`).
 
 ### Add a `/command`: `get_commands()`
 
@@ -3340,9 +3363,24 @@ menu's `Dialogs` and saves the new value for you.
 Return a `SettingsMenu` from `settings_menu` to give the plugin a settings menu.
 CLAI opens it when the plugin is turned on (Enter or Space in `/plugins`, `/plugins enable`,
 or `/plugins add`), on `c` in `/plugins`, and on `/plugins configure NAME`, with
-the shared field editor `/set` uses: type to filter, Enter edits a row, `R` resets
-it, and **Save & close**, like Esc, leaves. The menu is declared, not run, so it is
-not tied to the terminal.
+the shared field editor `/set` uses. Searchable terminal lists that offer Space
+cycling use `/` to start searching. While searching, printable characters,
+including Space and `R`, are query text. Enter ends search and keeps the matches,
+so hotkeys act on them; `/` resumes search. Esc clears the search or retained
+filter first; with no filter, Esc closes. Searchable lists without eligible rows
+filter as you type and keep uppercase `R` as the reset key.
+
+Outside search, Space cycles rows with more than one declared `FieldRow.choices`
+value, excluding rows mapped in `SettingsMenu.actions` or `SettingsMenu.menus`.
+Space selects the next choice in declaration order, wrapping from the last to
+the first. An unset or unlisted current value starts at the first choice. Each
+change saves immediately, keeping the selection and scroll position. Model,
+theme, spinner, and other declared option lists participate. Free-text rows,
+rows without choices, and single-choice rows do not cycle; action and submenu
+rows retain their Enter-only flow. Enter still opens the row's editor or choices.
+`R` resets the highlighted row (`r` in nonsearchable menus, which have no search).
+**Save & close** only leaves with edits already saved. The menu is declared,
+not run, so it is not tied to the terminal.
 
 A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 
@@ -3365,7 +3403,8 @@ A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
   builds it when it opens. Leaving it returns to this menu, in the terminal and in
   the web UI, which shows it beneath the row. The keys are read as the menu opens, so
   a row an action adds meanwhile opens its menu once the menu opens again.
-- `searchable`, whether typing filters the list (default `True`).
+- `searchable`, whether the terminal list can be filtered (default `True`): `/`
+  starts search when the list offers Space cycling; otherwise, typing filters.
 
 `Dialogs` asks the user wherever the menu was opened, and every method waits for the
 answer. Backing out returns `None` or `False`, never raises:
@@ -3418,7 +3457,8 @@ close** row; a list you build yourself ends with `save_and_close_item()` and tre
 a result as closed when `picked(result)` is `None`. For a row that opens something
 other than a plain value, pass `submenus` to `run_flow`, or await
 `field_menu.run_flow_async` when the submenu is itself async, such as
-`api_keys.prompt_api_key`.
+`api_keys.prompt_api_key`. These are internal UI helpers, not a stable third-party
+UI API.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
 secret in them: keep it in `/keys` with `prompt_api_key` and `save_key`, save only
@@ -3511,11 +3551,12 @@ Logfire's `AgentControl`, can replace CLAI's default per request; `resolved_mode
 status row still name the selected one, and `/compact` and session naming (without a
 `sessions.naming_model`) run on it. `conversation_id` is the ID `--resume` restores it by, and
 `title` its saved title (`None` until the first prompt is saved); `on_conversation_changed` says
-when either changes. `await resume(conversation_id)` switches to a saved conversation as
-`/resume ID` does, returning the notice to show: it only restores history, never runs the
-model or replays a tool. Call it between turns, for example from `on_session_start`; it raises
-`RuntimeError` during a run, `LookupError` for an unknown ID, and `ValueError` for a
-conversation saved in another directory or when persistence is not configured.
+when either changes. `await resume(conversation_id)` switches to a saved conversation and
+shows its history, as `/resume ID` does, returning the notice to show: it only restores
+history, never runs the model or replays a tool. Call it between turns, for example from
+`on_session_start`; it raises `RuntimeError` during a run, `LookupError` for an unknown ID,
+and `ValueError` for a conversation saved in another directory or when persistence is not
+configured.
 `resume(conversation_id, allow_other_workspace=True)` continues a conversation saved in another
 directory in this one instead, as confirming it in the `/resume` browser does: tools then run
 in this directory, and the saved conversation keeps its original one. A conversation
@@ -3523,8 +3564,8 @@ still running in another process is not taken over: the newest unarchived copy C
 continue it that no other process runs is resumed, else a new copy, and the notice says which.
 When the conversation or its title changed, every loaded plugin, the caller included, then
 receives `on_conversation_changed`; when the ID changed, the status row starts afresh.
-Resuming the conversation already held changes nothing. An in-memory `Transcript` has nothing
-saved, so its `resume` raises `LookupError`.
+Resuming the conversation already held only shows its history again. An in-memory
+`Transcript` has nothing saved, so its `resume` raises `LookupError`.
 Local `!command` executions append a user message with the command, stdout, stderr, and
 completion status. A command that gets the terminal (a full-screen program such as `!vim`, or
 `!!command`) appends only the command and its completion status. They do not start an agent turn or fire turn hooks;
@@ -4013,7 +4054,7 @@ What changes for a process-scoped plugin:
 | `await open(conversation_id)` | the live session holding that saved conversation; when none does, resumes it in a new live session in the folder it was saved in. Concurrent calls for one conversation get the same session. A conversation another process runs continues in a fork of it, reusing one saved before, so the session's `conversation.conversation_id` differs from the one passed. Raises `LookupError` for an unknown conversation, `ValueError` when its folder is gone, and `RuntimeError` where CLAI opens no other sessions |
 | `await new(workspace=None)` | a new live session with a new conversation, in `workspace`, by default the folder CLAI started in. Raises `ValueError` unless `workspace` is an existing absolute folder, and `RuntimeError` where CLAI opens no other sessions |
 | `await close(live_id)` | close a live session, cancelling its turn; its plugins end with `'exit'`. Raises `LookupError` when none is live, and `ValueError` for a session its own driver runs: the one the terminal shows, or the one `clai2 --web` or `clai2 -p` started with. A host built outside CLAI's shell raises `RuntimeError` |
-| `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued (including an edit of its queue), or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
+| `subscribe(listener)` | call `listener()` whenever a session opens or closes, or its running, queued (including an edit of its queue), waiting-for-user, or watched state may change; returns a function that unsubscribes. It is called synchronously, from the session's own loop, so it must be quick and must not raise |
 
 Never await `open` or `new` from `on_session_start`: the new session waits for the
 plugins still loading.
@@ -4032,6 +4073,8 @@ A `LiveSession` is one live session:
 | `forks` | its background `/fork` runs, oldest first, each a `ForkInfo` as `/forks` lists it |
 | `running` | whether a turn runs in it now |
 | `busy` | whether it handles input now (a turn, a command, or the terminal's rewind) or has input queued; check it before replacing its history between turns |
+| `waiting_for` | the most recent open user wait's reason, or `None` when none is open; CLAI tracks `ask_user` questions automatically |
+| `wait_for_user(reason)` | mark a user wait, such as an approval dialog, until you call the idempotent function it returns; pair the call with `finally` so cancellation cannot leave a stale wait |
 | `setting(key)` | a CLAI setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
 | `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |
@@ -4043,6 +4086,29 @@ A `LiveSession` is one live session:
 | `send_input(text, images=())` | enter `text` at its prompt, with `images` attached, as its `host.send_input` does |
 | `interrupt()` | cancel its running turn or command; `False` when nothing was running |
 | `await complete(text)` | what Tab offers at its prompt for `text` |
+
+Process-scoped plugins can read `waiting_for` through `host.live.listing()`, `get(id)`, or
+`current()`. `host.live.subscribe()` notifies them when a wait starts or ends. CLAI reports
+`ask_user` waits automatically; a plugin can mark another user interaction without depending
+on a concrete runtime class:
+
+```python
+from collections.abc import Awaitable, Callable
+
+from pydantic_clai2.plugins import LiveSession
+
+
+async def confirm_with_status(session: LiveSession, *, confirm: Callable[[], Awaitable[bool]]) -> bool:
+    finished = session.wait_for_user('an approval')
+    try:
+        return await confirm()
+    finally:
+        finished()
+```
+
+The callback ends only its own wait, even if another interaction starts meanwhile. Call it
+in `finally`, including when the interaction is cancelled. `waiting_for` becomes `None` once
+all waits have ended.
 
 With one session, as in a terminal where the web UI opened no other, `host.live`
 lists just that one. `open` and `new` raise `RuntimeError` only where CLAI opens no
@@ -4224,9 +4290,12 @@ model without changing the active model. Esc returns from settings to this list;
 Esc again closes it. `/model settings PROVIDER:NAME` opens that model directly.
 Tab completes added models.
 `Ctrl+S` in `/model add` opens the same editor. Edits save immediately and apply
-from the model's next request, even in a running turn. `r` resets a field; Esc
-or Ctrl-C goes back. Fixed choices
-open a picker; numeric fields accept typed values, and empty input resets.
+from the model's next request, even in a running turn. Space cycles fields with
+multiple declared choices in order and wraps to the first; an unset or unlisted
+value starts at the first choice. Action and submenu rows, free-text fields, and
+single-choice fields do not cycle. `r` resets a field. This field list is not
+searchable. Esc, Ctrl-C, or **Save & close** goes back. Enter opens a picker for
+fixed choices; numeric fields accept typed values, and empty input resets.
 
 The built-in model catalog and `/set model` completions include
 `openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
@@ -4351,8 +4420,8 @@ for an in-memory host. The built-in `persistence` plugin binds
 for the same store and run. Removing the plugin removes step capture on subsequent
 turns; conversation-head saving is owned by `Session` and continues independently.
 
-Harness exports `SnapshotSaved` from `pydantic_ai_harness.step_persistence`.
-Subscribe with a `Hooks` capability's `hooks.on.event(SnapshotSaved)` to observe committed checkpoints.
+Harness exports `SnapshotSavedEvent` from `pydantic_ai_harness.step_persistence`.
+Subscribe with a `Hooks` capability's `hooks.on.event(SnapshotSavedEvent)` to observe committed checkpoints.
 It carries `persistence_run_id`, `conversation_id`, `step_index`, and `state`.
 This is a notification, not the durable source of truth or permission to replay a
 tool. A durable replay may notify again. An observer failure cannot roll back the
