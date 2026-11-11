@@ -21,7 +21,7 @@ def chain_name(model: str) -> str | None:
 
 
 def settings_model(store: SettingsStore, model: str) -> str:
-    """The model whose `/model settings` controls and defaults a chain takes: its first model."""
+    """The model whose `/model settings` controls and defaults a chain shows: its first model."""
     name = chain_name(model)
     members = store.chains().get(name) if name is not None else None
     return members[0] if members else model
