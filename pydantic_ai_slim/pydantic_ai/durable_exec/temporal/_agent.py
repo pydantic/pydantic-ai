@@ -1432,6 +1432,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         native_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
@@ -1451,6 +1452,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             tools: The tools to use instead of the tools registered with the agent.
             native_tools: The native tools to use instead of the agent's configured native tools.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            capabilities: The capabilities to use instead of the agent's configured capabilities.
             metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
@@ -1479,6 +1481,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Native tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
                 )
 
+            if _utils.is_set(capabilities):
+                raise UserError(
+                    'Capabilities cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
+                )
         with super().override(
             name=name,
             deps=deps,
@@ -1487,6 +1493,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             tools=tools,
             native_tools=native_tools,
             instructions=instructions,
+            capabilities=capabilities,
             metadata=metadata,
             model_settings=model_settings,
             retries=retries,

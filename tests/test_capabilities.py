@@ -4842,3 +4842,80 @@ def test_a_synthetic_key_retries_until_it_is_unused(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr('pydantic_ai.agent.uuid4', lambda: next(minted))
 
     assert _synthetic_capability_id(_Unnamed, taken={'<_unnamed:aaaaaa>'}) == '<_unnamed:bbbbbb>'
+
+
+async def test_instruction_types_publicly_importable() -> None:
+    """`AgentInstructions` and `SourcedInstruction` are importable from public entry points."""
+    from pydantic_ai import AgentInstructions, SourcedInstruction
+    from pydantic_ai.capabilities import (
+        AgentInstructions as CapabilitiesAgentInstructions,
+        SourcedInstruction as CapabilitiesSourcedInstruction,
+    )
+    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
+    from pydantic_ai.models.function import FunctionModel
+
+    assert AgentInstructions is CapabilitiesAgentInstructions
+    assert SourcedInstruction is CapabilitiesSourcedInstruction
+
+    # `AgentInstructions` annotates what a capability's `get_instructions` accepts.
+    class SourcedCap(AbstractCapability):
+        def get_instructions(self) -> AgentInstructions:
+            return 'instructions annotated with the public types'
+
+    captured_instructions: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        request = next(m for m in messages if isinstance(m, ModelRequest))
+        captured_instructions.append(request.instructions or '')
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[SourcedCap()])
+    await agent.run('Hello')
+    assert captured_instructions == ['instructions annotated with the public types']
+
+    # `SourcedInstruction` is the collected form of capability instructions.
+    extra: SourcedInstruction = SourcedInstruction('per-run addition')
+    assert extra.instruction == 'per-run addition'
+
+
+async def test_override_capabilities_kwarg() -> None:
+    """`override(capabilities=...)` replaces the capability set, restores it after the block, and stacks explicitly."""
+    from pydantic_ai import AgentInstructions
+
+    captured_instructions: list[str] = []
+
+    class BaseCap(AbstractCapability):
+        def get_instructions(self) -> AgentInstructions:
+            return 'base instructions'
+
+    class OverrideCap(AbstractCapability):
+        def get_instructions(self) -> AgentInstructions:
+            return 'override instructions'
+
+    class ExtraCap(AbstractCapability):
+        def get_instructions(self) -> AgentInstructions:
+            return 'extra instructions'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        request = next(m for m in messages if isinstance(m, ModelRequest))
+        captured_instructions.append(request.instructions or '')
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[BaseCap()])
+    await agent.run('Hello')
+    assert captured_instructions[-1] == 'base instructions'
+
+    # Replacement: the override replaces (not merges with) the configured set.
+    with agent.override(capabilities=[OverrideCap()]):
+        await agent.run('Hello')
+        assert captured_instructions[-1] == 'override instructions'
+
+    # Restoration: the configured set is back after the block.
+    await agent.run('Hello')
+    assert captured_instructions[-1] == 'base instructions'
+
+    # Stacking: include the configured capabilities explicitly to add one.
+    with agent.override(capabilities=[*agent.root_capability.capabilities, ExtraCap()]):
+        await agent.run('Hello')
+        assert 'base instructions' in captured_instructions[-1]
+        assert 'extra instructions' in captured_instructions[-1]
