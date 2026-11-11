@@ -212,6 +212,7 @@ __all__ = (
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
     'ToolDenied',
+    'ToolsetTool',
 )
 
 _ACTIVE_AGENT_LIMITERS: ContextVar[tuple[tuple[int, _concurrency.ConcurrencyLimiter], ...]] = ContextVar(
@@ -511,44 +512,6 @@ S = TypeVar('S')
 _PreparedDepsT = TypeVar('_PreparedDepsT')
 _PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
-
-
-@dataclasses.dataclass
-class _OutputToolsFirstToolset(CombinedToolset[AgentDepsT]):
-    """The output toolset combined with the other tools, preparing the output tools first.
-
-    The other tools then see them as this step's `prepare_output_tools` hooks left them, through
-    `RunContext.output_tool_defs`: Code Mode builds its sandbox's output functions from them.
-    """
-
-    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        output_toolset, toolset = self.toolsets
-        output_tools = await output_toolset.get_tools(ctx)
-        # Only a `RunContext` built outside an agent run has no submitter.
-        if (submitter := ctx._live_output_submitter) is not None:  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
-            submitter.record_prepared_tool_defs([tool.tool_def for tool in output_tools.values()])
-        return self._merge_tools([output_tools, await toolset.get_tools(ctx)])
-
-
-async def _prepare_first_step_output_tools(
-    ctx: GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]],
-) -> None:
-    """Prepare the output tools before the run's lifecycle hooks, so code in them can submit output.
-
-    Unlike the other tools, output tools need no toolset to be entered, so they can be prepared before
-    `wrap_run` and `before_run`: `RunContext.output_tool_defs` and `RunContext.submit_output` then see
-    them as the `prepare_output_tools` hooks leave them. The first step prepares them again.
-    """
-    deps = ctx.deps
-    toolset = deps.tool_manager.toolset
-    if not isinstance(toolset, _OutputToolsFirstToolset):
-        return
-    output_toolset = toolset.toolsets[0]
-    tool_manager = await ToolManager[AgentDepsT](
-        output_toolset, root_capability=deps.tool_manager.root_capability
-    ).for_run_step(_agent_graph.build_run_context(ctx))
-    deps.first_step_output_tool_manager = tool_manager
-    deps.prepared_output_tool_defs = tool_manager.tool_defs
 
 
 @dataclasses.dataclass
@@ -3966,7 +3929,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     return await output_cap.prepare_output_tools(output_ctx, tool_defs)
 
                 output_toolset = PreparedToolset(output_toolset, _dispatch_prepare_output_tools)
-            toolset = _OutputToolsFirstToolset([output_toolset, toolset])
+            toolset = _agent_graph.OutputToolsFirstToolset([output_toolset, toolset])
 
         return toolset
 
@@ -5127,7 +5090,6 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # to this task above, before `wrap_run`/`before_run`.
                 self.binding.agent_run = agent_run
             self.resolve_metadata(agent_run.ctx)
-            await _prepare_first_step_output_tools(agent_run.ctx)
 
             # Build RunContext for run lifecycle hooks
             run_ctx = _agent_graph.build_run_context(agent_run.ctx)

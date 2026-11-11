@@ -1417,8 +1417,7 @@ class TestPrepareOutputToolsCapability:
             return 'result'  # pragma: no cover
 
         await agent.run('hello')
-        # Once when the run starts, and once for its step.
-        assert seen_kinds == ['output', 'output']
+        assert seen_kinds == ['output']
 
     def test_not_serializable(self):
         """`PrepareOutputTools` opts out of spec serialization."""

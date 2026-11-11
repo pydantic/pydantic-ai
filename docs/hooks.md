@@ -262,7 +262,7 @@ See [Output hooks](capabilities/custom.md#output-hooks) for the full lifecycle, 
 
 Filters or modifies tool definitions the model sees on each step.
 
-`prepare_tools` handles **function** tools; `prepare_output_tools` handles [output tools][pydantic_ai.output.ToolOutput] separately, with `ctx.max_retries` reflecting the **output** retry budget. Both run as `PreparedToolset` wrappers — the result flows into the model's request *and* `ToolManager.tools`, so filtering also blocks tool execution. `prepare_output_tools` also runs once when the run starts, before `wrap_run` and `before_run`, so [output submitted](output.md#submit-output) before the first step goes to the output tools as it leaves them.
+`prepare_tools` handles **function** tools; `prepare_output_tools` handles [output tools][pydantic_ai.output.ToolOutput] separately, with `ctx.max_retries` reflecting the **output** retry budget. Both run as `PreparedToolset` wrappers — the result flows into the model's request *and* `ToolManager.tools`, so filtering also blocks tool execution.
 
 ### Deferred tool call hook
 

@@ -2066,8 +2066,7 @@ class TestPrepareOutputToolsHook:
             capabilities=[CaptureCtxCap()],
         )
         await agent.run('hello')
-        # Once when the run starts, and once for its step.
-        assert seen == [(0, 4), (0, 4)]
+        assert seen == [(0, 4)]
 
     async def test_chaining_order(self):
         """Multiple capabilities chain `prepare_output_tools` in forward order."""

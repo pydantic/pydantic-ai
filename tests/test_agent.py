@@ -10383,13 +10383,13 @@ def test_prepare_output_tools_receives_output_max_retries():
     result = agent.run_sync('Hello')
     assert isinstance(result.output, Foo)
 
-    # `prep` runs once when the run starts and once per step (= target_retries + 2 calls). Each call
-    # should see the OUTPUT retry budget, never the tool retry budget (`retries=1`).
-    assert seen_max_retries == [target_retries] * (target_retries + 2)
-    assert seen_retries == [0, 0, 1, 2, 3]
+    # `prep` runs once per step (= target_retries + 1 calls). Each call should see the
+    # OUTPUT retry budget, never the tool retry budget (`retries=1`).
+    assert seen_max_retries == [target_retries] * (target_retries + 1)
+    assert seen_retries == [0, 1, 2, 3]
     # Per-tool retry counts populated by `for_run_step` propagate too — matching
     # what `prepare_tools` sees on the function-tool side.
-    assert seen_per_tool_retries == [0, 0, 1, 2, 3]
+    assert seen_per_tool_retries == [0, 1, 2, 3]
 
 
 def test_prepare_output_tools_sees_run_level_output_retries_override():
@@ -10417,8 +10417,8 @@ def test_prepare_output_tools_sees_run_level_output_retries_override():
 
     result = agent.run_sync('Hello', retries={'output': 2})
     assert isinstance(result.output, Foo)
-    # Hook sees run-level override (2), not the agent-level default (5), when the run starts and for its step.
-    assert seen_max_retries == [2, 2]
+    # Hook sees run-level override (2), not the agent-level default (5).
+    assert seen_max_retries == [2]
 
 
 def test_set_mcp_sampling_model():

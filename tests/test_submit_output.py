@@ -1114,7 +1114,7 @@ class SubmitBeforeTheFirstStep(AbstractCapability[None]):
 
 @pytest.mark.parametrize('hook', ['before_run', 'wrap_run', 'before_node_run'])
 async def test_tool_output_submission_before_the_first_step(hook: str):
-    """The output tools are prepared before the run's hooks, so they see what `prepare_output_tools` left."""
+    """The output tools are prepared on demand, since the run's tool manager isn't prepared until its first step."""
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise AssertionError('no request should be sent')  # pragma: no cover
@@ -1131,7 +1131,33 @@ async def test_tool_output_submission_before_the_first_step(hook: str):
 
     assert result.output == Invoice(order_id=hook, total=1)
     assert result.usage.requests == 0
-    assert submitter.output_tool_names == ['submit_invoice']
+    # Before the first step, as they're declared.
+    assert submitter.output_tool_names == ['submit_invoice', 'submit_receipt']
+
+
+async def test_submission_before_the_first_step_to_a_hidden_output_tool_is_rejected():
+    raised: list[str] = []
+
+    class SubmitReceipt(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            try:
+                await ctx.submit_output('submit_receipt', {'payment_id': 'pay_1'})
+            except ModelRetry as e:
+                raised.append(e.message)
+
+    agent = Agent(
+        FunctionModel(
+            lambda m, i: ModelResponse(parts=[ToolCallPart('submit_invoice', {'order_id': 'ord_1', 'total': 1})])
+        ),
+        output_type=[ToolOutput(Invoice, name='submit_invoice'), ToolOutput(Receipt, name='submit_receipt')],
+        capabilities=[PrepareOutputTools(hide_receipts), SubmitReceipt()],
+        deps_type=type(None),
+    )
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id='ord_1', total=1)
+    assert raised == ["Output tool 'submit_receipt' is not available right now."]
 
 
 async def test_output_tool_defs_carry_what_prepare_output_tools_changed():

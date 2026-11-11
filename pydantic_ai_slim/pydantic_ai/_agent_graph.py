@@ -164,6 +164,8 @@ from .toolsets._deferred_capability_loader import (
     resolve_loaded_capability_instructions,
 )
 from .toolsets._instruction_collection import collect_toolset_instructions
+from .toolsets.abstract import ToolsetTool
+from .toolsets.combined import CombinedToolset
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -1024,11 +1026,6 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     Runtime-only: read by `RunContext.output_tool_defs`, so a wrapper toolset building its tools after them
     (like Code Mode's catalog) and the step's tools see what this step accepts. `None` before any step."""
-    first_step_output_tool_manager: ToolManager[DepsT] | None = dataclasses.field(default=None, repr=False)
-    """The output tools, prepared on their own before the run's first step.
-
-    Runtime-only: code that runs before that step, like `before_run`, submits its output to them, since
-    `tool_manager` isn't prepared until the step starts. `None` when the output has no output tools."""
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -4992,6 +4989,23 @@ def _build_output_run_context(
 
 
 @dataclasses.dataclass
+class OutputToolsFirstToolset(CombinedToolset[DepsT]):
+    """The output toolset combined with the other tools, preparing the output tools first.
+
+    The other tools then see them as this step's `prepare_output_tools` hooks left them, through
+    `RunContext.output_tool_defs`: Code Mode builds its sandbox's output functions from them.
+    """
+
+    async def get_tools(self, ctx: RunContext[DepsT]) -> dict[str, ToolsetTool[DepsT]]:
+        output_toolset, toolset = self.toolsets
+        output_tools = await output_toolset.get_tools(ctx)
+        # Only a `RunContext` built outside an agent run has no submitter.
+        if (submitter := ctx._live_output_submitter) is not None:  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
+            submitter.record_prepared_tool_defs([tool.tool_def for tool in output_tools.values()])
+        return self._merge_tools([output_tools, await toolset.get_tools(ctx)])
+
+
+@dataclasses.dataclass
 class _GraphOutputSubmitter(Generic[DepsT]):
     """Backs `RunContext.output_tool_defs` and `RunContext.submit_output` with the run's output pipeline."""
 
@@ -5116,9 +5130,7 @@ class _GraphOutputSubmitter(Generic[DepsT]):
 
         With `for_run`, a rejection is raised as is, without using up a retry.
         """
-        tool_manager = self.ctx.deps.tool_manager
-        if tool_manager.tools is None and self.ctx.deps.first_step_output_tool_manager is not None:
-            tool_manager = self.ctx.deps.first_step_output_tool_manager
+        tool_manager = await self._output_tool_manager()
         tool = (tool_manager.tools or {}).get(tool_name)
         if tool is None or tool.tool_def.kind != 'output':
             # A `prepare_output_tools` hook left it out of this step.
@@ -5144,6 +5156,20 @@ class _GraphOutputSubmitter(Generic[DepsT]):
         except exceptions.UnexpectedModelBehavior as e:
             wrapped = exceptions.UnexpectedModelBehavior(f'Exceeded maximum output retries ({tool.max_retries})')
             raise wrapped from e.__cause__ or e
+
+    async def _output_tool_manager(self) -> ToolManager[DepsT]:
+        """The run's tool manager, or before the run's first step, one for the output tools prepared on their own.
+
+        Unlike other toolsets, output tools need no entering, so code that runs before the first step, like
+        `before_run`, can submit to them as the `prepare_output_tools` hooks leave them.
+        """
+        tool_manager = self.ctx.deps.tool_manager
+        if tool_manager.tools is not None or not isinstance(tool_manager.toolset, OutputToolsFirstToolset):
+            return tool_manager
+        output_toolset = tool_manager.toolset.toolsets[0]
+        return await ToolManager[DepsT](output_toolset, root_capability=tool_manager.root_capability).for_run_step(
+            build_run_context(self.ctx)
+        )
 
     async def _submit_as_text(
         self, target: _output.OutputSubmissionTarget, args: dict[str, Any], *, for_run: bool = False

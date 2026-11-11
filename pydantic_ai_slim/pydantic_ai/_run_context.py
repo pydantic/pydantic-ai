@@ -884,7 +884,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
         With tool output they're the agent's output tools, as this step's
         [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] hooks left
-        them, or as they left them when the run started, before its first step. With native or prompted output they're the output tools tool output would have used, so they have
+        them, or before the run's first step, as they're declared. With native or prompted output they're the output tools tool output would have used, so they have
         the same names and parameter schemas whatever the output mode. Plain text output has one that takes
         the text as `response`. Image output and
         [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] can't be submitted.
