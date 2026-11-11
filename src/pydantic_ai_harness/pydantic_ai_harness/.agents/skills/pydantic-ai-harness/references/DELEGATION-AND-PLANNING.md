@@ -330,6 +330,8 @@ caching=None, forward_history=False, id='advisor', defer_loading=False, descript
 `ToolCallPart` and `ToolReturnPart`). `local=False` requires the provider tool; `native=False` always
 uses the function tool. `mode=` is deprecated.
 
+<!-- TODO(harness 1.0, #12997): remove the `mode=` deprecation sentence above. -->
+
 The executor decides when to consult. To require a consultation before a verdict, use
 `native=False` and check this run's history in an output validator:
 

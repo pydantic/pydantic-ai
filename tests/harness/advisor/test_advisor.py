@@ -695,7 +695,7 @@ class TestAdvisor:
             'model',
             'native',
             'local',
-            'mode',
+            'mode',  # TODO(harness 1.0, #12997): remove with the deprecated `Advisor.mode`.
             'max_uses',
             'max_tokens',
             'caching',
@@ -742,6 +742,7 @@ class TestAdvisorNativeOrLocal:
     Unit tests: they pin which halves a configuration builds, which no provider recording shows.
     """
 
+    # TODO(harness 1.0, #12997): remove this deprecated `mode` test.
     @pytest.mark.parametrize(
         ('mode', 'replacement', 'halves'),
         [
@@ -769,12 +770,14 @@ class TestAdvisorNativeOrLocal:
             with pytest.warns(HarnessDeprecationWarning, match=r'`Advisor.mode` is deprecated'):
                 assert advisor.mode == mode
 
+    # TODO(harness 1.0, #12997): remove this deprecated `mode` test.
     def test_deprecated_mode_rejects_an_unknown_value_or_native_and_local(self) -> None:
         with pytest.raises(ValueError, match=r"`Advisor.mode` must be 'auto', 'native', or 'local'"):
             Advisor('test', mode='invalid')  # pyright: ignore[reportArgumentType]
         with pytest.raises(UserError, match=r'either the deprecated `mode` or `native`/`local`'):
             Advisor('anthropic:claude-opus-4-8', mode='native', local=False)
 
+    # TODO(harness 1.0, #12997): remove this deprecated `mode` test.
     @pytest.mark.parametrize(('earlier', 'later'), [('native', 'auto'), ('auto', 'native'), ('local', 'native')])
     def test_merging_deprecated_modes_keeps_the_later_one(
         self, earlier: Literal['auto', 'native', 'local'], later: Literal['auto', 'native', 'local']
@@ -804,9 +807,11 @@ class TestAdvisorNativeOrLocal:
 
         assert isinstance(merged, Advisor)
         assert merged.get_toolset() is not None
+        # TODO(harness 1.0, #12997): drop this deprecated `mode` check.
         with pytest.warns(HarnessDeprecationWarning):
             assert merged.mode == 'auto'
 
+    # TODO(harness 1.0, #12997): remove this deprecated `mode` test.
     def test_setting_the_deprecated_mode_rebuilds_the_halves(self) -> None:
         advisor = Advisor[None]('anthropic:claude-opus-4-8')
 
@@ -819,6 +824,7 @@ class TestAdvisorNativeOrLocal:
         assert advisor.get_native_tools() == []
         assert advisor.get_toolset() is not None
 
+    # TODO(harness 1.0, #12997): remove this deprecated `mode` test.
     def test_setting_an_invalid_deprecated_mode_leaves_the_advisor_unchanged(self) -> None:
         advisor = Advisor[None]('openrouter:anthropic/claude-opus-4.8', max_uses=2)
 
@@ -844,6 +850,7 @@ class TestAdvisorNativeOrLocal:
         assert toolset is not None
         assert toolset.id == 'team_advisor'
 
+    # TODO(harness 1.0, #12997): remove this deprecated `mode` test.
     def test_agent_spec_accepts_the_deprecated_mode(self) -> None:
         with pytest.warns(HarnessDeprecationWarning, match=r"`Advisor\(mode='local'\)` is deprecated"):
             agent = Agent.from_spec(

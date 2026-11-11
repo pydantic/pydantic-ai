@@ -32,6 +32,7 @@ class _Advice:
     output: object
 
 
+# TODO(harness 1.0, #12997): remove `_Mode` along with the deprecated `Advisor.mode`.
 _Mode = Literal['auto', 'native', 'local']
 """The deprecated `Advisor.mode` values."""
 
@@ -111,6 +112,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
 
     _local_uses: int = field(init=False, repr=False, compare=False, default=0)
 
+    # TODO(harness 1.0, #12997): remove `_MODE_DECLARATIONS` and `_MODE_REPLACEMENTS` along with `mode`.
     _MODE_DECLARATIONS: ClassVar[dict[_Mode, tuple[bool, bool]]] = {
         'auto': (True, True),
         'native': (True, False),
@@ -140,6 +142,8 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         id: str | None = 'advisor',
         defer_loading: bool = False,
         description: str | None = None,
+        # TODO(harness 1.0, #12997): remove the deprecated `mode` parameter, its docstring entry and the block
+        # that maps it below, and drop the `mode='auto'` comparison from the `local` docstring.
         mode: _Mode | None = None,
     ) -> None:
         """Create an advisor capability.
@@ -170,6 +174,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         if local is None:
             # `None` and `True` build the same tool; stating `True` makes them merge the same way too.
             local = True
+        # TODO(harness 1.0, #12997): remove this deprecated `mode` mapping.
         if mode is not None:
             self._check_mode(mode)
             if native is not True or local is not True:
@@ -190,6 +195,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         self._local_uses = 0
         super().__init__(native=native, local=local, id=id, defer_loading=defer_loading, description=description)
 
+    # TODO(harness 1.0, #12997): remove the deprecated `mode` property, its setter and `_check_mode`.
     @property
     def mode(self) -> _Mode:
         """Deprecated: read the `native` and `local` declarations instead.
@@ -243,6 +249,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         id: str | None = 'advisor',
         defer_loading: bool = False,
         description: str | None = None,
+        # TODO(harness 1.0, #12997): remove the deprecated `mode` spec field, its docstring mention and `mode=mode` below.
         mode: _Mode | None = None,
         **kwargs: Any,
     ) -> Advisor[Any]:

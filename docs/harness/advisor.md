@@ -104,6 +104,8 @@ By default, a `Model` instance runs locally and keeps its own provider, client, 
 
 Pass `local=False` when the consultation must stay inside the executor provider, or `native=False` when the configured advisor provider must receive a separate request, the same switches as the other native-or-local capabilities. `local=False` requires an `anthropic:<model>` or `openrouter:<model>` string and an executor on that same provider. A provider subclass that only changes its `name`, such as an `AnthropicProvider` subclass named `claude-code`, counts as the provider it extends. It does not fall back when the executor lacks support.
 
+<!-- TODO(harness 1.0, #12997): remove this `mode` note, and the `mode='auto'` comparison in the merging paragraph. -->
+
 The earlier `mode` option still works until pydantic-ai-harness 1.0, with a `HarnessDeprecationWarning`: `mode='native'` is `local=False`, `mode='local'` is `native=False`, and `mode='auto'` is the default.
 
 `max_uses` has the same per-request scope as Anthropic's native tool and resets on the next request. On the local path, a call counts once its arguments validate, even if the consultation then fails. Parallel calls cannot exceed the cap. Without `max_uses`, the run's usage limits bound local consultations within one request.
