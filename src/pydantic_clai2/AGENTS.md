@@ -332,7 +332,11 @@ one that is not.
   (`ui/menus/slash_search.py`), not a bare `.searchable()`: plain letters stay
   hotkeys, `/` starts a search, Esc leaves it. Pass single-key actions as its
   `hotkeys` so they type into the search instead of firing while the user
-  searches.
+  searches. For searchable `FieldMenu` lists, use `slash_search` only when a row offers Space cycling.
+  Eligible rows have multiple declared choices and no action/submenu mapping.
+  Cycle choices in declaration order and wrap. Start at the first choice when the current value is absent or unlisted.
+  Keep searchable field lists without eligible rows on type-to-filter with uppercase `R` reset.
+  Keep nonsearchable field lists without search and with lowercase `r` reset.
 - A widget opened mid-run (including the inline `ask_user` picker) goes inside
   `async with host.full_screen()`, which flushes streamed text and suspends the
   editor's input reader first, preserving its draft. Slash-command handlers

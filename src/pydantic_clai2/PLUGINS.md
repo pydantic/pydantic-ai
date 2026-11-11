@@ -767,7 +767,7 @@ and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
    Server instructions      Include
    Save & close
 
- type to filter - Enter edit - R reset - Esc close
+ / search - Space cycle - Enter edit - R reset - Esc close
 ```
 
 | Row | Choices | Default |
@@ -777,7 +777,10 @@ and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
 | Access | read-only, or read and write | read-only |
 | Server instructions | pass Linear's own MCP instructions to the agent, or leave them out | include |
 
-Enter edits a row, R resets it to the default, and Esc backs out of a picker
+Outside search, Space cycles **Server instructions**, Enter edits a row, and `R`
+resets it to the default. Access uses Enter because it can require sign-in.
+Press `/` to search; Enter keeps the matches and restores these
+actions, and Esc clears the filter first. Esc backs out of a picker
 without changing anything. Each change is saved as you make it, so **Save & close**
 and Esc both just leave the menu, and the plugin is reloaded with the new settings.
 The same rows show in the [web UI](#web-this-session-in-your-browser)'s plugins
@@ -825,7 +828,8 @@ change pages.
 `/plugins enable notion` loads it and opens its settings menu. To change the
 settings later, run `/plugins configure notion` or press `c` on it in
 `/plugins`; you never need to reinstall it. The menu is the shared field editor
-`/set` uses: type to filter, Enter to edit a row, `R` to reset one, Esc to close.
+`/set` uses: `/` to search; outside search, Space cycles eligible choices, Enter edits
+a row, and `R` resets one. Esc clears a filter first, then closes.
 Each change is saved as soon as you make it, and the plugin loads again when the
 menu closes, so the next turn uses the new settings. The same menu also opens in
 the [web UI](#web-this-session-in-your-browser)'s plugins panel, where picking
@@ -895,10 +899,13 @@ opens its settings menu; reopen the menu any time with
 the [web UI](#web-this-session-in-your-browser)'s plugins panel, where **API key**
 and **Which Logfire** open their pickers and fields as dialogs in the page.
 
-Every row saves as soon as you change it, so **Save & close** (or Esc) just leaves
-the menu, and the plugin loads again with the new settings. Esc backs out of any
-picker or text field without changing anything; `R` resets the highlighted row to
-its default.
+Press `/` to search; Enter ends search and retains the matches. Outside search,
+Space cycles the declared choices for **Tools**, **Server instructions**, and
+**Browser sign-in**. Enter edits any row, including the action-backed **API key**
+and **Which Logfire** rows; `R` resets the highlighted row. Esc clears a filter
+first, then closes; in a picker or text field, Esc backs out without changes.
+Every change saves immediately, so **Save & close** only leaves the menu, and
+the plugin loads again with the new settings.
 
 | Row | Setting | Default | Does |
 |---|---|---|---|
@@ -1912,8 +1919,9 @@ press `c` on it in `/plugins`. The same menu opens in the web UI's plugins
 panel, with the sign-in, key, and host steps shown as dialogs in the page.
 You never need to reinstall it.
 
-The menu is the shared field editor that `/set` uses: type to filter, Enter to
-edit a row, `R` to reset one, Esc or **Save & close** to close. Each change is
+The menu is the [shared field editor](#offer-a-settings-menu-def-settings_menuself)
+that `/set` uses: `/` to search, Space to cycle eligible choices outside search,
+Enter to edit a row, `R` to reset one, and **Save & close** to close. Each change is
 saved as soon as you make it. When the menu closes, the plugin loads again, so the next turn uses the
 new settings.
 
@@ -1988,9 +1996,9 @@ its settings menu. Open it again later with `c` in `/plugins`,
 /google_workspace
 ```
 
-The settings menu is full-screen with one row per setting. Up/Down moves, Enter
-edits a row, `r` puts a row back to its default, and **Save & close** or Esc
-leaves. Each change is saved to the plugin's declaration as soon as you make it and applies
+The settings menu is full-screen with one row per setting. Up/Down moves, Space
+cycles eligible choices, Enter edits a row, `r` puts a row back to its default, and
+**Save & close** or Esc leaves. Each change is saved to the plugin's declaration as soon as you make it and applies
 from the next turn, without reloading. Run `/google_workspace` again at any time
 to change a setting or pick a different key. The same rows show in the
 [web UI](#web-this-session-in-your-browser)'s plugins panel, where Access token key
@@ -2057,8 +2065,9 @@ in, so only Member and Admin users with Pylon's `MCP Access` role can use it.
 Turning the plugin on opens its settings menu, like any plugin with a
 [settings menu](#offer-a-settings-menu-def-settings_menuself). `c` in
 `/plugins`, `/plugins configure pylon`, and `/pylon` reopen it at any time to
-change anything, including the key. Type to filter the rows. Enter edits a row,
-`R` restores its default, and **Save & close** or Esc leaves the menu. Each
+change anything, including the key. Press `/` to search the rows. Outside search,
+Space cycles eligible choices, Enter edits a row, and `R` restores its default.
+**Save & close** leaves the menu; Esc clears a filter first, then leaves. Each
 change is saved to the plugin's settings as soon as you make it and applies from
 the next run, with no reinstall. The same rows show in the
 [web UI](#web-this-session-in-your-browser)'s plugins panel, where the Sign-in
@@ -2124,8 +2133,9 @@ server's name for it. It needs a paid Day AI Agent tier.
 
 `/plugins enable day_ai` loads it and opens its settings menu. Reopen the menu
 at any time with `/plugins configure day_ai`, or `c` on `day_ai` in `/plugins`.
-Type to filter the rows, press Enter to change one, `R` to reset it to its
-default, and Esc to close. Each change is saved as soon as you make it, and the
+Press `/` to search the rows; outside search, Space cycles **Server instructions**,
+Enter edits a row, and `R` resets it to its default. Esc clears a filter first,
+then closes. Each change is saved as soon as you make it, and the
 plugin loads again with the new settings when the menu closes. The same menu
 shows in the [web UI](#web-this-session-in-your-browser)'s Plugins panel, where
 the Sign-in row's **Change…** button asks for a key or runs the browser sign-in
@@ -2188,8 +2198,9 @@ catalog entry, that choice carries over to this plugin.
 Set it up in its settings menu. Turning it on (Space in `/plugins`,
 `/plugins enable ordinal`, or `/plugins add`) opens the menu, and so do `/plugins configure ordinal` and `c` in `/plugins`
 later, so you can change anything without reinstalling. It is the same field
-editor `/set` uses: type to filter, Enter edits a row, `R` resets it, and
-**Save & close** or Esc closes.
+editor `/set` uses: `/` starts search; outside search, Space cycles **Server instructions**,
+Enter edits a row, and `R` resets it. **Save & close** closes; Esc clears a filter
+first, then closes.
 Each change is saved as soon as you make it, and the plugin loads again when the
 menu closes. The same menu also opens in the [web UI](#web-this-session-in-your-browser)'s
 plugins panel, where the `/keys` picker, the masked token input, and the browser
@@ -2242,8 +2253,9 @@ settings is left as it is.
 
 Turning it on (Space in `/plugins`, `/plugins enable slack`, or `/plugins add`),
 or pressing `c` on it in `/plugins`, opens its settings menu. `/plugins configure slack`
-reopens it later, with no reinstall. The list is searchable, Enter edits the
-highlighted row, `R` resets it, and **Save & close** or Esc closes. The same menu
+reopens it later, with no reinstall. Press `/` to search. Outside search, Space
+cycles eligible choices, Enter edits the highlighted row, and `R` resets it.
+**Save & close** closes; Esc clears a filter first, then closes. The same menu
 shows in the [web UI](#web-this-session-in-your-browser)'s Plugins panel, where
 the User token, Slack app, and Browser sign-in rows have a **Change…** button and
 their steps (the key picker, the Client ID, the sign-in's waiting screen) open as
@@ -2329,8 +2341,9 @@ the server's name for it. It starts disabled.
 settings later, run `/plugins configure posthog` or press `c` on it in
 `/plugins`. You never need to reinstall it.
 
-The menu is the shared field editor that `/set` uses: type to filter, Enter to
-edit a row, `R` to reset one, **Save & close** or Esc to leave. Each change is
+The menu is the [shared field editor](#offer-a-settings-menu-def-settings_menuself)
+that `/set` uses: `/` to search, Space to cycle eligible choices outside search,
+Enter to edit a row, `R` to reset one, and **Save & close** to leave. Each change is
 saved as soon as you make it. When the menu closes, the plugin loads again, so the next turn uses the
 new settings. The same menu also opens in the [web UI](#web-this-session-in-your-browser)'s
 plugins panel, where the `/keys` picker, the masked key input, the feature-group
@@ -2396,8 +2409,8 @@ settings menu. Until you have closed the menu in the terminal once, changed a
 setting, or chosen the token source, loading it prints a line pointing there.
 
 `/grain`, `c` in `/plugins`, or `/plugins configure grain` opens the settings
-menu. Enter edits a row, `r` resets it to its default, and Esc or **Save &
-close** leaves the menu. Each change is saved to the plugin's settings at once
+menu. Space cycles eligible choices, Enter edits a row, `r` resets it to its default,
+and Esc or **Save & close** leaves the menu. Each change is saved to the plugin's settings at once
 and applies to the next prompt. Reopen it any time to change a setting or pick a
 different key. The same menu shows in the [web UI](#web-this-session-in-your-browser)'s
 plugins panel, where the Token row's **Change…** button asks its steps (the key
@@ -3344,9 +3357,24 @@ menu's `Dialogs` and saves the new value for you.
 Return a `SettingsMenu` from `settings_menu` to give the plugin a settings menu.
 CLAI opens it when the plugin is turned on (Enter or Space in `/plugins`, `/plugins enable`,
 or `/plugins add`), on `c` in `/plugins`, and on `/plugins configure NAME`, with
-the shared field editor `/set` uses: type to filter, Enter edits a row, `R` resets
-it, and **Save & close**, like Esc, leaves. The menu is declared, not run, so it is
-not tied to the terminal.
+the shared field editor `/set` uses. Searchable terminal lists that offer Space
+cycling use `/` to start searching. While searching, printable characters,
+including Space and `R`, are query text. Enter ends search and keeps the matches,
+so hotkeys act on them; `/` resumes search. Esc clears the search or retained
+filter first; with no filter, Esc closes. Searchable lists without eligible rows
+filter as you type and keep uppercase `R` as the reset key.
+
+Outside search, Space cycles rows with more than one declared `FieldRow.choices`
+value, excluding rows mapped in `SettingsMenu.actions` or `SettingsMenu.menus`.
+Space selects the next choice in declaration order, wrapping from the last to
+the first. An unset or unlisted current value starts at the first choice. Each
+change saves immediately, keeping the selection and scroll position. Model,
+theme, spinner, and other declared option lists participate. Free-text rows,
+rows without choices, and single-choice rows do not cycle; action and submenu
+rows retain their Enter-only flow. Enter still opens the row's editor or choices.
+`R` resets the highlighted row (`r` in nonsearchable menus, which have no search).
+**Save & close** only leaves with edits already saved. The menu is declared,
+not run, so it is not tied to the terminal.
 
 A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
 
@@ -3369,7 +3397,8 @@ A `SettingsMenu` (from `pydantic_clai2.plugins.menus`) has:
   builds it when it opens. Leaving it returns to this menu, in the terminal and in
   the web UI, which shows it beneath the row. The keys are read as the menu opens, so
   a row an action adds meanwhile opens its menu once the menu opens again.
-- `searchable`, whether typing filters the list (default `True`).
+- `searchable`, whether the terminal list can be filtered (default `True`): `/`
+  starts search when the list offers Space cycling; otherwise, typing filters.
 
 `Dialogs` asks the user wherever the menu was opened, and every method waits for the
 answer. Backing out returns `None` or `False`, never raises:
@@ -3422,7 +3451,8 @@ close** row; a list you build yourself ends with `save_and_close_item()` and tre
 a result as closed when `picked(result)` is `None`. For a row that opens something
 other than a plain value, pass `submenus` to `run_flow`, or await
 `field_menu.run_flow_async` when the submenu is itself async, such as
-`api_keys.prompt_api_key`.
+`api_keys.prompt_api_key`. These are internal UI helpers, not a stable third-party
+UI API.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
 secret in them: keep it in `/keys` with `prompt_api_key` and `save_key`, save only
@@ -4254,9 +4284,12 @@ model without changing the active model. Esc returns from settings to this list;
 Esc again closes it. `/model settings PROVIDER:NAME` opens that model directly.
 Tab completes added models.
 `Ctrl+S` in `/model add` opens the same editor. Edits save immediately and apply
-from the model's next request, even in a running turn. `r` resets a field; Esc
-or Ctrl-C goes back. Fixed choices
-open a picker; numeric fields accept typed values, and empty input resets.
+from the model's next request, even in a running turn. Space cycles fields with
+multiple declared choices in order and wraps to the first; an unset or unlisted
+value starts at the first choice. Action and submenu rows, free-text fields, and
+single-choice fields do not cycle. `r` resets a field. This field list is not
+searchable. Esc, Ctrl-C, or **Save & close** goes back. Enter opens a picker for
+fixed choices; numeric fields accept typed values, and empty input resets.
 
 The built-in model catalog and `/set model` completions include
 `openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.

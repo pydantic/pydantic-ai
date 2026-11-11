@@ -344,13 +344,24 @@ values for known settings and unsupported database schema versions still cause a
 
 `/set` on its own opens a full-screen menu, the same kind Code Puppy uses: the
 settings on the left, details for the highlighted one on the right (current
-value, default, what it does). Type to filter. Enter edits: booleans and the
-model get a picker (the model list is searchable, with "Type a value..." for
-anything not listed), everything else a typed input that validates as you go.
+value, default, what it does). Press `/` to search. While searching, printable
+characters, including Space and `R`, are query text, not actions. Enter ends the
+search and keeps the matches; `/` resumes it. Esc clears the search or retained
+filter first; with no filter, Esc closes.
+
+Outside search, Space cycles the highlighted setting through its declared
+choices in order, wrapping from the last to the first, and saves immediately
+without moving the selection or scroll position. If the current value is unset
+or not listed, Space selects the first choice. This includes booleans, model,
+theme, spinner, and other settings with multiple choices; Space does nothing on
+free-text or single-choice rows. Enter still opens a picker for fields with
+choices (the model list is searchable, with "Type a value..." for anything not
+listed), or a typed input that validates as you go for other fields.
 The input opens holding the current value unless it is the default or not
 set: Enter without changes saves nothing, and an empty input resets.
-`R` resets the highlighted setting. Esc closes. Every
-edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
+`R` resets the highlighted setting outside search. Every edit saves and applies
+immediately, the same as `/set KEY VALUE`; **Save & close** only leaves the menu
+with those edits already saved. `/settings` is
 an alias of `/set` and accepts the same arguments.
 
 While a turn is running, `/set`, `/settings`, `/system_prompt`, `/model`, `/model add`, `/model settings`,
@@ -663,9 +674,12 @@ model without changing the active model. Esc returns from settings to this list;
 Esc again closes it. `/model settings PROVIDER:NAME` opens that model directly.
 Tab completes added models.
 `Ctrl+S` in `/model add` opens the same editor. Edits save immediately and apply
-from the model's next request, even in a running turn. `r` resets a field; Esc
-or Ctrl-C goes back. Fixed choices
-open a picker; numeric fields accept typed values, and empty input resets.
+from the model's next request, even in a running turn. Space cycles fields with
+multiple declared choices in order and wraps to the first; an unset or unlisted
+value starts at the first choice. Action and submenu rows, free-text fields, and
+single-choice fields do not cycle. `r` resets a field. This field list is not
+searchable. Esc, Ctrl-C, or **Save & close** goes back. Enter opens a picker for
+fixed choices; numeric fields accept typed values, and empty input resets.
 
 CLAI2 enables prompt caching by default for every model, with the unified `Prompt Caching`
 setting (`cache`). It covers Claude on the Anthropic API, `claude-code:`, Amazon Bedrock and
