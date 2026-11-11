@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import pytest
 
+from pydantic_ai import Agent, Tool
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     Click,
@@ -24,8 +27,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.native_tools import ComputerTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
 SCREEN = BinaryImage(data=b'png', media_type='image/png')
@@ -269,3 +274,128 @@ async def test_a_computer_call_with_safety_checks_refuses_an_external_executor()
     agent = Agent(FunctionModel(respond), toolsets=[external], output_type=[str, DeferredToolRequests])
     with pytest.raises(UserError, match='approval cannot reach'):
         await agent.run('Click.')
+
+
+GRID_PROFILE = ModelProfile(computer_use_coordinate_grid=1000)
+GRID_SENTENCE = (
+    'Positions are on a 0-999 grid over the latest screenshot: (0, 0) is the top left, (999, 999) the bottom right.'
+)
+
+
+def _grid_agent(model: FunctionModel | FallbackModel) -> Agent[None, str]:
+    def computer(actions: list[dict[str, object]]) -> list[str | BinaryImage]:
+        """Act on the screen."""
+        return ['Done.', SCREEN]
+
+    return Agent(model, tools=[Tool(computer, tool_kind=COMPUTER_KIND)])
+
+
+def _click_then_stop(descriptions: list[str | None]):
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        descriptions.append(info.function_tools[0].description)
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('ok')])
+        return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'click', 'x': 500, 'y': 500}]})])
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        descriptions.append(info.function_tools[0].description)
+        if len(messages) > 1:
+            yield 'ok'
+        else:
+            yield {0: DeltaToolCall(name='computer', json_args='{"actions": [{"type": "click", "x": 500, "y": 500}]}')}
+
+    return respond, stream
+
+
+def _computer_calls(messages: list[ModelMessage]) -> list[ComputerCallPart]:
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ComputerCallPart)
+    ]
+
+
+@pytest.mark.parametrize('streamed', [False, True])
+async def test_a_grid_model_is_told_its_grid_and_its_calls_record_it(streamed: bool) -> None:
+    descriptions: list[str | None] = []
+    respond, stream = _click_then_stop(descriptions)
+    agent = _grid_agent(FunctionModel(respond, stream_function=stream, profile=GRID_PROFILE))
+    if streamed:
+        async with agent.run_stream('Click.') as result:
+            await result.get_output()
+        messages = result.all_messages()
+    else:
+        messages = (await agent.run('Click.')).all_messages()
+    assert descriptions == [f'Act on the screen. {GRID_SENTENCE}'] * 2
+    [call] = _computer_calls(messages)
+    assert call.coordinate_grid == 1000
+    restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    assert [part.coordinate_grid for part in _computer_calls(restored)] == [1000]
+
+
+@pytest.mark.parametrize(
+    'grids',
+    [pytest.param([None], id='pixels'), pytest.param([1000, None], id='mixed-fallback')],
+)
+async def test_a_model_not_known_to_point_on_a_grid_is_left_alone(grids: list[int | None]) -> None:
+    descriptions: list[str | None] = []
+    respond, _ = _click_then_stop(descriptions)
+    models = [
+        FunctionModel(respond, profile=ModelProfile(computer_use_coordinate_grid=grid) if grid else None)
+        for grid in grids
+    ]
+    agent = _grid_agent(models[0] if len(models) == 1 else FallbackModel(*models))
+    messages = (await agent.run('Click.')).all_messages()
+    assert descriptions == ['Act on the screen.'] * 2
+    [call] = _computer_calls(messages)
+    assert call.provider_details is None
+
+
+def _limited(max_side: int | None, max_pixels: int | None) -> ModelProfile:
+    profile = ModelProfile()
+    if max_side:
+        profile['computer_use_screenshot_max_side'] = max_side
+    if max_pixels:
+        profile['computer_use_screenshot_max_pixels'] = max_pixels
+    return profile
+
+
+@pytest.mark.parametrize(
+    'limits, side, pixels',
+    [
+        pytest.param([(1568, 1_150_000)], 1568, 1_150_000, id='one-model'),
+        pytest.param([(2576, 3_600_000), (1568, None), (None, None)], 1568, 3_600_000, id='smallest-in-a-fallback'),
+    ],
+)
+async def test_a_computer_call_records_the_screenshots_its_model_takes(
+    limits: list[tuple[int | None, int | None]], side: int, pixels: int
+) -> None:
+    respond, _ = _click_then_stop([])
+    models = [FunctionModel(respond, profile=_limited(max_side, max_pixels)) for max_side, max_pixels in limits]
+    agent = _grid_agent(models[0] if len(models) == 1 else FallbackModel(*models))
+    [call] = _computer_calls((await agent.run('Click.')).all_messages())
+    assert (call.screenshot_max_side, call.screenshot_max_pixels, call.coordinate_grid) == (side, pixels, None)
+
+
+async def test_a_grid_model_with_a_tool_without_a_description_gets_the_grid_alone() -> None:
+    descriptions: list[str | None] = []
+    respond, _ = _click_then_stop(descriptions)
+    agent = Agent(
+        FunctionModel(respond, profile=GRID_PROFILE),
+        tools=[Tool(lambda actions: ['Done.', SCREEN], name='computer', tool_kind=COMPUTER_KIND)],
+    )
+    await agent.run('Click.')
+    assert descriptions == [GRID_SENTENCE] * 2
+
+
+@pytest.mark.parametrize('value', [True, 0, '1000', None])
+def test_a_computer_call_reads_only_real_labels(value: object) -> None:
+    keys = ('coordinate_grid', 'screenshot_max_side', 'screenshot_max_pixels')
+    call = ComputerCallPart('computer', {'actions': []}, provider_details=dict.fromkeys(keys, value))
+    assert (call.coordinate_grid, call.screenshot_max_side, call.screenshot_max_pixels) == (None, None, None)
+    # A grid of one point says nothing about where.
+    assert (
+        ComputerCallPart('computer', {'actions': []}, provider_details={'coordinate_grid': 1}).coordinate_grid is None
+    )
