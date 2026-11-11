@@ -22,6 +22,7 @@ from pydantic_ai.exceptions import UserError
 
 from .._inline_snapshot import snapshot
 from ..conftest import RequestCapture, try_import
+from .conftest import AnthropicModelFactory, content_blocks
 
 with try_import() as openai_available:
     from openai import AsyncOpenAI
@@ -35,7 +36,7 @@ with try_import() as openai_available:
     from .mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as anthropic_available:
-    from .conftest import AnthropicModelFactory, content_blocks
+    from pydantic_ai.models.anthropic import AnthropicModel
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
@@ -171,7 +172,8 @@ async def test_anthropic_sends_image_jpg_as_jpeg(
     assets_path: Path,
 ):
     """The Anthropic API rejects `image/jpg` with a 400, so the request carries `image/jpeg`."""
-    agent = Agent(anthropic_model('claude-haiku-5-5', capture=True))
+    model: AnthropicModel = anthropic_model('claude-haiku-5-5', capture=True)
+    agent = Agent(model)
     image = BinaryContent(assets_path.joinpath('kiwi.jpg').read_bytes(), media_type='image/jpg')
 
     await agent.run(['What fruit is this? One word.', image])
