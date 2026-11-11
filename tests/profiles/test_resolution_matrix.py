@@ -913,7 +913,9 @@ def test_xai_grok_4():
     profile = XaiProvider.model_profile('grok-4')
     assert _normalize(profile) == snapshot(
         {
-            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'grok_supports_builtin_tools': True,
@@ -926,7 +928,9 @@ def test_xai_grok_3_mini():
     profile = XaiProvider.model_profile('grok-3-mini')
     assert _normalize(profile) == snapshot(
         {
-            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
@@ -1607,7 +1611,9 @@ def test_bedrock_xai_grok(region: str):
     assert profiles == snapshot(
         {
             '4.6': {
-                'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
+                'supported_image_media_types': frozenset(
+                    {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+                ),
                 'supports_thinking': True,
                 'thinking_always_enabled': True,
                 'grok_supports_builtin_tools': True,
@@ -1619,7 +1625,9 @@ def test_bedrock_xai_grok(region: str):
                 'supports_video_input': False,
             },
             '4.7': {
-                'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
+                'supported_image_media_types': frozenset(
+                    {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+                ),
                 'supports_thinking': True,
                 'thinking_always_enabled': True,
                 'grok_supports_builtin_tools': True,
@@ -1911,7 +1919,9 @@ def test_openrouter_xai_grok_4():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
-            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_thinking': True,
@@ -2043,7 +2053,9 @@ def test_github_copilot_xai_grok_4_5():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
@@ -2348,7 +2360,9 @@ def test_azure_grok_prefix():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
-            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_object_output': True,
             'json_schema_transformer': _AzureGrokJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
@@ -2463,7 +2477,9 @@ def test_xai_provider_grok_4():
     profile = XaiProvider.model_profile('grok-4')
     assert _normalize(profile) == snapshot(
         {
-            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'grok_supports_builtin_tools': True,
@@ -2476,7 +2492,9 @@ def test_xai_provider_grok_3_mini():
     profile = XaiProvider.model_profile('grok-3-mini')
     assert _normalize(profile) == snapshot(
         {
-            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_thinking': True,
@@ -2922,7 +2940,9 @@ def test_together_qwen():
             snapshot(
                 {
                     'json_schema_transformer': OpenAIJsonSchemaTransformer,
-                    'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
+                    'supported_image_media_types': frozenset(
+                        {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+                    ),
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
                     'supports_thinking': True,
@@ -3195,7 +3215,9 @@ def test_github_xai_grok():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
-            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,
@@ -3343,7 +3365,9 @@ def test_vercel_xai_grok():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
-            'supported_image_media_types': frozenset({'image/jpeg', 'image/png', 'image/webp'}),
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'grok_supports_builtin_tools': True,

@@ -676,7 +676,13 @@ GEMINI_IMAGES = [
                     'document_media_types': ALL_DOCUMENTS,
                     'audio': False,
                     'video': False,
-                    'image_media_types': ['image/jpeg', 'image/png', 'image/webp'],
+                    'image_media_types': [
+                        'image/jpeg',
+                        'image/png',
+                        'image/vnd.microsoft.icon',
+                        'image/webp',
+                        'image/x-icon',
+                    ],
                 }
             ),
             marks=pytest.mark.skipif(not xai_available(), reason='xai not installed'),
