@@ -8,7 +8,7 @@ from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai_harness import DenyUnanswered
 from pydantic_ai_harness.ask_user import AskUser
-from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE
+from pydantic_ai_harness.deny_unanswered import DEFAULT_MESSAGE, DEFAULT_QUESTION_MESSAGE
 
 from .._deferred_tools import QUESTION, call_then_echo
 
@@ -39,9 +39,9 @@ async def test_deny_unanswered_answers_approval_required_tool_in_run():
     result = await _approval_agent(ran, deny=True).run('do it')
     assert result.output == 'done'
     assert ran == []
-    assert any(
-        'No one was available to approve it' in str(part.content) for part in _tool_returns(result.all_messages())
-    )
+    assert [(part.tool_name, part.content) for part in _tool_returns(result.all_messages())] == [
+        ('danger', DEFAULT_MESSAGE)
+    ]
 
 
 @pytest.mark.parametrize(

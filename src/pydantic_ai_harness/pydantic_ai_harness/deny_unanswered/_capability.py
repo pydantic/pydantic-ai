@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -19,8 +20,7 @@ from pydantic_ai.tools import (
     RunContext,
     ToolDenied,
 )
-
-from ..ask_user import TOOL_NAME
+from pydantic_ai_harness.ask_user import TOOL_NAME
 
 __all__ = ['DEFAULT_MESSAGE', 'DEFAULT_QUESTION_MESSAGE', 'DenyUnanswered']
 
@@ -39,6 +39,10 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
 
     Emits nothing into telemetry.
     """
+
+    # It contributes no toolsets or durable operations and its handler is deterministic, so `SubAgents` and
+    # `DynamicWorkflow` can add it to a child run under durable execution.
+    _safe_at_runtime: ClassVar[bool] = True
 
     message: str = DEFAULT_MESSAGE
     """The tool result for a denied approval."""
