@@ -329,6 +329,24 @@ async def test_gpt_oss_responses(allow_model_requests: None) -> None:
     assert result.output == 'OSS'
 
 
+async def test_gpt_oss_tool_output(allow_model_requests: None, request_capture: RequestCapture) -> None:
+    """Mantle's `/v1/responses` endpoint only accepts `tool_choice='auto'` for GPT-OSS, so the default `ToolOutput`
+    doesn't force the output tool there.
+    """
+
+    class City(BaseModel):
+        city: str
+        country: str
+
+    model = infer_model('bedrock-mantle:openai.gpt-oss-120b', lambda _: _provider(request_capture.client))
+    agent = Agent(model, output_type=City)
+
+    result = await agent.run('The Eiffel Tower is in which city and country?')
+
+    assert result.output == City(city='Paris', country='France')
+    assert [body['tool_choice'] for body in request_capture.bodies('/responses')] == snapshot(['auto'])
+
+
 async def test_safeguard_chat_routing(allow_model_requests: None) -> None:
     """GPT-OSS Safeguard is served on the Chat Completions endpoint, not Responses."""
     model = infer_model('bedrock-mantle:openai.gpt-oss-safeguard-20b', lambda _: _provider())

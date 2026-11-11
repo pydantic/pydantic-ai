@@ -44,7 +44,7 @@ class AskUser(AbstractCapability[AgentDepsT]):
         return AskUserResponse(answers=tuple(answers))
 
 
-    agent = Agent('anthropic:claude-fable-5-1', capabilities=[AskUser(answerer=pick_first)])
+    agent = Agent('anthropic:claude-fable-5-2', capabilities=[AskUser(answerer=pick_first)])
     ```
     """
 
