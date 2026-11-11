@@ -74,9 +74,10 @@ def test_command_boundaries(tmp_path: Path) -> None:
     store.save_plugin(PluginSettings(id='one', factory='module:Factory'))
     plugins_command(store, ['disable', 'one'])
     assert 'disabled' in plugins_command(store, ['list'])
-    for args in (['disable', 'missing'], ['bad']):
-        with pytest.raises(ValueError):
-            plugins_command(store, args)
+    with pytest.raises(ValueError, match='with /plugins inside a CLAI session'):
+        plugins_command(store, ['bad'])
+    with pytest.raises(ValueError, match='Unknown plugin'):
+        plugins_command(store, ['disable', 'missing'])
     with pytest.raises(ValueError):
         store.reset('missing')
 
