@@ -2874,6 +2874,7 @@ def test_together_qwen():
                     'thinking_always_enabled': True,
                     'grok_supports_builtin_tools': True,
                     'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                    'grok_supports_stop_sequences': False,
                     'grok_default_effort_omitted': True,
                     'may_tokenize_special_tokens_in_content': False,
                 }
