@@ -18,9 +18,7 @@ async def test_a_desktop_vm_runs_debian_and_computer_use(fake_smol: FakeSmol, tm
     display = FakeDisplay()
     fake_smol.answer = lambda argv: display(' '.join(argv), None) if display.answers(' '.join(argv)) else None
     sandbox = SmolSandbox(working_dir=str(tmp_path.resolve()), desktop=True)
-    agent = Agent(
-        FunctionModel(look_click_then_finish), capabilities=[sandbox, ComputerUse(native=False, settle_seconds=0)]
-    )
+    agent = Agent(FunctionModel(look_click_then_finish), capabilities=[sandbox, ComputerUse(native=False)])
 
     result = await agent.run('Click.')
 
