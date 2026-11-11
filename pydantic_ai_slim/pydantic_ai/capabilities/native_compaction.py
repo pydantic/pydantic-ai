@@ -22,7 +22,7 @@ class NativeCompaction(AbstractCapability[Any]):
     [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction] or `compact=` on a run
     method, it calls
     [`compact_messages`][pydantic_ai.models.Model.compact_messages] on the
-    [model the request is for][pydantic_ai.capabilities.CompactionRequest.model], if its profile has
+    [model the request is for][pydantic_ai.capabilities.CompactionModelRequest.model], if its profile has
     [`supports_compaction_on_demand`][pydantic_ai.profiles.ModelProfile.supports_compaction_on_demand]: the OpenAI
     Responses API on OpenAI and Azure OpenAI, and Anthropic's Claude models that compact on demand. Otherwise it returns
     `None`, so the next capability with a
