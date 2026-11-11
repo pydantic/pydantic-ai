@@ -13,7 +13,7 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from typing_extensions import TypeIs
 
 from pydantic_ai._run_context import set_current_run_context
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, HandleDeferredToolCalls
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.external_events import ExternalEventError, wait_for_external_event
 from pydantic_ai.messages import ToolCallPart
@@ -166,6 +166,14 @@ class AskUser(AbstractCapability[AgentDepsT]):
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Static, cache-stable guidance on when to ask."""
         return _INSTRUCTIONS
+
+    def get_ordering(self) -> CapabilityOrdering:
+        """Answer its own questions before a `HandleDeferredToolCalls` handler sees the pending calls, wherever it is listed.
+
+        A generic handler that fills every call in `requests.calls` would otherwise answer the question
+        itself, and the answerer would never be asked. `RequestInput` is innermost, so it comes later still.
+        """
+        return CapabilityOrdering(wraps=[HandleDeferredToolCalls])
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """The `ask_user_question` tool, which defers each call as a question this capability answers."""

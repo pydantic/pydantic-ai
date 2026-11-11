@@ -767,6 +767,50 @@ class TestComposition:
         assert json.loads(result.output) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
         assert asked == []
 
+    async def test_ask_user_answers_before_a_handler_listed_earlier_that_fills_every_call(self) -> None:
+        answerer = ScriptedAnswerer()
+        seen: list[list[str]] = []
+
+        def fill_everything(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            seen.append([call.tool_call_id for call in requests.calls])
+            return requests.build_results(calls={call.tool_call_id: 'placeholder' for call in requests.calls})
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(TOOL_NAME, {'questions': raw_questions()}, tool_call_id='c1'),
+                        ToolCallPart('look_up', {}, tool_call_id='l1'),
+                    ]
+                )
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        ' | '.join(
+                            part.model_response_str() for part in messages[-1].parts if isinstance(part, ToolReturnPart)
+                        )
+                    )
+                ]
+            )
+
+        agent = Agent(
+            FunctionModel(model),
+            deps_type=type(None),
+            capabilities=[HandleDeferredToolCalls(fill_everything), AskUser(answerer=answerer)],
+        )
+
+        @agent.tool_plain
+        def look_up() -> str:
+            raise CallDeferred
+
+        result = await agent.run('go')
+
+        answer, looked_up = result.output.split(' | ')
+        assert json.loads(answer) == {'Approach': ['Refactor'], 'Targets': ['api.py']}
+        assert looked_up == 'placeholder'
+        assert [request.id for request in answerer.requests] == ['c1']
+        assert seen == [['l1']], 'the handler only sees what AskUser left pending'
+
     async def test_calls_that_are_not_its_questions_are_left_to_later_handlers(self) -> None:
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:

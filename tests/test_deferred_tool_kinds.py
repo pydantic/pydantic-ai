@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pickle
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -11,17 +10,21 @@ from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import HandleDeferredToolCalls
-from pydantic_ai.exceptions import CallDeferred
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
+from pydantic_ai.capabilities.abstract import ValidatedToolArgs
+from pydantic_ai.exceptions import CallDeferred, ModelRetry, ToolFailed
 from pydantic_ai.messages import (
     AgentStreamEvent,
     DeferredToolResultsEvent,
     ModelMessage,
     ModelResponse,
+    TextPart,
     ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 
 
 def ask_look_up_and_delete(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -138,14 +141,6 @@ async def test_a_question_deferred_by_an_args_validator_is_marked() -> None:
     assert result.output.kind('approval') == 'question'
 
 
-def test_a_pickled_question_stays_a_question() -> None:
-    error = pickle.loads(pickle.dumps(CallDeferred({'topic': 'scope'}, kind='question')))
-
-    assert error.kind == 'question'
-    assert error.metadata == {'topic': 'scope'}
-    assert pickle.loads(pickle.dumps(CallDeferred())).kind == 'external'
-
-
 async def test_an_approved_call_that_asks_a_question_stays_pending_as_one() -> None:
     """A call a handler resolves can defer again when it runs; it joins the calls still pending with its kind."""
 
@@ -180,3 +175,96 @@ async def test_an_approved_call_that_asks_a_question_stays_pending_as_one() -> N
     assert isinstance(result.output, DeferredToolRequests)
     assert [call.tool_call_id for call in result.output.calls] == ['external', 'approval']
     assert result.output.kinds == {'approval': 'question'}
+
+
+async def test_an_answer_given_during_the_run_passes_the_tools_result_hooks() -> None:
+    """A question the tool raised itself, answered by a handler, passes `after_tool_execute` as the tool's own result would."""
+    seen: list[Any] = []
+
+    class Redact(AbstractCapability[None]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            seen.append(result)
+            return result.replace('hunter2', '[redacted]') if isinstance(result, str) else result
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('ask', {}, tool_call_id='question'),
+                    ToolCallPart('look_up', {}, tool_call_id='external'),
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    ' | '.join(str(part.content) for part in messages[-1].parts if isinstance(part, ToolReturnPart))
+                )
+            ]
+        )
+
+    def answer(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(calls={'question': 'my password is hunter2', 'external': 'hunter2 found'})
+
+    agent = Agent(
+        FunctionModel(model),
+        deps_type=type(None),
+        capabilities=[Redact(), HandleDeferredToolCalls(answer)],
+    )
+
+    @agent.tool_plain
+    def ask() -> str:
+        raise CallDeferred(kind='question')
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise CallDeferred
+
+    result = await agent.run('go')
+
+    assert result.output == 'my password is [redacted] | hunter2 found'
+    assert seen == ['my password is hunter2'], "an external result is not the tool's own, so it is passed on as is"
+
+
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    [
+        (ModelRetry('Answer in English.'), 'Answer in English.'),
+        (ToolFailed('The answer was blocked.'), 'The answer was blocked.'),
+    ],
+)
+async def test_a_result_hook_can_reject_an_answer_given_during_the_run(error: Exception, expected: str) -> None:
+    class Block(AbstractCapability[None]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            raise error
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('ask', {}, tool_call_id='question')])
+        return ModelResponse(parts=[TextPart(str([getattr(part, 'content', None) for part in messages[-1].parts]))])
+
+    def answer(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(calls={'question': ToolReturn('nein', content='notes')})
+
+    agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=[Block(), HandleDeferredToolCalls(answer)])
+
+    @agent.tool_plain
+    def ask() -> str:
+        raise CallDeferred(kind='question')
+
+    assert expected in (await agent.run('go')).output

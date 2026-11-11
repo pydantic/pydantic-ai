@@ -1062,6 +1062,36 @@ class ToolManager(Generic[AgentDepsT]):
             validated, usage=self.ctx.usage, wrap_validation_errors=wrap_validation_errors
         )
 
+    async def after_tool_execute(self, validated: ValidatedToolCall[AgentDepsT], result: Any) -> Any:
+        """Pass a result the tool didn't return itself through the `after_tool_execute` hooks, as if it had.
+
+        Used for the answer to a question the tool deferred with `CallDeferred(kind='question')`, when a
+        `handle_deferred_tool_calls` hook answers it during the run, so result guards (redaction,
+        blocking, scanning) see the answer as they would see one the tool waited for itself.
+
+        Raises:
+            ToolRetryError: A hook raised `ModelRetry` or a `ValidationError`.
+            ToolFailedError: A hook raised `ToolFailed`.
+        """
+        cap = self.root_capability
+        # Deferred calls are only answered during a run by `handle_deferred_tool_calls` hooks on this capability.
+        assert cap is not None, 'after_tool_execute requires root_capability'
+        assert validated.tool is not None
+        assert validated.validated_args is not None
+        call = validated.call
+        try:
+            return await cap.after_tool_execute(
+                validated.ctx, call=call, tool_def=validated.tool.tool_def, args=validated.validated_args, result=result
+            )
+        except (ValidationError, ModelRetry) as e:
+            name = call.tool_name
+            max_retries = validated.tool.max_retries
+            attempt = self._check_max_retries(name, max_retries, e)
+            self.failed_tools.add(name)
+            raise self._wrap_error_as_retry(name, call, e, attempt=attempt, max_retries=max_retries) from e
+        except ToolFailed as e:
+            raise self._wrap_error_as_failed(call.tool_name, call, e) from e
+
     # --- Output tool methods (output hooks, no tool hooks) ---
 
     async def validate_output_tool_call(

@@ -225,7 +225,7 @@ agent = Agent('{{ anthropic:xlarge }}', capabilities=[AskUser(answerer=hand_on)]
 Because the question is a deferred call, it waits until the other tool calls from the same model
 response have finished.
 
-`AskUser` answers its questions before `RequestInput` is asked about what's left, wherever you list them.
+`AskUser` answers its questions before a `HandleDeferredToolCalls` handler or `RequestInput` is asked about what's left, wherever you list them, and its answer passes the tool's `after_tool_execute` hooks, such as result guards, as it did when the tool waited for it.
 To handle every pending call in one place instead, pass `answerer=None` and answer the question in
 `RequestInput`'s `ask` with `ask_user_result`, as the next section shows for a later run.
 

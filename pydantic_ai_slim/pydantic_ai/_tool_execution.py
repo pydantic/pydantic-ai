@@ -5,7 +5,16 @@ import dataclasses
 import inspect
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from contextlib import aclosing
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Generic, Literal, assert_never, cast
@@ -488,11 +497,15 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     winning_output_part: _messages.ToolReturnPart | None = dataclasses.field(default=None, init=False)
     deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]] = dataclasses.field(init=False)
     deferred_metadata: dict[str, dict[str, Any]] = dataclasses.field(init=False)
+    # The validated calls whose tool deferred them as questions, so an answer given during the run
+    # passes the tool's result hooks, as it did when the tool waited for the answer itself.
+    question_calls: dict[str, ValidatedToolCall[DepsT]] = dataclasses.field(init=False)
 
     def __post_init__(self) -> None:
         self.final_result_was_set_externally = self.final_result is not None
         self.deferred_calls = defaultdict(list)
         self.deferred_metadata = {}
+        self.question_calls = {}
 
         # Classify each call once, preserving emission order for the per-index views below.
         tool_calls_by_kind: dict[ToolDefinitionKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(
@@ -822,7 +835,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         try:
             if tool_call_result is None or isinstance(tool_call_result, ToolApproved):
                 if validated is not None:
-                    tool_result = await self.tool_manager.execute_tool_call(validated)
+                    tool_result = await self._execute_tool_call(validated)
                 else:
                     raise RuntimeError('Expected validated tool call')  # pragma: no cover
             elif isinstance(tool_call_result, ToolDenied):
@@ -856,7 +869,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     )
                 )
             else:
-                tool_result = tool_call_result
+                tool_result = await self._answer_result(validated, tool_call_result)
         except ToolRetryError as e:
             return [tool_bound_retry_part(e)], None
         except ToolFailedError as e:
@@ -1167,6 +1180,37 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 self.deferred_metadata[call.tool_call_id] = deferral.metadata
         self.deferred_calls[bucket].append(call)
 
+    async def _execute_tool_call(self, validated: ValidatedToolCall[DepsT]) -> Any:
+        """Execute a validated call, remembering it when its tool defers it as a question."""
+        try:
+            return await self.tool_manager.execute_tool_call(validated)
+        except exceptions.CallDeferred as e:
+            if e.kind == 'question':
+                self.question_calls[validated.call.tool_call_id] = validated
+            raise
+
+    async def _answer_result(self, validated: ValidatedToolCall[DepsT] | None, result: Any) -> Any:
+        """The result for a call answered with `result`, passed through the tool's result hooks when it is a question's answer.
+
+        `validated` is only given for a question answered during the run (see `_answered_question_calls`).
+        A plain value the answer wrapped is unwrapped, so the hooks see what the tool would have returned.
+        """
+        if validated is None or not isinstance(result, _messages.ToolReturn):
+            return result
+        answer = cast(_messages.ToolReturn[Any], result)
+        bare = answer.content is None and answer.metadata is None and answer.tools is None
+        return await self.tool_manager.after_tool_execute(validated, answer.return_value if bare else answer)
+
+    def _answered_question_calls(
+        self, results: Mapping[str, DeferredToolResult]
+    ) -> dict[str, ValidatedToolCall[DepsT]]:
+        """The questions the tool raised itself that `results` answers, so their answers pass the tool's result hooks."""
+        return {
+            tool_call_id: validated
+            for tool_call_id, validated in self.question_calls.items()
+            if isinstance(results.get(tool_call_id), _messages.ToolReturn)
+        }
+
     async def _resolve_deferred_calls(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
         # Deferred calls are returned to the caller and later matched back to results by `tool_call_id`.
@@ -1205,7 +1249,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 if call.tool_call_id in handler_tool_call_results
             ]
 
-            handler_validated_calls: dict[str, ValidatedToolCall[DepsT]] = {}
+            handler_validated_calls = self._answered_question_calls(handler_tool_call_results)
             for call in resolved_calls:
                 handler_result = handler_tool_call_results[call.tool_call_id]
                 if not isinstance(handler_result, ToolApproved):
