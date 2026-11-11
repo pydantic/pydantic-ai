@@ -485,7 +485,7 @@ from the project file, reads instruction files automatically: one per directory,
 it. Under your home the walk-up stops at `~`;
 elsewhere it stops at the repository root (see
 [Repository instructions](#repository-instructions)). A subdirectory's file is added the first time
-the agent reads or lists something in it. `/plugins disable repo_context` turns it off, for this and
+the agent reads, lists, writes or edits something in it. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
 
