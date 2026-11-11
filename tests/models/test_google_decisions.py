@@ -342,6 +342,7 @@ async def test_settings_are_forwarded(allow_model_requests: None):
     [
         ('labels', '`extra_body` must be a dict'),
         ({'questions': {}}, '`extra_body` cannot set `questions`'),
+        ({'Ques_tions': {}}, '`extra_body` cannot set `questions`'),
     ],
 )
 async def test_extra_body_refused(allow_model_requests: None, extra_body: object, message: str):
@@ -417,6 +418,30 @@ async def test_invalid_response(allow_model_requests: None, respond: Handler):
 
     with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the Gemini API'):
         await agent.run('Server is down')
+
+
+def _short_of_one(request: httpx2.Request) -> httpx2.Response:
+    return decisions_response(
+        {
+            'q0': {
+                'type': 'choice',
+                'choice': 'billing',
+                'confidence': 0.9,
+                'probabilities': {'billing': 0.9, 'bug': 0.095},
+            }
+        }
+    )
+
+
+async def test_probabilities_must_sum_to_one(allow_model_requests: None):
+    """A distribution short of one is refused, though a backend that rounds each probability could send it.
+
+    The endpoint sends unrounded probabilities, which sum to one within float error. Mocked: no real response does.
+    """
+    agent = Agent(mock_model(_short_of_one), output_type=Literal['billing', 'bug'], instructions='Which team?')
+
+    with pytest.raises(UnexpectedModelBehavior, match="answer 'response' does not match its question"):
+        await agent.run('I was charged twice')
 
 
 async def test_non_image_evidence_refused():

@@ -22,6 +22,7 @@ from .decision import (
     DecisionQuestion,
     DecisionRequest,
     DecisionResponse,
+    NoulAnswer,
     NoulCriteria,
     NoulQuestion,
     ScoreQuestion,
@@ -43,6 +44,9 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `google-genai` package to use the Google Decisions model, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
+
+# Unrounded float64 probabilities sum to one within about 1e-15, even over 255 options.
+_FLOAT_TOLERANCE = 1e-6
 
 __all__ = (
     'GoogleDecisionsModel',
@@ -196,7 +200,7 @@ class GoogleDecisionsModel(DecisionModel[Client]):
         answers: dict[str, DecisionAnswer] = {}
         for key, name in names.items():
             answer = parsed.answers[key]
-            if not _answer_fits(request.questions[name], answer):
+            if not (_answer_fits(request.questions[name], answer) and _sums_to_one(answer)):
                 raise UnexpectedModelBehavior(
                     f'Invalid response from the Gemini API: answer {name!r} does not match its question: {answer!r}',
                     response.body,
@@ -219,13 +223,23 @@ def _http_options(client: Client, model_settings: DecisionModelSettings) -> Http
         return http_options
     if not _utils.is_str_dict(extra_body):
         raise UserError(f'`extra_body` must be a dict to send it to the Gemini API; got {extra_body!r}.')
-    if 'questions' in extra_body:
+    # The SDK merges `extra_body` into the body by key with `_` removed and case ignored, so `Questions` sets it too.
+    if any(key.replace('_', '').lower() == 'questions' for key in extra_body):
         raise UserError(
             '`extra_body` cannot set `questions`: each question goes under an ID of its own, '
             'which its answer is read back by.'
         )
     http_options['extra_body'] = extra_body
     return http_options
+
+
+def _sums_to_one(answer: DecisionAnswer) -> bool:
+    """Whether a pick-one's or a rubric's probabilities sum to one within float error.
+
+    The API sends its probabilities unrounded, so the allowance `_answer_fits` makes for a backend that rounds each
+    one would let through a distribution that sums to far less than one.
+    """
+    return isinstance(answer, NoulAnswer) or abs(sum(answer.probabilities.values()) - 1) <= _FLOAT_TOLERANCE
 
 
 class _TextBlock(TypedDict):
