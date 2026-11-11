@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
 
 import pytest
 from pydantic import TypeAdapter
@@ -1055,8 +1056,8 @@ async def test_capture_run_conversation_keeps_the_first_run_and_leaves_an_inner_
     assert inner.conversation.conversation_id == 'inner'
 
 
-class _FailsBeforeTheRun(AbstractCapability[None]):
-    async def before_run(self, ctx: RunContext[None]) -> None:
+class _FailsBeforeTheRun(AbstractCapability[Any]):
+    async def before_run(self, ctx: RunContext[Any]) -> None:
         raise RuntimeError('the hook failed')
 
 
