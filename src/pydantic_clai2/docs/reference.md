@@ -1553,7 +1553,7 @@ uses. The default appearance keeps CLAI's existing addition and deletion
 backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
 Code uses the terminal foreground and ANSI syntax colours on the terminal
 background. Successful file writes also show the proposed diff from their matching
-`FileChangeRequestEvent`: new files show additions, overwrites show before/after
+`FileChangeRequestedEvent`: new files show additions, overwrites show before/after
 changes. Without a matching request event, only the written path is shown. Failed
 or cancelled writes do not display a success diff. Large diffs retain the
 filesystem's truncation notice. Coder shell events show the command, attached

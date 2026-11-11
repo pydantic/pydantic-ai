@@ -2719,8 +2719,8 @@ the terminal; the shell has already printed them.
 
 `on_task_progress` receives a `TaskProgress` for everything a task the agent delegated does, and its
 descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the event
-from the task's own run (text, thinking, tool calls and results), its `DelegationStartEvent` or
-`DelegationEndEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
+from the task's own run (text, thinking, tool calls and results), its `DelegationStartedEvent` or
+`DelegationFinishedEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
 its parent, or `None` when only the task changed, such as when it started, finished, or began
 waiting for an answer. Its own run's events never reach the main run's hooks: they are the feed
 `/tasks` shows. Its `sub_agents` task events also go into the stream of the run that delegated it,
@@ -2840,7 +2840,7 @@ class WriteLog(Plugin):
 A capability class of your own can do the same with core's `@on_event(EventClass)`
 method decorator. Some events let you say no. If the event has a `cancel()`
 method, calling it stops the action before it happens (for example
-`FileChangeRequestEvent`).
+`FileChangeRequestedEvent`).
 
 ### Add a `/command`: `get_commands()`
 
@@ -4351,8 +4351,8 @@ for an in-memory host. The built-in `persistence` plugin binds
 for the same store and run. Removing the plugin removes step capture on subsequent
 turns; conversation-head saving is owned by `Session` and continues independently.
 
-Harness exports `SnapshotSaved` from `pydantic_ai_harness.step_persistence`.
-Subscribe with a `Hooks` capability's `hooks.on.event(SnapshotSaved)` to observe committed checkpoints.
+Harness exports `SnapshotSavedEvent` from `pydantic_ai_harness.step_persistence`.
+Subscribe with a `Hooks` capability's `hooks.on.event(SnapshotSavedEvent)` to observe committed checkpoints.
 It carries `persistence_run_id`, `conversation_id`, `step_index`, and `state`.
 This is a notification, not the durable source of truth or permission to replay a
 tool. A durable replay may notify again. An observer failure cannot roll back the

@@ -13,7 +13,7 @@ SHELL_EVENTS = 'shell'
 
 
 @dataclass(kw_only=True)
-class CommandStartedEvent(CapabilityEvent, namespace=SHELL_EVENTS, name='command_started'):
+class CommandStartedEvent(CapabilityEvent, namespace=SHELL_EVENTS):
     """A command supervisor has started; its output log combines stdout and stderr."""
 
     command: str
@@ -21,14 +21,14 @@ class CommandStartedEvent(CapabilityEvent, namespace=SHELL_EVENTS, name='command
 
 
 @dataclass(kw_only=True)
-class CommandOutputEvent(CapabilityEvent, namespace=SHELL_EVENTS, name='command_output'):
+class CommandOutputEvent(CapabilityEvent, namespace=SHELL_EVENTS):
     """A bounded chunk of the command's combined output log."""
 
     text: str
 
 
 @dataclass(kw_only=True)
-class CommandFinishedEvent(CapabilityEvent, namespace=SHELL_EVENTS, name='command_finished'):
+class CommandFinishedEvent(CapabilityEvent, namespace=SHELL_EVENTS):
     """The tool stopped waiting for the command, which may still be running.
 
     `exit_code` is `None` while no completed status has been published.

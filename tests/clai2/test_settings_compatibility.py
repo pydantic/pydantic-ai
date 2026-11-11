@@ -13,7 +13,7 @@ from rich.console import Console
 from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
 from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
 from pydantic_clai2.builtin_plugins.aoe import AoePlugin
@@ -349,7 +349,7 @@ async def test_historical_tool_output_preference_is_preserved(tmp_path: Path, va
         Console(file=output), stop_loading=lambda: None, show_tool_output=reopened.load().tool_output
     )
     for event in (
-        FileChangeRequestEvent(
+        FileChangeRequestedEvent(
             path='file.txt', root_dir='/tmp', operation='write', diff='visible diff', truncated=False
         ),
         FileWrittenEvent(path='file.txt', root_dir='/tmp', content_hash='hash'),
