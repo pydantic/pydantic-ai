@@ -273,12 +273,12 @@ Spilled files are kept for the life of the workspace; they are not pruned by thi
 
 ### Reading spills with `FileSystem`
 
-When spills are files in the run's workspace (the default `WorkspaceStore()`, without a
-`workspace=` of its own or a `CapabilityStorage` on the run) and `FileSystem` is on the agent, `read_tool_result` steps aside for
-`FileSystem`'s `read_file`. The tool is marked with
+When spills are files in the run's workspace (the default `WorkspaceStore()`, without a `workspace=`
+of its own or a `CapabilityStorage` on the run) and `FileSystem` is on the agent, `read_tool_result`
+steps aside for `FileSystem`'s `read_file`. The tool is marked with
 [`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind)
-set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. The
-spill marker then names that tool as it is called in the run, with the spill's path:
+set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. The spill
+marker then names that tool as it is called in the run, with the spill's path:
 
 ```text
 [Tool output too large (20,719 chars); stored to handle '/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0'. Read it with read_file(path='/repo/.pydantic-ai-harness/tool-output/<run>/<call>.0').]
