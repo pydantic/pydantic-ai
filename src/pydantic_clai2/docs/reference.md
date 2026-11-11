@@ -1282,6 +1282,9 @@ still queues the message like Enter, the terminal is sending a plain Enter:
 ### Interrupting a turn
 
 Press Esc or Ctrl-C to cancel the active agent turn without discarding your draft.
+Cancelling also stops the sub-agents that turn was waiting on. A sub-agent the turn
+started in the background keeps running and still reports when it finishes; stop
+one from `/tasks`.
 Tool cleanup finishes before the next queued message starts. Esc does not request
 exit, even when pressed repeatedly. Arrow keys and Alt-key shortcuts keep their
 editing behavior. The active full-screen interface retains control of Esc rather

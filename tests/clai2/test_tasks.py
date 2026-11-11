@@ -915,6 +915,76 @@ async def test_background_completion_continues_parent_without_user_input(
     assert shell.tasks.wake is None
 
 
+async def test_cancelling_a_turn_leaves_its_background_child_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user's stop ends the turn; a child that turn started in the background runs on and still reports."""
+    child_started, parent_waiting, idle, release, continued = (asyncio.Event() for _ in range(5))
+    reads = 0
+    original_read = LivePrompt.read
+
+    async def read(live: LivePrompt) -> str:
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            idle.set()
+        return await original_read(live)
+
+    monkeypatch.setattr(LivePrompt, 'read', read)
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        request = messages[0]
+        assert isinstance(request, ModelRequest)
+        first = next(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        if first == 'child':
+            child_started.set()
+            await release.wait()
+            yield 'Child finished.'
+        elif any(
+            is_task_report(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
+        ):
+            yield 'Report read.'
+            continued.set()
+        elif len(messages) == 1:
+            yield {
+                0: DeltaToolCall(
+                    name='delegate_task', json_args='{"agent_name":"self","task":"child","background":true}'
+                )
+            }
+        else:
+            parent_waiting.set()
+            await asyncio.Event().wait()
+
+    shell = create_shell(
+        create_stock_agent(FunctionModel(stream_function=stream)),
+        deps=None,
+        plugins=[Coder(repo_context=False)],
+        usage_limits=None,
+        console=Console(file=io.StringIO(), force_terminal=True, width=100, height=24),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as group:
+            group.start_soon(shell.run)
+            pipe.send_text('launch\r')
+            await child_started.wait()
+            await parent_waiting.wait()
+            assert shell.interrupts.cancel(exit_on_repeat=False)
+            await idle.wait()
+            (record,) = shell.tasks.owner.records.values()
+            assert (record.status, record.outcome, record.user_stopped) == ('running', None, False)
+            release.set()
+            await continued.wait()
+            assert (record.status, record.outcome, record.output) == ('finished', 'ok', 'Child finished.')
+            assert record.delivered and not record.user_stopped
+            assert shell.editor is not None
+            shell.editor.submit('/exit')
+
+
 async def test_consumed_background_report_does_not_start_another_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
