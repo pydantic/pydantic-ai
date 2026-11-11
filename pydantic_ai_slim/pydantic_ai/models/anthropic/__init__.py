@@ -378,7 +378,8 @@ __all__ = (
     'bash_code_execution_tool_result_content_ta',
     'code_execution_tool_result_content_ta',
     'text_editor_code_execution_tool_result_content_ta',
-    'web_search_tool_result_content_ta', 'ComputerResult',
+    'web_search_tool_result_content_ta',
+    'ComputerResult',
 )
 
 # Fast mode is not available on any Bedrock transport, so it goes in `_FAST_MODE_UNSUPPORTED_CLIENTS`.

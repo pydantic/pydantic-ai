@@ -653,7 +653,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         mode='identity' if self.engine_spec.codec is IDENTITY_CODEC else 'json',
                     ),
                     config_role='capability',
-                    policy=declaration.policy,
                 )
                 self._bound_capability_operations[key] = backend.bind(operation)
                 self._capability_declarations[key] = declaration

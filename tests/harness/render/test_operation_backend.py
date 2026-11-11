@@ -6,11 +6,9 @@ import pytest
 from render.workflows import Options, Retry, Workflows
 
 from pydantic_ai import Agent, AgentStreamEvent, FunctionToolset, RunContext
-from pydantic_ai.durable_exec import StepPolicy
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import RenderWorkflows
-from pydantic_ai_harness.render._operation_backend import _policy_options  # pyright: ignore[reportPrivateUsage]
 
 from .conftest import RecordingTaskContext, RecordingWorkflows, run_agent_in_task
 
@@ -227,25 +225,3 @@ def test_different_static_tool_options_fail_before_registration() -> None:
             ],
         )
     assert app.registered_task_names == []
-
-
-@pytest.mark.parametrize(
-    ('options', 'policy', 'retries', 'timeout'),
-    [
-        pytest.param(Options(timeout_seconds=60), StepPolicy(repeatable=False, timeout=180), 0, 180, id='raised'),
-        pytest.param(Options(timeout_seconds=600), StepPolicy(repeatable=False, timeout=180), 0, 600, id='kept'),
-        pytest.param(
-            Options(retry=Retry(max_retries=2, wait_duration_ms=100), timeout_seconds=60),
-            StepPolicy(),
-            2,
-            60,
-            id='repeatable',
-        ),
-        pytest.param(None, StepPolicy(timeout=180), None, 180, id='no-options'),
-    ],
-)
-def test_a_step_policy_goes_into_the_registered_task_options(
-    options: Options | None, policy: StepPolicy, retries: int | None, timeout: int
-) -> None:
-    applied = _policy_options(options, policy)
-    assert (applied.retry.max_retries if applied.retry else None, applied.timeout_seconds) == (retries, timeout)
