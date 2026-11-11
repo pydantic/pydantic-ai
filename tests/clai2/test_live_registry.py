@@ -413,6 +413,25 @@ async def test_second_owner_cannot_replace_live_socket(private_runtime: Path) ->
         assert (await request(first.socket_path, HelloRequest())).instance == first.instance
 
 
+@pytest.mark.parametrize('error', [ControlProtocolError('Invalid control frame'), ValueError('Invalid control frame')])
+async def test_unrecognised_listener_counts_as_active(
+    private_runtime: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """A listener that answers outside this protocol keeps its socket and fails startup with `OSError`."""
+    first = LiveRegistry(lambda: [], directory=private_runtime)
+    second = LiveRegistry(lambda: [], directory=private_runtime)
+
+    async def answer(path: Path, frame: HelloRequest) -> Hello:
+        raise error
+
+    async with first.serving(subscribe):
+        monkeypatch.setattr(live_registry, 'request', answer)
+        with pytest.raises(OSError, match='already active'):
+            async with second.serving(subscribe):
+                pass
+        assert first.socket_path is not None and first.socket_path.exists()
+
+
 @pytest.mark.parametrize('variable', ['TMPDIR', 'XDG_RUNTIME_DIR'])
 async def test_relative_runtime_environment_is_discoverable(
     private_runtime: Path, monkeypatch: pytest.MonkeyPatch, variable: str

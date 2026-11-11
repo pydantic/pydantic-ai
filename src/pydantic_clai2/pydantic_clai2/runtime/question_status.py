@@ -17,7 +17,7 @@ class QuestionStatus(AbstractCapability[AgentDepsT]):
 
     session: LiveSession
     waits: dict[str | None, dict[str, Callable[[], None]]] = field(
-        default_factory=dict[str | None, dict[str, Callable[[], None]]]
+        default_factory=dict[str | None, dict[str, Callable[[], None]]], init=False, repr=False
     )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[object]:

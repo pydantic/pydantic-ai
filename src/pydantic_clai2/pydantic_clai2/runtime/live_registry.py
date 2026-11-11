@@ -415,6 +415,8 @@ class LiveRegistry:
                 await request(path, HelloRequest())
             except (ConnectionRefusedError, FileNotFoundError):
                 await to_thread.run_sync(_unlink_abandoned, path, abandoned)
+            except (ControlProtocolError, ValueError) as exc:
+                raise OSError(f'CLAI socket already active at {path}') from exc
             else:
                 raise OSError(f'CLAI socket already active at {path}')
         self.socket_path = path
