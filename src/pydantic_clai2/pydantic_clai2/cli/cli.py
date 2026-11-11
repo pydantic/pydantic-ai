@@ -323,7 +323,7 @@ def _settings_for(
     return settings_for
 
 
-def _enter_worktree(*, name: str, headless: bool, store: SettingsStore) -> 'Worktree':
+def _enter_worktree(*, name: str, headless: bool, store: 'SettingsStore') -> 'Worktree':
     """Open the `--worktree` checkout and change into it, marking it for exit cleanup when that will run.
 
     A checkout a saved choice keeps, or whose choice cannot be read, is not marked for removal once pushed.
