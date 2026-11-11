@@ -776,8 +776,9 @@ and `/plugins configure linear` (or `c` in `/plugins`) opens it again later:
 | Access | read-only, or read and write | read-only |
 | Server instructions | pass Linear's own MCP instructions to the agent, or leave them out | include |
 
-Outside search, Space toggles boolean rows, Enter edits a row, and `R` resets it
-to the default. Press `/` to search; Enter keeps the matches and restores these
+Outside search, Space toggles **Server instructions**, Enter edits a row, and `R`
+resets it to the default. Access uses Enter because it can require sign-in.
+Press `/` to search; Enter keeps the matches and restores these
 actions, and Esc clears the filter first. Esc backs out of a picker
 without changing anything. Each change is saved as you make it, so **Save & close**
 and Esc both just leave the menu, and the plugin is reloaded with the new settings.

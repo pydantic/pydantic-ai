@@ -139,6 +139,7 @@ class FieldMenu:
                 key_source=menu_key,
                 hotkeys={' ': self.toggle, 'R': self._reset_key},
             )
+        # Only toggle-bearing lists need hotkey routing; keep ordinary filtering for the rest.
         if self._searchable:
             builder.searchable().on_key('R', self._reset_key).footer_hint('type to filter - ' + _LIST_HINT)
         else:
