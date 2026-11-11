@@ -29,7 +29,10 @@ import time
 import urllib.request
 import uuid
 import zipfile
-from typing import Any, Literal
+from collections.abc import Mapping
+
+# The standard library's, not `typing_extensions`': this runs on the sandbox's Python, which has nothing else.
+from typing import Literal, TypedDict  # noqa: TID251
 
 STATE = '/dev/shm/pydantic-ai-mounts'
 """Daemon socket, lock and each mount's key expiry. In memory, so a restarted sandbox starts clean, as its kernel
@@ -69,6 +72,8 @@ PROBE_SECONDS = 10
 """How long a mount may take to answer a lookup before it counts as dead, and `rclone version` to answer."""
 DEADLINE_SECONDS = 1800
 """The most one call may take, all steps together, so a caller that waits for it is never left waiting for ever."""
+CLEANUP_SECONDS = 30
+"""How long undoing a half-made mount may take once the deadline has passed, while the lock is still held."""
 
 
 RCLONE_VERSION_OUTPUT = re.compile(r'rclone v(\d+)\.(\d+)\.(\d+)')
@@ -78,6 +83,51 @@ KERNEL_ESCAPE = re.compile(rb'\\([0-7]{3})')
 
 FailureCode = Literal['busy', 'conflict', 'fuse', 'mount', 'rclone', 'stuck', 'timeout']
 """Why a call failed, as the reply's `error` names it."""
+
+
+class Keys(TypedDict):
+    access_key_id: str
+    secret_access_key: str
+    session_token: str
+
+
+class Wanted(TypedDict):
+    """One mount to make, or to give fresh keys."""
+
+    path: str
+    fingerprint: str
+    """What the folder shows, hashed: the same fingerprint means a refresh, another means another bucket."""
+    remote: dict[str, str]
+    """The rclone remote's parameters, keys aside."""
+    root: str
+    read_only: bool
+    keys: Keys
+    expires_at: float
+
+
+class Request(TypedDict):
+    """The one JSON line the helper reads on stdin."""
+
+    working_dir: str
+    mounts: list[Wanted]
+
+
+class _MountPoint(TypedDict):
+    MountPoint: str
+    Fs: str
+
+
+class _DiskCache(TypedDict):
+    uploadsQueued: int
+    uploadsInProgress: int
+
+
+class _RcReply(TypedDict, total=False):
+    """The fields of rclone's remote control replies this reads."""
+
+    error: str
+    mountPoints: list[_MountPoint]
+    diskCache: _DiskCache
 
 
 class MountFailed(Exception):
@@ -97,11 +147,11 @@ class _UnixConnection(http.client.HTTPConnection):
         self.sock.connect(SOCKET)
 
 
-def rc(command: str, body: dict[str, Any] | None = None, timeout: float = 60) -> dict[str, Any]:
+def rc(command: str, body: Mapping[str, object] | None = None, timeout: float = 60) -> _RcReply:
     connection = _UnixConnection('localhost', timeout=timeout)
     connection.request('POST', f'/{command}', json.dumps(body or {}), {'Content-Type': 'application/json'})
     response = connection.getresponse()
-    reply = json.loads(response.read() or b'{}')
+    reply: _RcReply = json.loads(response.read() or b'{}')
     if response.status != 200:
         # rclone echoes the request, keys included, in its errors: report only its own message.
         raise MountFailed(
@@ -227,22 +277,17 @@ def alive(path: str) -> bool:
 def served() -> dict[str, str]:
     """Mount point to the rclone file system it shows, for the mounts the running daemon serves."""
     try:
-        return {mount['MountPoint']: mount['Fs'] for mount in rc('mount/listmounts')['mountPoints']}
+        return {mount['MountPoint']: mount['Fs'] for mount in rc('mount/listmounts').get('mountPoints', [])}
     except (OSError, MountFailed):
         return {}
 
 
-def unmount(path: str) -> None:
-    """Send queued uploads, then unmount; a dead mount is detached so a new one can take its place."""
+def unmount(path: str, *, drain: bool = True) -> None:
+    """Send queued uploads, unless `drain` is off, then unmount; a dead mount is detached so a new one can take its place."""
     mounted = served()
     if path in mounted:
-        for _ in range(UPLOAD_WAIT_SECONDS * 10):
-            stats: dict[str, int] = rc('vfs/stats', {'fs': mounted[path]})['diskCache']
-            if not stats['uploadsQueued'] and not stats['uploadsInProgress']:
-                break
-            time.sleep(0.1)
-        else:
-            raise MountFailed('busy', f'{path} still has files uploading. Try again once they are sent.')
+        if drain:
+            wait_for_uploads(path, mounted[path])
         rc('mount/unmount', {'mountPoint': path})
     else:
         # The daemon that served it is gone, so nothing is left to send.
@@ -253,6 +298,15 @@ def unmount(path: str) -> None:
     # Unmounted on purpose, so the marker no longer means a lost mount.
     with contextlib.suppress(FileNotFoundError):
         os.remove(os.path.join(path, MARKER))
+
+
+def wait_for_uploads(path: str, fs: str) -> None:
+    for _ in range(UPLOAD_WAIT_SECONDS * 10):
+        stats = rc('vfs/stats', {'fs': fs}).get('diskCache')
+        if stats is None or (not stats['uploadsQueued'] and not stats['uploadsInProgress']):
+            return
+        time.sleep(0.1)
+    raise MountFailed('busy', f'{path} still has files uploading. Try again once they are sent.')
 
 
 def forget_lost() -> None:
@@ -349,10 +403,15 @@ def expired(fingerprint: str) -> bool:
         return True
 
 
-def mount(wanted: dict[str, Any], owner: os.stat_result) -> None:
-    path, fingerprint = str(wanted['path']), str(wanted['fingerprint'])
-    remote = f'pai-{fingerprint}'
-    parameters: dict[str, str] = {**wanted['remote'], **wanted['keys']}
+def mount(wanted: Wanted, owner: os.stat_result) -> None:
+    path, keys = wanted['path'], wanted['keys']
+    remote = f'pai-{wanted["fingerprint"]}'
+    parameters = {
+        **wanted['remote'],
+        'access_key_id': keys['access_key_id'],
+        'secret_access_key': keys['secret_access_key'],
+        'session_token': keys['session_token'],
+    }
     rc('config/delete', {'name': remote})
     rc('config/create', {'name': remote, 'type': parameters.pop('type'), 'parameters': parameters})
     rc(
@@ -367,7 +426,7 @@ def mount(wanted: dict[str, Any], owner: os.stat_result) -> None:
                 'CacheMode': 'writes',
                 'DirCacheTime': DIR_CACHE_NANOSECONDS,
                 'Links': True,
-                'ReadOnly': bool(wanted['read_only']),
+                'ReadOnly': wanted['read_only'],
                 'UID': owner.st_uid,
                 'GID': owner.st_gid,
                 'FilePerms': 0o755,
@@ -379,12 +438,12 @@ def mount(wanted: dict[str, Any], owner: os.stat_result) -> None:
         raise MountFailed(
             'mount', f'{path} did not answer right after it was mounted. Check the bucket and its keys, and try again.'
         )
-    record_expiry(fingerprint, float(wanted['expires_at']))
+    record_expiry(wanted['fingerprint'], wanted['expires_at'])
 
 
-def refresh_or_clear(wanted: dict[str, Any], source: str) -> bool:
+def refresh_or_clear(wanted: Wanted, source: str) -> bool:
     """Give the mount already at `wanted`'s path fresh keys and return True, or unmount it and return False."""
-    path, fingerprint = str(wanted['path']), str(wanted['fingerprint'])
+    path, fingerprint = wanted['path'], wanted['fingerprint']
     if not source.startswith('pai-'):
         raise MountFailed('conflict', f'{path} already has something else mounted on it. Mount at another folder.')
     fs = served().get(path)
@@ -393,7 +452,7 @@ def refresh_or_clear(wanted: dict[str, Any], source: str) -> bool:
         # a mount whose keys expired can't answer the lookup that tells whether it is alive.
         rc('backend/command', {'command': 'set', 'fs': fs, 'opt': wanted['keys']})
         if alive(path):
-            record_expiry(fingerprint, float(wanted['expires_at']))
+            record_expiry(fingerprint, wanted['expires_at'])
             return True
     elif fs is not None and alive(path) and not expired(source.removeprefix('pai-')):
         raise MountFailed(
@@ -404,9 +463,9 @@ def refresh_or_clear(wanted: dict[str, Any], source: str) -> bool:
     return False
 
 
-def place(wanted: dict[str, Any], owner: os.stat_result) -> str | None:
+def place(wanted: Wanted, owner: os.stat_result) -> str | None:
     """Mount `wanted` at its path, or give the mount already there fresh keys; returns where stray files went."""
-    path, fingerprint = str(wanted['path']), str(wanted['fingerprint'])
+    path, fingerprint = wanted['path'], wanted['fingerprint']
     if os.path.realpath(path) != path:
         # A symlink would put the mount, and the moving aside of strays, somewhere else.
         raise MountFailed('conflict', f'{path} leads through a symlink. Mount at a real folder.')
@@ -417,19 +476,29 @@ def place(wanted: dict[str, Any], owner: os.stat_result) -> str | None:
     marked, moved = prepare(path, owner)
     try:
         mount(wanted, owner)
-    except (MountFailed, OutOfTime):
-        if kernel_mounts().get(path) == f'pai-{fingerprint}':
-            # Mounted but not answering. The marker is behind the mount, where removing it would delete a bucket object,
-            # so it goes once the mount is off, as `unmount` does.
-            unmount(path)
-        elif marked:
-            # Nothing was mounted, so the marker would later read as a lost mount.
-            os.remove(os.path.join(path, MARKER))
+    except (MountFailed, OutOfTime) as error:
+        if isinstance(error, OutOfTime):
+            # The deadline's one alarm has gone off; this one ends the cleanup too, rather than leave the lock held.
+            signal.alarm(CLEANUP_SECONDS)
+        undo(path, f'pai-{fingerprint}', marked)
         raise
     return moved
 
 
-def ensure(request: dict[str, Any]) -> dict[str, Any]:
+def undo(path: str, remote: str, marked: bool) -> None:
+    """Take off a mount `place` just made, or the marker it left; a failure here leaves the first one to report."""
+    with contextlib.suppress(MountFailed, OSError):
+        if kernel_mounts().get(path) == remote:
+            # Mounted but not answering. Just made, so nothing was written to it and no uploads are waiting. The marker
+            # is behind the mount, where removing it would delete a bucket object, so it goes once the mount is off, as
+            # `unmount` does.
+            unmount(path, drain=False)
+        elif marked:
+            # Nothing was mounted, so the marker would later read as a lost mount.
+            os.remove(os.path.join(path, MARKER))
+
+
+def ensure(request: Request) -> dict[str, list[str]]:
     install_fuse()
     start_daemon(install_rclone())
     forget_lost()
@@ -446,7 +515,7 @@ def main() -> None:
     os.environ['PATH'] = ROOT_PATH
     signal.signal(signal.SIGALRM, out_of_time)
     signal.alarm(DEADLINE_SECONDS)
-    request = json.loads(sys.stdin.readline())
+    request: Request = json.loads(sys.stdin.readline())
     try:
         result = locked(request)
     except MountFailed as error:
@@ -456,7 +525,7 @@ def main() -> None:
     print(json.dumps(result))
 
 
-def locked(request: dict[str, Any]) -> dict[str, Any]:
+def locked(request: Request) -> dict[str, list[str]]:
     """`ensure`, one call at a time: two at once would mount twice on one path."""
     private_state()
     with os.fdopen(os.open(f'{STATE}/lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600), 'w') as lock:

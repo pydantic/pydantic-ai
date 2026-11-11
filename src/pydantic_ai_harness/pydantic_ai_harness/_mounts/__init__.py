@@ -17,7 +17,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from functools import cached_property
 from pathlib import Path
-from typing import Any, assert_never
+from typing import assert_never
 
 import anyio
 import anyio.to_thread
@@ -35,7 +35,7 @@ from pydantic_ai.workspaces import (
     WorkspaceError,
     WrapperWorkspace,
 )
-from pydantic_ai_harness._mounts._helper import DEADLINE_SECONDS, FailureCode
+from pydantic_ai_harness._mounts._helper import DEADLINE_SECONDS, FailureCode, Keys, Request, Wanted
 
 __all__ = ('MountError', 'S3Mount')
 
@@ -144,7 +144,7 @@ def _root(url: str) -> str:
     return f'{bucket}/{prefix}/'
 
 
-def _settings(mount: S3Mount) -> tuple[dict[str, str], str, dict[str, str]]:
+def _settings(mount: S3Mount) -> tuple[dict[str, str], str, Keys]:
     """The rclone remote's parameters, the root it mounts, and its keys. The only code that reads a mount's keys."""
     match mount:
         case S3Mount():
@@ -153,7 +153,7 @@ def _settings(mount: S3Mount) -> tuple[dict[str, str], str, dict[str, str]]:
                 remote['endpoint'] = mount.endpoint
             if mount.region is not None:
                 remote['region'] = mount.region
-            keys = {
+            keys: Keys = {
                 'access_key_id': mount.access_key_id,
                 'secret_access_key': mount.secret_access_key,
                 # Always sent, so fresh keys without a token clear the old one.
@@ -163,9 +163,9 @@ def _settings(mount: S3Mount) -> tuple[dict[str, str], str, dict[str, str]]:
     assert_never(mount)
 
 
-def _request(mounts: Sequence[S3Mount], working_dir: str) -> tuple[dict[str, Any], datetime]:
+def _request(mounts: Sequence[S3Mount], working_dir: str) -> tuple[Request, datetime]:
     """The helper's request, and when its keys expire first."""
-    wanted: list[dict[str, Any]] = []
+    wanted: list[Wanted] = []
     for mount in mounts:
         remote, root, keys = _settings(mount)
         path = posixpath.join(working_dir, mount.path)
@@ -323,13 +323,17 @@ class _Mounted(WrapperWorkspace):
             refresh_at = expires_at - _REFRESH_MARGIN
             self._remount_at = refresh_at if refresh_at > now else expires_at
 
-    async def _call(self, request: Mapping[str, Any]) -> _Reply:
+    async def _call(self, request: Request) -> _Reply:
         # Each key as written, and as written inside JSON, where quotes, backslashes and control characters are escaped;
         # longest first, so a form inside a longer one doesn't leave the rest of the longer one showing.
         forms = {
             form
             for wanted in request['mounts']
-            for value in wanted['keys'].values()
+            for value in (
+                wanted['keys']['access_key_id'],
+                wanted['keys']['secret_access_key'],
+                wanted['keys']['session_token'],
+            )
             if value
             for form in (value, json.dumps(value)[1:-1])
         }

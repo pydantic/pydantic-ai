@@ -88,6 +88,8 @@ class Sandbox:
         self.queued = 0
         """Uploads `vfs/stats` reports as queued, each call taking one off."""
         self.mount_answers = True
+        self.alarms: list[int] = []
+        """The seconds each `signal.alarm` call set, none of which go off."""
 
     def rc(self, command: str, body: Mapping[str, object] | None = None, timeout: float = 60) -> dict[str, object]:
         body = body or {}
@@ -148,6 +150,7 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     monkeypatch.setattr(helper.subprocess, 'run', sandbox.run)
     monkeypatch.setattr(helper.time, 'sleep', returns(None))
     monkeypatch.setattr(helper.time, 'time', lambda: 1_000.0)
+    monkeypatch.setattr(helper.signal, 'alarm', sandbox.alarms.append)
     # `main` sets root's own `PATH`; this puts the test process's back afterwards.
     monkeypatch.setenv('PATH', os.environ.get('PATH', ''))
     return sandbox
@@ -165,7 +168,7 @@ def wanted(sandbox: Sandbox, name: str = 'data', fingerprint: str = 'aaaa', expi
     }
 
 
-def ensure(sandbox: Sandbox, *mounts: Wanted) -> dict[str, object]:
+def ensure(sandbox: Sandbox, *mounts: Wanted) -> dict[str, list[str]]:
     return helper.ensure({'working_dir': str(sandbox.root / 'workspace'), 'mounts': list(mounts)})
 
 
@@ -925,3 +928,41 @@ def test_running_out_of_time_while_mounting_removes_the_marker(
     with pytest.raises(helper.OutOfTime):
         ensure(sandbox, mount)
     assert os.listdir(mount['path']) == []
+
+
+def test_running_out_of_time_after_mounting_unmounts_without_waiting_for_uploads(
+    sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deadline's one alarm has gone off, so the cleanup gets its own, and skips the upload wait it can't need."""
+    mount = wanted(sandbox)
+
+    def late(wanted: helper.Wanted, owner: os.stat_result) -> None:
+        sandbox.mounted(wanted['path'], wanted['fingerprint'])
+        helper.out_of_time(14, None)
+
+    monkeypatch.setattr(helper, 'mount', late)
+    sandbox.queued = 5
+
+    with pytest.raises(helper.OutOfTime):
+        ensure(sandbox, mount)
+    assert sandbox.alarms == [helper.CLEANUP_SECONDS]
+    assert 'vfs/stats' not in sandbox.commands()
+    assert mount['path'] not in sandbox.kernel
+    assert os.listdir(mount['path']) == []
+
+
+def test_a_cleanup_that_fails_reports_the_failure_that_started_it(
+    sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mount = wanted(sandbox)
+
+    def broken(wanted: helper.Wanted, owner: os.stat_result) -> None:
+        sandbox.mounted(wanted['path'], wanted['fingerprint'])
+        raise helper.MountFailed('mount', 'the first failure')
+
+    monkeypatch.setattr(helper, 'mount', broken)
+    sandbox.fail['mount/unmount'] = 'the cleanup failed too'
+
+    with pytest.raises(helper.MountFailed, match='the first failure'):
+        ensure(sandbox, mount)
+    assert sandbox.alarms == []
