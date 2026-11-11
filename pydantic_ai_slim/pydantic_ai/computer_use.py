@@ -549,13 +549,17 @@ _SCREENSHOT_MAX_PIXELS = 'screenshot_max_pixels'
 """The `provider_details` key under which the agent records the most screenshot pixels the call's model takes."""
 
 
-_CALL_LABELS = frozenset({_COORDINATE_GRID, _SCREENSHOT_MAX_SIDE, _SCREENSHOT_MAX_PIXELS})
+_LABEL_KEYS = frozenset({_COORDINATE_GRID, _SCREENSHOT_MAX_SIDE, _SCREENSHOT_MAX_PIXELS})
 """The `provider_details` keys the agent adds to a `computer` call after the model returned it, which the provider
 never saw."""
 
 
-def _positive(value: object, minimum: int = 1) -> int | None:
-    """`value` when it's an `int` (not a `bool`) of at least `minimum`, otherwise `None`."""
+def _label(part: ToolCallPart, key: str, *, minimum: int = 1) -> int | None:
+    """The label the agent recorded on `part` under `key`, or `None` if it's missing or invalid.
+
+    Invalid is anything but an `int` of at least `minimum`, such as in a history edited by hand.
+    """
+    value = (part.provider_details or {}).get(key)
     return value if type(value) is int and value >= minimum else None
 
 
@@ -589,7 +593,7 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         profile sets `computer_use_coordinate_grid`; a history that lost the call's `provider_details`, such as one a
         UI rebuilt, reads `None`.
         """
-        return _positive((self.provider_details or {}).get(_COORDINATE_GRID), minimum=2)
+        return _label(self, _COORDINATE_GRID, minimum=2)
 
     @property
     def screenshot_max_side(self) -> int | None:
@@ -598,7 +602,7 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         The agent records it from the profile's `computer_use_screenshot_max_side`, so the screenshot the call returns
         can be taken at a size that model can see; a call without it, such as in a history a UI rebuilt, reads `None`.
         """
-        return _positive((self.provider_details or {}).get(_SCREENSHOT_MAX_SIDE))
+        return _label(self, _SCREENSHOT_MAX_SIDE)
 
     @property
     def screenshot_max_pixels(self) -> int | None:
@@ -607,7 +611,7 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         Recorded from the profile's `computer_use_screenshot_max_pixels`; see
         [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side].
         """
-        return _positive((self.provider_details or {}).get(_SCREENSHOT_MAX_PIXELS))
+        return _label(self, _SCREENSHOT_MAX_PIXELS)
 
 
 class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=COMPUTER_KIND):
