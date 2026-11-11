@@ -882,6 +882,30 @@ class TestSubAgentsTaskControl:
         assert returns[2].endswith('already finished (ok); there is nothing to cancel.')
         assert "Unknown task 'unknown'" in returns[3]
 
+    async def test_listing_passes_a_parent_whose_saved_file_was_damaged(self, tmp_path: Path) -> None:
+        """A loaded task whose parent's file was skipped as damaged does not break the walk up its ancestry."""
+        orphan = DelegationTask(
+            id='b' * 32,
+            parent_id='1' * 32,
+            agent_name='researcher',
+            prompt='Find x.',
+            conversation_id='root',
+            status='finished',
+            outcome='ok',
+        )
+        (tmp_path / f'{orphan.id}.json').write_bytes(TypeAdapter(DelegationTask).dump_json(orphan))
+        (tmp_path / f'{orphan.parent_id}.json').write_text('{"id": "')
+        owner = DelegationTasks(directory=tmp_path)
+        parent = Agent(scripted(call('list_tasks'), echo_last_return), capabilities=[controlled()])
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+                with owner.bind():
+                    result = await parent.run('Go.', conversation_id='root')
+        assert [problem.path.name for problem in owner.problems] == [f'{orphan.parent_id}.json']
+        assert result.output == (
+            f"- {orphan.id} (researcher, finished: ok, started by task {orphan.parent_id}, resumable): 'Find x.'"
+        )
+
     async def test_an_application_owner_gets_every_task_event(self) -> None:
         observed: list[DelegationTaskEvent] = []
 
