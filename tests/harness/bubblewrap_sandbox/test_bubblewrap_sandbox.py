@@ -216,14 +216,23 @@ async def test_shell_startup_files_inside_the_working_dir_are_mounted_read_only(
     assert (home / '.tcshrc').read_text() == 'source ~/.cshrc\n'
     assert (home / '.zshenv').read_text() == ''
     assert (home / '.pam_environment').read_text() == ''
+    assert (home / '.bashrc.d').is_dir()
+    assert (home / '.cargo' / 'env').read_text() == ''
+    assert (home / '.local' / 'bin' / 'env').read_text() == ''
     assert (home / '.config' / 'fish').is_dir()
     mounts = ' '.join(
         [
             f'--ro-bind {home}/.bashrc {home}/.bashrc',
+            f'--ro-bind {home}/.bashrc.d {home}/.bashrc.d',
+            f'--bind {home}/.cargo {home}/.cargo',
+            f'--ro-bind {home}/.cargo/env {home}/.cargo/env',
             # A mount point can't be renamed, so a command can't move `~/.config` aside to plant its own.
             f'--bind {home}/.config {home}/.config',
             f'--ro-bind {home}/.config/fish {home}/.config/fish',
             f'--ro-bind {home}/.cshrc {home}/.cshrc',
+            f'--bind {home}/.local {home}/.local',
+            f'--bind {home}/.local/bin {home}/.local/bin',
+            f'--ro-bind {home}/.local/bin/env {home}/.local/bin/env',
             f'--ro-bind {home}/.pam_environment {home}/.pam_environment',
             f'--ro-bind {home}/.ssh {home}/.ssh',
             f'--ro-bind {home}/.tcshrc {home}/.tcshrc',

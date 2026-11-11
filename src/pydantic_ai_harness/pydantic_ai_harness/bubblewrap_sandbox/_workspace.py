@@ -94,11 +94,23 @@ travels on the command line because `bwrap` may run on another host, which recei
 open files.
 """
 
-_LOGIN_PATHS = ('.ssh/', '.config/fish/', '.bashrc', '.zshenv', '.cshrc', '.tcshrc', '.pam_environment')
+_LOGIN_PATHS = (
+    '.ssh/',
+    '.config/fish/',
+    '.bashrc',
+    '.bashrc.d/',
+    '.cargo/env',
+    '.local/bin/env',
+    '.zshenv',
+    '.cshrc',
+    '.tcshrc',
+    '.pam_environment',
+)
 """Paths under `$HOME` that the host reads or runs when the next SSH connection logs in, before the command.
 
 `sshd` runs `~/.ssh/rc` and reads `~/.ssh/environment` and `~/.pam_environment`; the login shell runs the
-command with `-c`, which makes bash run `~/.bashrc`, zsh `~/.zshenv`, csh and tcsh `~/.cshrc` or `~/.tcshrc`,
+command with `-c`, which makes bash run `~/.bashrc` (and default `.bashrc` templates source `~/.bashrc.d/*`,
+`~/.cargo/env`, and `~/.local/bin/env`), zsh `~/.zshenv`, csh and tcsh `~/.cshrc` or `~/.tcshrc`,
 and fish its `~/.config/fish`. A trailing `/` marks a directory.
 """
 
