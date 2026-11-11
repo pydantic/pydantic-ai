@@ -2742,7 +2742,7 @@ the terminal; the shell has already printed them.
 `on_task_progress` receives a `TaskProgress` for everything a task the agent delegated does, and its
 descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the event
 from the task's own run (text, thinking, tool calls and results), its `DelegationStartedEvent` or
-`DelegationFinishedEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
+`DelegationFinishedEvent`, one of its `sub_agents` task events, such as `TaskQuestionAskedEvent` when it asks
 its parent, or `None` when only the task changed, such as when it started, finished, or began
 waiting for an answer. Its own run's events never reach the main run's hooks: they are the feed
 `/tasks` shows. Its `sub_agents` task events also go into the stream of the run that delegated it,
