@@ -30,6 +30,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `runtime/session_naming.py` | resume-browser naming prompt, `SessionName` card schema, and the bounded `SessionNamer` worker, shared by the process's sessions; each queues with its own `NamingClient` (model, setting), and every session hears titles through `listeners`, retitling the conversation it holds |
 | `runtime/forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output, `ForkEnd` for plugins |
 | `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
+| `ui/menus/task_view.py` | `/tasks`: `TaskView`, a `termflow.live` app of a task sidebar, the selected task's streaming transcript, and an input that steers a running task or prompts a finished one; `perform`, the stop, background, resume, prompt and steer it asks `Tasks` for |
 | `ui/menus/rewind.py` | double-Esc rewind picker over `runtime/rewind.py`'s points, and durable history replacement before draft restoration |
 | `ui/rendering/welcome.py` | `print_welcome`: the banner, version, worktree notice, hints, and project-settings report a fresh launch and `/clear` show |
 | `ui/rendering/rendering.py` | streaming Markdown and thinking |

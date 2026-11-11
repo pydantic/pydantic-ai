@@ -4,9 +4,9 @@ import asyncio
 import io
 import re
 import time
-from collections.abc import AsyncIterable, AsyncIterator
-from contextlib import nullcontext
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,11 +16,9 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
-from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
-from termflow.tui import MenuItem
-from termflow.tui.menu import Menu, MenuResult
+from termflow.live import LiveApp
 
 from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -57,16 +55,17 @@ from pydantic_clai2.builtin_plugins.web.protocol import history_items
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
+from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
-from pydantic_clai2.runtime.tasks import TaskPresentation, Tasks, task_row, task_tree
-from pydantic_clai2.ui.menus.field_menu import Runners
-from pydantic_clai2.ui.menus.task_menu import TaskDetail, TaskMenu, open_tasks, run_tasks
+from pydantic_clai2.runtime.tasks import Status, TaskPresentation, Tasks, task_row, task_tree
+from pydantic_clai2.ui.menus.task_view import open_tasks, task_rows, transcript_blocks
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.terminal import Terminal
 from pydantic_clai2.ui.rendering.history import turn_starts
+from tests.clai2.live_script import press
 from tests.clai2.test_forks import Model as ForkModel, shell_for
 
 
@@ -90,35 +89,25 @@ def test_panel_tree_and_completion_retention() -> None:
     assert '[bbbbbbbb]' not in '\n'.join(ui.rows('*'))
 
 
-def test_live_menu_keeps_selected_child_after_completion_and_insert() -> None:
-    parent, sibling = task(), task(task_id='c' * 32)
-    records = [parent, sibling]
-    actions: list[tuple[str, str]] = []
-    picker = TaskMenu(snapshot=lambda: records, action=lambda name, task_id: actions.append((name, task_id)))
-    item = picker.items()[1]
-    assert item.value == sibling.id
-    assert 'running' in picker.preview(item)
-    records.insert(1, task(task_id='b' * 32, parent_id=parent.id))
-    sibling.status, sibling.outcome, sibling.output = 'finished', 'ok', 'child result'
-    picker.records = records
-    assert picker.items()[1].value == sibling.id
-    assert 'child result' in picker.preview(item)
-    assert picker.selected == sibling.id
-    picker.scroll(10)
-    assert picker.offset == 10
-    picker.scroll(-20)
-    assert picker.offset == 0
-    assert 'child result' in picker.preview(item)
+def test_task_rows_are_this_conversations_tree_with_streaming_text() -> None:
+    ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
+    parent, child = task(), task(task_id='b' * 32, parent_id='a' * 32)
+    elsewhere = task(task_id='c' * 32, conversation_id='other')
+    done = task(task_id='d' * 32)
+    done.status, done.outcome, done.finished_at = 'finished', 'ok', time.time()
+    ui.owner.records = {record.id: record for record in (done, child, elsewhere, parent)}
+    ui.partial[child.id] = 'reading the registry'
+    ui.progress[child.id] = Status(activity='running grep', model='test')
 
-
-def test_menu_empty_and_untrusted_transcript() -> None:
-    picker = TaskMenu(snapshot=lambda: (), action=lambda name, task_id: None)
-    assert picker.items()[0].disabled
-    assert picker.preview(MenuItem('none')) == ''
-    record = task()
-    record.prompt = 'unsafe\x1b]52;c;payload\x07'
-    picker.records = [record]
-    assert '\x1b' not in picker.preview(picker.items()[0])
+    rows = task_rows(ui)
+    assert [(row.depth, row.task.id[0], row.info.status) for row in rows] == [
+        (0, 'a', 'running'),
+        (1, 'b', 'running'),
+        (0, 'd', 'finished'),
+    ]
+    assert rows[1].info.activity == 'running grep'
+    assert transcript_blocks(rows[1].task)[-1] == 'reading the registry'
+    assert not child.messages, 'a row is a snapshot: the streaming text never reaches the record'
 
 
 @pytest.mark.parametrize('name', ['Explore', 'Plan', 'general-purpose'])
@@ -166,104 +155,6 @@ async def test_stock_managed_specialists_and_general_purpose(tmp_path: Path, nam
         assert record.outcome == 'ok', record.output
         assert record.resumable == (name == 'general-purpose')
         assert prompts == ['parent', 'child']
-
-
-def test_detail_wraps_cell_width_and_refreshes() -> None:
-    record = task()
-    record.prompt = '界' * 80
-    records = [record]
-    sizes = [(60, 20)]
-
-    def poll() -> str:
-        record.status, record.outcome, record.output = 'finished', 'ok', 'completed result'
-        sizes[0] = (25, 20)
-        return ''
-
-    picker = TaskMenu(snapshot=lambda: records, action=lambda name, task_id: None, key_source=poll)
-    detail = TaskDetail(picker=picker, task_id=record.id, size=lambda: sizes[0])
-    assert all(cell_len(item.label) <= 55 for item in detail.items())
-    menu = detail.build()
-    # Drive the public widget with a controlled input source and stream.
-    assert '界' * 80 in ''.join(item.label for item in detail.items())
-    poll()
-    assert all(cell_len(item.label) <= 20 for item in detail.items())
-    assert 'completed result' in ''.join(item.label for item in detail.items())
-    assert menu.highlighted is not None
-
-
-def test_task_menu_flow_and_action_errors() -> None:
-    record = task()
-    actions: list[tuple[str, str]] = []
-
-    def action(name: str, task_id: str) -> None:
-        actions.append((name, task_id))
-        if name == 'stop':
-            raise ValueError('already stopped')
-
-    picker = TaskMenu(snapshot=lambda: [record], action=action)
-    menu = picker.build()
-    item = picker.items()[0]
-    picker.act(menu, item, 'background')
-    assert 'background requested' in picker.notice
-    picker.act(menu, item, 'stop')
-    assert picker.notice == 'already stopped'
-    picker.act(menu, MenuItem('empty', value=42), 'stop')
-    assert len(actions) == 2
-    calls = 0
-
-    def choose(menu: Menu) -> MenuResult:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return MenuResult(item=item)
-        assert menu.highlighted is not None and menu.highlighted.value == record.id
-        return MenuResult(cancelled=True)
-
-    details: list[Menu] = []
-
-    def inspect(menu: Menu) -> MenuResult:
-        details.append(menu)
-        return MenuResult(cancelled=True)
-
-    run_tasks(picker, runners=Runners(run_list=choose, run_choice=inspect))
-    assert len(details) == 1
-    run_tasks(picker, runners=Runners(run_list=lambda menu: MenuResult()))
-    run_tasks(picker, runners=Runners(run_list=lambda menu: MenuResult(item=MenuItem('invalid', value=42))))
-
-
-async def test_open_tasks_injectable_runner() -> None:
-    ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
-
-    def close(menu: Menu) -> MenuResult:
-        assert menu.highlighted is not None
-        assert menu.highlighted.disabled
-        return MenuResult(cancelled=True)
-
-    assert await open_tasks(ui, runners=Runners(run_list=close)) == ''
-
-
-@pytest.mark.parametrize('detail', [False, True])
-def test_widget_polling_controls_and_resize(monkeypatch: pytest.MonkeyPatch, detail: bool) -> None:
-    monkeypatch.setattr('termflow.tui.menu.raw_mode', nullcontext)
-
-    def alternate(output: object) -> nullcontext[None]:
-        return nullcontext()
-
-    monkeypatch.setattr('termflow.tui.menu.alt_screen', alternate)
-    record = task()
-    keys = iter(['', 'down', 'b', 'x', ']', '[', 'end', 'home', 'escape'])
-    actions: list[str] = []
-
-    def poll() -> str:
-        key = next(keys)
-        record.status, record.outcome, record.output = 'finished', 'ok', 'live completed'
-        return key
-
-    picker = TaskMenu(snapshot=lambda: [record], action=lambda name, task_id: actions.append(name), key_source=poll)
-    widget = TaskDetail(picker=picker, task_id=record.id).build() if detail else picker.build()
-    assert widget.run().cancelled
-    assert actions == ['background', 'stop']
-    assert 'live completed' in picker.preview(picker.items()[0])
 
 
 async def test_partial_stream_and_lifecycle_routing() -> None:
@@ -452,51 +343,54 @@ async def test_presentation_classifies_capability_owned_tool() -> None:
     ]
 
 
-async def test_open_tasks_controls_on_application_loop(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr('termflow.tui.menu.raw_mode', nullcontext)
+def drive(*keys: str, screens: list[str]) -> Callable[[LiveApp], None]:
+    """A scripted `run` for `open_tasks`: press `keys` on the view's thread and keep the screen after each."""
 
-    def alternate(output: object) -> nullcontext[None]:
-        return nullcontext()
+    def run(app: LiveApp) -> None:
+        app.running = True
+        screens.extend(press(app, key) for key in keys)
 
-    monkeypatch.setattr('termflow.tui.menu.alt_screen', alternate)
-    keys = iter(['b', 'x', 'escape'])
+    return run
+
+
+async def test_open_tasks_steers_and_controls_on_application_loop() -> None:
+    screens: list[str] = []
+    run = drive(*'go', 'enter', 'ctrl-b', 'ctrl-x', 'escape', screens=screens)
     ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
 
-    def run(menu: Menu) -> MenuResult:
-        # TaskMenu's default source resolves menu_key on construction; replace the reader's dependency.
-        return menu.run()
-
-    def read(*, timeout: float) -> str:
-        return next(keys)
-
-    monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', read)
+    started = asyncio.Event()
 
     async def child(record: DelegationTask) -> str:
+        started.set()
         await asyncio.Event().wait()
         return 'unreachable'  # pragma: no cover
 
     async with ui.owner.opened():
-        await ui.owner.delegate(
-            agent_name='worker', prompt='', conversation_id='root', model=None, background=True, resume=None, run=child
+        foreground = asyncio.create_task(
+            ui.owner.delegate(
+                agent_name='worker',
+                prompt='',
+                conversation_id='root',
+                model=None,
+                background=False,
+                resume=None,
+                run=child,
+            )
         )
-        assert await open_tasks(ui, runners=Runners(run_list=run)) == ''
+        await started.wait()
         (record,) = ui.owner.records.values()
-        assert record.user_stopped
+        assert await open_tasks(ui, run=run) == ''
+        label = record.id[:8]
+        assert '› go▌' in screens[1]
+        assert f'Steered {label}.' in screens[2] and '› go▌' not in screens[2]
+        assert f'Backgrounded {label}.' in screens[3] and f'Stopped {label}.' in screens[4]
+        assert record.background and record.user_stopped
+        assert label in await foreground, 'backgrounding released the delegate call that was waiting'
 
 
-async def test_open_tasks_does_not_background_a_prompted_task(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_open_tasks_does_not_background_a_prompted_task() -> None:
     """Backgrounded, a prompted task would report to the conversation, which never asked for it."""
-    keys = iter(['b', 'escape'])
-
-    def alternate(output: object) -> nullcontext[None]:
-        return nullcontext()
-
-    def read(*, timeout: float) -> str:
-        return next(keys)
-
-    monkeypatch.setattr('termflow.tui.menu.raw_mode', nullcontext)
-    monkeypatch.setattr('termflow.tui.menu.alt_screen', alternate)
-    monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', read)
+    screens: list[str] = []
     gate = asyncio.Event()
 
     async def work(record: DelegationTask) -> str:
@@ -522,8 +416,9 @@ async def test_open_tasks_does_not_background_a_prompted_task(monkeypatch: pytes
     ui.owner.records[record.id] = record
     async with ui.router.opened(view=ui):
         await ui.prompt(record.id, 'and the docs?')
-        assert await open_tasks(ui, runners=Runners(run_list=lambda menu: menu.run())) == ''
+        assert await open_tasks(ui, run=drive('ctrl-b', screens=screens)) == ''
         assert (record.status, record.background) == ('running', False)
+        assert 'Steer · Nothing waits for a task you' in screens[0]
         gate.set()
 
 
@@ -656,19 +551,14 @@ async def test_task_commands_and_plugin_lifetime(tmp_path: Path) -> None:
     await shell.forks.close()
 
 
-async def test_tasks_without_arguments_opens_the_live_task_browser(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    def escape(timeout: float) -> str:
-        return 'escape'
-
-    monkeypatch.setattr('termflow.tui.menu.raw_mode', nullcontext)
-    monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', escape)
+async def test_tasks_without_arguments_opens_the_live_view(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    screens: list[str] = []
+    monkeypatch.setattr(session_runtime, 'open_tasks', partial(open_tasks, run=drive('escape', screens=screens)))
     shell = shell_for(tmp_path, ForkModel(), io.StringIO())
     record = task(conversation_id=shell.session.summary.id)
     shell.tasks.owner.records[record.id] = record
     assert await shell.commands.execute_async('/tasks') == ''
-    assert 'worker [aaaaaaaa] running' in capsys.readouterr().out
+    assert 'worker aaaaaaaa' in screens[0] and 'Type to steer worker, then Enter.' in screens[0]
     await shell.forks.close()
 
 
