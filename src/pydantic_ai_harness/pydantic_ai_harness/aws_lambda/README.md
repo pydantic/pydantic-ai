@@ -370,6 +370,8 @@ def charge_card(amount: int) -> str:
 `metadata={'aws_lambda': False}` opts a tool out of checkpointing entirely, so it runs inline on
 every attempt. Use it for cheap, side-effect-free tools whose result is not worth a checkpoint. MCP
 tools cannot opt out, because they perform I/O that must not re-run when the execution resumes.
+The engine-neutral [`metadata={'durable': False}`](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/#running-a-tool-outside-the-durable-unit) opts an async
+function tool out the same way on every engine; an `'aws_lambda'` key on the same tool wins.
 
 `AWSLambdaDurability(step_config=...)` sets the base configuration for every step. Per-tool metadata
 overrides it key by key, so a tool that sets only `step_semantics` keeps the base `retry_strategy`.

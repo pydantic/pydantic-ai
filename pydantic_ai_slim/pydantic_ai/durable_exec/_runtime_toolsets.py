@@ -73,6 +73,25 @@ def _runtime_toolset_kind(toolset: AbstractToolset[Any]) -> RuntimeToolsetKind |
     return None
 
 
+def _all_tools_opt_out(toolset: AbstractToolset[Any], tool_config_key: str | None) -> bool:
+    """Whether every tool of a `FunctionToolset` opts out of durable wrapping, so it needs no registration.
+
+    The engine's own `tool_config_key` decides when it's set on a tool, the engine-neutral `{'durable': False}` otherwise.
+    """
+    from ..toolsets.function import FunctionToolset
+    from ._toolset import durable_metadata_opts_out
+
+    assert isinstance(toolset, FunctionToolset)
+
+    def opts_out(name: str, metadata: dict[str, Any] | None) -> bool:
+        engine_config = metadata.get(tool_config_key) if metadata is not None and tool_config_key is not None else None
+        if engine_config is not None:
+            return engine_config is False
+        return durable_metadata_opts_out(metadata, name)
+
+    return bool(toolset.tools) and all(opts_out(name, tool.metadata) for name, tool in toolset.tools.items())
+
+
 def reject_unsupported_runtime_toolsets(
     toolsets: Sequence[AbstractToolset[Any]] | None,
     *,
@@ -87,7 +106,8 @@ def reject_unsupported_runtime_toolsets(
         unsupported_kinds: The leaf kinds this engine cannot handle when added per-run. Engines that run
             function tools inline (DBOS) omit `'function'`.
         engine: Human-readable engine name for the error message (e.g. `'DBOS'`).
-        tool_config_key: Metadata key whose explicit `False` value opts async function tools out of wrapping.
+        tool_config_key: Metadata key whose explicit `False` value opts async function tools out of wrapping. When
+            it isn't set on a tool, the engine-neutral `{'durable': False}` opts the tool out instead.
     """
     if not toolsets:
         return
@@ -96,12 +116,8 @@ def reject_unsupported_runtime_toolsets(
 
     def collect(leaf: AbstractToolset[Any]) -> None:
         kind = _runtime_toolset_kind(leaf)
-        if kind == 'function' and tool_config_key is not None:
-            from ..toolsets.function import FunctionToolset
-
-            assert isinstance(leaf, FunctionToolset)
-            if leaf.tools and all((tool.metadata or {}).get(tool_config_key) is False for tool in leaf.tools.values()):
-                return
+        if kind == 'function' and _all_tools_opt_out(leaf, tool_config_key):
+            return
         if kind in unsupported_kinds:
             bad_toolsets.setdefault(kind, []).append(leaf)
 

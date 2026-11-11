@@ -1561,6 +1561,14 @@ def test_resolve_tool_activity_config_reads_metadata():
     tool.tool_def.metadata = {'temporal': False}
     assert resolve_tool_activity_config(tool, 'fn_tool', {}) is False
 
+    # The engine-neutral `{'durable': False}` applies when the `'temporal'` key isn't set, which wins when it is.
+    tool.tool_def.metadata = {'durable': False}
+    assert resolve_tool_activity_config(tool, 'fn_tool', {'fn_tool': ActivityConfig(summary='from_dict')}) is False
+    tool.tool_def.metadata = {'durable': False, 'temporal': ActivityConfig(summary='from_metadata')}
+    assert resolve_tool_activity_config(tool, 'fn_tool', {}) == {'summary': 'from_metadata'}
+    tool.tool_def.metadata = {'durable': True}
+    assert resolve_tool_activity_config(tool, 'fn_tool', {}) == {}
+
     # Invalid metadata (e.g. a string from a misuse like `metadata={'temporal': '5s'}`)
     # raises `UserError` instead of silently passing the wrong shape to Temporal.
     tool.tool_def.metadata = {'temporal': '5s'}

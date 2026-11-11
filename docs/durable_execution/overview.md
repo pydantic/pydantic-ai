@@ -41,3 +41,53 @@ to integrate another engine without importing Pydantic AI internals.
 
 Harness workspace capabilities such as `Coder`, `Shell`, and `FileSystem` also run inside a durable agent; the
 [workspace guide](../workspace.md#durable-execution) shows how, and what works on each engine.
+
+## Running a tool outside the durable unit
+
+An engine runs each function tool call in a durable unit (an activity, step or task) so a restarted run reuses its recorded result. To run a tool in the workflow code itself instead, set `metadata={'durable': False}` on it. The tool then runs again on every replay, so keep it deterministic: no I/O, clock or randomness of its own. What it does through a [workspace](../workspace.md#durable-execution) call or a durable agent's run is still recorded, unit by unit. Use it for a tool that has to see live run state, or that starts work which should be recorded step by step rather than as one unit:
+
+```python {title="durable_opt_out.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai.toolsets import FunctionToolset
+
+toolset = FunctionToolset(id='planning')
+
+
+@toolset.tool_plain(metadata={'durable': False})  # (1)!
+async def next_step(steps: list[str]) -> str:
+    return steps[0]
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    name='planner',
+    toolsets=[toolset],
+    capabilities=[
+        SetToolMetadata(tools=['summarize_steps'], durable=False),  # (2)!
+        TemporalDurability(),  # (3)!
+    ],
+)
+```
+
+1. The same metadata keeps the tool out of its durable unit on every engine.
+2. [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] sets it on tools you don't define, such as a capability's. `durable=True` puts back the default.
+3. Swap in any other engine's durability capability; the tool's metadata stays the same.
+
+Only async function tools can leave their durable unit this way. On a sync tool, an [MCP](../mcp/client.md) tool or a dynamic toolset's tool, `{'durable': False}` raises a [`UserError`][pydantic_ai.exceptions.UserError], because those run in a thread or perform I/O.
+
+An engine's own metadata key wins when a tool sets it, so `metadata={'temporal': ActivityConfig(...), 'durable': False}` still runs the tool in a Temporal activity. Engine keys also accept the engine's unit config, and some allow tools the engine-neutral key refuses:
+
+| Engine | Where `{'durable': False}` runs the tool | Engine's own key |
+|---|---|---|
+| [Temporal](./temporal.md#per-tool-activity-config) | workflow code | `'temporal'` |
+| [DBOS](./dbos.md) | workflow code, where DBOS already runs function tools | none; `{'dbos': {'child_workflow': ...}}` selects a [child workflow](./dbos.md#child-workflows) |
+| [Prefect](./prefect.md) | flow code | `'prefect'` |
+| [AWS Lambda](../harness/aws-lambda.md) | handler code, outside any step | `'aws_lambda'` |
+| [Azure Durable Task](../harness/azure-durable-task.md) | orchestrator code | `'azure_durable_task'` |
+| [Absurd](../harness/absurd.md) | task handler code, outside any step | none |
+| [pgtask](../harness/pgtask.md) | task code, outside any step | none |
+| [Render Workflows](../harness/render-workflows.md) | the parent task run | none; use `resolve_tool_options` |
+
+Restate and Apache Airflow ship their own integrations; see their pages for how they wrap tools.

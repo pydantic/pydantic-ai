@@ -113,6 +113,8 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   `agent.run()` called twice, pgtask numbers them 0, 1, 2, and so on, in the order they happen.
   Finish one `agent.run()` before starting the next in the same task, so the numbers come out the
   same after a crash.
+- An async function tool with [`metadata={'durable': False}`](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/#running-a-tool-outside-the-durable-unit) gets no
+  step: it runs in the task on every attempt, so keep it deterministic and free of I/O.
 
 ## Rules
 

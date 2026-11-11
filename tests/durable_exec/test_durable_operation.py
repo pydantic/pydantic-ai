@@ -24,7 +24,7 @@ from pydantic_ai import (
     Tool,
     ToolsetTool,
 )
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata
 from pydantic_ai.durable_exec import (
     DurabilityEngineSpec,
     JournalCallableOperationBackend,
@@ -59,6 +59,7 @@ from pydantic_ai.durable_exec._operation_backend import (
     RegisteredOperationBackend,
 )
 from pydantic_ai.durable_exec._operation_names import DurableOperationNamer, JournalOperationNamer
+from pydantic_ai.durable_exec._runtime_toolsets import reject_unsupported_runtime_toolsets
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableDynamicToolset,
@@ -307,6 +308,130 @@ def test_durability_without_tool_config_key_ignores_tool_metadata() -> None:
     resolve = durability._build_resolve_tool_config({'base': 1})  # pyright: ignore[reportPrivateUsage]
 
     assert resolve(tool, 'configured') == {'base': 1}
+
+
+async def test_durable_metadata_runs_a_function_tool_outside_the_durable_unit() -> None:
+    class KeyedJournalDurability(JournalDurability):
+        engine_spec = replace(JournalDurability.engine_spec, tool_config_key='journal')
+
+    def validate(ctx: RunContext[None], value: int) -> None:
+        pass
+
+    async def inline(value: int) -> str:
+        return 'inline'
+
+    async def journaled(value: int) -> str:
+        return 'journaled'
+
+    async def engine_key_wins(value: int) -> str:
+        return 'engine'
+
+    async def selected(value: int) -> str:
+        return 'selected'
+
+    async def reselected(value: int) -> str:
+        return 'reselected'
+
+    toolset = FunctionToolset(
+        tools=[
+            Tool(inline, args_validator=validate, metadata={'durable': False}),
+            Tool(journaled, args_validator=validate),
+            Tool(engine_key_wins, metadata={'durable': False, 'journal': {}}),
+            Tool(selected),
+            Tool(reselected, metadata={'durable': False}),
+        ],
+        id='functions',
+    )
+    durability = KeyedJournalDurability()
+    agent = Agent(
+        TestModel(),
+        name='agent',
+        toolsets=[toolset],
+        capabilities=[
+            SetToolMetadata(tools=['selected'], durable=False),
+            SetToolMetadata(tools=['reselected'], durable=True),
+            durability,
+        ],
+    )
+
+    await agent.run('Go.')
+
+    assert sorted(name for name, _, _ in durability.calls if name.startswith('agent__function_toolset')) == [
+        'agent__function_toolset__functions.call_tool:engine_key_wins',
+        'agent__function_toolset__functions.call_tool:journaled',
+        'agent__function_toolset__functions.call_tool:reselected',
+        'agent__function_toolset__functions.validate_args',
+    ]
+
+
+async def _async_tool() -> str:
+    return 'never called'  # pragma: no cover
+
+
+def _sync_tool() -> str:
+    return 'never called'  # pragma: no cover
+
+
+def _no_validation(ctx: RunContext[None]) -> None:
+    pass  # pragma: no cover
+
+
+def _dynamic(tool: Tool[None]) -> DynamicToolset[None]:
+    return DynamicToolset(lambda _: FunctionToolset(tools=[tool]), id='dynamic')
+
+
+@pytest.mark.parametrize(
+    ('toolset', 'match'),
+    [
+        pytest.param(
+            FunctionToolset(tools=[Tool(_sync_tool, metadata={'durable': False})], id='functions'),
+            'only async tools can run outside a durable unit',
+            id='sync',
+        ),
+        pytest.param(
+            FunctionToolset(tools=[Tool(_async_tool, metadata={'durable': 'no'})], id='functions'),
+            "has invalid 'durable' metadata: expected `True` or `False`, got str",
+            id='invalid',
+        ),
+        pytest.param(
+            _dynamic(Tool(_async_tool, metadata={'durable': False})),
+            'only function tools can run outside a durable unit',
+            id='dynamic',
+        ),
+        pytest.param(
+            _dynamic(Tool(_async_tool, args_validator=_no_validation, metadata={'durable': False})),
+            'only function tools can run outside a durable unit',
+            id='dynamic-validated',
+        ),
+    ],
+)
+async def test_durable_metadata_refuses_tools_that_cannot_leave_the_durable_unit(
+    toolset: FunctionToolset[None] | DynamicToolset[None], match: str
+) -> None:
+    agent = Agent(TestModel(), name='agent', toolsets=[toolset], capabilities=[JournalDurability()])
+
+    with pytest.raises(UserError, match=match):
+        await agent.run('Go.')
+
+
+def test_runtime_function_toolset_opted_out_with_durable_metadata_is_allowed() -> None:
+    async def tool() -> str:
+        return 'never called'  # pragma: no cover
+
+    def check(metadata: dict[str, Any]) -> None:
+        reject_unsupported_runtime_toolsets(
+            [FunctionToolset(tools=[Tool(tool, metadata=metadata)])],
+            unsupported_kinds=frozenset({'function'}),
+            engine='Journal',
+            tool_config_key='journal',
+        )
+
+    check({'durable': False})
+    check({'journal': False, 'durable': True})
+    with pytest.raises(UserError, match='cannot be added at runtime with Journal'):
+        check({'journal': {}, 'durable': False})
+    with pytest.raises(UserError, match='cannot be added at runtime with Journal'):
+        check({'durable': True})
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')

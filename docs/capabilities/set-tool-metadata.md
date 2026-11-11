@@ -42,4 +42,6 @@ assert greet_tool.metadata is None or greet_tool.metadata.get('sensitive') is No
 
 _(This example is complete, it can be run "as is")_
 
+Under durable execution, `SetToolMetadata(tools=[...], durable=False)` runs the selected tools [outside their durable unit](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) on every engine.
+
 The same effect can be achieved at the toolset level using [`.with_metadata()`][pydantic_ai.toolsets.AbstractToolset.with_metadata] — see [toolset composition](../toolsets.md#setting-tool-metadata).

@@ -900,6 +900,10 @@ agent = Agent(
 The opt-out applies to function and dynamic tools only. MCP tools perform I/O and always run in
 their Temporal activity, so `metadata={'temporal': False}` on an MCP tool raises a `UserError`.
 
+To keep a tool out of its activity on any engine, set the engine-neutral
+[`metadata={'durable': False}`](overview.md#running-a-tool-outside-the-durable-unit) instead. A `'temporal'`
+key on the same tool wins.
+
 !!! tip "Configuring third-party tools"
     [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] is the recommended path when the activity config doesn't belong on the tool definition — for example, tools defined in third-party packages, or a group of tools that share the same timeout profile but live in different files.
 

@@ -88,6 +88,9 @@ A model other than the agent's default adds its id to the step name
 the same task or the same tool called twice, gets an encounter-order suffix (`#2`, `#3`, ...). Await
 one run before starting the next in the same task.
 
+An async function tool with [`metadata={'durable': False}`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) gets no step:
+it runs in the task handler on every attempt, so keep it deterministic and free of I/O.
+
 These are not checkpointed and run again on replay:
 
 - a tool call that raises `ModelRetry`, `ToolFailed`, `CallDeferred`, or `ApprovalRequired`;

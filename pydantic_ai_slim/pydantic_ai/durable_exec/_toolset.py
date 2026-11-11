@@ -639,6 +639,24 @@ def unwrap_recorded_tool_call_result(result: Any) -> Any:
     return result
 
 
+DURABLE_METADATA_KEY = 'durable'
+"""The engine-neutral tool metadata key: `{'durable': False}` runs the tool outside the durable unit on every engine."""
+
+
+def durable_metadata_opts_out(metadata: Mapping[str, Any] | None, tool_name: str) -> bool:
+    """Whether a tool's engine-neutral `{'durable': False}` metadata runs it outside the durable unit.
+
+    Callers consult it only when the engine's own metadata key isn't set, so that key keeps winning.
+    """
+    value = metadata.get(DURABLE_METADATA_KEY) if metadata is not None else None
+    if value is None or isinstance(value, bool):
+        return value is False
+    raise UserError(
+        f'Tool {tool_name!r} has invalid {DURABLE_METADATA_KEY!r} metadata: expected `True` or `False`, '
+        f'got {type(value).__name__}.'
+    )
+
+
 def resolve_tool_durable_config(
     tool: ToolsetTool[Any] | None,
     tool_name: str,
@@ -647,7 +665,7 @@ def resolve_tool_durable_config(
     metadata_key: str,
     config_type_label: str,
 ) -> ToolConfig:
-    """Resolve a tool's durable config: tool metadata under `metadata_key` first, then `fallback_config` by name."""
+    """Resolve a tool's durable config: tool metadata under `metadata_key` first, then `{'durable': False}`, then `fallback_config` by name."""
     if tool is not None and tool.tool_def.metadata is not None:
         metadata_config = tool.tool_def.metadata.get(metadata_key)
         if metadata_config is False:
@@ -659,6 +677,8 @@ def resolve_tool_durable_config(
                     f'(`{config_type_label}`) or `False`, got {type(metadata_config).__name__}.'
                 )
             return cast('DurableConfig', metadata_config)
+        if durable_metadata_opts_out(tool.tool_def.metadata, tool_name):
+            return False
     return fallback_config.get(tool_name, {})
 
 

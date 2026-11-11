@@ -546,19 +546,19 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             name=tool_name,
             retries=tool_retries,
             prepare=self._prepare_delegate,
-            metadata={'temporal': False} if in_workflow else None,
+            metadata={'durable': False} if in_workflow else None,
         )
         if task_control is not None:
-            self.add_function(self.list_tasks, prepare=self._prepare_control, metadata={'temporal': False})
-            self.add_function(self.message_task, prepare=self._prepare_control, metadata={'temporal': False})
-            self.add_function(self.answer_task, prepare=self._prepare_control, metadata={'temporal': False})
-            self.add_function(self.cancel_task, prepare=self._prepare_control, metadata={'temporal': False})
+            self.add_function(self.list_tasks, prepare=self._prepare_control, metadata={'durable': False})
+            self.add_function(self.message_task, prepare=self._prepare_control, metadata={'durable': False})
+            self.add_function(self.answer_task, prepare=self._prepare_control, metadata={'durable': False})
+            self.add_function(self.cancel_task, prepare=self._prepare_control, metadata={'durable': False})
         if dynamic_agents is not None:
             self.add_function(
                 self.create_agent,
                 name=CREATE_AGENT_TOOL_NAME,
                 prepare=self._prepare_control,
-                metadata={'temporal': False},
+                metadata={'durable': False},
             )
 
     def _prepare_control(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
