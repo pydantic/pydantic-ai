@@ -55,7 +55,7 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
-from ..computer_use import _KEYS_ADDED_BY_AGENT  # pyright: ignore[reportPrivateUsage]
+from ..computer_use import _LABEL_KEYS  # pyright: ignore[reportPrivateUsage]
 from ..durable_exec._operation_backend import in_durable_unit
 from ..exceptions import (
     ModelConnectionError,
@@ -3043,7 +3043,7 @@ def _call_as_sent(part: ToolCallPart) -> ToolCallPart:
     leaving it in would make a response compared later never match.
     """
     args = part.args if part.args is None or isinstance(part.args, str) else {**part.args}
-    details = {key: value for key, value in (part.provider_details or {}).items() if key not in _KEYS_ADDED_BY_AGENT}
+    details = {key: value for key, value in (part.provider_details or {}).items() if key not in _LABEL_KEYS}
     return ToolCallPart(
         tool_name=part.tool_name,
         args=args,
