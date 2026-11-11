@@ -533,7 +533,7 @@ On DBOS, use `DBOSDurability()` and `SetToolMetadata(tools=['delegate_task'], db
 
 - Every delegate must be durable on the parent's engine: the tool body runs as workflow code.
 - On Temporal, register each delegate with the worker too, for example with an `AgentPlugin`.
-- `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, and a delegate's `max_calls` rely on parent-run state the child workflow doesn't receive, so a delegation with any of them raises a `UserError`.
+- `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, `task_control`, and a delegate's `max_calls` rely on parent-run state the child workflow doesn't receive, so a delegation with any of them raises a `UserError`.
 - The delegate's usage isn't reliably counted in the parent run's usage, and the parent's usage limits don't bound it.
 - The delegation depth isn't carried into the child workflow, so if a delegate's own `SubAgents` also opts in, `max_depth` counts again from each child workflow and no longer bounds the tree.
 

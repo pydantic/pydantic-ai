@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 
 import pytest
@@ -123,19 +123,32 @@ async def test_durable_delegate_runs_as_a_child_workflow(dbos: DBOS) -> None:
     assert [step['function_name'] for step in child_steps] == ['dbos_worker__model.request']
 
 
-async def test_child_workflow_rejects_options_that_need_the_parent_run(dbos: DBOS) -> None:
+@pytest.mark.parametrize(
+    ('name', 'sub_agents'),
+    [
+        pytest.param('budgeted', lambda: SubAgents[None](agents=[SubAgent(dbos_worker, max_calls=1)]), id='max_calls'),
+        pytest.param(
+            'task_control',
+            lambda: SubAgents[None](agents=[SubAgent(dbos_worker)], task_control=TaskControl()),
+            id='task_control',
+        ),
+    ],
+)
+async def test_child_workflow_rejects_options_that_need_the_parent_run(
+    dbos: DBOS, name: str, sub_agents: Callable[[], SubAgents[None]]
+) -> None:
     agent = Agent(
         FunctionModel(_delegator),
-        name='dbos_budgeted_delegator',
+        name=f'dbos_{name}_delegator',
         deps_type=type(None),
         capabilities=[
-            SubAgents[None](agents=[SubAgent(dbos_worker, max_calls=1)]),
+            sub_agents(),
             SetToolMetadata(tools=['delegate_task'], dbos={'child_workflow': {}}),
             DBOSDurability[None](),
         ],
     )
 
-    @DBOS.workflow(name='subagents_budgeted_child_workflow')
+    @DBOS.workflow(name=f'subagents_{name}_child_workflow')
     async def workflow() -> str:
         return (await agent.run('Delegate it')).output
 
