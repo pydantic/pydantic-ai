@@ -184,18 +184,20 @@ def test_launcher_sends_shared_review_and_restricts_environment(
     assert capsys.readouterr().out == 'OpenCode run served by opencode-go/deepseek-v4.1-flash.\n'
 
 
+@pytest.mark.parametrize('kind', ['provider.go-limit', 'provider.quota'])
 def test_go_refusal_reruns_the_review_on_deepinfra(
-    review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], kind: str
 ) -> None:
     """A run Go refused before its first step did no work, so DeepInfra reviews instead and the receipt says so."""
-    invoked = fake_opencode(monkeypatch, (REFUSED, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
+    refused = [REFUSED[0], {'type': 'error', 'error': {'type': kind, 'message': LIMIT, 'status': 429}}]
+    invoked = fake_opencode(monkeypatch, (refused, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
     douwebot_opencode_run.main()
     assert invoked[1].input == invoked[0].input
     assert_runs_on(invoked[0], OPENCODE_GO)
     assert_runs_on(invoked[1], DEEPINFRA)
     assert review_env.read_text(encoding='utf-8') == 'engine=opencode-deepinfra\n'
     assert capsys.readouterr().out == (
-        'OpenCode Go refused the run before its first step (provider.go-limit); retrying on DeepInfra.\n'
+        f'OpenCode Go refused the run before its first step ({kind}); retrying on DeepInfra.\n'
         'OpenCode run served by deepinfra/deepseek-ai/DeepSeek-V4.1-Flash.\n'
     )
 
@@ -214,6 +216,12 @@ def test_go_refusal_reruns_the_review_on_deepinfra(
             [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.auth', 'message': 'Invalid', 'status': 401}}],
             subprocess.CalledProcessError(1, 'opencode'),
             id='rejected-key',
+        ),
+        pytest.param(
+            'deepinfra-key',
+            [REFUSED[0], {'type': 'error', 'error': {'type': ['provider.go-limit'], 'status': 429}}],
+            subprocess.CalledProcessError(1, 'opencode'),
+            id='error-type-not-a-string',
         ),
         pytest.param(
             'deepinfra-key',

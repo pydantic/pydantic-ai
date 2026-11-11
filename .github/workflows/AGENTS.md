@@ -215,7 +215,7 @@ supersede an empty incomplete review, but cannot erase earlier findings. PR Bots
 reviewer and a trusted publisher that binds the result to its run and head. The gate verifies that
 receipt, so `CI Review` cannot stand in for douwebot even though both can use the same bot account.
 Maintainer-authorized protected-configuration reviews satisfy the same rule.
-A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine and, for OpenCode, its provider.
+A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine that served the review: `engine=claude`, `engine=opencode` for OpenCode Go, or `engine=opencode-deepinfra` for OpenCode on DeepInfra.
 
 `pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews and
 inline-comment changes with a read-only token, including on forks. Its completion wakes
@@ -309,10 +309,7 @@ timeout and an invalid answer. The DeepInfra run gets only the rest of the time 
 only its provider and pins the `title` and `compaction` agents to its model. Its environment holds only that
 provider's key. The job log names the model that served the run, and on a fallback the error type. It never prints
 the error message, which can repeat the provider's response. A DeepInfra run sends DeepInfra the same content a
-Go run sends Go, fork pull request content included.
-
-Douwebot's receipt and attribution name the serving provider: `engine=opencode` for Go and
-`engine=opencode-deepinfra` for DeepInfra. Start any new CI OpenCode run through `run_with_fallback`.
+Go run sends Go, fork pull request content included. Start any new CI OpenCode run through `run_with_fallback`.
 
 # Code owners review dependency, CI config and durable runtime changes
 

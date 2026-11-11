@@ -161,10 +161,11 @@ def run_with_fallback(
         except ValidationError:
             # A malformed stream is no refusal. Its validation error would copy the stream into the public log.
             events, kinds = [], []
+        kind = kinds[-1] if kinds else None
         finished = any(event.get('type') == 'step_finish' for event in events)
-        if not fallback_key or finished or not kinds or kinds[-1] not in QUOTA_ERRORS:
+        if not fallback_key or finished or not isinstance(kind, str) or kind not in QUOTA_ERRORS:
             raise
-        print(f'OpenCode Go refused the run before its first step ({kinds[-1]}); retrying on DeepInfra.')
+        print(f'OpenCode Go refused the run before its first step ({kind}); retrying on DeepInfra.')
     return run_on(DEEPINFRA, fallback_key)
 
 
