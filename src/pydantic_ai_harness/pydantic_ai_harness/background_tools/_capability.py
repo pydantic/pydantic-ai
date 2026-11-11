@@ -17,7 +17,7 @@ from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStre
 from opentelemetry.trace import StatusCode
 from pydantic import ValidationError
 
-from pydantic_ai._telemetry import current_span, open_span, set_content_attribute
+from pydantic_ai._telemetry import current_span, open_span
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentNode,
@@ -37,15 +37,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.framing import neutralize_tags
-from pydantic_ai.messages import (
-    ModelRequest,
-    TextContent,
-    ToolCallPart,
-    ToolReturn,
-    ToolReturnPart,
-    UserContent,
-    tool_return_ta,
-)
+from pydantic_ai.messages import ModelRequest, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -179,10 +171,6 @@ async def _execute_traced(
                 span.set_status(StatusCode.ERROR, type(error).__name__)
             raise
         span.set_attribute('background_tools.outcome', 'success')
-        if span.is_recording():
-            # Serialized as core's `execute_tool` span serializes a result.
-            serialized = result if isinstance(result, str) else tool_return_ta.dump_json(result).decode()
-            set_content_attribute(ctx, span, 'gen_ai.tool.call.result', serialized)
         return result
 
 

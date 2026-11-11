@@ -2123,19 +2123,6 @@ class TestTelemetry:
         assert summary['status'] == 'ERROR'
         assert 'secret detail' not in str([(span.attributes, span.events) for span in exporter.get_finished_spans()])
 
-    async def test_result_is_recorded_with_include_content(self) -> None:
-        instrumentation, exporter = _instrumented(include_content=True)
-        agent = Agent(_model_calling('lookup'), capabilities=[BackgroundTools(), instrumentation])
-
-        @agent.tool_plain(metadata={'background': True})
-        async def lookup() -> dict[str, int]:
-            return {'answer': 42}
-
-        await agent.run('go')
-
-        attributes = _span(exporter, 'background_tools execute lookup').attributes or {}
-        assert attributes['gen_ai.tool.call.result'] == '{"answer":42}'
-
     async def test_failure_message_is_recorded_with_include_content(self) -> None:
         instrumentation, exporter = _instrumented(include_content=True)
         agent = Agent(_model_calling('broken'), capabilities=[BackgroundTools(), instrumentation])
