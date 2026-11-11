@@ -80,7 +80,7 @@ agent = Agent(
 2. [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] sets the metadata on selected tools, including ones you don't define yourself, such as a capability's. `durable=True` puts back the default.
 3. Swap in any other engine's durability capability; the tools' metadata stays the same.
 
-Only async function tools can leave their durable unit this way. On a sync tool, an [MCP](../mcp/client.md) tool or a dynamic toolset's tool, `{'durable': False}` raises a [`UserError`][pydantic_ai.exceptions.UserError], because those run in a thread or perform I/O.
+Only async function tools can leave their durable unit this way. On a sync tool, an [MCP](../mcp/client.md) tool or a dynamic toolset's tool that the engine runs in a durable unit, `{'durable': False}` raises a [`UserError`][pydantic_ai.exceptions.UserError] when the tool is called, because those run in a thread or perform I/O.
 
 An engine's own metadata key wins when a tool sets it, so `metadata={'temporal': ActivityConfig(...), 'durable': False}` still runs the tool in a Temporal activity. Engine keys also accept the engine's unit config, and some allow tools the engine-neutral key refuses. `{'durable': False}` in turn wins over per-tool config set in code, such as Azure Durable Task's and Render Workflows' `resolve_tool_options`:
 
