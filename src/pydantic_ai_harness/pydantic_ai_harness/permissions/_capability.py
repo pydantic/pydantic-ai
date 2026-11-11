@@ -338,8 +338,9 @@ def permission_ask(
 ) -> Callable[[RunContext[AgentDepsT], DeferredToolRequests, str], Awaitable[DeferredToolResults]]:
     """The `ask` of a [`RequestInput`][pydantic_ai.capabilities.RequestInput] that asks `approver` about held calls.
 
-    `approver` answers each call `Permissions` holds in place, as `ask_permissions` asks it. Approvals other capabilities asked for, and
-    external calls, are left pending for the next handler, or for the run's `DeferredToolRequests` output.
+    `approver` answers each call `Permissions` holds in place, as `ask_permissions` asks it. Approvals other
+    capabilities asked for, and external calls, are left pending for the next handler, or for the run's
+    `DeferredToolRequests` output.
     `RequestInput` refuses to wait in the durable runs of engines without external event support, which
     is every engine but AWS Lambda so far; call `ask_permissions` from a `HandleDeferredToolCalls` handler
     there. On Lambda, `ask` runs in a step that records the answer, so the approver must answer quickly.
