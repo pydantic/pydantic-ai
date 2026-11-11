@@ -242,6 +242,8 @@ agent = Agent(
 
 A tier inside `TieredCompaction` is driven directly by the orchestrator, which re-measures after each tier and stops once under `target_tokens`. A tier's own `max_*` trigger is therefore irrelevant when it runs inside `TieredCompaction` -- set it to anything valid (for example `ClearToolResults(max_tokens=1)`). Any object with `async def compact(messages, ctx) -> list[ModelMessage]` (the `CompactionStrategy` protocol) can be a tier, so you can plug in your own.
 
+Each tier keeps some messages as they are: its `keep_tokens` or `keep_messages` tail, which holds the whole current turn, the first user message under `preserve_first_user_message`, and pinned parts. Those set a lower bound on how far the chain can shrink the history, and a `target_tokens` below it can't be reached. A `SummarizingCompaction` tier with `keep_tokens` whose only candidates are messages it keeps anyway makes no model call and leaves the history unchanged. When the last tier leaves the history above the target, the outermost `TieredCompaction` logs a warning on each attempt on the `pydantic_ai_harness.compaction._tiered_compaction` logger, and sets `compaction.target_unreached` on its [span](#tracing) when the history changes. If no tier changes the history, no span is emitted; the warning still reports the estimate and target. Pass `preserve_first_user_message=False` to a tier that may drop or summarize the first user message.
+
 ## `FallbackCompaction`: recover when a strategy fails
 
 `FallbackCompaction` optionally triggers its chain at a token threshold and also works as a composing `CompactionStrategy`.
@@ -641,6 +643,9 @@ The span name is the static `compact_messages`; the strategy is an attribute, no
 | `compaction.model_requested` | bool | `true` when the model asked for the compaction through `CompactOnRequest`; absent otherwise |
 | `compaction.background` | str | Only with `background_start`: `used`, `stale`, or `failed`, what became of the background compaction |
 | `compaction.skipped` | str | `not_smaller` when an automatic summary was discarded because it wasn't smaller than the history; the `*_after` attributes then describe the discarded result. Absent otherwise |
+| `compaction.target_unreached` | bool | `TieredCompaction` only: `true` when every tier ran and the history is still estimated above the target. Absent otherwise |
+| `compaction.target_tokens` | int | With `compaction.target_unreached`: the resolved target |
+| `compaction.estimate` | int | With `compaction.target_unreached`: the estimate the stop decision used, anchored on provider-reported usage when there is any |
 
 `gen_ai.conversation.compacted` is the GenAI semantic convention's flag; the rest is harness-specific. Token counts use the strategy's `tokenizer` when set, otherwise the ~4-chars-per-token heuristic. Raw message content is not recorded.
 
