@@ -370,7 +370,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[BaseEvent]:
         if not delta.content_delta:
-            return  # pragma: no cover
+            return
 
         assert self._reasoning_message_id is not None, (
             'handle_thinking_start must be called before handle_thinking_delta'
