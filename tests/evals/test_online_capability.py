@@ -11,12 +11,14 @@ import pytest
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai import Agent
+    from pydantic_ai import Agent, RunContext
+    from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
     from pydantic_ai.capabilities.instrumentation import Instrumentation
     from pydantic_ai.messages import ModelMessage, ModelResponse
     from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.models.test import TestModel
+    from pydantic_ai.run import AgentRunResult
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext, EvaluatorFailure
     from pydantic_evals.evaluators.evaluator import EvaluatorOutput
     from pydantic_evals.online import (
@@ -584,3 +586,155 @@ async def test_malformed_traceparent_yields_no_span_reference(monkeypatch: pytes
     await wait_for_evaluations()
 
     assert collector.span_refs == [None]
+
+
+async def test_multiple_capabilities_each_evaluate_the_run():
+    """Every `OnlineEvaluation` on an agent evaluates the run, against the same captured context."""
+    first, second = Collector(), Collector()
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=first)),
+            OnlineEvaluation(
+                evaluators=[OutputEquals('success (no tool calls)')],
+                config=OnlineEvalConfig(default_sink=second, metadata={'team': 'b'}),
+            ),
+        ],
+    )
+
+    result = await agent.run('hello')
+    await wait_for_evaluations()
+
+    [(_, _, first_ctx)] = first.calls
+    [(second_results, _, second_ctx)] = second.calls
+    assert second_results[0].value is True
+    assert first_ctx.name == second_ctx.name == result.run_id
+    assert first_ctx.duration == second_ctx.duration
+    assert first_ctx.metadata is None
+    assert second_ctx.metadata == {'team': 'b'}
+
+
+async def test_multiple_capabilities_on_error_dispatch_their_own_opted_in_evaluators():
+    """On a failed run, each `OnlineEvaluation` dispatches only its own `run_on_errors` evaluators."""
+    outer, inner = Collector(), Collector()
+    agent = Agent(
+        FunctionModel(_failing_model),
+        capabilities=[
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=outer)),
+            OnlineEvaluation(
+                evaluators=[OnlineEvaluator(evaluator=AlwaysTrue(), run_on_errors=True)],
+                config=OnlineEvalConfig(default_sink=inner),
+            ),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match='model exploded'):
+        await agent.run('hello')
+    await wait_for_evaluations()
+
+    assert outer.calls == []
+    [(_, _, ctx)] = inner.calls
+    assert isinstance(ctx.output, RuntimeError)
+
+
+async def test_agent_run_nested_in_an_evaluated_run_is_not_evaluated():
+    """A different agent run inside an evaluated one stays unevaluated, as inside `Dataset.evaluate()`."""
+    outer_collector, inner_collector = Collector(), Collector()
+    inner_agent = Agent(
+        TestModel(),
+        capabilities=[
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=inner_collector))
+        ],
+    )
+    outer_agent = Agent(
+        TestModel(),
+        capabilities=[
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=outer_collector))
+        ],
+    )
+
+    @outer_agent.tool_plain
+    async def ask_inner() -> str:
+        return (await inner_agent.run('inner')).output
+
+    await outer_agent.run('outer')
+    await wait_for_evaluations()
+
+    assert len(outer_collector.calls) == 1
+    assert inner_collector.calls == []
+
+
+async def test_multiple_capabilities_skip_a_disabled_one():
+    """An `OnlineEvaluation` whose config is disabled stays quiet when another one captures the run."""
+    first, second = Collector(), Collector()
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=first)),
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=second, enabled=False)),
+        ],
+    )
+
+    await agent.run('hello')
+    await wait_for_evaluations()
+
+    assert len(first.calls) == 1
+    assert second.calls == []
+
+
+async def test_multiple_capabilities_each_see_their_own_outcome():
+    """A capability between two `OnlineEvaluation`s can change the outcome; each evaluates the one it saw."""
+
+    @dataclass
+    class RejectAfterRun(AbstractCapability[Any]):
+        async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+            await handler()
+            raise ValueError('rejected after the run')
+
+    outer, inner = Collector(), Collector()
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            OnlineEvaluation(
+                evaluators=[OnlineEvaluator(evaluator=AlwaysTrue(), run_on_errors=True)],
+                config=OnlineEvalConfig(default_sink=outer),
+            ),
+            RejectAfterRun(),
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=inner)),
+        ],
+    )
+
+    with pytest.raises(ValueError, match='rejected after the run'):
+        await agent.run('hello')
+    await wait_for_evaluations()
+
+    [(_, _, outer_ctx)] = outer.calls
+    [(_, _, inner_ctx)] = inner.calls
+    assert isinstance(outer_ctx.output, ValueError)
+    assert inner_ctx.output == 'success (no tool calls)'
+
+
+async def test_multiple_capabilities_respect_disable_evaluation_between_them():
+    """`disable_evaluation()` entered between two `OnlineEvaluation`s silences the inner one."""
+
+    @dataclass
+    class DisableInside(AbstractCapability[Any]):
+        async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+            with disable_evaluation():
+                return await handler()
+
+    outer, inner = Collector(), Collector()
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=outer)),
+            DisableInside(),
+            OnlineEvaluation(evaluators=[AlwaysTrue()], config=OnlineEvalConfig(default_sink=inner)),
+        ],
+    )
+
+    await agent.run('hello')
+    await wait_for_evaluations()
+
+    assert len(outer.calls) == 1
+    assert inner.calls == []

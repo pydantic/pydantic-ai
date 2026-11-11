@@ -184,7 +184,9 @@ the backend model takes over, calling the agent's tools as it goes. Those calls 
 [tool loop](tools.md#function-tools) as every other provider, including validation, retries,
 [dependencies](../dependencies.md), and [capability hooks](capabilities.md), and sends the
 results back. Speech and delegated work run independently, so the Live model can keep talking while
-that happens rather than leaving dead air.
+that happens rather than leaving dead air. Delegations run one at a time, though: when the user speaks
+a new request while a delegation is still under way, even one only waiting for a tool's result, Live
+delegates it once that one is done.
 
 In history, the round has the shape a [standard run](../message-history.md) gives it: the reply that
 delegated holds the backend's tool calls, their results follow it, and then comes the answer Live
@@ -194,7 +196,11 @@ them in hand once the backend answers. So that reply, and the results after it, 
 [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] once the backend answers, or
 calls more tools with those results, which are then a response of their own, after them. The backend's
 calls land wherever Live is in a sentence, so what Live says in the reply is recorded as one
-[`SpeechPart`][pydantic_ai.messages.SpeechPart], ahead of the calls, rather than cut in two at each one.
+[`SpeechPart`][pydantic_ai.messages.SpeechPart], ahead of the calls, rather than cut in two at each one. Live
+also finishes what it was saying when the backend answers, before it speaks the answer, and nothing on the wire
+marks where the answer starts: the reply ends where Live next pauses for half a second, or at anything else
+that happens first (the user speaking, say). Should Live run straight on into the answer without that pause, the
+start of the answer is recorded in the reply, ahead of the results.
 
 Live can also delegate to the *client* rather than to a backend model, leaving your application to
 answer in prose. Pydantic AI configures backend delegation, so a client delegation is reported as a
@@ -276,9 +282,9 @@ without telling Live what was typed, so Live may leave a terse answer to it unsa
 sent, so it is not recorded in history; split it, send it as a typed turn, which the backend takes at any
 length, or give long material to the backend as a tool result instead.
 [`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle, except that
-[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s on their own aren't the user's words: Live
-hears them as context as they are, and the backend gets them as a developer message, so the model doesn't
-later tell the caller they said it. Enqueued together with user text, they go out with it as the user's turn,
+[system prompts](turns.md#system-prompts), sent with `send()` or enqueued on their own, aren't the user's
+words: Live hears them as context as they are (`<system>`-tagged), and with a reply asked for, the backend
+gets them as a developer message, so the model doesn't later tell the caller they said it. Enqueued together with user text, they go out with it as the user's turn,
 so enqueue a system prompt on its own when the caller mustn't be credited with it. The
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] it produces marks when the text
 was sent, not when the model took it in. Live speaks to text in the reply it is giving, if it is giving one, rather
@@ -396,8 +402,9 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 
 Voice, audio format, and the starting instructions are fixed for the life of the session, which is
 why these are session-start settings rather than things to change mid-call. (The Live API can append
-to the instructions and reconfigure the delegation backend mid-session; Pydantic AI does not expose
-either yet.) Live exposes no turn-detection, truncation, or token-limit controls: it ignores `max_tokens`
+to Live's instructions and reconfigure the delegation backend mid-session. Pydantic AI uses the second to
+append [changes to the agent's instructions](capabilities.md#instructions-that-change) to the backend's, but
+doesn't expose either as a setting yet.) Live exposes no turn-detection, truncation, or token-limit controls: it ignores `max_tokens`
 and the [`TurnDetection`][pydantic_ai.realtime.TurnDetection] knobs, as a standard model ignores a tuning
 knob it doesn't support, along with `input_transcription_model`, since it always transcribes with its own
 model. It [raises](#what-raises) for push-to-talk, which it can't provide. `tool_choice` reaches the
@@ -592,7 +599,9 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   `live_session_expired` (the duration limit), `live_session_content` (the safety filter), or
   `live_session_connection_lost`. With a [`reconnect`](lifecycle.md#reconnecting) policy, an expired
   or lost WebSocket session is re-opened instead while the policy's reconnects last; one the safety
-  filter ended stays ended.
+  filter ended stays ended. On a [WebRTC sideband](#browser-webrtc), a lost connection is the browser's:
+  Live reports a browser that closed its connection as `connection_lost`, about half a minute later, and
+  the session ends as it would after any other hangup, without an error.
 - A delegated backend that fails, stops short, or reports an error is surfaced as a recoverable
   [`RealtimeSessionErrorEvent`][pydantic_ai.messages.RealtimeSessionErrorEvent] instead: the call
   goes on. When Live reports such a failure only as a session-level error that names no delegation

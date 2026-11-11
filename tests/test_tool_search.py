@@ -91,6 +91,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .cassette_utils import request_json
 from .conftest import RequestCapture, iter_message_parts, message, message_part, try_import
+from .function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -167,11 +168,13 @@ with try_import() as openai_available:
     from pydantic_ai.models.openai import (
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
-        _build_tool_search_return_part,  # pyright: ignore[reportPrivateUsage]
-        _map_client_tool_search_call,  # pyright: ignore[reportPrivateUsage]
-        _map_tool_search_call,  # pyright: ignore[reportPrivateUsage]
-        _normalize_tool_search_args,  # pyright: ignore[reportPrivateUsage]
-        _tool_search_namespace_for_synthesis,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.models.openai._tool_search import (
+        build_tool_search_return_part,
+        map_client_tool_search_call,
+        map_tool_search_call,
+        normalize_tool_search_args,
+        tool_search_namespace_for_synthesis,
     )
     from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -2321,7 +2324,7 @@ async def test_openai_client_tool_search_maps_to_local_search_call():
         status='completed',
         type='tool_search_call',
     )
-    part = _map_client_tool_search_call(call, 'azure')
+    part = map_client_tool_search_call(call, 'azure')
     assert part.tool_name == _SEARCH_TOOLS_NAME
     # Provider name flows through from the model — important for OpenAI-compatible
     # providers (Azure, gateways) where `self.system` differs from `'openai'`.
@@ -3826,7 +3829,7 @@ def test_anthropic_build_tool_search_replay_block_error_branch():
 
 
 def test_openai_map_tool_search_call_unit():
-    """Unit-level: `_map_tool_search_call` and `_build_tool_search_return_part` produce
+    """Unit-level: `map_tool_search_call` and `build_tool_search_return_part` produce
     populated metadata for various output shapes — useful as a fast deterministic
     gate without burning a live API call. The end-to-end live cassette in
     `test_openai_native_tool_search_round_trip` exercises the same functions with
@@ -3850,8 +3853,8 @@ def test_openai_map_tool_search_call_unit():
         ],
         type='tool_search_output',
     )
-    call_part = _map_tool_search_call(call, 'openai')
-    return_part = _build_tool_search_return_part('call_1', output, 'openai')
+    call_part = map_tool_search_call(call, 'openai')
+    return_part = build_tool_search_return_part('call_1', output, 'openai')
     assert isinstance(call_part, NativeToolSearchCallPart)
     assert call_part.tool_name == 'tool_search'
     # OpenAI server-executed `tool_search.arguments` carries `paths`; the adapter
@@ -3880,7 +3883,7 @@ def test_openai_map_tool_search_call_unit():
         ],
         type='tool_search_output',
     )
-    mixed = _build_tool_search_return_part('call_mix', mixed_output, 'openai')
+    mixed = build_tool_search_return_part('call_mix', mixed_output, 'openai')
     assert mixed.content == {'discovered_tools': [{'name': 'real'}]}
 
 
@@ -6695,7 +6698,7 @@ def test_openai_normalize_tool_search_args_empty_dict_returns_empty_queries() ->
     to `{'queries': []}` — that's "not yet populated", not "unrecognized"."""
     pytest.importorskip('openai')
 
-    assert _normalize_tool_search_args({}) == {'queries': []}
+    assert normalize_tool_search_args({}) == {'queries': []}
 
 
 def test_openai_normalize_tool_search_args_raises_on_unrecognized_shape() -> None:
@@ -6707,15 +6710,15 @@ def test_openai_normalize_tool_search_args_raises_on_unrecognized_shape() -> Non
     # Non-dict input shouldn't happen given the SDK types arguments as a dict, but if it
     # ever does we want a loud failure rather than a silent fallback.
     with pytest.raises(UnexpectedModelBehavior, match='Unrecognized tool_search arguments shape'):
-        _normalize_tool_search_args(None)
+        normalize_tool_search_args(None)
     with pytest.raises(UnexpectedModelBehavior, match='Unrecognized tool_search arguments shape'):
-        _normalize_tool_search_args('')
+        normalize_tool_search_args('')
     # Dict missing both recognized keys.
     with pytest.raises(UnexpectedModelBehavior, match='Unrecognized tool_search arguments shape'):
-        _normalize_tool_search_args({'something_else': 'x'})
+        normalize_tool_search_args({'something_else': 'x'})
     # Dict with `paths` present but of a non-list type.
     with pytest.raises(UnexpectedModelBehavior, match='Unrecognized tool_search arguments shape'):
-        _normalize_tool_search_args({'paths': 'not a list'})
+        normalize_tool_search_args({'paths': 'not a list'})
 
 
 # --- Cross-provider local→native promotion ---
@@ -7539,7 +7542,7 @@ def test_tool_search_namespace_synthesis_returns_tool_name_for_revealed_tool(too
         revealed_tool_names={'lookup_refund_policy'},
     )
     params = replace(params, tool_visibility={tool_def.name: 'via_history'})
-    assert _tool_search_namespace_for_synthesis('lookup_refund_policy', params) == 'lookup_refund_policy'
+    assert tool_search_namespace_for_synthesis('lookup_refund_policy', params) == 'lookup_refund_policy'
 
 
 def test_tool_search_namespace_synthesis_returns_none_for_unrelated_function_tool() -> None:
@@ -7549,7 +7552,7 @@ def test_tool_search_namespace_synthesis_returns_none_for_unrelated_function_too
 
     regular_tool = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
     params = ModelRequestParameters(function_tools=[regular_tool])
-    assert _tool_search_namespace_for_synthesis('get_weather', params) is None
+    assert tool_search_namespace_for_synthesis('get_weather', params) is None
 
 
 def test_tool_availability_delta_accumulates_onto_earlier_search_returns():
@@ -8271,6 +8274,7 @@ async def _keyword_search_results(
     return [part.content for part in completed(result.all_messages())]
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 @pytest.mark.parametrize(
     'second,expected',
     [
@@ -8288,6 +8292,7 @@ async def test_keyword_search_sees_corpus_changes_within_a_run(
     assert results == [{'discovered_tools': [{'name': 'one'}]}, {'discovered_tools': [{'name': expected}]}]
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_keyword_search_ties_follow_current_corpus_order() -> None:
     first = [('a', 'alpha'), ('b', 'alpha'), ('c', 'alpha')]
     results = await _keyword_search_results([first, first[::-1]], [['alpha'], ['alpha']], max_results=1)

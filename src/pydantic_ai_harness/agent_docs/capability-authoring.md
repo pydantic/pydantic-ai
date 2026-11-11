@@ -32,7 +32,7 @@ Each capability package should normally have:
   docs with relative `.md` links (`../toolsets.md`), links its
   source module, and -- where the capability exposes a public class -- may end
   with a `::: pydantic_ai_harness.<Class>` autodoc block. The README and this
-  page are kept in sync (see `review-checklist.md` "Docs").
+  page are kept in sync (see [Semantic Parity](docs-conventions.md#semantic-parity)).
 - an entry in the `pydantic-ai-harness` agent skill
   (`src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/`): a row in the
   `SKILL.md` routing tables and a section in the matching `references/` file
@@ -107,14 +107,37 @@ release: a renamed module keeps a shim package at its old path, and a renamed
 class keeps a module-level `__getattr__` alias, both emitting
 `HarnessDeprecationWarning` via the helpers in `src/pydantic_ai_harness/pydantic_ai_harness/_warn.py`.
 
-Top-level re-exports in `src/pydantic_ai_harness/pydantic_ai_harness/__init__.py` (`CodeMode`,
-`FileSystem`, `Shell`, `ManagedPrompt`) are the exception, not the rule. Once an
-export has shipped in a published release it is a backward-compatibility
-commitment: do not move, rename, or break it. Do not add new top-level
-re-exports.
+A root export shipped in a published release is a backward-compatibility commitment: do not move, rename, or break it.
 
 APIs are subject to change between releases; breaking changes ship deprecation
 warnings where practical.
+
+### Naming Capability Events
+
+A `CapabilityEvent` subclass has three names: its class, its namespace, and its kind.
+
+- **Class**: `<Subject><PastParticiple>Event` (`FileReadEvent`, `PlanCreatedEvent`,
+  `FileChangeRequestedEvent`). A start/stop pair is `*StartedEvent` and `*FinishedEvent`
+  (`CommandStartedEvent`, `CommandFinishedEvent`), not the `Start`/`End` of core's part events. A
+  streamed chunk of data is a noun (`CommandOutputEvent`).
+- **Namespace**: the snake_case of the emitting capability's class, exported from the capability's
+  package as `<NAMESPACE>_EVENTS` (`SUB_AGENTS_EVENTS = 'sub_agents'`).
+- **Kind**: `<namespace>.<name>`, the discriminator that persisted and streamed events are
+  serialized with. Core has no kind aliases, so a payload written under a kind that was later
+  changed loads as an `UnknownCapabilityEvent`. Keep the kind of a shipped event.
+
+The `<name>` segment follows one of two rules, chosen per namespace:
+
+1. **Derived**, the default (`file_system`, `shell`, `sub_agents`, `code_mode`,
+   `step_persistence`): core's default, the snake_case of the class name without `Event`
+   (`file_system.file_read`). Do not pass a `name=` equal to that default.
+2. **Subject-stripped**, only when the subject of every event is the thing the namespace already
+   names (`planning`, `ask_user`, `spend_limits`, `system_reminders`, `report_context_usage`): pass
+   the snake_case of the class name without that subject and `Event` as `name=`
+   (`planning.created`, `planning.status_changed`, `ask_user.requested`).
+
+A renamed event class keeps its alias like any renamed class, and passes its old segment as `name=`
+so the kind does not change: `DelegationStartedEvent` is still `sub_agents.delegation_start`.
 
 ## API Design
 

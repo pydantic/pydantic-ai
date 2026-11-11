@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.openai import (
     _GPT_6_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     OpenAIJsonSchemaTransformer,
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
     from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
-    from openai import AsyncOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the OpenAI provider, '
@@ -30,22 +31,35 @@ except ImportError as _import_error:
 
 from ._openai_compatible import (
     AsyncHTTPClient as _OpenAIHTTPClient,
-    OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
 )
 
 
-class OpenAIProvider(_OpenAICompatibleProvider):
-    """Provider for OpenAI API.
+class OpenAIProvider(_OpenAISDKProvider):
+    """Provider for the OpenAI API, or a transparent proxy to it.
 
-    Changing `base_url` does not change the OpenAI model profile selection. For another service,
-    use its dedicated provider when available. For a custom gateway, subclass this provider and
-    override `model_profile`, or configure the model's `profile` explicitly.
+    Changing `base_url` does not change the OpenAI model profile selection, nor the
+    [`canonical_system`][pydantic_ai.providers.Provider.canonical_system]: encrypted reasoning and
+    compaction items from OpenAI are sent to it, and the ones it returns are sent to OpenAI. For another
+    service, use its dedicated provider when available, or
+    [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider].
     See [OpenAI-compatible models](https://pydantic.dev/docs/ai/models/openai/#openai-compatible-models).
     """
 
     @property
     def name(self) -> str:
         return 'openai'
+
+    _canonical_system_follows_client = True
+
+    @property
+    def canonical_system(self) -> str:
+        """`'azure'` with an `AsyncAzureOpenAI` client, as Azure only accepts its own encrypted data, otherwise `name`.
+
+        `name` rather than `'openai'`, so a subclass that renames itself to talk to another service doesn't send
+        that service's encrypted data to OpenAI, or OpenAI's to it.
+        """
+        return 'azure' if isinstance(self._client, AsyncAzureOpenAI) else self.name
 
     @property
     def base_url(self) -> str:
@@ -98,10 +112,16 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 # shared with OpenAI-compatible endpoints that don't necessarily accept them.
                 supports_cache=bool(profile.get('openai_supports_prompt_cache_breakpoints')),
                 # OpenAI ignores `CachePoint.ttl`. GPT-5.6 and later accept a request-wide
-                # `prompt_cache_options.ttl`, whose only value is `'30m'`; earlier models have no retention
-                # tier to request (`prompt_cache_retention` is a maximum-retention policy, not a tier).
+                # `prompt_cache_options.ttl` of `'30m'` (the default) or, on the Responses API only, `'12h'`
+                # (verified live on every GPT-5.6, GPT-6 and GPT-6.1 model; `OpenAIChatModel` leaves `'12h'`
+                # out, as Chat Completions rejects it). `AzureProvider` follows Microsoft's documentation, which
+                # lists only `'30m'`, so this is set here rather than in `openai_model_profile`. Earlier models
+                # have no retention tier to request (`prompt_cache_retention` is a maximum-retention policy, not
+                # a tier).
                 # https://developers.openai.com/api/docs/guides/prompt-caching
-                supported_cache_retentions=('30m',) if profile.get('openai_supports_prompt_cache_breakpoints') else (),
+                supported_cache_retentions=('30m', '12h')
+                if profile.get('openai_supports_prompt_cache_breakpoints')
+                else (),
                 # Prompt cache diagnostics are documented for GPT-5.6 and later, the models with explicit cache
                 # breakpoints. Earlier models accept the field but always answer `unavailable`. Set here rather than
                 # in `openai_model_profile` because OpenAI-compatible Responses endpoints don't all accept it:
@@ -110,6 +130,13 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 openai_responses_supports_prompt_cache_diagnostics=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # Only OpenAI's audio models (`gpt-audio*`, `gpt-4o-audio-preview`, `gpt-4o-mini-audio-preview`) take
+                # `input_audio` on Chat Completions; the others reject it with a 400, so a tool-returned audio file
+                # would end the run instead of becoming a note. Responses takes no audio input on any model, which
+                # `OpenAIResponsesModel` already declares. Set here rather than in `openai_model_profile`, which is
+                # the fallback for unknown models on OpenAI-compatible endpoints, some of which serve audio models.
+                # https://developers.openai.com/api/docs/guides/audio
+                supports_audio_file_input='audio' in model_name,
                 # Measured live: every model from `gpt-4o-mini` through `gpt-5.5` rejects a `tool_choice` naming a tool
                 # that only an `additional_tools` item declares, and GPT-5.6 and GPT-6 accept it. Those are the models
                 # with explicit cache breakpoints. Set here with `tool_addition_mode`, since the item is first-party.
@@ -132,7 +159,12 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 # OpenAI-compatible Responses endpoints that share it don't necessarily implement the item.
                 # https://developers.openai.com/api/docs/guides/reasoning
                 supports_mid_conversation_effort=model_name.startswith(_GPT_6_MODEL_PREFIXES),
+                # The Batch API is OpenAI's own: set here rather than in `openai_model_profile`, which OpenAI-compatible
+                # providers share without necessarily serving `/v1/batches`. `OpenAIResponsesModel` turns it off for an
+                # Azure OpenAI client.
+                openai_supports_batch_api=True,
             ),
+            special_token_route_profile('openai', model_name),
         )
 
     @staticmethod

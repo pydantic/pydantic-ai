@@ -10,7 +10,6 @@ from __future__ import annotations
 import contextvars
 import copy
 import json
-import keyword
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -25,7 +24,7 @@ from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
-from pydantic_ai.function_signature import FunctionSignature
+from pydantic_ai.function_signature import FunctionSignature, _is_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, post_compaction_window
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
@@ -53,12 +52,20 @@ from pydantic_ai_harness._monty_exec import (
     in_temporal_workflow,
     is_sandbox_panic,
 )
-from pydantic_ai_harness._sub_agent_output import resumable_output_reason, without_resumable_outputs
+from pydantic_ai_harness._sub_agent_output import (
+    ServingModelRecorder,
+    cancel_pending_output,
+    resumable_output_reason,
+    without_resumable_outputs,
+)
+from pydantic_ai_harness._warn import renamed_duration_limit
 
 # Set while a workflow script is executing, so `get_tools` hides `run_workflow` from sub-agents
 # running inside it -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
 # schedules, so concurrently-dispatched sub-agents inherit this flag (the capability is asyncio-only).
-_in_workflow: contextvars.ContextVar[bool] = contextvars.ContextVar('pydantic_ai_harness_in_workflow', default=False)
+_in_workflow: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    'pydantic_ai_harness.dynamic_workflow.in_workflow', default=False
+)
 
 
 class WorkflowResourceLimits(TypedDict, total=False):
@@ -69,7 +76,7 @@ class WorkflowResourceLimits(TypedDict, total=False):
     keeps its backstop value.
     """
 
-    max_duration_secs: float
+    max_duration_seconds: float
     """Ceiling on the time the script spends executing sandbox code. Monty checks it per bytecode
     step, so time spent awaiting sub-agents does not count against it -- neither a single `await`
     nor a concurrent `asyncio.gather` batch, because during that wait the script is suspended on
@@ -79,21 +86,25 @@ class WorkflowResourceLimits(TypedDict, total=False):
     Sleeping is not execution time either, so when set, the script may also sleep for up to this
     long in total."""
 
+    max_duration_secs: float
+    """Deprecated: renamed to `max_duration_seconds`."""
+
     max_memory: int
     """Maximum sandbox memory, in bytes."""
 
 
 def _default_resource_limits() -> ResourceLimits:
-    """Backstop sandbox limits; no duration cap -- see `WorkflowResourceLimits.max_duration_secs`."""
+    """Backstop sandbox limits; no duration cap -- see `WorkflowResourceLimits.max_duration_seconds`."""
     return {
         'max_memory': 256 * 1024 * 1024,
     }
 
 
-# The keys `WorkflowResourceLimits` accepts. A `total=False` TypedDict does not validate keys at
-# runtime, so a typo (e.g. `max_durations_secs`) would otherwise merge through and be silently
-# dropped -- quietly disabling the only guard against a pure-CPU `while True`. We reject unknowns.
-_RESOURCE_LIMIT_KEYS = frozenset(WorkflowResourceLimits.__annotations__)
+# The keys `WorkflowResourceLimits` accepts, without the deprecated one `__post_init__` renames.
+# A `total=False` TypedDict does not validate keys at runtime, so a typo (e.g. `max_durations_seconds`)
+# would otherwise merge through and be silently dropped -- quietly disabling the only guard against
+# a pure-CPU `while True`. We reject unknowns.
+_RESOURCE_LIMIT_KEYS = frozenset(WorkflowResourceLimits.__annotations__) - {'max_duration_secs'}
 _MODEL_SAFE_EXCEPTION_MESSAGE_TYPES = (UsageLimitExceeded,)
 _MAX_COMPLETED_DISPATCHES = 20
 _MAX_TASK_PREVIEW_CHARS = 120
@@ -123,8 +134,8 @@ def _resolve_resource_limits(limits: WorkflowResourceLimits | Literal['unlimited
     resolved = _default_resource_limits()
     if 'max_memory' in limits:
         resolved['max_memory'] = limits['max_memory']
-    if 'max_duration_secs' in limits:
-        resolved['max_feed_duration_secs'] = limits['max_duration_secs']
+    if 'max_duration_seconds' in limits:
+        resolved['max_feed_duration_secs'] = limits['max_duration_seconds']
     return resolved
 
 
@@ -185,16 +196,6 @@ non-`None` value returns `{"output": "<printed text>", "result": <last expressio
 bounded previews of up to the 20 most recent results are reported so a retry can reuse untruncated
 values.\
 """
-
-
-def _is_valid_sandbox_name(name: str) -> bool:
-    """Whether `name` can be exposed as a sandbox function: a non-keyword Python identifier.
-
-    `str.isidentifier()` alone is not enough -- Python keywords (`for`, `class`, `async`, ...) are
-    valid identifiers but cannot be used as function names, so the model could never call them.
-    Callers guard the empty/`None` case before this is reached.
-    """
-    return name.isidentifier() and not keyword.iskeyword(name)
 
 
 # Every sub-agent is exposed with the same fixed parameters -- `(*, task: str)` -- and a per-agent
@@ -412,6 +413,24 @@ def _completed_workflow_result(
     return _workflow_result(completed_output, printed)
 
 
+def _dispatched_task(agent_name: str, kwargs: Mapping[str, object]) -> str:
+    """The `task` a sandbox call to sub-agent `agent_name` passed, its only keyword argument."""
+    # The sandbox signature is `(*, task: str)`, but Monty does not validate kwargs against
+    # it at runtime, and the static check can be evaded through `Any` (e.g. `json.loads`
+    # results) -- so check here: a dropped extra kwarg or a non-string `task` would
+    # otherwise run the sub-agent on silently-wrong input. Each raises before the budget
+    # is touched.
+    if 'task' not in kwargs:
+        raise TypeError(f'{agent_name}() missing required keyword argument: task')
+    extra = sorted(set(kwargs) - {'task'})
+    if extra:
+        raise TypeError(f'{agent_name}() got unexpected keyword argument(s): {", ".join(extra)}; only task')
+    task = kwargs['task']
+    if not isinstance(task, str):
+        raise TypeError(f'{agent_name}() task must be a string, got {type(task).__name__}')
+    return task
+
+
 @dataclass(frozen=True)
 class WorkflowAgent(Generic[AgentDepsT]):
     """One sub-agent exposed to the orchestration script as an async function.
@@ -456,7 +475,7 @@ def validate_workflow_agent(entry: WorkflowAgent[AgentDepsT], existing_names: se
             'DynamicWorkflow sub-agent has no `name` and its agent has no `name`; '
             'set `WorkflowAgent(name=...)` so it can be exposed as a sandbox function.'
         )
-    if not _is_valid_sandbox_name(name):
+    if not _is_python_identifier(name):
         raise UserError(
             f'DynamicWorkflow sub-agent name {name!r} cannot be exposed as a sandbox function: '
             'it must be a Python identifier that is not a reserved keyword. Rename it.'
@@ -519,7 +538,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     See `DynamicWorkflow.inherit_model` for when to use this."""
 
     sub_agent_usage_limits: UsageLimits | None = None
-    """`UsageLimits` applied to every sub-agent run, replacing pydantic-ai's default.
+    """`UsageLimits` applied to every sub-agent run, replacing the parent run's limits or Pydantic AI's default.
     See `DynamicWorkflow.sub_agent_usage_limits` for the budgeting semantics."""
 
     resource_limits: WorkflowResourceLimits | Literal['unlimited'] | None = None
@@ -558,6 +577,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     _description: str = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self.resource_limits = renamed_duration_limit(self.resource_limits, 'DynamicWorkflowToolset')
         validate_workflow_settings(max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits)
         self._rebuild()
 
@@ -702,11 +722,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         This exists precisely because `usage_limits` cannot give an exact ceiling here:
         core's own limit check is split from its increment by the model-request `await`
         (a TOCTOU race -- N gathered sub-agents all pass the check before any increments;
-        measured ~20x overshoot), and `RunContext` exposes `usage` but not `usage_limits`,
-        so the parent's configured limit can't be forwarded to sub-agents at all.
-        TODO: file upstream on pydantic-ai -- (a) expose `usage_limits` on `RunContext`,
-        (b) atomic reserve-then-request in the run loop. Until then, tree-wide token caps
-        stay best-effort (see `forward_usage` / `sub_agent_usage_limits` docstrings).
+        measured ~20x overshoot). Until the run loop reserves before requesting, tree-wide
+        caps stay best-effort (see `forward_usage` / `sub_agent_usage_limits` docstrings).
         """
         if self._call_count >= self.max_agent_calls:
             raise _BudgetExhausted(self.max_agent_calls)
@@ -718,17 +735,25 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         # mirroring core's own `reinject_system_prompt` idiom.
         ctx_model = ctx.model
         inherited_model = cast('Model[Any]', ctx_model) if self.inherit_model and isinstance(ctx_model, Model) else None
+        serving_model = ServingModelRecorder()
+        usage_limits = self.sub_agent_usage_limits
+        if usage_limits is None and self.forward_usage:
+            # Shared usage is checked against the parent's limits, so they bound the whole tree.
+            usage_limits = ctx.usage_limits
         try:
             result = await self._by_name[agent_name].agent.run(
                 task,
                 deps=ctx.deps,
                 model=inherited_model,
                 usage=ctx.usage if self.forward_usage else None,
-                usage_limits=self.sub_agent_usage_limits,
+                usage_limits=usage_limits,
+                capabilities=[serving_model],
             )
             reason = resumable_output_reason(result.output)
             if reason is None:
                 return to_jsonable_python(result.output)
+            # The script can't check on a request the sub-agent left pending, so it's cancelled.
+            await cancel_pending_output(result.output, serving_model)
         except Exception as exc:
             # Don't leak host internals (file paths, deps/agent reprs) to the model;
             # surface the failing agent and error type by default.
@@ -776,19 +801,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
 
         async def dispatch(agent_name: str, kwargs: dict[str, Any]) -> Any:
             nonlocal budget_exhausted
-            # The sandbox signature is `(*, task: str)`, but Monty does not validate kwargs against
-            # it at runtime, and the static check can be evaded through `Any` (e.g. `json.loads`
-            # results) -- so check here: a dropped extra kwarg or a non-string `task` would
-            # otherwise run the sub-agent on silently-wrong input. Each raises before the budget
-            # is touched.
-            if 'task' not in kwargs:
-                raise TypeError(f'{agent_name}() missing required keyword argument: task')
-            extra = sorted(set(kwargs) - {'task'})
-            if extra:
-                raise TypeError(f'{agent_name}() got unexpected keyword argument(s): {", ".join(extra)}; only task')
-            task = kwargs['task']
-            if not isinstance(task, str):
-                raise TypeError(f'{agent_name}() task must be a string, got {type(task).__name__}')
+            task = _dispatched_task(agent_name, kwargs)
             try:
                 output = await self._run_one(agent_name, task, ctx)
             except _BudgetExhausted:
@@ -815,15 +828,15 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 dispatch=dispatch,
                 valid_names=self._by_name,
                 portal=monty.portal,
-                max_sleep_secs=limits.get('max_feed_duration_secs'),
+                max_sleep_seconds=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))
-        except MontyTypingError as e:
-            raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(e.display())}') from e
+        except MontyTypingError as exc:
+            raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(exc.display())}') from exc
         # Backstop: the type checker parses the code first. `lax` because the errors handled below
         # are still matched against this clause.
-        except MontySyntaxError as e:  # pragma: lax no cover
-            raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(e.display())}') from e
-        except MontyRuntimeError as e:
+        except MontySyntaxError as exc:  # pragma: lax no cover
+            raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(exc.display())}') from exc
+        except MontyRuntimeError as exc:
             if budget_exhausted:
                 # The script may catch the budget error and fail later on something else, so
                 # the flag -- not the displayed error -- proves this script hit the budget;
@@ -831,27 +844,27 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 # failure from the same batch.
                 return _budget_terminal_result(
                     max_agent_calls=self.max_agent_calls,
-                    last_error=capture.prepend_to(e.display()),
+                    last_error=capture.prepend_to(exc.display()),
                     completed_dispatches=completed_dispatches,
                 )
             raise ModelRetry(
-                f'Runtime error in workflow:\n{capture.prepend_to(e.display())}'
+                f'Runtime error in workflow:\n{capture.prepend_to(exc.display())}'
                 f'{_completed_retry_section(completed_dispatches)}'
-            ) from e
-        except MontyCrashedError as e:
+            ) from exc
+        except MontyCrashedError as exc:
             # The worker died mid-script (e.g. resource exhaustion or request timeout);
             # the pool replaces it transparently. Completed sub-agent results are listed
             # so the retry can reuse them as plain values.
             return _worker_crash_result(
-                crash=e,
+                crash=exc,
                 budget_exhausted=budget_exhausted,
                 max_agent_calls=self.max_agent_calls,
                 completed_dispatches=completed_dispatches,
             )
-        except BaseException as e:
+        except BaseException as exc:
             # Convert a sandbox panic to a retry (see `is_sandbox_panic`);
             # anything else (CancelledError, ...) re-raises unchanged.
-            if not is_sandbox_panic(e):
+            if not is_sandbox_panic(exc):
                 raise
             if budget_exhausted:
                 return _budget_terminal_result(
@@ -862,10 +875,10 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             raise ModelRetry(
                 'The workflow script aborted inside the sandbox. Revise the script and try again.'
                 f'{_completed_retry_section(completed_dispatches)}'
-            ) from e
+            ) from exc
         finally:
             _in_workflow.reset(in_workflow_token)
-            await monty.close()
+            await monty.aclose()
 
         # Monty lets workflow code catch host exceptions. Exhausting the budget remains
         # terminal even if the script catches that error and otherwise finishes normally.

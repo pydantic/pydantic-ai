@@ -11,7 +11,7 @@ import warnings
 from typing import TYPE_CHECKING
 
 from pydantic_ai_harness._task_report import is_task_report
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_class_renamed
 from pydantic_ai_harness.subagents._capability import SubAgents, ToolResolver
 from pydantic_ai_harness.subagents._control import (
     DynamicAgentFactory,
@@ -27,9 +27,9 @@ from pydantic_ai_harness.subagents._events import (
     AgentCreatedEvent,
     BackgroundReason,
     ChildMessage,
-    DelegationEndEvent,
+    DelegationFinishedEvent,
     DelegationOutcome,
-    DelegationStartEvent,
+    DelegationStartedEvent,
     ParentMessage,
     Recipient,
     SubAgentMessage,
@@ -56,8 +56,16 @@ from pydantic_ai_harness.subagents._tasks import (
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
+    SavedTaskProblem,
+    SavedTasks,
 )
-from pydantic_ai_harness.subagents._toolset import SubAgent, SubAgentToolset
+from pydantic_ai_harness.subagents._toolset import (
+    SELF_AGENT_NAME,
+    DelegationWorkspaceRequest,
+    SubAgent,
+    SubAgentToolset,
+    WorkspaceResolver,
+)
 from pydantic_ai_harness.subagents._transport import (
     InMemoryTransport,
     SubAgentTransport,
@@ -72,17 +80,19 @@ if TYPE_CHECKING:
 __all__ = [
     'MAX_EVENT_TEXT_CHARS',
     'MINIMUM_EFFORT_FLOOR',
+    'SELF_AGENT_NAME',
     'SUB_AGENTS_EVENTS',
     'AgentCreatedEvent',
     'AgentOverride',
     'BackgroundReason',
     'ChildMessage',
-    'DelegationEndEvent',
+    'DelegationFinishedEvent',
     'DelegationOutcome',
-    'DelegationStartEvent',
+    'DelegationStartedEvent',
     'DelegationReports',
     'DelegationTask',
     'DelegationTaskEvent',
+    'DelegationWorkspaceRequest',
     'DelegationTasks',
     'DynamicAgentFactory',
     'DynamicAgentSpec',
@@ -92,6 +102,8 @@ __all__ = [
     'ParentMessage',
     'Recipient',
     'RemoteSubAgent',
+    'SavedTaskProblem',
+    'SavedTasks',
     'SubAgent',
     'SubAgentMessage',
     'SubAgentToolset',
@@ -116,14 +128,24 @@ __all__ = [
     'TaskSettledEvent',
     'TaskStartedEvent',
     'ToolResolver',
+    'WorkspaceResolver',
     'clamp_effort',
     'deserialize_message',
     'is_task_report',
     'serialize_message',
 ]
 
+_RENAMED = {
+    'DelegationEndEvent': DelegationFinishedEvent,
+    'DelegationStartEvent': DelegationStartedEvent,
+}
+
 
 def __getattr__(name: str) -> object:
+    renamed = _RENAMED.get(name)
+    if renamed is not None:
+        warn_class_renamed(name, renamed.__name__, __name__)
+        return renamed
     if name in {'MINIMUM_EFFORT_FLOOR', 'clamp_effort'}:
         from pydantic_ai_harness.subagents import _effort
 

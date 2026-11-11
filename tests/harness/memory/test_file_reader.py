@@ -27,6 +27,7 @@ from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, R
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.memory import FileStore, InMemoryStore, Memory, MemoryStore
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 from tests.realtime_connections import InferredConnection
 
 
@@ -256,6 +257,7 @@ class TestSeveralFileMemories:
 
 
 class TestDirectoryBlockShape:
+    @pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
     async def test_block_is_present_from_the_first_request_when_the_reader_joins_mid_run(self, tmp_path: Path) -> None:
         instructions: list[str | None] = []
         seen: list[str] = []

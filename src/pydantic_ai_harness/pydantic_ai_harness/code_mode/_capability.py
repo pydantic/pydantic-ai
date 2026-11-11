@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
+from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore
 from pydantic_ai_harness.code_mode._speculation import (
@@ -39,7 +40,7 @@ from pydantic_ai_harness.code_mode._toolset import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_monty import AsyncMontyWebsocket
+    from pydantic_monty import AsyncMontyRemote
 
     from pydantic_ai.capabilities.abstract import ValidatedToolArgs
     from pydantic_ai.messages import ToolCallPart
@@ -88,9 +89,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
       when the agent needs environment variables, the clock, or filesystem behavior you
       control.
 
-    `mount` exposes selected host directories. The built-in `OSAccess` has an
-    isolated filesystem and environment but uses the host clock by default; custom
-    OS handlers can expose other host resources.
+    The built-in `OSAccess` has an isolated filesystem and environment but uses the
+    host clock by default; custom OS handlers can expose other host resources.
 
     ```python
     from pydantic_monty import MountDir
@@ -137,7 +137,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None
     """Sandbox execution limits.
 
-    `None` applies a 30-second execution and 256 MiB heap backstop. `max_duration_secs` is per
+    `None` applies a 30-second execution and 256 MiB heap backstop. `max_duration_seconds` is per
     snippet: no single `run_code` snippet runs longer than it, and it is not a run-wide budget.
     `'unlimited'` removes the time and memory caps, but Monty's finite suspension budget still
     applies. Set `max_suspensions` to bound cumulative host interactions across consecutive snippets.
@@ -165,13 +165,13 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     execution mode is sequential. See the Code Mode guide for the mechanics.
     """
 
-    monty_sandbox: str | Callable[[], AsyncMontyWebsocket | Awaitable[AsyncMontyWebsocket]] | None = field(
+    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, repr=False
     )
-    """Where sandboxed code runs: a `ws://` or `wss://` URL, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyWebsocket`, called for each run. Unset, code runs locally.
+    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run. Unset, code runs locally.
 
-    A function's pool limits how long code runs between tool calls with its own `request_timeout`
-    (10 seconds by default), in place of `max_duration_secs`. Tools, mounts, `os_access`, and print
+    A remote pool's `request_timeout` adds a per-turn transport deadline to `max_duration_seconds`.
+    Inside Temporal, only the transport deadline applies. Tools, mounts, `os_access`, and print
     output stay in your process.
     """
 
@@ -189,44 +189,41 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     guide for an example.
     """
 
-    dynamic_catalog: bool = False
-    """Keep the `run_code` tool definition cache-stable as the sandboxed toolset grows.
+    dynamic_catalog: bool = True
+    """Keep the `run_code` tool definition cache-stable as the sandboxed toolset grows. Default: `True`.
 
-    By default the signatures of all sandboxed tools are rendered into `run_code`'s
-    description, which lives in the prompt-cache-keyed tool-definitions block. When the
-    toolset changes mid-run -- e.g. [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]
-    reveals a new tool that then gets folded into `run_code` -- the description changes and
-    busts the prefix cache from that point on.
+    With `dynamic_catalog=True`:
 
-    Set `dynamic_catalog=True` to instead:
-
-    - keep only the static base prose (sandbox restrictions, return-value contract) in
-      `run_code.description`, so the tool-definitions block stays byte-stable across
-      discoveries;
-    - move the "available functions" catalog (TypedDict definitions + signatures) into
-      agent instructions as a dynamic
-      [`InstructionPart`][pydantic_ai.messages.InstructionPart] with the id
-      `toolset:code_mode:catalog` and `on_change='append'`, so a discovery appends the
-      updated catalog to the message history instead of rewriting the instructions;
-    - keep deferred tools that `run_code` will take over off the wire until they're found
-      through the local `search_tools` tool or by loading their capability, and callable only
-      from `run_code` after that, so no tool declaration changes. With the `'bm25'` and
-      `'regex'` `ToolSearch` strategies, or a `tools` selector that keeps another deferred tool
-      native, only the native tool search can find them, so they're declared for it and the
-      declaration is dropped once they move into `run_code`;
-    - announce the functions `run_code` gains from tools a search found via a short
+    - `run_code.description` keeps only the static base prose (sandbox restrictions, return-value contract), so
+      the tool-definitions block stays byte-stable across discoveries;
+    - the "available functions" catalog (TypedDict definitions + signatures) goes into the agent's
+      instructions as an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with the id
+      `toolset:code_mode:catalog` and `on_change='append'`, so a discovery appends the updated catalog to the
+      message history instead of rewriting the instructions. Like other appending blocks, it's sent right after
+      the static instructions, ahead of dynamic instructions that rewrite the prefix, and on Anthropic, Bedrock
+      and OpenRouter's Anthropic routes it gets a cache point of its own, so new conversations reuse it;
+    - deferred tools that `run_code` will take over stay off the wire until they're found through the local
+      `search_tools` tool or by loading their capability, and are callable only from `run_code` after that, so
+      no tool declaration changes. When a `tools` selector keeps other deferred tools native, `search_tools`
+      searches those too and the native tool search isn't sent. With the `'bm25'` and `'regex'` `ToolSearch`
+      strategies only the native tool search can find them, so they're declared for it and the declaration is
+      dropped once they move into `run_code`;
+    - the functions `run_code` gains from tools a search found are announced in a short
       [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] enqueued through
-      [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], naming them as `run_code`
-      calls them. Loading a capability appends only the catalog update.
+      [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], naming them as `run_code` calls them.
+      Loading a capability appends only the catalog update.
 
-    The cache stays intact only if a callable `tools` selector gives the same answer for a tool
-    before and after it's revealed: one that sandboxes a tool only once it's revealed declares it
-    natively first and then drops the declaration.
+    The cache stays intact only if a callable `tools` selector gives the same answer for a tool before and
+    after it's revealed: one that sandboxes a tool only once it's revealed declares it natively first and then
+    drops the declaration.
 
-    This pays off when paired with [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] or
-    deferred capabilities: the prompt cache survives discoveries at the cost of a larger
-    system prompt. With a fixed toolset, the default keeps the system prompt shorter and is
-    the better choice.
+    With `dynamic_catalog=False`, the signatures of all sandboxed tools are rendered into `run_code`'s
+    description instead, which lives in the prompt-cache-keyed tool-definitions block, so a tool revealed
+    mid-run (by [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] or a capability load) changes the
+    description and invalidates the cached prefix from that point on. Deferred tools are declared to the
+    provider's native tool search where there is one.
+
+    Earlier releases defaulted to `False`.
     """
 
     speculation_stats: SpeculationStats = field(default_factory=SpeculationStats, init=False, repr=False)
@@ -241,11 +238,53 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         self.os_access = as_os_handler(self.os_access)
         self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeMode')
         self.monty_sandbox_url = None
+        self.resource_limits = renamed_duration_limit(self.resource_limits, 'CodeMode')
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
                 'To allowlist one tool, pass a one-element list.'
             )
+
+    @classmethod
+    def from_spec(
+        cls,
+        tools: Literal['all'] | Sequence[str] | dict[str, Any] = 'all',
+        max_retries: int = 3,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        max_tool_calls: int = 100,
+        resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,
+        eager: bool = False,
+        speculate: Sequence[str] | Literal['declared'] | None = None,
+        monty_sandbox: str | None = None,
+        dynamic_catalog: bool = True,
+        **kwargs: Any,
+    ) -> CodeMode[Any]:
+        """Build from an agent spec, naming the fields a spec can express.
+
+        Core reads this signature to generate the spec's JSON schema. Inherited, core falls back
+        to the variadic base `from_spec`, because `__init__`'s `AsyncMontyRemote` hint is a
+        `TYPE_CHECKING` import, and publishes only the bare `'CodeMode'`. Reading `__init__`
+        would not help: `os_access`, `mount`, `repl_store`, and a `monty_sandbox` factory have
+        no JSON schema, and would drop the keyword form.
+        `**kwargs` reaches `__init__` unchanged, so a spec that set anything else still loads.
+        """
+        return cls(
+            tools,
+            max_retries,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            max_tool_calls=max_tool_calls,
+            resource_limits=resource_limits,
+            eager=eager,
+            speculate=speculate,
+            monty_sandbox=monty_sandbox,
+            dynamic_catalog=dynamic_catalog,
+            **kwargs,
+        )
 
     def get_ordering(self) -> CapabilityOrdering:
         """CodeMode wraps around ToolSearch so that search_tools stays native."""

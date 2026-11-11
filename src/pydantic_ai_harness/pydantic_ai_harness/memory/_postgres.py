@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Protocol, runtime_checkable
 
 import anyio
@@ -53,9 +53,14 @@ class PostgresConnection(Protocol):
 
 @runtime_checkable
 class PostgresPool(Protocol):
-    """The asyncpg-compatible pool surface used by `PostgresMemoryStore`."""
+    """The asyncpg-compatible pool surface used by `PostgresMemoryStore`.
 
-    def acquire(self) -> AbstractAsyncContextManager[PostgresConnection]:
+    `acquire` yields `object` rather than `PostgresConnection` because asyncpg's pooled
+    connection proxy forwards its methods at runtime, so a type checker sees none of them.
+    The store checks the acquired connection against `PostgresConnection` instead.
+    """
+
+    def acquire(self) -> AbstractAsyncContextManager[object]:
         """Acquire one connection for an operation or transaction."""
         ...  # pragma: no cover
 
@@ -78,13 +83,20 @@ class PostgresMemoryStore:
         self._schema_ready = False
         self._schema_lock = anyio.Lock()
 
+    @asynccontextmanager
+    async def _connection(self) -> AsyncGenerator[PostgresConnection]:
+        async with self._pool.acquire() as connection:
+            if not isinstance(connection, PostgresConnection):
+                raise TypeError(f'pool acquired {type(connection).__name__}, which is not a PostgresConnection')
+            yield connection
+
     async def _ensure_schema(self) -> None:
         if self._schema_ready:
             return
         async with self._schema_lock:
             if self._schema_ready:
                 return
-            async with self._pool.acquire() as connection, connection.transaction():
+            async with self._connection() as connection, connection.transaction():
                 await connection.fetchval('SELECT pg_advisory_xact_lock(hashtext($1))', self._metadata_table)
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._table} ('
@@ -162,7 +174,7 @@ class PostgresMemoryStore:
         if max_chars <= 0:
             raise ValueError('max_chars must be positive')
         await self._ensure_schema()
-        async with self._pool.acquire() as connection:
+        async with self._connection() as connection:
             row = await connection.fetchrow(
                 # As text, so the result does not depend on the driver's JSON codec.
                 f'SELECT left(content, $2), version, last_operation_id, length(content), write_metadata::TEXT '
@@ -182,7 +194,7 @@ class PostgresMemoryStore:
 
     async def get_operation(self, operation: MemoryOperation) -> MemoryMutation | None:
         await self._ensure_schema()
-        async with self._pool.acquire() as connection:
+        async with self._connection() as connection:
             return await self._get_operation(connection, operation)
 
     async def write(
@@ -210,7 +222,7 @@ class PostgresMemoryStore:
         validate_store_path(path)
         encoded = encode_metadata(metadata)
         await self._ensure_schema()
-        async with self._pool.acquire() as connection, connection.transaction():
+        async with self._connection() as connection, connection.transaction():
             if operation is not None and (receipt := await self._reserve_operation(connection, operation)) is not None:
                 return receipt
             # Bound as text and cast in SQL, so a JSONB codec registered on the caller's pool does not encode it again.
@@ -253,7 +265,7 @@ class PostgresMemoryStore:
     ) -> MemoryMutation:
         validate_store_path(path)
         await self._ensure_schema()
-        async with self._pool.acquire() as connection, connection.transaction():
+        async with self._connection() as connection, connection.transaction():
             if operation is not None and (receipt := await self._reserve_operation(connection, operation)) is not None:
                 return receipt
             await connection.fetchval(f"SELECT nextval('{self._version_sequence}')")
@@ -281,7 +293,7 @@ class PostgresMemoryStore:
         if limit <= 0:
             raise ValueError('limit must be positive')
         await self._ensure_schema()
-        async with self._pool.acquire() as connection:
+        async with self._connection() as connection:
             rows = await connection.fetch(
                 f'SELECT path FROM {self._table} WHERE starts_with(path, $1) ORDER BY path LIMIT $2', prefix, limit
             )
@@ -301,7 +313,7 @@ class PostgresMemoryStore:
         if not query.split() or limit <= 0 or max_files <= 0 or max_chars <= 0 or max_file_chars <= 0:
             return MemorySearchResult(matches=[], scanned=0, truncated=False)
         await self._ensure_schema()
-        async with self._pool.acquire() as connection:
+        async with self._connection() as connection:
             # Paths in a deeper scope nested under `prefix` belong to another namespace or agent.
             rows = await connection.fetch(
                 f'SELECT path, left(content, $2), length(content) FROM {self._table} '

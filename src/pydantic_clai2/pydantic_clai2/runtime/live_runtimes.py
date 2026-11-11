@@ -8,18 +8,20 @@ opened with `open` or `new` run here, each as a task of `serving`, and close aft
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable, Generator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from anyio import CancelScope, Event, create_task_group, sleep
+from anyio import CancelScope, Event, create_task_group, sleep, to_thread
 from anyio.abc import TaskGroup, TaskStatus
 
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import LiveSession, SessionEndReason
 from pydantic_clai2.plugins.process_plugins import JoinedSessions, LiveRuntime, handling
+from pydantic_clai2.runtime.live_registry import LiveRegistry
+from pydantic_clai2.runtime.session import continuing_fork
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 
 IDLE_AFTER = 3600.0
@@ -51,6 +53,18 @@ class Served(Protocol):
         """Restore `resume`, load plugins, call `ready`, and take input until it ends or is cancelled."""
         ...
 
+    def send_input(self, text: str) -> None:
+        """Enter `text` as Enter at its prompt does."""
+        ...
+
+    def restarts_clai(self) -> bool:
+        """Whether `/reload` and `/update` restart CLAI from it."""
+        ...
+
+    def restart_refusal(self) -> str | None:
+        """Why `/reload` and `/update` cannot restart CLAI from it now; `None` when they can."""
+        ...
+
 
 Builder = Callable[[Path | None], Served]
 """Builds a session in a directory, by default the one CLAI started in, ready to `serve`."""
@@ -69,8 +83,6 @@ class _Live:
     """Set once it starts closing, so `open` waits for it to close rather than return it."""
     done: Event = field(default_factory=Event)
     """Set once it has closed."""
-    copied: tuple[str, str] | None = None
-    """The conversation `open` asked for and the copy it continues in, when another process was running it."""
 
 
 class LiveRuntimes(JoinedSessions):
@@ -101,10 +113,15 @@ class LiveRuntimes(JoinedSessions):
         self._switching: dict[str, Event] = {}
         """Sessions resuming another conversation, by ID, set once they have."""
         self._building = False
+        self.registry = LiveRegistry(self.listing)
 
     def listing(self) -> list[LiveSession]:
         """Every live session, oldest first, leaving out those `open` and `new` are still loading."""
         return [live.runtime.live_session for live in self._live.values() if live.ready]
+
+    def restarter(self) -> Served | None:
+        """The live session CLAI restarts from; `None` while none does, as while the terminal shows one not listed."""
+        return next((live.runtime for live in self._live.values() if live.ready and live.runtime.restarts_clai()), None)
 
     def add(self, runtime: Served) -> None:
         """Count `runtime` among the live sessions, following the settings the others save; once is enough."""
@@ -164,17 +181,6 @@ class LiveRuntimes(JoinedSessions):
             None,
         )
 
-    def _copy_of(self, conversation_id: str) -> _Live | None:
-        """The session `open` started for `conversation_id`, still in the copy it made of it."""
-        return next(
-            (
-                live
-                for live in self._live.values()
-                if live.copied == (conversation_id, live.runtime.live_session.conversation.conversation_id)
-            ),
-            None,
-        )
-
     @asynccontextmanager
     async def serving(self) -> AsyncGenerator[None]:
         """Run the sessions `open` and `new` start, and close idle ones; leaving closes them all.
@@ -182,26 +188,35 @@ class LiveRuntimes(JoinedSessions):
         What the block raises propagates as it is, not in an exception group.
         """
         try:
-            async with create_task_group() as group:
-                # Set at once: a browser may open a session as soon as the web UI it serves is up.
-                self._group = group
-                group.start_soon(self._close_idle_ones)
+            async with AsyncExitStack() as stack:
                 try:
-                    # A new sessions database switches to WAL on first use, which fails at once when two sessions'
-                    # first saves race, so make it before the sessions opened from here run.
-                    await self._conversations.listing(limit=1)
-                    yield
-                finally:
-                    self._group = None
-                    group.cancel_scope.cancel()
+                    await stack.enter_async_context(self.registry.serving(self.subscribe))
+                except OSError as exc:
+                    _LOGGER.warning('Live session discovery unavailable: %s', exc)
+                async with create_task_group() as group:
+                    # Set at once: a browser may open a session as soon as the web UI it serves is up.
+                    self._group = group
+                    group.start_soon(self._close_idle_ones)
+                    try:
+                        # A new sessions database switches to WAL on first use, which fails at once when two sessions'
+                        # first saves race, so make it before the sessions opened from here run.
+                        await self._conversations.listing(limit=1)
+                        yield
+                    finally:
+                        self._group = None
+                        group.cancel_scope.cancel()
         except BaseExceptionGroup as errors:
             if len(errors.exceptions) == 1:
                 raise errors.exceptions[0] from None
             raise  # pragma: no cover -- the block and idle closing never both raise.
 
     async def open(self, conversation_id: str, /) -> LiveSession:
+        """The live session holding `conversation_id`, else a new one resuming it.
+
+        One another process runs continues in the fork of it an earlier open saved, in any CLAI, if there is one.
+        """
         while True:
-            live = self._holder(conversation_id) or self._copy_of(conversation_id)
+            live = self._holder(conversation_id)
             switching = self._switching.get(live.runtime.live_session.id) if live is not None else None
             if live is not None and live.ready and not live.closing and switching is None:
                 return live.runtime.live_session
@@ -216,13 +231,18 @@ class LiveRuntimes(JoinedSessions):
         opened = self._opening[conversation_id] = Event()
         try:
             saved = await self._conversations.get(conversation_id=conversation_id)
-            return await self._start(workspace_directory(saved.summary.workspace), resume=conversation_id)
+            continuing = await continuing_fork(self._conversations, saved.summary)
+            if continuing is None:
+                directory = await to_thread.run_sync(workspace_directory, saved.summary.workspace)
+                return await self._start(directory, resume=conversation_id)
         finally:
             del self._opening[conversation_id]
             opened.set()
+        return await self.open(continuing.conversation_id)
 
     async def new(self, *, workspace: Path | None = None) -> LiveSession:
-        return await self._start(None if workspace is None else workspace_directory(str(workspace)), resume=None)
+        directory = None if workspace is None else await to_thread.run_sync(workspace_directory, str(workspace))
+        return await self._start(directory, resume=None)
 
     @contextmanager
     def claim(self, conversation_id: str, *, holder: LiveSession) -> Generator[None]:
@@ -298,9 +318,6 @@ class LiveRuntimes(JoinedSessions):
         live = self._live[runtime.live_session.id]
 
         def started() -> None:
-            if resume is not None and (copy := runtime.live_session.conversation.conversation_id) != resume:
-                # Another process runs it, so this session continues in a copy; opening it again returns this one.
-                live.copied = (resume, copy)
             live.ready = True
             task_status.started(runtime.live_session)
             self.changed(runtime.live_session)

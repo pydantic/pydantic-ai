@@ -365,7 +365,8 @@ class TestRun:
                 # Hold the deadline until the child runs, so the stop has to end it rather than
                 # merely beat it: a stop that lands late on a loaded runner must not flake the test.
                 with anyio.CancelScope(shield=True), anyio.fail_after(5):
-                    while not (pid_file.exists() and pid_file.read_text().endswith('\n')):
+                    pid = anyio.Path(pid_file)
+                    while not (await pid.exists() and (await pid.read_text()).endswith('\n')):
                         await anyio.sleep(0.01)
                 if delay_ack:
                     # The start ACK is lost: the deadline passed, so this is where it cancels.
@@ -1050,7 +1051,7 @@ async def test_auth_error_classifies_expired_key_without_leaking_it(fake_e2b: Fa
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await E2BSandboxBackend().get_sandbox()
     assert str(exc.value) == (
-        'Credential expired. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
+        'Credential expired. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment, or pass a configured `e2b.E2B` as `client=`.'
     )
     assert 'sensitive-credential-value' not in str(exc.value)
 
@@ -1062,7 +1063,10 @@ async def test_missing_key_is_reported_as_not_found(fake_e2b: FakeE2B) -> None:
     )
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await E2BSandboxBackend().get_sandbox()
-    assert str(exc.value) == 'No E2B API key found. Set E2B_API_KEY in the environment.'
+    assert (
+        str(exc.value)
+        == 'No E2B API key found. Set E2B_API_KEY in the environment, or pass a configured `e2b.E2B` as `client=`.'
+    )
 
 
 def test_missing_e2b_extra_has_an_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1284,10 +1288,11 @@ async def test_a_stop_reaches_a_command_whose_name_holds_a_newline(fake_e2b: Fak
     # Linux names a process after its executable, and a file name may hold a newline, which a
     # line-wise read of `/proc/PID/stat` would cut short.
     fake_e2b.host_root = tmp_path
-    sleep = shutil.which('sleep')
-    assert sleep is not None
+    # A script rather than a link to `sleep`: a multicall `sleep`, such as uutils coreutils on
+    # Ubuntu 26.04, refuses to run under another name. The kernel names a script after its file.
     odd = tmp_path / 'odd\nname'
-    odd.symlink_to(sleep)
+    odd.write_text('#!/bin/sh\nsleep 30 & wait\n')
+    odd.chmod(0o755)
     pid_file = tmp_path / 'pid'
     backend = await started()
     try:
@@ -1296,7 +1301,7 @@ async def test_a_stop_reaches_a_command_whose_name_holds_a_newline(fake_e2b: Fak
                 group.start_soon(
                     partial(
                         backend.run,
-                        f'echo $$ > {shlex.quote(str(pid_file))}; exec {shlex.quote(str(odd))} 30',
+                        f'echo $$ > {shlex.quote(str(pid_file))}; exec {shlex.quote(str(odd))}',
                         shell=True,
                     )
                 )

@@ -24,8 +24,9 @@ from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._agent_graph import resolve_conversation_id
-from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, NativeTool, WebFetch
+from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -96,9 +97,12 @@ from pydantic_ai.realtime._session import (
     _AUDIO_TAP_MAX_CHUNKS,  # pyright: ignore[reportPrivateUsage]
     _AUDIO_TAP_SECONDS,  # pyright: ignore[reportPrivateUsage]
     _pending_message_text,  # pyright: ignore[reportPrivateUsage]
+    _RealtimePendingMessages,  # pyright: ignore[reportPrivateUsage]
     _TapView,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.realtime._utils import (
+    SystemPromptContext,
+    SystemPromptText,
     resolve_advertised_tools,
     seed_pcm_audio,
     seed_speech_content,
@@ -299,6 +303,7 @@ def _profile(
     supports_output_truncation: bool = True,
     supports_text_output: bool = True,
     supports_session_seeding: bool = True,
+    supports_system_messages: bool = True,
     supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(
         {WebSearchTool, WebFetchTool, CodeExecutionTool}
     ),
@@ -311,6 +316,7 @@ def _profile(
         supports_output_truncation=supports_output_truncation,
         supports_text_output=supports_text_output,
         supports_session_seeding=supports_session_seeding,
+        supports_system_messages=supports_system_messages,
         supported_native_tools=supported_native_tools,
     )
 
@@ -596,6 +602,36 @@ async def test_cumulative_transcript_repeating_itself_emits_nothing() -> None:
         PartDeltaEvent(index=0, delta=SpeechPartDelta(speaker='user', transcript_delta='Hello', transcript='Hello'))
     ]
     assert deltas == [TranscriptUpdate(index=0, speaker='user', delta='Hello', transcript='Hello')]
+
+
+async def test_cumulative_transcript_revised_to_empty_clears_the_caption() -> None:
+    """A snapshot revising the turn to nothing is a correction, and the caption view must show it as one.
+
+    An empty `transcript` is a real value, not "no transcript": treating it as missing would keep
+    rendering the text the provider just withdrew.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello', cumulative=True),
+            InputTranscript(text='', cumulative=True),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn)
+
+    async with session:
+        events, deltas = await asyncio.gather(
+            drain_events(session), aiter_to_list(session.stream_transcripts(delta=True))
+        )
+
+    assert [event.delta for event in events if isinstance(event, PartDeltaEvent)] == [
+        SpeechPartDelta(speaker='user', transcript_delta='hello', transcript='hello'),
+        SpeechPartDelta(speaker='user', transcript_delta='', transcript=''),
+    ]
+    assert deltas == [
+        TranscriptUpdate(index=0, speaker='user', delta='hello', transcript='hello'),
+        TranscriptUpdate(index=0, speaker='user', delta='', transcript=''),
+    ]
 
 
 # One second of the default 24 kHz mono PCM16 output.
@@ -905,7 +941,6 @@ async def test_closing_an_unstarted_view_releases_its_tap() -> None:
         assert session._audio_tap_drops == 0  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.usefixtures('young_gc')
 async def test_abandoned_unstarted_view_releases_its_tap() -> None:
     chunks = [bytes([index]) for index in range(40)]
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
@@ -991,7 +1026,7 @@ async def test_multiple_assistant_items_fold_into_one_response() -> None:
         [
             ModelResponse(
                 parts=[
-                    SpeechPart(speaker='assistant', transcript='first'),
+                    SpeechPart(speaker='assistant', transcript='first', id='item-1', provider_name='openai'),
                     TextPart(content='second'),
                 ],
                 provider_name='openai',
@@ -1478,8 +1513,8 @@ async def test_explicit_interrupt_records_audio_offset_on_last_speech_part() -> 
         [
             ModelResponse(
                 parts=[
-                    SpeechPart(speaker='assistant', transcript='first'),
-                    SpeechPart(speaker='assistant', transcript='second', interrupted_at_ms=640),
+                    SpeechPart(speaker='assistant', transcript='first', id='item-1'),
+                    SpeechPart(speaker='assistant', transcript='second', interrupted_at_ms=640, id='item-2'),
                 ],
                 model_name='m',
                 timestamp=IsDatetime(),
@@ -1517,9 +1552,7 @@ async def test_deltas_still_in_flight_when_a_cancel_lands_stay_in_the_interrupte
             ModelResponse(
                 parts=[
                     SpeechPart(
-                        speaker='assistant',
-                        transcript='I was saying something',
-                        interrupted_at_ms=120,
+                        speaker='assistant', transcript='I was saying something', interrupted_at_ms=120, id='item-1'
                     )
                 ],
                 model_name='m',
@@ -2462,7 +2495,8 @@ async def test_handle_barge_in_flushes_on_provider_initiated_interruption() -> N
         assert [chunk async for chunk in stream] == []
 
 
-async def test_speech_parts_do_not_persist_provider_item_ids() -> None:
+async def test_speech_parts_record_provider_item_ids() -> None:
+    """The model's speech carries the provider's item ID, which a standard model never receives."""
     openai = RealtimeSession(
         FakeRealtimeConnection([OutputTranscript(text='hello', is_final=True, item_id='item-a'), ResponseDone()]),
         _noop_runner,
@@ -2473,14 +2507,20 @@ async def test_speech_parts_do_not_persist_provider_item_ids() -> None:
         _noop_runner,
         provider_name='google',
     )
-    _ = await collect_events(openai)
+    openai_events = await collect_events(openai)
     _ = await collect_events(gemini)
 
+    starts = [event.part for event in openai_events if isinstance(event, PartStartEvent)]
+    assert starts == snapshot([SpeechPart(speaker='assistant', transcript='', id='item-a', provider_name='openai')])
     openai_part = openai.new_messages()[0].parts[0]
     gemini_part = gemini.new_messages()[0].parts[0]
     assert isinstance(openai_part, SpeechPart) and isinstance(gemini_part, SpeechPart)
-    assert (openai_part.id, openai_part.provider_name) == (None, None)
+    assert (openai_part.id, openai_part.provider_name) == ('item-a', 'openai')
     assert (gemini_part.id, gemini_part.provider_name) == (None, None)
+
+    # A text model reads the speech as plain text: a realtime item ID means nothing to the API it would be replayed to.
+    prepared = TestModel().prepare_messages(openai.all_messages())
+    assert prepared[0].parts == snapshot([TextPart(content='hello')])
 
 
 # --- tool calls: history + events --------------------------------------------------------------
@@ -3817,12 +3857,14 @@ class _RepeatedMalformedToolArgsConnection(FakeRealtimeConnection):
 async def test_repeated_malformed_json_args_exceed_tool_retry_budget() -> None:
     session = RealtimeSession(_RepeatedMalformedToolArgsConnection([]), _noop_runner)
 
-    with pytest.raises(UnexpectedModelBehavior, match="Tool 'noop' exceeded max retries count of 1"):
-        await collect_events(session)
-
-    assert session._tool_manager.failed_tools == set()  # pyright: ignore[reportPrivateUsage]
-    assert session._tool_manager.ctx is not None  # pyright: ignore[reportPrivateUsage]
-    assert session._tool_manager.ctx.retries == {'noop': 1}  # pyright: ignore[reportPrivateUsage]
+    async with session:
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'noop' exceeded max retries count of 1"):
+            async for _ in session:
+                pass
+        # Read before closing: teardown releases the tool manager's run context.
+        assert session._tool_manager.failed_tools == set()  # pyright: ignore[reportPrivateUsage]
+        assert session._tool_manager.ctx is not None  # pyright: ignore[reportPrivateUsage]
+        assert session._tool_manager.ctx.retries == {'noop': 1}  # pyright: ignore[reportPrivateUsage]
 
 
 class _RecordsUnanswered(FakeRealtimeConnection):
@@ -4287,7 +4329,8 @@ async def test_close_completes_when_the_closing_task_is_cancelled() -> None:
             watchdog.cancel()
 
     assert session.closed
-    assert session._pump_task is not None and session._pump_task.done()  # pyright: ignore[reportPrivateUsage]
+    # The teardown finished, releasing the pump task along with the rest of the run state.
+    assert session._pump_task is None  # pyright: ignore[reportPrivateUsage]
     assert tool_task is not None and tool_task.done()
     assert tool_cancelled.is_set()
     assert [
@@ -6024,7 +6067,7 @@ async def test_send_during_response_is_recorded_after_response() -> None:
     assert session.new_messages() == snapshot(
         [
             ModelResponse(
-                parts=[SpeechPart(speaker='assistant', transcript='first response')],
+                parts=[SpeechPart(speaker='assistant', transcript='first response', id='assistant-1')],
                 provider_response_id='response-1',
                 timestamp=IsDatetime(),
                 finish_reason='stop',
@@ -6670,9 +6713,9 @@ async def test_late_transcript_yields_its_turn_again_in_stream_transcripts() -> 
 
     assert transcripts == snapshot(
         [
-            SpeechPart(speaker='assistant', transcript='Hello'),
-            SpeechPart(speaker='assistant', transcript='Hello world.'),
-            SpeechPart(speaker='assistant', transcript='Bonjour.'),
+            SpeechPart(speaker='assistant', transcript='Hello', id='a'),
+            SpeechPart(speaker='assistant', transcript='Hello world.', id='a'),
+            SpeechPart(speaker='assistant', transcript='Bonjour.', id='b'),
         ]
     )
     assert updates == snapshot(
@@ -8009,6 +8052,36 @@ async def test_agent_realtime_session_warns_when_async_tool_calls_false_is_ignor
             pass
 
 
+async def test_agent_realtime_session_warns_when_output_speech_timestamps_are_unsupported() -> None:
+    """A model that reports no speech timestamps says so when they're asked for, and only then."""
+    agent: Agent[None, str] = Agent()
+    untimed = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(UnsupportedSettingWarning) as record:
+        async with agent.realtime(
+            untimed, model_settings=RealtimeModelSettings(output_speech_timestamps=True)
+        ).session():
+            pass
+    assert [str(warning.message) for warning in record] == snapshot(
+        [
+            "The `output_speech_timestamps` setting is not supported by model 'fake:fake-realtime' and will be "
+            'ignored. Its speech carries no timestamps.'
+        ]
+    )
+
+    profile = _profile()
+    profile['output_speech_timestamp_granularity'] = 'word'
+    timed = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]), profile=profile)
+    untimed = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        async with agent.realtime(timed, model_settings=RealtimeModelSettings(output_speech_timestamps=True)).session():
+            pass
+        async with agent.realtime(
+            untimed, model_settings=RealtimeModelSettings(output_speech_timestamps=False)
+        ).session():
+            pass
+
+
 @pytest.mark.parametrize(
     'settings,has_tools,declared',
     [
@@ -8583,6 +8656,65 @@ async def test_session_enqueue_when_idle_follows_asap() -> None:
     assert conn.sent_before_each_done == [['soon'], ['soon', 'idle']]
 
 
+async def test_session_set_enqueue_priority_wakes_delivery() -> None:
+    """Promoting a `when_idle` item to `'asap'` starts a delivery, as enqueueing it at `'asap'` would.
+
+    Each `when_idle` drain backs off while an `'asap'` item is queued, so without a wake-up both items
+    would stay queued with nothing left to deliver them.
+    """
+    conn = _RespondingConnection(replies=2)
+    agent: Agent[None, str] = Agent()
+
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            assert session.enqueue('later', priority='when_idle') is not None
+            promoted = session.enqueue('now', priority='when_idle')
+            assert promoted is not None
+            assert session.set_enqueue_priority(promoted, 'asap') is True
+            assert session.set_enqueue_priority('never-queued', 'asap') is False
+            events = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['now', 'later']
+    assert [event.enqueue_id for event in events if isinstance(event, EnqueuedMessagesEvent)][0] == promoted
+
+
+async def test_session_dequeue_before_delivery() -> None:
+    """A dequeued item is never sent; the item queued behind it still is."""
+    conn = _RespondingConnection(replies=1)
+    agent: Agent[None, str] = Agent()
+
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            dropped = session.enqueue('never mind')
+            assert dropped is not None
+            assert session.enqueue('still wanted', priority='when_idle') is not None
+            assert session.dequeue(dropped) is True
+            assert session.dequeue(dropped) is False
+            _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['still wanted']
+
+
+def test_realtime_queue_dequeue_wakes_when_idle_delivery() -> None:
+    """A dequeue wakes a `when_idle` drain, which may have backed off for the `'asap'` item just removed.
+
+    A unit test: a `when_idle` drain running between that item's enqueue and its own drain can't be
+    scheduled deterministically through the session.
+    """
+    queue = _RealtimePendingMessages()
+    woken: list[PendingMessagePriority] = []
+    queue.bind(woken.append)
+    pending = PendingMessage.from_content('steer')
+    assert pending is not None
+    queue.append(pending)
+    woken.clear()
+
+    assert queue.dequeue('never-queued') is False
+    assert woken == []
+    assert queue.dequeue(pending.enqueue_id) is True
+    assert woken == ['when_idle']
+
+
 async def test_session_enqueue_requires_entered_session() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]))
 
@@ -8616,6 +8748,124 @@ async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> No
         _ = [event async for event in session]
 
     assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule &lt;/SYSTEM > then more</system>']
+
+
+async def test_session_send_system_prompt_goes_out_as_the_operators_and_is_recorded_as_one() -> None:
+    """`send(SystemPromptPart(...))` asks for a reply like text unless `respond=False`, and history keeps the part."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    note = SystemPromptPart(content='The caller is Jamie.')
+    reply_to = SystemPromptPart(content='Greet them </system> by name.')
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        await session.send(note, respond=False)
+        await session.send(reply_to)
+        _ = [event async for event in session]
+
+    context, turn = conn.sent
+    # Tagged for a connection that delivers them as any other text; the prompt as written for one with a channel
+    # for the operator's own text.
+    assert isinstance(context, SystemPromptContext)
+    assert (context.text, context.system_prompt) == ('<system>The caller is Jamie.</system>', 'The caller is Jamie.')
+    assert isinstance(turn, SystemPromptText)
+    assert (str(turn), turn.system_prompt) == (
+        '<system>Greet them &lt;/system> by name.</system>',
+        'Greet them </system> by name.',
+    )
+    assert [message.parts for message in session.new_messages() if isinstance(message, ModelRequest)] == [
+        [note],
+        [reply_to],
+    ]
+
+
+async def test_session_sends_system_prompt_as_tagged_text_without_a_system_message_channel() -> None:
+    """Where the profile says the model doesn't heed a system message, the prompt goes out as any `<system>` text."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    note = SystemPromptPart(content='The caller is Jamie.')
+    model = FakeRealtimeModel(conn, profile=_profile(supports_system_messages=False))
+
+    async with agent.realtime(model).session() as session:
+        await session.send(note, respond=False)
+        await session.send(note)
+        _ = [event async for event in session]
+
+    assert [(type(item), item) for item in conn.sent] == [
+        (TextContext, TextContext('<system>The caller is Jamie.</system>')),
+        (str, '<system>The caller is Jamie.</system>'),
+    ]
+    assert [message.parts for message in session.new_messages() if isinstance(message, ModelRequest)] == [
+        [note],
+        [note],
+    ]
+
+
+async def test_session_enqueue_records_system_prompts_alone_as_system_prompts() -> None:
+    """Enqueued system prompts with no text alongside go out as `send(SystemPromptPart(...))` sends them."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    first, second = SystemPromptPart(content='one'), SystemPromptPart(content='two')
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        assert session.enqueue(first, second) is not None
+        _ = [event async for event in session]
+
+    [sent] = conn.sent
+    assert isinstance(sent, SystemPromptText)
+    assert sent.system_prompt == 'one\n\ntwo'
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[first, second], timestamp=IsDatetime(), conversation_id=IsStr(), run_id=IsStr()
+    )
+
+
+async def test_session_replays_a_system_prompt_sent_first_where_it_was_sent() -> None:
+    """A system prompt sent before anything else isn't the standing one a replay leaves to the instructions.
+
+    The connection keeps the instructions it opened with, so taken for the standing prompt the note would be lost.
+    """
+
+    class _RecordsConversation(FakeRealtimeConnection):
+        message_history: Callable[[], Sequence[ModelMessage]] | None = None
+
+        def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
+            self.message_history = message_history
+
+    note = SystemPromptPart(content='The caller is Jamie.')
+
+    fresh = _RecordsConversation([])
+    async with RealtimeSession(fresh, profile=_profile(supports_session_seeding=True)) as session:
+        assert fresh.message_history is not None
+        assert fresh.message_history() == []
+        await session.send(note, respond=False)
+        await session.send('hi')
+        replayed = fresh.message_history()
+    assert [message.parts for message in replayed if isinstance(message, ModelRequest)] == [
+        [UserPromptPart(content='<system>The caller is Jamie.</system>', timestamp=note.timestamp)],
+        [UserPromptPart(content='hi', timestamp=IsDatetime())],
+    ]
+    # History itself keeps the system prompt it is.
+    assert session.new_messages()[0].parts == [note]
+
+    # After a user turn, the note is a later system prompt, which every replay keeps in place already.
+    after_text = _RecordsConversation([])
+    async with RealtimeSession(after_text, profile=_profile(supports_session_seeding=True)) as session:
+        await session.send('hi')
+        await session.send(note, respond=False)
+        assert after_text.message_history is not None
+        assert [part for message in after_text.message_history() for part in message.parts][1] is note
+
+    # A conversation that opens with a request of its own: only that one's system prompt is the standing one.
+    seeded = _RecordsConversation([])
+    history = [ModelRequest(parts=[SystemPromptPart(content='Standing prompt.')])]
+    async with RealtimeSession(
+        seeded, profile=_profile(supports_session_seeding=True), message_history=history
+    ) as session:
+        await session.send(note, respond=False)
+        assert seeded.message_history is not None
+        assert [part for message in seeded.message_history() for part in message.parts] == [
+            history[0].parts[0],
+            note,
+        ]
 
 
 async def test_session_enqueue_delivers_text_content_and_keeps_its_metadata() -> None:
@@ -8889,7 +9139,7 @@ async def test_existing_assistant_speech_associates_late_item_id_in_session_stat
     assert isinstance(response, ModelResponse)
     part = response.parts[0]
     assert isinstance(part, SpeechPart)
-    assert part.id is None
+    assert part.id == 'assistant-item'
     assert len(response.parts) == 1
 
 
@@ -10139,22 +10389,6 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
     assert model.last_instructions == 'Base\n\nDynamic'
 
 
-async def test_agent_realtime_session_append_instructions_warn() -> None:
-    agent: Agent[None, str] = Agent(instructions='Base')
-
-    @agent.instructions(name='state', on_change='append')
-    def state() -> str:
-        return 'Current state'
-
-    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
-    with pytest.warns(
-        UserWarning, match="realtime sessions, so instruction blocks 'agent:state' are sent as session instructions"
-    ):
-        async with agent.realtime(model).session() as session:
-            _ = [event async for event in session]
-    assert model.last_instructions == 'Base\n\nCurrent state'
-
-
 async def test_agent_realtime_session_sorts_static_instructions_before_dynamic() -> None:
     """A static toolset `InstructionPart` sorts before dynamic agent instructions, like `run`/`iter`.
 
@@ -10565,6 +10799,40 @@ async def test_agent_realtime_continues_a_text_runs_conversation() -> None:
         assert session.new_messages()[0].conversation_id == text.conversation_id
         # Handed back, the bundle still carries the text run's total, not a restarted one.
         assert session.conversation.usage.requests == text.usage.requests
+
+
+async def test_agent_realtime_carries_the_conversation_s_revision() -> None:
+    agent: Agent[None, str] = Agent(TestModel())
+    conversation = (await agent.run('Hi')).conversation
+    conversation.revision = 'rev-3'
+
+    async with agent.realtime(
+        FakeRealtimeModel(FakeRealtimeConnection([])), conversation=conversation
+    ).session() as session:
+        assert session.conversation.revision == 'rev-3'
+
+    assert session.result is not None
+    assert session.result.conversation.revision == 'rev-3'
+
+
+async def test_a_sessions_conversation_can_be_saved_again_as_the_session_goes_on() -> None:
+    store = InMemoryConversationStore()
+    agent: Agent[None, str] = Agent(TestModel())
+    conversation = (await agent.run('Hi')).conversation
+    await store.save(conversation)
+
+    async with agent.realtime(
+        FakeRealtimeModel(FakeRealtimeConnection([])), conversation=conversation
+    ).session() as session:
+        await store.save(session.conversation)
+        await session.send('And another.')
+        await store.save(session.conversation)
+
+    assert session.result is not None
+    await store.save(session.result.conversation)
+    loaded = await store.load(conversation.conversation_id)
+    assert loaded is not None
+    assert loaded.messages == session.all_messages()
 
 
 def test_agent_realtime_rejects_a_conversation_alongside_its_pieces() -> None:

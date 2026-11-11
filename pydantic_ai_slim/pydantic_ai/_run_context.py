@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import sys
 import warnings
+from collections import Counter
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -21,7 +22,16 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 from ._cancel import current_run_clock
 from ._context_size import context_tokens
-from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._enqueue import (
+    EnqueueContent,
+    EnqueueGuard,
+    PendingMessage,
+    PendingMessagePriority,
+    PendingMessageQueue,
+    QueueChangeMethod,
+    remove_pending,
+    set_pending_priority,
+)
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 
@@ -333,7 +343,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     backed by a running agent (e.g. the `RunContext` built by `Agent.system_prompt_parts`), where
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] would have nowhere to drain to and so raises.
     Managed by the framework: read it if useful, but use [`enqueue`][pydantic_ai.tools.RunContext.enqueue]
-    to add messages rather than mutating it directly.
+    to add messages, and [`dequeue`][pydantic_ai.tools.RunContext.dequeue] or
+    [`set_enqueue_priority`][pydantic_ai.tools.RunContext.set_enqueue_priority] to change them, rather than mutating it directly.
     """
 
     _cancellation: RunCancellation | None = field(default=None, repr=False)
@@ -449,7 +460,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
 
     loaded_capability_ids: set[str] = field(default_factory=set[str])
-    """IDs of the deferred capabilities the model has explicitly loaded via the `load_capability` tool.
+    """IDs of the deferred capabilities that have been explicitly loaded, by the model via the `load_capability` tool or from code via [`load_capability`][pydantic_ai.tools.RunContext.load_capability].
 
     The capability-side mirror of `discovered_tool_names`: the runtime-revealed subset.
     Derived from message history (`parse_loaded_capabilities`) before each request, so a capability
@@ -498,6 +509,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     _capability: AbstractCapability[RunContextAgentDepsT] | None = field(default=None, repr=False)
     """The capability whose hook is currently being dispatched, if any."""
+
+    _dispatched_tool_name: str | None = field(default=None, repr=False, compare=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The name the executing `ToolManager` holds the current tool under, set when it builds the tool
+    call's context. `tool_name` can differ: `PrefixedToolset` and `RenamedToolset` hand the wrapped
+    tool its own name. `emit` resolves the tool's owning capability by this name.
+    """
 
     _tool_name_path: ToolNamePath = field(default=(), repr=False, compare=False)
     """Private implementation detail — not part of the public API; do not read or write.
@@ -660,10 +679,28 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Because it grows step by step, where you read it in the
         [hook order](../hooks.md#hook-ordering) determines what you see — e.g. a capability
         loaded during one step is not reflected until the next step's hooks.
+
+        A capability inside a deferred group (a `CombinedCapability` with an `id` and
+        `defer_loading=True`) is active only once the group is loaded.
         """
+        # The registry first: a Temporal run context without it raises an error that names it.
+        registry = self.capabilities
+        loaded = self.loaded_capability_ids
+        # How often each object occurs beneath an unloaded deferred capability.
+        hidden: Counter[int] = Counter()
+        for capability_id, cap in registry.items():
+            if cap.defer_loading is True and capability_id not in loaded:
+                # `apply` visits the capability itself first, then what is registered beneath it.
+                beneath: list[AbstractCapability[RunContextAgentDepsT]] = []
+                cap.apply(beneath.append)
+                hidden.update(map(id, beneath[1:]))
+        # The registry holds one id per occurrence, so an object that also occurs elsewhere stays active.
+        occurrences = Counter(map(id, registry.values()))
         return {
-            id for id, cap in self.capabilities.items() if cap.defer_loading is not True
-        } | self.loaded_capability_ids
+            capability_id
+            for capability_id, cap in registry.items()
+            if cap.defer_loading is not True and hidden[id(cap)] < occurrences[id(cap)]
+        } | loaded
 
     @property
     def _dispatch_active_capability_ids(self) -> set[str]:
@@ -900,8 +937,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
             capability_id = next(
                 (run_id for run_id, cap in self.capabilities.items() if cap is capability), capability.id
             )
-        elif self.tool_name is not None and self.tool_manager is not None and self.tool_manager.tools is not None:
-            if (tool := self.tool_manager.tools.get(self.tool_name)) is not None:
+        elif (
+            (tool_name := self._dispatched_tool_name or self.tool_name) is not None
+            and self.tool_manager is not None
+            and self.tool_manager.tools is not None
+        ):
+            if (tool := self.tool_manager.tools.get(tool_name)) is not None:
                 # `CapabilityOwnedToolset` stamps the owning capability's run id on the tool definition,
                 # covering capabilities that rely on an implicit (derived) id as well as explicit ones.
                 tool_capability_id = tool.tool_def.capability_id
@@ -971,7 +1012,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end). From a `before_model_request`
+                    or a redirect if the agent would otherwise end; at a deferred-tool pause the
+                    content is added to the history instead, unless every call in the paused step
+                    was deferred). From a `before_model_request`
                     hook, that's the request being prepared. In a realtime session, an active
                     assistant response is allowed to finish before the content is sent; otherwise it
                     is sent immediately.
@@ -1004,6 +1047,111 @@ class RunContext(Generic[RunContextAgentDepsT]):
             return None
         self.pending_messages.append(pending)
         return pending.enqueue_id
+
+    def dequeue(self, enqueue_id: str) -> bool:
+        """Remove a message queued with [`enqueue`][pydantic_ai.tools.RunContext.enqueue] before it's delivered.
+
+        Safe to call from the same places as `enqueue`. The check and the removal happen under the
+        queue's lock, so a concurrent delivery and a dequeue can't both succeed.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+
+        Returns:
+            `True` if the message was still queued and is now removed, or `False` if it was already
+            delivered, dequeued, or never queued in this run. No
+            [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] is emitted for it.
+
+        Raises:
+            UserError: If this `RunContext` has no pending-message queue (e.g. the synthetic context from
+                `Agent.system_prompt_parts`), or it runs inside a durable execution unit, where the change
+                would be lost on replay.
+        """
+        queue = self._changeable_queue('dequeue')
+        if isinstance(queue, PendingMessageQueue):
+            return queue.dequeue(enqueue_id)
+        return remove_pending(queue, enqueue_id)  # a hand-built context's list, which nothing drains
+
+    def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+        """Change when a message queued with [`enqueue`][pydantic_ai.tools.RunContext.enqueue] is delivered.
+
+        The message keeps its place among queued messages and its `enqueue_id`, so the
+        [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] for its delivery still
+        carries that ID. A message enqueued at `'when_idle'` and promoted to `'asap'` is delivered at the
+        next model request, in its own [`ModelRequest`][pydantic_ai.messages.ModelRequest]. Content
+        enqueued during a tool call and demoted to `'when_idle'` is delivered like other `'when_idle'`
+        content, as its own request, not next to that call's result; promoted back before the request
+        carrying that result is sent, it goes next to the result again.
+
+        Args:
+            enqueue_id: The ID `enqueue` returned.
+            priority: The new priority, with the same meaning as in `enqueue`.
+
+        Returns:
+            `True` if the message was still queued, or `False` if it was already delivered, dequeued,
+            or never queued in this run.
+
+        Raises:
+            UserError: If this `RunContext` has no pending-message queue (e.g. the synthetic context from
+                `Agent.system_prompt_parts`), or it runs inside a durable execution unit, where the change
+                would be lost on replay.
+        """
+        queue = self._changeable_queue('set_enqueue_priority')
+        if isinstance(queue, PendingMessageQueue):
+            return queue.set_enqueue_priority(enqueue_id, priority)
+        return set_pending_priority(queue, enqueue_id, priority)  # a hand-built context's list, which nothing drains
+
+    def _changeable_queue(self, method: QueueChangeMethod) -> list[PendingMessage]:
+        queue = self.pending_messages
+        if queue is None:
+            raise UserError(
+                f'`{method}` is only available during an agent run (from tools, capability hooks, or '
+                f'`AgentRun.{method}`). This `RunContext` has no pending-message queue to change.'
+            )
+        if isinstance(queue, EnqueueGuard):
+            raise queue.change_error(method)
+        return queue
+
+    def load_capability(self, capability: str | AbstractCapability[RunContextAgentDepsT]) -> bool:
+        """Load an [on-demand capability](../capabilities/on-demand.md#loading-from-code) on the model request that follows.
+
+        The load is recorded in message history as a
+        [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] naming the
+        capability, followed by a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]
+        revealing its tools if it has any, without a `load_capability` call, so it works whether or not the
+        request has a `load_capability` tool. It takes effect on the model request that follows: the capability's
+        instructions are stated then and its tools become available. Because it lives in history, the load survives
+        [resuming the conversation](../capabilities/on-demand.md#resumable-across-runs).
+
+        Call it whenever a model request follows: from a tool function, sync or async, a tool hook such as
+        `after_tool_execute`, or `after_model_request` on a response with tool calls the run executes, for the next
+        request; from a `before_model_request` hook, for the request being prepared, which gets the capability's tools
+        and instructions (its model settings, native tools and hooks apply from the next request); or from a
+        `before_run` hook, for the run's first request. The load rides along with that request and never causes one: if
+        a step with tool calls ends the run instead (because a tool call needs approval or is deferred, or the run
+        produces its output), the load is discarded, and resuming the run doesn't run that tool again. Durable execution
+        engines run some tools in an activity, step, or task, where it isn't supported; see [Loading a capability from
+        code](../capabilities/on-demand.md#loading-from-code).
+
+        Args:
+            capability: The capability to load: its `id` in this run, or the capability instance itself.
+
+        Returns:
+            `True` if the load was queued, or `False` if the capability is already active (always-on or
+            loaded) or already being loaded: by an earlier call, or by a `load_capability` tool call in the
+            model response being handled. In that last case, the capability is only loaded if the model's
+            call succeeds.
+
+        Raises:
+            UserError: If the capability isn't registered in this run, if it's a non-deferred member of a deferred group
+                that isn't loaded yet (load the group instead), or if this context can't load capabilities: where no
+                model request follows (such as `after_model_request` on a final response, or `after_run`), from an
+                output tool, in a realtime session, or inside a durable execution activity, step, or task.
+        """
+        # Imported here: the loader module imports `RunContext`.
+        from .toolsets._deferred_capability_loader import load_capability
+
+        return load_capability(capability, self)
 
     def cancel(self) -> None:
         """Cancel the agent run this context belongs to.

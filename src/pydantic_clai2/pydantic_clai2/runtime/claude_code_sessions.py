@@ -27,7 +27,6 @@ from pydantic_ai.messages import (
     DocumentUrl,
     ImageUrl,
     ModelMessage,
-    ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
@@ -44,6 +43,8 @@ from pydantic_clai2.runtime.imported_history import (
     Header,
     HistoryBuilder,
     JsonObject,
+    final_answer,
+    framed,
     imported_context,
     number,
     obj,
@@ -139,7 +140,7 @@ def messages(path: Path) -> list[ModelMessage]:
         else ''
     )
     opening = _OPENING.format(subject='This conversation', session_id=path.stem)
-    return _framed(_history(list(records(path)), agents), opening=opening, closing=closing)
+    return framed(_history(list(records(path)), agents), source=SOURCE, opening=opening, closing=closing)
 
 
 def tasks(path: Path, conversation_id: str) -> list[DelegationTask]:
@@ -171,7 +172,7 @@ def tasks(path: Path, conversation_id: str) -> list[DelegationTask]:
             replace(
                 task,
                 prompt=prompt or task.prompt,
-                messages=_framed(history, opening=opening, closing=_CLOSING),
+                messages=framed(history, source=SOURCE, opening=opening, closing=_CLOSING),
                 output=_STOPPED if output is None else output,
                 started_at=times[0].timestamp() if times else task.started_at,
                 finished_at=times[-1].timestamp() if times else None,
@@ -250,10 +251,7 @@ def _output(history: list[ModelMessage]) -> str | None:
     for part in reversed(responses[-1].parts if responses else []):
         if isinstance(part, ToolCallPart) and part.tool_name == 'SubagentHandback':
             return text(part.args_as_dict().get('message'))
-    # A final answer ends the history; anything after it is work the sub-agent had yet to answer.
-    if responses and history[-1] is responses[-1] and not responses[-1].tool_calls:
-        return '\n\n'.join(part.content for part in responses[-1].parts if isinstance(part, TextPart))
-    return None
+    return final_answer(history)
 
 
 def _history(entries: list[JsonObject], agents: dict[str, DelegationTask], *, main: bool = True) -> list[ModelMessage]:
@@ -275,30 +273,18 @@ def _history(entries: list[JsonObject], agents: dict[str, DelegationTask], *, ma
     return history.build()
 
 
-def _framed(history: list[ModelMessage], *, opening: str, closing: str) -> list[ModelMessage]:
-    """`history` between the notes on the change of harness, or nothing when there is no history."""
-    built = list(history)
-    if not built:
-        return []
-    first = built[0]
-    start = imported_context(opening, source=SOURCE, kind='import_start', at=first.timestamp or timestamp(None))
-    end = imported_context(closing, source=SOURCE, kind='import_end', at=built[-1].timestamp or timestamp(None))
-    if isinstance(first, ModelRequest):
-        built[0] = replace(first, parts=[start, *first.parts])
-    else:
-        built.insert(0, ModelRequest(parts=[start], timestamp=start.timestamp))
-    if isinstance(last := built[-1], ModelRequest):
-        built[-1] = replace(last, parts=[*last.parts, end])
-    else:
-        built.append(ModelRequest(parts=[end], timestamp=end.timestamp))
-    return built
-
-
 def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:
     """The entries behind the last message, with the results of its parallel tool calls, in file order.
 
     In a main transcript the last message is the last one off a sidechain; a sub-agent's is all sidechain.
     """
+    chain = _chain(entries, main=main)
+    kept = chain | _parallel_results(entries, chain)
+    return [entry for entry in entries if text(entry.get('uuid')) in kept]
+
+
+def _chain(entries: list[JsonObject], *, main: bool) -> set[str]:
+    """The IDs of the entries behind the last message."""
     by_id = {text(entry.get('uuid')): entry for entry in entries}
     node = next(
         (
@@ -315,6 +301,11 @@ def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:
         # Popping each entry as it is visited also ends a malformed, cyclic chain.
         by_id.pop(text(node.get('uuid')), None)
         node = by_id.pop(text(node.get('parentUuid')), None)
+    return chain
+
+
+def _parallel_results(entries: list[JsonObject], chain: set[str]) -> set[str]:
+    """The IDs of the results off `chain` that answer its parallel tool calls, the first answer to each call winning."""
     on_chain = [entry for entry in entries if text(entry.get('uuid')) in chain]
     calls = {
         text(block.get('id'))
@@ -324,14 +315,18 @@ def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:
         if block.get('type') == 'tool_use'
     }
     answered = {call_id for entry in on_chain for call_id in _result_ids(entry)}
-    kept = set(chain)
+    kept: set[str] = set()
     for entry in entries:
         ids = _result_ids(entry)
-        if text(entry.get('uuid')) not in chain and text(entry.get('parentUuid')) in chain and ids:
-            if ids <= calls - answered:
-                kept.add(text(entry.get('uuid')))
-                answered |= ids
-    return [entry for entry in entries if text(entry.get('uuid')) in kept]
+        if (
+            text(entry.get('uuid')) not in chain
+            and text(entry.get('parentUuid')) in chain
+            and ids
+            and ids <= calls - answered
+        ):
+            kept.add(text(entry.get('uuid')))
+            answered |= ids
+    return kept
 
 
 def _result_ids(entry: JsonObject) -> set[str]:
@@ -372,19 +367,23 @@ def _user(history: HistoryBuilder, content: object, *, at: datetime) -> None:
     prompt: list[UserContent] = []
     for block in objects(content):
         if block.get('type') == 'tool_result':
-            items = _contents(block.get('content'))
-            result: ToolReturnContent = (
-                '\n'.join(item for item in items if isinstance(item, str))
-                if all(isinstance(item, str) for item in items)
-                else items
-            )
-            outcome = 'failed' if block.get('is_error') else 'success'
-            history.result(text(block.get('tool_use_id')), result, at=at, outcome=outcome)
+            _tool_result(history, block, at=at)
         elif (item := _content(block)) is not None:
             prompt.append(item)
     if isinstance(content, str):
         prompt = [content]
     history.prompt(prompt[0] if len(prompt) == 1 and isinstance(prompt[0], str) else prompt, at=at)
+
+
+def _tool_result(history: HistoryBuilder, block: JsonObject, *, at: datetime) -> None:
+    items = _contents(block.get('content'))
+    result: ToolReturnContent = (
+        '\n'.join(item for item in items if isinstance(item, str))
+        if all(isinstance(item, str) for item in items)
+        else items
+    )
+    outcome = 'failed' if block.get('is_error') else 'success'
+    history.result(text(block.get('tool_use_id')), result, at=at, outcome=outcome)
 
 
 def _meta(

@@ -1,14 +1,17 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
+from itertools import chain
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, override
 
 from .. import _model_errors, usage
+from .._run_context import RunContext
 from .._utils import is_str_dict
 from ..exceptions import ModelAPIError, ModelHTTPError, ModelRequestRejectedError, UserError
 from ..messages import (
@@ -16,28 +19,35 @@ from ..messages import (
     CachePoint,
     FinishReason,
     ModelMessage,
+    ModelResponse,
     ModelResponseStreamEvent,
+    ModelSettingsDeltaPart,
     ThinkingPart,
     UserContent,
     VideoUrl,
 )
-from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
+from ..native_tools import AbstractNativeTool, AdvisorTool, OpenRouterWebSearchToolSettings, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
-from ..settings import CacheSetting, ModelSettings, ThinkingLevel
+from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from . import (
     ModelRequestParameters,
+    StreamedResponse,
+    _effort_window_baseline,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
+    _without_model_settings_deltas,  # pyright: ignore[reportPrivateUsage]
     download_item,
 )
 from ._prompt_cache import (
     excess_cache_points,
+    instruction_cache_boundaries,
     previous_tail_needing_breakpoint,
     raise_earlier_cache_ttls,
     split_cache_setting,
+    split_instruction_cache_points,
 )
 from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
 from ._tool_choice import support_tool_forcing, tool_forcing_unavailable_reason
@@ -52,15 +62,10 @@ try:
     from openai.types.chat.completion_create_params import WebSearchOptions
     from openai.types.shared import ReasoningEffort
 
-    from .openai import (
-        OpenAIChatModel,
-        OpenAIChatModelSettings,
-        OpenAIStreamedResponse,
-        _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
-        _ChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
-        _flags_input,  # pyright: ignore[reportPrivateUsage]
-        _map_usage as _map_openai_usage,  # pyright: ignore[reportPrivateUsage]
-    )
+    from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
+    from .openai._chat_completions import LenientChatCompletion, LenientChatCompletionChunk
+    from .openai._errors import flags_input
+    from .openai._response_fields import map_usage as _map_openai_usage
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenRouter model, '
@@ -114,6 +119,25 @@ class _ChatCompletionContentPartVideoUrlParam(TypedDict):
 
     type: Literal['video_url']
     """The type of content part."""
+
+
+class _ReasoningEffortUpdate(TypedDict):
+    effort: Literal['low', 'medium', 'high', 'max', 'none']
+
+
+class _ConfigurationUpdate(TypedDict):
+    reasoning: _ReasoningEffortUpdate
+
+
+class _ChatCompletionConfigurationUpdateMessageParam(chat.ChatCompletionSystemMessageParam):
+    """A content-less system message that changes the reasoning effort from its position on.
+
+    OpenRouter's extension to Chat Completions, which it translates to the routed model's own form: OpenAI's
+    `configuration_update` input item or Anthropic's per-message `output_config`.
+    See https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#changing-effort-mid-conversation.
+    """
+
+    configuration_update: _ConfigurationUpdate
 
 
 class _OpenRouterMaxPrice(TypedDict, total=False):
@@ -219,6 +243,48 @@ _CACHE_SETTINGS_KEYS = (
     'openrouter_cache_messages',
     'openrouter_cache_tool_definitions',
 )
+
+
+def _move_trailing_cache_control(openai_messages: list[chat.ChatCompletionMessageParam]) -> None:
+    """Keep only the last conversation breakpoint, and move it off the end of the request and off tool results.
+
+    Runs for profiles without `openrouter_supports_trailing_cache_control` (Gemini routes), where OpenRouter uses only the
+    last breakpoint across message content. A breakpoint on the final content part of the request makes OpenRouter's
+    Google Vertex endpoint bill the prompt twice, and one on a tool message isn't used, so the breakpoint goes on the
+    last part of the closest earlier user or assistant message. A breakpoint inside the final user message, with
+    content after it, stays where it is. System message breakpoints aren't touched.
+    """
+    carriers: list[tuple[int, int, dict[str, Any]]] = [
+        (message_index, part_index, part)
+        for message_index, message in enumerate(openai_messages)
+        if message['role'] not in ('system', 'developer') and isinstance(content := message.get('content'), list)
+        for part_index, part in enumerate(cast(list[dict[str, Any]], content))
+        if 'cache_control' in part
+    ]
+    if not carriers:
+        return
+    message_index, part_index, last_carrier = carriers[-1]
+    cache_control = last_carrier['cache_control']
+    for _, _, part in carriers:
+        del part['cache_control']
+
+    message = openai_messages[message_index]
+    is_request_end = (
+        message_index == len(openai_messages) - 1 and part_index == len(cast(list[Any], message.get('content'))) - 1
+    )
+    if message['role'] != 'tool' and not is_request_end:
+        last_carrier['cache_control'] = cache_control
+        return
+    for earlier in reversed(openai_messages[:message_index]):
+        content = earlier.get('content')
+        if earlier['role'] in ('user', 'assistant') and content:
+            if isinstance(content, str):
+                cast(dict[str, Any], earlier)['content'] = [
+                    {'type': 'text', 'text': content, 'cache_control': cache_control}
+                ]
+            else:
+                cast(list[dict[str, Any]], content)[-1]['cache_control'] = cache_control
+            return
 
 
 def _chat_message_block_count(message: chat.ChatCompletionMessageParam) -> int:
@@ -350,7 +416,7 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     openrouter_cache_messages: OpenRouterCacheTTL
     """Convenience setting to enable caching for the last message in the conversation.
 
-    When enabled, this automatically adds `cache_control` to the last content block
+    On Anthropic routes, this adds `cache_control` to the last content block
     in the final message (regardless of role), which is useful for Anthropic's prefix-based
     caching in multi-turn conversations. In tool-use flows, this may target a tool result
     message rather than a user message, which is correct for prefix caching.
@@ -358,10 +424,10 @@ class OpenRouterModelSettings(ModelSettings, total=False):
     If `True`, uses TTL='5m'. You can also specify '5m' or '1h' directly.
     TTL is only included for Anthropic models; Gemini does not support explicit TTL.
 
-    Note: OpenRouter uses only the last breakpoint across normal message content for
-    Gemini caching. Use this when caching the final message boundary is intentional;
-    use `openrouter_cache_instructions` for stable system context. Anthropic supports
-    prefix-based caching across multi-turn conversations with this setting.
+    On Gemini routes, OpenRouter uses only the last breakpoint across normal message
+    content, and it goes on the closest user or assistant message
+    before the final one: a breakpoint at the very end of the request makes OpenRouter's
+    Google Vertex endpoint bill the prompt twice, and one on a tool result isn't used.
 
     See https://openrouter.ai/docs/guides/best-practices/prompt-caching for more information.
     """
@@ -397,7 +463,7 @@ def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream
     the response's own status was 200.
     """
     category = _model_errors.openai_compatible_category(error.code, None, None, error.message)
-    if error.code == 403 and _flags_input(error.metadata):
+    if error.code == 403 and flags_input(error.metadata):
         # A 403 for flagged input is a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
     return ModelHTTPError.for_category(
@@ -530,7 +596,7 @@ class _OpenRouterUsage(completion_usage.CompletionUsage):
     completion_tokens_details: _OpenRouterCompletionTokenDetails | None = None  # type: ignore[reportIncompatibleVariableOverride]
 
 
-class _OpenRouterChatCompletion(_ChatCompletion):
+class _OpenRouterChatCompletion(LenientChatCompletion):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
     provider: str
@@ -681,6 +747,7 @@ def _openrouter_settings_to_openai_settings(
     model_request_parameters: ModelRequestParameters,
     *,
     thinking_always_enabled: bool = False,
+    lowest_reasoning_effort: Literal['minimal', 'low'] = 'low',
 ) -> OpenAIChatModelSettings:
     """Transforms a 'OpenRouterModelSettings' object into an 'OpenAIChatModelSettings' object.
 
@@ -689,6 +756,8 @@ def _openrouter_settings_to_openai_settings(
         model_request_parameters: The 'ModelRequestParameters' object to use for the transformation.
         thinking_always_enabled: Whether the routed model always reasons, so `thinking=False` asks for its lowest
             effort instead of turning reasoning off.
+        lowest_reasoning_effort: The lowest effort the routed model accepts, sent for `thinking=False` when it
+            always reasons.
 
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
@@ -714,7 +783,7 @@ def _openrouter_settings_to_openai_settings(
         if thinking is False and thinking_always_enabled:
             # The routed model can't stop reasoning (OpenRouter rejects `effort='none'` with "Reasoning is
             # mandatory"), so it reasons as little as it can.
-            openrouter_reasoning = {'effort': 'low'}
+            openrouter_reasoning = {'effort': lowest_reasoning_effort}
         else:
             openrouter_reasoning = {'effort': _OPENROUTER_EFFORT_MAP[thinking]}
         if thinking is not False:
@@ -749,11 +818,29 @@ def _openrouter_settings_to_openai_settings(
     return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
 
 
+def _map_web_search_parameters(tool: WebSearchTool) -> dict[str, Any]:
+    parameters: dict[str, Any] = {'search_context_size': tool.search_context_size}
+    if (user_location := tool.user_location) is not None:
+        parameters['user_location'] = {'type': 'approximate', **user_location}
+    if (allowed_domains := tool.allowed_domains) is not None:
+        parameters['allowed_domains'] = allowed_domains
+    if (blocked_domains := tool.blocked_domains) is not None:
+        parameters['excluded_domains'] = blocked_domains
+    if (max_uses := tool.max_uses) is not None:
+        parameters['max_uses'] = max_uses
+    settings = (tool.provider_settings or {}).get('openrouter', {})
+    # Like model settings, options this version doesn't know are ignored rather than sent.
+    known_options = OpenRouterWebSearchToolSettings.__optional_keys__
+    return {**parameters, **{option: value for option, value in settings.items() if option in known_options}}
+
+
 class OpenRouterModel(OpenAIChatModel):
     """Extends OpenAIChatModel to capture extra metadata for Openrouter."""
 
     # OpenRouter extends Chat Completions with a `video_url` content part, so video is up to the model.
     _unsupported_file_inputs = frozenset()
+    # OpenRouter extends Chat Completions with a `configuration_update` system message, too.
+    _renders_effort_deltas = True
 
     def __init__(
         self,
@@ -834,9 +921,10 @@ class OpenRouterModel(OpenAIChatModel):
     ) -> None:
         """Limit the number of cache breakpoints to the downstream provider's maximum.
 
-        Tool and system/developer cache points always take priority; excess breakpoints on the
-        remaining messages are removed oldest-first. Downstreams without a declared maximum
-        (`openrouter_max_cache_points`) are not limited.
+        Tool cache points and the first system/developer cache point always take priority; excess
+        breakpoints on the remaining messages are removed oldest-first, after the instruction cache
+        point behind the `on_change='append'` blocks (see `split_instruction_cache_points`).
+        Downstreams without a declared maximum (`openrouter_max_cache_points`) are not limited.
 
         Args:
             openai_messages: The mapped OpenAI messages to limit.
@@ -846,21 +934,28 @@ class OpenRouterModel(OpenAIChatModel):
         if max_points is None:
             return
 
-        reserved = int(has_tool_cache_point)
-        for msg in openai_messages:
-            if msg.get('role') in ('system', 'developer'):
-                content = msg.get('content')
-                if isinstance(content, list):
-                    reserved += sum(1 for part in content if 'cache_control' in cast(dict[str, Any], part))
+        # The leading system messages carry the instruction points. A later one is a mid-conversation system message,
+        # whose breakpoint is a message point like any other.
+        system_prefix_count = _system_prefix_count(openai_messages)
+        reserved, optional_points = split_instruction_cache_points(
+            [
+                cast('dict[str, Any]', part)
+                for msg in openai_messages[:system_prefix_count]
+                if isinstance(content := msg.get('content'), list)
+                for part in content
+                if 'cache_control' in cast('dict[str, Any]', part)
+            ]
+        )
+        reserved += int(has_tool_cache_point)
 
         message_parts = (
             cast('dict[str, Any]', part)
-            for msg in reversed(openai_messages)
-            if msg.get('role') not in ('system', 'developer') and isinstance(content := msg.get('content'), list)
+            for msg in reversed(openai_messages[system_prefix_count:])
+            if isinstance(content := msg.get('content'), list)
             for part in reversed(content)
         )
         for part_dict in excess_cache_points(
-            message_parts,
+            chain(message_parts, optional_points),
             max_points=max_points,
             reserved=reserved,
             is_cache_point=lambda part: 'cache_control' in part,
@@ -877,8 +972,8 @@ class OpenRouterModel(OpenAIChatModel):
         Anthropic rejects a request where a one-hour breakpoint comes after a five-minute one, processing `tools`, then
         `system`, then `messages` (https://platform.claude.com/docs/en/build-with-claude/prompt-caching), and OpenRouter
         passes that error through. Walking the tools and then the messages matches that order: the only `system`
-        messages are the leading ones that become Anthropic's `system`, since a mid-conversation system prompt is sent
-        as a `<system>`-wrapped user message (`supports_inline_system_prompts=False`).
+        messages are the leading ones that become Anthropic's `system`, and the mid-conversation ones that stay in
+        `messages` as native entries where they are.
         """
         if not self._resolved_profile.get('openrouter_supports_cache_ttl', False):
             return
@@ -931,7 +1026,7 @@ class OpenRouterModel(OpenAIChatModel):
         `CachePoint` is its message's only content: dropping that message would leave the assistant turn
         last, which Anthropic reads as a prefill.
 
-        `_move_leading_cache_breakpoints` in `openai.py` handles the same shape for OpenAI's
+        `move_leading_cache_breakpoints` in `openai/_caching.py` handles the same shape for OpenAI's
         `prompt_cache_breakpoint`. It isn't shared because the rules differ in every step: here only user
         messages carry the marker, a longer TTL already on the target wins, a missing target drops the
         marker instead of raising, a `CachePoint`-only message raises instead of being deleted, and the
@@ -987,25 +1082,24 @@ class OpenRouterModel(OpenAIChatModel):
     ) -> None:
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         if not instruction_parts:
-            for msg in reversed(openai_messages):
-                if msg.get('role') in ('system', 'developer'):
-                    self._add_cache_control_to_message(msg, ttl)
-                    break
+            # The leading system messages only: a later one is a mid-conversation system message, not the system prompt.
+            if system_prefix_count := _system_prefix_count(openai_messages):
+                self._add_cache_control_to_message(openai_messages[system_prefix_count - 1], ttl)
             return
 
         instruction_role = self._resolved_profile.get('openai_system_prompt_role', None) or 'system'
         if instruction_role not in ('system', 'developer'):
             return
 
-        has_dynamic_instructions = any(part.dynamic for part in instruction_parts)
-        if has_dynamic_instructions and not self._resolved_profile.get(
-            'openrouter_supports_dynamic_instruction_cache', False
-        ):
+        caches_instruction_prefix = self._resolved_profile.get('openrouter_supports_dynamic_instruction_cache', False)
+        if not caches_instruction_prefix and any(part.dynamic for part in instruction_parts):
             # OpenRouter normalizes Google system/developer messages into Gemini's single
             # `systemInstruction`, which Gemini caches as an immutable block (explicit
             # cache_control path). Unlike Anthropic prefix caching, we can't cache only the
             # static instruction prefix and leave a dynamic tail uncached in that shape, so
-            # skip instruction caching when dynamic instructions are present.
+            # skip instruction caching when dynamic instructions are present. That includes
+            # `on_change='append'` blocks: one holding per-user state would make every
+            # conversation write its own cache entry.
             # https://openrouter.ai/docs/guides/best-practices/prompt-caching
             # https://ai.google.dev/api/caching  ('systemInstruction': Input only. Immutable)
             return
@@ -1017,18 +1111,20 @@ class OpenRouterModel(OpenAIChatModel):
         # Instruction parts are mapped as the tail of the system/developer prefix.
         first_instruction_index = instruction_prefix_count - len(instruction_parts)
 
-        if has_dynamic_instructions:
-            static_instruction_count = sum(1 for part in instruction_parts if not part.dynamic)
-            if static_instruction_count:
-                cache_message_index = first_instruction_index + static_instruction_count - 1
-            elif first_instruction_index > 0:
-                cache_message_index = first_instruction_index - 1
-            else:
-                return
-        else:
-            cache_message_index = instruction_prefix_count - 1
+        if not caches_instruction_prefix:
+            # Only static instructions: the whole system instruction gets one cache point at its end.
+            self._add_cache_control_to_message(openai_messages[instruction_prefix_count - 1], ttl)
+            return
 
-        self._add_cache_control_to_message(openai_messages[cache_message_index], ttl)
+        # After the literal instructions (or the system prompt when there are none), and after the append blocks;
+        # see `instruction_cache_boundaries`. `_limit_cache_points` drops the second first.
+        static_parts, stable_parts = instruction_cache_boundaries(instruction_parts)
+        static_end = first_instruction_index + static_parts
+        if static_end:
+            self._add_cache_control_to_message(openai_messages[static_end - 1], ttl)
+        stable_end = first_instruction_index + stable_parts
+        if stable_end > static_end:
+            self._add_cache_control_to_message(openai_messages[stable_end - 1], ttl)
 
     @classmethod
     @override
@@ -1051,6 +1147,64 @@ class OpenRouterModel(OpenAIChatModel):
         return frozenset()
 
     @override
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        messages, model_settings = self._effort_delta_request(messages, model_settings, model_request_parameters)
+        return await super().request(messages, model_settings, model_request_parameters)
+
+    @override
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        messages, model_settings = self._effort_delta_request(messages, model_settings, model_request_parameters)
+        async with super().request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as streamed_response:
+            yield streamed_response
+
+    def _effort_delta_request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[ModelMessage], ModelSettings | None]:
+        """Decide whether this request sends effort changes as `configuration_update` messages.
+
+        It does when the history holds a mid-conversation change (a `ModelSettingsDeltaPart` that
+        `prepare_messages` kept for this model) and no explicit `openrouter_reasoning` or `openai_reasoning_effort`
+        rules it out: those are sent as is. The request then keeps the window's opening effort as its
+        `reasoning.effort`, so its prefix matches the earlier requests'. Otherwise the parts are removed and the
+        current effort goes out as `reasoning.effort`, as it would without them.
+
+        Runs before `prepare_request` turns the unified `thinking` setting into `reasoning`, so it pins the opening
+        effort as the request's `thinking`.
+        """
+        baseline, has_changes = _effort_window_baseline(messages)
+        merged: Mapping[str, object] = merge_model_settings(self.settings, model_settings) or {}
+        if (
+            has_changes
+            # `prepare_messages` already dropped the parts on a model without the channel, but a direct `request`
+            # call with stored history doesn't run it.
+            and self.profile.get('supports_mid_conversation_effort', False)
+            and not self._overrides_unified_effort(merged)
+            and merged.get('openai_reasoning_effort') is None
+        ):
+            if baseline is not None and isinstance(merged.get('thinking', model_request_parameters.thinking), str):
+                model_settings = ModelSettings(**(model_settings or {}))
+                model_settings['thinking'] = baseline
+            return messages, model_settings
+        return _without_model_settings_deltas(messages), model_settings
+
+    @override
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -1061,6 +1215,7 @@ class OpenRouterModel(OpenAIChatModel):
             cast(OpenRouterModelSettings, merged_settings or {}),
             customized_parameters,
             thinking_always_enabled=self.profile.get('thinking_always_enabled', False),
+            lowest_reasoning_effort=self._resolved_profile.get('openrouter_lowest_reasoning_effort', 'low'),
         )
         return new_settings, customized_parameters
 
@@ -1150,28 +1305,21 @@ class OpenRouterModel(OpenAIChatModel):
         # Append server tools after the cache block so the tool-definitions cache breakpoint stays on the last function tool.
         advisor = next((t for t in model_request_parameters.native_tools if isinstance(t, AdvisorTool)), None)
         if advisor is not None:
+            advisor_settings = (advisor.provider_settings or {}).get('openrouter', {})
             parameters: dict[str, Any] = {
                 'model': advisor.model,
-                # TODO: Allow provider-specific native tool parameters so users can opt into forwarding the transcript.
-                # https://github.com/pydantic/pydantic-ai/pull/6605#discussion_r3640554790
-                'forward_transcript': False,
+                'forward_transcript': advisor_settings.get('forward_transcript', False),
                 **({'max_completion_tokens': advisor.max_tokens} if advisor.max_tokens is not None else {}),
             }
             tools.append(cast(chat.ChatCompletionToolParam, {'type': 'openrouter:advisor', 'parameters': parameters}))
 
         web_search = next((t for t in model_request_parameters.native_tools if isinstance(t, WebSearchTool)), None)
         if web_search is not None:
-            parameters: dict[str, Any] = {'search_context_size': web_search.search_context_size}
-            if (user_location := web_search.user_location) is not None:
-                parameters['user_location'] = {'type': 'approximate', **user_location}
-            if (allowed_domains := web_search.allowed_domains) is not None:
-                parameters['allowed_domains'] = allowed_domains
-            if (blocked_domains := web_search.blocked_domains) is not None:
-                parameters['excluded_domains'] = blocked_domains
-            if (max_uses := web_search.max_uses) is not None:
-                parameters['max_uses'] = max_uses
             tools.append(
-                cast(chat.ChatCompletionToolParam, {'type': 'openrouter:web_search', 'parameters': parameters})
+                cast(
+                    chat.ChatCompletionToolParam,
+                    {'type': 'openrouter:web_search', 'parameters': _map_web_search_parameters(web_search)},
+                )
             )
 
         return tools, tool_choice
@@ -1184,7 +1332,15 @@ class OpenRouterModel(OpenAIChatModel):
         *,
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
-        openai_messages = await super()._map_messages(messages, model_request_parameters, model_settings=model_settings)
+        mapped = await super()._map_messages(messages, model_request_parameters, model_settings=model_settings)
+        if self._resolved_profile.get('supports_inline_system_prompts', False) and self._resolved_profile.get(
+            'openrouter_system_messages_precede_generation', False
+        ):
+            _place_system_messages_before_generation(mapped)
+        # A `configuration_update` message has no content to carry a breakpoint, and an empty text block with one is
+        # rejected, so breakpoints are placed as if it weren't there and it goes back in its place afterwards.
+        updates = [(index, message) for index, message in enumerate(mapped) if 'configuration_update' in message]
+        openai_messages = [message for message in mapped if 'configuration_update' not in message]
         self._move_leading_cache_controls(openai_messages)
 
         if (
@@ -1205,7 +1361,7 @@ class OpenRouterModel(OpenAIChatModel):
             # A request-scoped prompt ends the request as its own user message (see `_request_scoped_tail_texts`),
             # and the next request won't send it, so the breakpoint goes on the message before it.
             end, _ = _request_scoped_suffix_start(
-                openai_messages, _request_scoped_tail_texts(messages), _user_message_text
+                openai_messages, _request_scoped_tail_texts(messages), _request_scoped_message_text
             )
             if end:
                 self._add_cache_control_to_message(openai_messages[end - 1], cache_messages)
@@ -1219,6 +1375,9 @@ class OpenRouterModel(OpenAIChatModel):
                 openai_messages, messages, model_request_parameters, cache_instructions
             )
 
+        if not self._resolved_profile.get('openrouter_supports_trailing_cache_control', True):
+            _move_trailing_cache_control(openai_messages)
+
         has_tool_cache_point = bool(
             model_settings
             and model_settings.get('openrouter_cache_tool_definitions')
@@ -1227,7 +1386,20 @@ class OpenRouterModel(OpenAIChatModel):
         )
         self._limit_cache_points(openai_messages, has_tool_cache_point=has_tool_cache_point)
 
+        for index, update in updates:
+            openai_messages.insert(index, update)
         return openai_messages
+
+    @override
+    def _map_model_settings_delta(self, part: ModelSettingsDeltaPart) -> chat.ChatCompletionMessageParam | None:
+        # Only the mid-conversation changes render: a window's opening effort went out as the request-level
+        # `reasoning.effort`. `_effort_delta_request` has already removed every part when this request sends the
+        # current effort at request level instead.
+        if part.top_level or (effort := part.settings.get('thinking')) is None:
+            return None
+        return _ChatCompletionConfigurationUpdateMessageParam(
+            role='system', content='', configuration_update={'reasoning': {'effort': _OPENROUTER_EFFORT_MAP[effort]}}
+        )
 
     @override
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
@@ -1308,7 +1480,7 @@ class OpenRouterModel(OpenAIChatModel):
         @override
         def _map_response_thinking_part(self, item: ThinkingPart) -> None:
             assert isinstance(self._model, OpenRouterModel)
-            if item.provider_name == self._model.system:
+            if self.accepts_stateless_artifacts(item):
                 if reasoning_detail := into_reasoning_detail(item):  # pragma: lax no cover
                     self.reasoning_details.append(reasoning_detail.model_dump())
             else:  # pragma: lax no cover
@@ -1403,7 +1575,7 @@ class _OpenRouterChunkChoice(chat_completion_chunk.Choice):
     """A wrapped chat completion delta with OpenRouter specific attributes."""
 
 
-class _OpenRouterChatCompletionChunk(_ChatCompletionChunk):
+class _OpenRouterChatCompletionChunk(LenientChatCompletionChunk):
     """Wraps OpenAI chat completion with OpenRouter specific attributes."""
 
     provider: str | None = None
@@ -1516,7 +1688,41 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         return _CHAT_FINISH_REASON_MAP.get(key)
 
 
-def _user_message_text(message: chat.ChatCompletionMessageParam) -> str | None:
-    """A user message's text content, which is how a request-scoped prompt renders."""
+def _request_scoped_message_text(message: chat.ChatCompletionMessageParam) -> str | None:
+    """A user or system message's text content, which is how a request-scoped prompt renders.
+
+    It's a `system` message on a route that takes one mid-conversation, and a `<system>`-tagged user message elsewhere.
+    """
     content = message.get('content')
-    return content if message['role'] == 'user' and isinstance(content, str) else None
+    return content if message['role'] in ('user', 'system') and isinstance(content, str) else None
+
+
+def _system_prefix_count(messages: Sequence[chat.ChatCompletionMessageParam]) -> int:
+    """How many `system` and `developer` messages lead the request: the system prompt and instructions."""
+    return next(
+        (index for index, message in enumerate(messages) if message['role'] not in ('system', 'developer')),
+        len(messages),
+    )
+
+
+def _place_system_messages_before_generation(messages: list[chat.ChatCompletionMessageParam]) -> None:
+    """Move each mid-conversation `system` message past the user and tool messages that follow it.
+
+    On a route with `openrouter_system_messages_precede_generation`, OpenRouter keeps a `system` message only right
+    before an assistant turn or at the end of the request, and turns one anywhere else into user text. An instruction
+    governs the generation that follows it, which is the same one either way, so moving it costs nothing and keeps its
+    authority. Only user and tool messages are hopped over, so a later instruction never overtakes an earlier one. The
+    content-less `configuration_update` message is hopped over too, since it doesn't have to follow these rules. The
+    leading system messages are the system prompt and stay where they are. See
+    `place_system_messages_before_generation` for `AnthropicModel`'s counterpart.
+    """
+    for index in range(len(messages) - 1, _system_prefix_count(messages) - 1, -1):
+        if messages[index]['role'] != 'system' or 'configuration_update' in messages[index]:
+            continue
+        target = index + 1
+        while target < len(messages) and (
+            messages[target]['role'] in ('user', 'tool') or 'configuration_update' in messages[target]
+        ):
+            target += 1
+        if target > index + 1:
+            messages.insert(target - 1, messages.pop(index))

@@ -22,8 +22,10 @@ from pydantic_ai_harness.compaction import (
     CompactOnRequest,
     SlidingWindowCompaction,
     TieredCompaction,
+    estimate_token_count,
 )
 from tests.conftest import try_import
+from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 with try_import() as logfire_import_successful:
     from logfire.testing import CaptureLogfire
@@ -189,6 +191,7 @@ class TestCompactOnRequest:
             'Not compacted again: a compaction is already scheduled before your next turn.',
         ]
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_stands_down_when_automatic_compaction_already_ran(self) -> None:
         strategy = Tail()
         script = Script(
@@ -219,10 +222,11 @@ class TestCompactOnRequest:
 @pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 async def test_span_marks_the_compaction_model_requested(capfire: CaptureLogfire) -> None:
     script = Script([ModelResponse(parts=[_compact()]), ModelResponse(parts=[TextPart('done')])])
-    agent = _agent(script, CompactOnRequest(Tail()))
+    agent = _agent(script, CompactOnRequest(Tail(), tokenizer=len))
     agent.instrument = InstrumentationSettings()
 
     await agent.run('continue', message_history=_history())
+    before = [*script.seen[0], *script.seen[1]]
 
     [span] = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'compact_messages']
     attributes = span['attributes']
@@ -230,3 +234,6 @@ async def test_span_marks_the_compaction_model_requested(capfire: CaptureLogfire
     assert attributes['compaction.model_requested'] is True
     assert attributes['compaction.messages_before'] == 5
     assert attributes['compaction.messages_after'] == 2
+    # Measured with the configured tokenizer, not the characters-per-token heuristic.
+    assert attributes['compaction.tokens_before'] == estimate_token_count(before, len)
+    assert estimate_token_count(before, len) != estimate_token_count(before)

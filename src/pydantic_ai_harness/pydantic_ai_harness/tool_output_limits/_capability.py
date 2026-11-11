@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import posixpath
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, TypeGuard
+from typing import Any
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
@@ -20,10 +22,12 @@ from pydantic_ai.messages import (
     ToolSearchReturnPart,
     UserContent,
 )
-from pydantic_ai.models import AbstractModel, Model
+from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
+from pydantic_ai_harness._models import is_request_response_model
+from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
 from pydantic_ai_harness.filesystem import READ_FILE_KIND
@@ -85,12 +89,12 @@ def _spills(action: Action | None) -> bool:
     while action is not None:
         if isinstance(action, Spill):
             return True
-        action = None if isinstance(action, Passthrough) else action.then
+        action = _next_action(action)
     return False
 
 
 def _default_bands() -> list[Band]:
-    """Lossless spill with a bounded truncation fallback: zero LLM cost, no silent drop."""
+    """Spill to the store, falling back to truncation when the store write fails."""
     return [Band(over=_DEFAULT_THRESHOLD, action=Spill(then=Truncate()))]
 
 
@@ -211,6 +215,26 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         self._store = self.store if self.store is not None else WorkspaceStore()
         self._bands = self._prepare_bands(self.bands)
         self._per_tool = {name: self._prepare_bands(bands) for name, bands in self.per_tool.items()}
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge the configuration, with the later band winning a shared threshold, then re-derive from it.
+
+        `_store`, `_bands`, and `_per_tool` are derived in `__post_init__`, which merging skips, so
+        they are rebuilt from the merged configuration: a merged band list keeps the largest-first
+        order a single instance has, and a stated `store` is the one spills go to.
+        """
+        limits = [capability for capability in capabilities if isinstance(capability, ToolOutputLimits)]
+        assert len(limits) == len(capabilities)
+        merged = super().combine(capabilities)
+        assert isinstance(merged, cls)
+        bands: list[Band] = []
+        for capability in limits:
+            thresholds = {band.over for band in capability.bands}
+            bands = [band for band in bands if band.over not in thresholds] + list(capability.bands)
+        merged = replace_no_init(merged, bands=bands)
+        merged.__post_init__()
+        return merged
 
     @staticmethod
     def _prepare_bands(bands: Sequence[Band]) -> list[Band]:
@@ -491,21 +515,41 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         unit: _Unit,
     ) -> tuple[str | None, str | None]:
         key = _handle_key(ctx, call, unit.suffix)
-        try:
-            handle = await self._store_for(ctx).write(key, unit.data)
-        except (UserError, WorkspaceReadOnlyError) as error:
-            # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
-            # say so rather than degrading quietly.
-            warnings.warn(f'ToolOutputLimits: could not spill a {call.tool_name!r} result: {error}', stacklevel=2)
-            return await self._fallback(ctx, call, action.then, unit)
-        except Exception as exc:
-            _log_fallback('Spilling', call.tool_name, action.then, exc)
+        # Text crosses the durable boundary as is; only binary needs base64 to travel as JSON.
+        if unit.binary:
+            payload = base64.b64encode(unit.data).decode('ascii')
+        else:
+            assert unit.text is not None
+            payload = unit.text
+        handle = await self._write_spill(ctx, call.tool_name, key, payload, unit.binary, _fallback_label(action.then))
+        if handle is None:
             return await self._fallback(ctx, call, action.then, unit)
 
         preview = _build_spill_preview(
             handle, unit, action.preview_chars, over_tokens=self.over_tokens, read_hint=self._read_hint(ctx, handle)
         )
         return preview, handle
+
+    # A durable operation, so a replay returns the recorded outcome instead of writing again: a
+    # second write could return a different handle, or succeed where the first failed.
+    @durable_operation('spill')
+    async def _write_spill(
+        self, ctx: RunContext[AgentDepsT], tool_name: str, key: str, payload: str, binary: bool, fallback: str
+    ) -> str | None:
+        """Write a spill and return its handle, or `None` when the store could not take it.
+
+        `payload` is the text, or base64 when `binary`: a durable engine may carry it to another worker as JSON.
+        """
+        data = base64.b64decode(payload) if binary else payload.encode('utf-8')
+        try:
+            return await self._store_for(ctx).write(key, data)
+        except (UserError, WorkspaceReadOnlyError) as error:
+            # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
+            # say so rather than degrading quietly.
+            warnings.warn(f'ToolOutputLimits: could not spill a {tool_name!r} result: {error}', stacklevel=3)
+        except Exception as exc:
+            _log_fallback('Spilling', tool_name, fallback, exc)
+        return None
 
     def _read_hint(self, ctx: RunContext[AgentDepsT], handle: str) -> str:
         """How the model reads a spill back, naming the tools by the names they have in this run."""
@@ -536,7 +580,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             # the user's to fix, not something to mask by silently truncating instead.
             raise
         except Exception as exc:
-            _log_fallback('Summarizing', call.tool_name, action.then, exc)
+            _log_fallback('Summarizing', call.tool_name, _fallback_label(action.then), exc)
             return await self._fallback(ctx, call, action.then, unit)
         return summary, None
 
@@ -571,7 +615,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         model = action.model if action.model is not None else ctx.model
         if isinstance(model, str):
             return model
-        if not _is_request_response_model(model):
+        if not is_request_response_model(model):
             raise UserError(
                 'Summarizing oversized tool output needs a request-response model, but the run '
                 f'uses {type(model).__name__}, which is not one. Set a `model=` on the '
@@ -651,13 +695,13 @@ def _fallback_label(then: Action | None) -> str:
     return 'the unreduced output' if then is None else type(then).__name__
 
 
-def _log_fallback(operation: str, tool_name: str, then: Action | None, exc: Exception) -> None:
+def _log_fallback(operation: str, tool_name: str, fallback: str, exc: Exception) -> None:
     logger.warning(
         '%s output of tool %r failed (%s); falling back to %s',
         operation,
         tool_name,
         type(exc).__name__,
-        _fallback_label(then),
+        fallback,
         exc_info=exc,
     )
 
@@ -672,16 +716,6 @@ def _handle_key(ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '
     return f'{run_id}/{call_id}.{ctx.retry}{suffix}'
 
 
-def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
-    """`TypeGuard` so a mapping narrows to a known element type, not `Unknown`."""
-    return isinstance(value, Mapping)
-
-
-def _is_request_response_model(value: AbstractModel) -> TypeGuard[Model[Any]]:
-    """Narrow an abstract model without losing its provider client type."""
-    return isinstance(value, Model)
-
-
 def _with_handles(
     existing: object,
     value_handle: str | None,
@@ -690,8 +724,8 @@ def _with_handles(
 ) -> dict[str, object]:
     """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens)."""
     base: dict[str, object] = {}
-    if _is_mapping(existing):
-        base.update(_copy_mapping(existing))
+    if is_mapping(existing):
+        base.update({str(key): existing[key] for key in existing})
     elif existing is not None:
         base['original_metadata'] = existing
     if value_handle is not None:
@@ -702,26 +736,21 @@ def _with_handles(
     return base
 
 
-def _copy_mapping(source: Mapping[object, object]) -> dict[str, object]:
-    """Copy an arbitrary mapping with stringified keys (tool metadata is app-defined)."""
-    return {str(key): source[key] for key in source}
-
-
 def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, read_hint: str) -> str:
     """Compose the model-visible spill stand-in: marker, sketch, and a head/tail preview."""
     if unit.binary:
-        size_desc = f'{len(unit.data):,} bytes (binary)'
+        size_description = f'{len(unit.data):,} bytes (binary)'
         body = f'<{len(unit.data):,} bytes of binary data>'
         sketch = ''
     else:
         text = unit.text or ''
         size_unit = 'tokens' if over_tokens else 'chars'
         amount = measure(text, over_tokens=over_tokens, tokenizer=None) if over_tokens else len(text)
-        size_desc = f'{amount:,} {size_unit}'
+        size_description = f'{amount:,} {size_unit}'
         body = _head_tail_preview(text, preview_chars)
         sketch = json_sketch(unit.value)
 
-    header = f'[Tool output too large ({size_desc}); stored to handle {handle!r}.{read_hint}]'
+    header = f'[Tool output too large ({size_description}); stored to handle {handle!r}.{read_hint}]'
     parts = [header]
     if sketch:
         parts.append(f'shape: {sketch}')

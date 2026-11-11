@@ -56,6 +56,7 @@ from .._utils import generate_tool_call_id
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     FilePart,
     FinishReason,
@@ -415,8 +416,8 @@ CONVERSATION_ITEM_ADDED_EVENT_ADAPTER: TypeAdapter[ProtocolConversationItemAdded
 )
 
 
-def is_user_message_item(item: ProtocolConversationItem | dict[str, Any]) -> bool:
-    """Whether a conversation item is a user message the client created: text or images, not spoken audio.
+def is_client_message_item(item: ProtocolConversationItem | dict[str, Any]) -> bool:
+    """Whether a conversation item is a message the client created: user text or images, or a system prompt.
 
     Spoken audio joins the conversation as a user message too, but the server makes that item itself when
     it commits the audio buffer, so it answers to no `conversation.item.create` of the client's.
@@ -425,7 +426,7 @@ def is_user_message_item(item: ProtocolConversationItem | dict[str, Any]) -> boo
         item = ProtocolConversationItem.model_validate(item)
     return (
         item.type == 'message'
-        and item.role == 'user'
+        and item.role in ('user', 'system')
         and not any(content.type == 'input_audio' for content in item.content or ())
     )
 
@@ -592,6 +593,7 @@ async def _seed_request_items(
                 InstructionDeltaPart,
                 InstructionBaselinePart,
                 ToolAvailabilityDeltaPart,
+                CapabilityLoadDeltaPart,
                 ModelSettingsDeltaPart,
             ),
         ):

@@ -3,14 +3,14 @@ import { SessionContext } from '../api'
 import { OpenCardsContext } from '../openCards'
 import { JumpToLatest, useStickToBottom } from '../stickToBottom'
 import { WorkspaceLinkContext } from '../workspaceLink'
-import type { Item } from '../protocol'
+import type { Item, TurnSummary } from '../protocol'
 import type { Entry } from '../state'
 import { cell } from '../code'
 import { compact, duration } from '../format'
-import type { TurnSummary } from '../state'
-import { ChevronIcon } from './icons'
+import { ChevronIcon, PencilIcon, RetryIcon } from './icons'
 import { Markdown } from './Markdown'
 import { Thinking } from './Thinking'
+import { ForkResult, ForksCard } from './ForksCard'
 import { ToolCard, codeCalls, isWorkspaceTool } from './ToolCard'
 import { UsageCard } from './UsageCard'
 
@@ -45,31 +45,126 @@ function Thumbnail({ id }: { id: string }) {
   )
 }
 
-const EntryView = memo(function EntryView({ entry, live }: { entry: Entry; live: boolean }) {
-  switch (entry.kind) {
-    case 'user':
-      return (
-        <div className="user-row">
-          <div className="user-bubble">
-            {entry.images.length > 0 && (
-              <div className={`user-images ${entry.text ? 'captioned' : ''}`}>
-                {entry.images.map((id, index) => (
-                  <Thumbnail key={`${index}-${id}`} id={id} />
-                ))}
-              </div>
-            )}
-            {entry.text}
+/** Rewind to the prompt `runId` started and send `text` in its place, or the prompt as saved for `null`; `false` when it failed. */
+export type Rewind = (runId: string, text: string | null) => Promise<boolean>
+
+const REWIND_NOTE = 'Later messages are removed; files are not restored.'
+
+/** A sent prompt; with `rewind`, Edit and Retry send it again from here once its session is not `busy`. */
+function UserEntry({ entry, rewind, busy }: { entry: Item; rewind?: Rewind; busy: boolean }) {
+  const runId = rewind ? entry.run_id : null
+  // Kept by the prompt it edits: a snapshot that puts another prompt in this row drops it.
+  const [editing, setEditing] = useState<{ runId: string; text: string } | null>(null)
+  const draft = editing && editing.runId === runId ? editing.text : null
+  const [sending, setSending] = useState(false)
+  const blocked = busy || sending
+  /** Send `text` in the prompt's place; `null` sends it again as it was saved. */
+  const send = async (text: string | null) => {
+    if (!runId || blocked) return
+    setSending(true)
+    try {
+      if (await rewind?.(runId, text)) setEditing(null)
+    } finally {
+      setSending(false)
+    }
+  }
+  const setDraft = (text: string | null) => setEditing(text === null || !runId ? null : { runId, text })
+  const images = entry.images.length > 0 && (
+    <div className={`user-images ${entry.text || draft !== null ? 'captioned' : ''}`}>
+      {entry.images.map((id, index) => (
+        <Thumbnail key={`${index}-${id}`} id={id} />
+      ))}
+    </div>
+  )
+  if (draft !== null)
+    return (
+      <div className="user-row">
+        <div className="user-bubble editing">
+          {images}
+          <textarea
+            autoFocus
+            rows={Math.min(8, draft.split('\n').length)}
+            value={draft}
+            aria-label="Edit prompt"
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setDraft(null)
+              } else if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                void send(draft)
+              }
+            }}
+          />
+          <div className="user-edit-actions">
+            <span>{REWIND_NOTE}</span>
+            <button className="ghost" onClick={() => setDraft(null)}>
+              Cancel
+            </button>
+            <button className="primary" disabled={blocked} onClick={() => void send(draft)}>
+              Send
+            </button>
           </div>
         </div>
-      )
+      </div>
+    )
+  return (
+    <div className="user-row">
+      {runId && (
+        <div className="user-actions">
+          <button
+            className="icon-button"
+            title={`Edit and send from here. ${REWIND_NOTE}`}
+            aria-label="Edit prompt"
+            disabled={blocked}
+            onClick={() => setDraft(entry.text)}
+          >
+            <PencilIcon size={13} />
+          </button>
+          <button
+            className="icon-button"
+            title={`Send again from here. ${REWIND_NOTE}`}
+            aria-label="Retry prompt"
+            disabled={blocked}
+            onClick={() => void send(null)}
+          >
+            <RetryIcon size={13} />
+          </button>
+        </div>
+      )}
+      <div className="user-bubble">
+        {images}
+        {entry.text}
+      </div>
+    </div>
+  )
+}
+
+const EntryView = memo(function EntryView({
+  entry,
+  live,
+  rewind,
+  busy,
+}: {
+  entry: Entry
+  live: boolean
+  rewind?: Rewind
+  busy: boolean
+}) {
+  switch (entry.kind) {
+    case 'user':
+      return <UserEntry entry={entry} rewind={rewind} busy={busy} />
     case 'assistant':
-      return <Markdown className={`assistant ${live ? 'streaming' : ''}`} text={entry.text} />
+      return <Markdown className={`assistant ${live ? 'streaming' : ''}`} text={entry.text} live={live} />
     case 'thinking':
       return <Thinking text={entry.text} live={live} />
     case 'tool':
       return <ToolCard item={entry} />
     case 'notice':
       if (entry.usage && entry.level === 'info') return <UsageCard notice={entry} usage={entry.usage} />
+      if (entry.forks) return <ForksCard notice={entry} forks={entry.forks} />
+      if (entry.fork) return <ForkResult notice={entry} fork={entry.fork} />
       return (
         <div className={`notice ${entry.level}`}>
           {entry.command && <span className="notice-command">{entry.command}</span>}
@@ -177,7 +272,20 @@ const ToolGroup = memo(function ToolGroup({ tools }: { tools: Item[] }) {
 })
 
 /** The conversation; it follows new output while the reader is at the bottom, and stays put once they scroll up. */
-export function Transcript({ entries, running, empty }: { entries: Entry[]; running: boolean; empty: React.ReactNode }) {
+export function Transcript({
+  entries,
+  running,
+  empty,
+  rewind,
+  busy = false,
+}: {
+  entries: Entry[]
+  running: boolean
+  empty: React.ReactNode
+  rewind?: Rewind
+  /** The session still handles input though no turn runs, as while a turn's `TurnEnd` hooks run. */
+  busy?: boolean
+}) {
   const [open, setOpen] = useState<ReadonlyMap<string, boolean>>(() => new Map())
   const cards = useMemo(
     () => ({
@@ -202,7 +310,13 @@ export function Transcript({ entries, running, empty }: { entries: Entry[]; runn
               row.kind === 'group' ? (
                 <ToolGroup key={row.id} tools={row.tools} />
               ) : (
-                <EntryView key={row.entry.id} entry={row.entry} live={running && row.entry === last} />
+                <EntryView
+                  key={row.entry.id}
+                  entry={row.entry}
+                  live={running && row.entry === last}
+                  rewind={rewind}
+                  busy={running || busy}
+                />
               ),
             )}
         {running && last?.kind !== 'assistant' && last?.kind !== 'thinking' && (

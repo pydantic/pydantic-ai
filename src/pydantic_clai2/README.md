@@ -24,7 +24,9 @@ commands, and menus without forking anything.
   background, or rewind it to an earlier prompt. You can even pick up sessions from
   Claude Code and Codex.
 - **Yours to change.** Turn plugins on and off from a menu, install one from Git, or
-  write your own in a few lines of Python.
+  write your own in a few lines of Python. Ask CLAI how: it can look up its own
+  [reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#ask-clai-about-itself)
+  and plugin docs when you need them.
 
 CLAI runs commands and edits files as you, with no sandbox and no approval step. Run it
 in a project you trust.
@@ -43,7 +45,7 @@ uv tool install --compile-bytecode pydantic-clai2
 
 This gives you the `clai2` command (and `pydantic-clai2`, which does the same).
 `--compile-bytecode` makes the install take a little longer so the first start doesn't, and
-`/update` uses it too. To try CLAI without installing, run `uvx pydantic-clai2`; set
+`/update now` uses it too. To try CLAI without installing, run `uvx pydantic-clai2`; set
 `UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
 
 CLAI comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
@@ -85,8 +87,9 @@ A few keys to know:
 
 Type `/` to see every command, or `/help` for the full list.
 
-CLAI reads `AGENTS.md` or `CLAUDE.md` from the folder you start it in and follows what it
-says (not yet on Windows). If the folder (or a parent) has a `.env` file, CLAI loads it at startup.
+CLAI reads `AGENTS.md` (or `CLAUDE.md`) from the folder you start it in and the folders above
+it, then a subfolder's as it works there, and follows what they say (not yet on Windows). If
+the folder (or a parent) has a `.env` file, CLAI loads it at startup.
 
 ### Where CLAI keeps things
 
@@ -107,10 +110,16 @@ in the reference.
 
 ## Updating
 
-Run `/update`. CLAI installs the newest build, then restarts into it with the same
-conversation open. While other live sessions run turns, as ones the browser opened can,
-`/update` and `/reload` ask you to try again when they finish. They restart CLAI in the folder it started in,
-so a session from another folder shown in the terminal cannot run them.
+Run `/update` to see whether a newer CLAI is out, and choose **Update…** to install it.
+`/update now` installs without asking, and `clai2 update` (or `clai2 --update`) does it from your shell and exits
+(on Windows, use `/update now` instead).
+CLAI installs the newest build, then restarts into it with the same conversation open.
+In the web UI, **Update…** in Settings › About installs from any session's page, and the
+restart reopens the session the terminal shows, or under `clai2 --web`, the one CLAI started with.
+While other live sessions run turns, as ones the browser opened can, `/update now`
+and `/reload` ask you to try again when they finish; bare `/update` still shows the
+menu. Installs and reloads restart CLAI in the folder it started in, so a session
+from another folder shown in the terminal cannot run them.
 
 When a newer build is out, the status row tells you, for example
 `update 0.57.0: /update`. CLAI checks once at startup and again when you change channel.
@@ -124,12 +133,12 @@ There are two channels. Pick one with `/set updates.channel`:
 
 ```text
 /set updates.channel main
-/update
+/update now
 ```
 
-`/update` works when CLAI was installed with `uv tool install`. On Windows, CLAI closes
+`/update now` works when CLAI was installed with `uv tool install`. On Windows, CLAI closes
 first and installs in a new PowerShell window; start `clai2` again when it is done.
-`/update` reinstalls `pydantic-clai2` without extras or `--with` packages, so add those
+`/update now` reinstalls `pydantic-clai2` without extras or `--with` packages, so add those
 again afterwards. See
 [Updating](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#updating)
 in the reference for the details.
@@ -265,12 +274,18 @@ them, using your current model. Press <kbd>/</kbd> to search, <kbd>→</kbd> to 
 
 ![The /resume session browser with projects and named sessions](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_clai2/docs/images/resume.png)
 
-From your shell, `clai2 --resume` opens the same browser. `/resume claude` and
+From your shell, `clai2 --resume` opens the same browser, and `clai2 --continue` (`-c`)
+restores the most recent session in the current directory. `/resume claude` and
 `/resume codex` continue a session you started in Claude Code or Codex.
 
 With `/web` running, the browser can open other sessions while this one runs. `/resume`
 of one of them shows it here, even mid-turn, instead of copying it; the session you
 left keeps running in the browser.
+
+On Unix, `clai2 sessions` lists live sessions across your terminal tabs and processes,
+including idle sessions and those waiting for an answer. It shows unique session-ID
+prefixes and folder names without opening a session or starting a turn. See
+[Sessions](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#sessions).
 
 ### Work in the background: `/fork`
 
@@ -350,10 +365,13 @@ remove it. Changes apply from your next prompt, with no restart.
 
 These are on from the start:
 
-- `coder`: the file and shell tools, delegating tasks to sub-agents, and Agent Skills
+- `coder`: the file and shell tools, delegating tasks to sub-agents, and Agent Skills.
+  Configure a delegate model menu to select a model per call. Separately enable a read-only `Review`
+  specialist to review another directory; see [delegate models](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#delegate-models-and-review-directory).
 - `ask_user`: questions from the model
-- `repo_context`: reads `AGENTS.md` or `CLAUDE.md`
+- `repo_context`: reads `AGENTS.md` or `CLAUDE.md` from the folder, its parents, and subfolders
 - `compaction`: summarises older messages, and `/compact`
+- `refinement`: `/refine`, which has the model review and revise its last answer
 - `persistence`: extra checkpoints so an interrupted session can recover
 - `mcp`: MCP servers, managed with `/mcp`
 - `notifications`: a desktop notification when a turn finishes
@@ -367,7 +385,7 @@ path, or drop a file in `~/.config/pydantic-clai2/plugins/`:
 
 ```text
 /plugins add https://github.com/your-org/my-plugin.git
-/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"max_results": 8}'
 ```
 
 The second line adds web search from

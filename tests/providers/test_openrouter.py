@@ -1,12 +1,16 @@
 import re
 from copy import deepcopy
+from typing import Literal
 
 import pytest
 from pytest_mock import MockerFixture
+from typing_extensions import TypeAliasType
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -36,6 +40,8 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
 ]
+
+Key = TypeAliasType('Key', str)
 
 
 def test_openrouter_provider():
@@ -368,6 +374,72 @@ def test_openrouter_google_boolean_defs(definition: bool):
     assert schema == original
 
 
+def test_openrouter_google_resolves_property_names_ref_through_tool_preparation():
+    """The OpenRouter Google transformer drops `$defs`, so the `$ref` under `propertyNames` must be inlined too.
+
+    A `propertyNames` without a `$ref` is left as written. A recording can't check either: cassettes match on
+    method and URI, not the request body.
+    """
+
+    def accept_values(values: dict[Key, int], labels: dict[Literal['a', 'b'], int]) -> str:
+        return 'accepted'  # pragma: no cover
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.function_tools[0].parameters_json_schema == snapshot(
+            {
+                'additionalProperties': False,
+                'properties': {
+                    'values': {
+                        'additionalProperties': {'type': 'integer'},
+                        'propertyNames': {'type': 'string'},
+                        'type': 'object',
+                    },
+                    'labels': {
+                        'additionalProperties': {'type': 'integer'},
+                        'propertyNames': {'enum': ['a', 'b']},
+                        'type': 'object',
+                    },
+                },
+                'required': ['values', 'labels'],
+                'type': 'object',
+            }
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    profile = OpenRouterProvider(api_key='api-key').model_profile('google/gemini-2.5-flash')
+    agent = Agent(FunctionModel(model_function, profile=profile), tools=[accept_values])
+    assert agent.run_sync('accept').output == 'done'
+
+
+def test_openrouter_google_resolves_contains_ref():
+    """The OpenRouter Google transformer inlines a `$ref` under `contains` and leaves a `contains` without one as written.
+
+    Pydantic never emits `contains`, so the schema is written by hand. A recording can't check this: cassettes
+    match on method and URI, not the request body.
+    """
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {
+            'positives': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'$ref': '#/$defs/Positive'}},
+            'threes': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'const': 3}},
+        },
+        '$defs': {'Positive': {'type': 'integer', 'minimum': 1}},
+    }
+    assert _OpenRouterGoogleJsonSchemaTransformer(schema).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'positives': {
+                    'type': 'array',
+                    'items': {'type': 'integer'},
+                    'contains': {'type': 'integer', 'minimum': 1},
+                },
+                'threes': {'type': 'array', 'items': {'type': 'integer'}, 'contains': {'const': 3}},
+            },
+        }
+    )
+
+
 @pytest.mark.parametrize(
     'model_name',
     [
@@ -395,6 +467,44 @@ def test_openrouter_google_boolean_defs(definition: bool):
         'z-ai/glm-5.3',
         'z-ai/glm-5.3-flash',
         'google/gemini-3.5-flash:batch',
+        'aion-labs/aion-2.0',
+        'aion-labs/aion-3.0-mini',
+        'aion-labs/aion-3.5',
+        'liquid/lfm-2.5-2.6b',
+        'liquid/lfm-2.5-2.6b:free',
+        'liquid/lfm-2.5-24b-a2b',
+        'meta/muse-glimmer-30b',
+        'meta/muse-spark-1.1',
+        'meta/muse-spark-1.2-contributor',
+        'meta/muse-spark-1.3',
+        'meta/muse-spark-open',
+        'meta/muse-wonder',
+        'minimax/minimax-m2.5',
+        'minimax/minimax-m2.7',
+        'minimax/minimax-m3.1-flash',
+        'mistralai/mistral-large-4-0',
+        'openai/gpt-6.1-terra-pro',
+        'perplexity/sonar-deep-research',
+        'perplexity/sonar-pro-search',
+        'perplexity/sonar-reasoning-pro',
+        'recursive/flint-v1.0:free',
+        'reflection/beam-1.0-501b-a23b',
+        'rekaai/reka-flash-3',
+        'sakana/fugu-max',
+        'sakana/fugu-ultra',
+        'sakana/fugu-ultra-v2',
+        'stepfun/step-3.5-flash',
+        'stepfun/step-3.7-flash',
+        'stepfun/step-5-preview',
+        '~anthropic/claude-fable-latest',
+        '~anthropic/claude-opus-latest',
+        '~anthropic/claude-sonnet-latest',
+        '~google/gemini-flash-latest',
+        '~openai/gpt-astra-latest',
+        '~openai/gpt-sol-latest',
+        '~x-ai/grok-latest',
+        '~z-ai/glm-latest',
+        '~z-ai/glm-flash-latest',
     ],
 )
 def test_openrouter_mandatory_reasoning_routes_are_always_on(model_name: str):
@@ -402,12 +512,20 @@ def test_openrouter_mandatory_reasoning_routes_are_always_on(model_name: str):
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('thinking_always_enabled', False) is True
+    # Every route accepted `minimal` live, except Sonar Deep Research, which wasn't probed.
+    expected_floor = 'low' if model_name == 'perplexity/sonar-deep-research' else 'minimal'
+    assert profile.get('openrouter_lowest_reasoning_effort') == expected_floor
 
 
 @pytest.mark.parametrize(
     'model_name',
     [
         'anthropic/claude-sonnet-5',
+        '~anthropic/claude-haiku-latest',
+        'minimax/minimax-m1',
+        'minimax/minimax-m2-her',
+        'minimax/minimax-m3',
+        '~openai/gpt-luna-latest',
         'google/gemini-3.1-flash-lite',
         'moonshotai/kimi-k3',
         'openai/gpt-5.4',

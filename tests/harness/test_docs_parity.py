@@ -127,6 +127,7 @@ _ALLOWED_CLASSNAME_HEADINGS = {
     'Linear',
     'LocalStack',
     'Notion',
+    'OpenSandbox',
     'PostHog',
     'StackOne',
 }
@@ -149,8 +150,10 @@ _CAPABILITY_PAGE_META = {
     'aws-lambda.md': ('aws_lambda', 'AWS Lambda Durability'),
     'absurd.md': ('absurd', 'Absurd Durability'),
     'pgtask.md': ('pgtask', 'pgtask Durability'),
+    'azure-durable-task.md': ('azure_durable_task', 'Azure Durable Task'),
     'background-tools.md': ('background_tools', 'Background Tools'),
     'code-mode.md': ('code_mode', 'Code Mode'),
+    'ipython-code-mode.md': ('ipython_code_mode', 'IPython Code Mode'),
     'coder.md': ('coder', 'Coder'),
     'skills.md': ('skills', 'Skills'),
     'filesystem.md': ('filesystem', 'FileSystem'),
@@ -158,11 +161,15 @@ _CAPABILITY_PAGE_META = {
     'smart-search.md': ('smart_search', 'Smart Search'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
+    'pixeltable.md': ('pixeltable', 'Pixeltable'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
     'docker-sandbox.md': ('docker_sandbox', 'Docker Sandbox'),
+    'opensandbox-sandbox.md': ('opensandbox_sandbox', 'OpenSandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
+    'render-sandbox.md': ('render_sandbox', 'Render Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
+    'boxd-sandbox.md': ('boxd_sandbox', 'boxd Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
     'boxlite-sandbox.md': ('boxlite_sandbox', 'BoxLite Sandbox'),
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
@@ -175,12 +182,14 @@ _CAPABILITY_PAGE_META = {
     'exa-search.md': ('exa', 'Exa Search'),
     'playwright.md': ('playwright', 'Playwright Browser'),
     'youdotcom.md': ('youdotcom', 'You.com'),
+    'keenable-search.md': ('keenable', 'Keenable Search'),
     'macroscope.md': ('macroscope', 'Macroscope'),
     'browser-use.md': ('browser_use', 'Browser Use'),
     'compaction.md': ('compaction', 'Compaction'),
     'tool-output-limits.md': ('tool_output_limits', 'Tool Output Limits'),
     'tool-call-judge.md': ('tool_call_judge', 'Tool Call Judge'),
     'approval-reviewer.md': ('approval_reviewer', 'Approval Reviewer'),
+    'permissions.md': ('permissions', 'Permissions'),
     'warn-on-cache-busts.md': ('warn_on_cache_busts', 'Warn On Cache Busts'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),
     'conversation-search.md': ('conversation_search', 'Conversation Search'),
@@ -188,12 +197,15 @@ _CAPABILITY_PAGE_META = {
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
     'planning.md': ('planning', 'Planning'),
     'system-reminders.md': ('system_reminders', 'System Reminders'),
+    'detect-loops.md': ('detect_loops', 'Detect Loops'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
+    'refine-output.md': ('refine_output', 'Refine Output'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
     'github.md': ('github', 'GitHub'),
     'google-workspace.md': ('google_workspace', 'Google Workspace'),
     'prompt-injection-defender.md': ('prompt_injection_defender', 'Prompt Injection Defender'),
+    'artifact-scanning.md': ('artifact_scanning', 'Artifact Scanning'),
     'spend.md': ('spend', 'Spend'),
     'localstack.md': ('localstack', 'LocalStack'),
     'logfire-mcp.md': ('logfire_mcp', 'Logfire MCP'),
@@ -384,6 +396,13 @@ def test_capability_readme_links_source(package: Path) -> None:
         f'{package.relative_to(_ROOT) / "README.md"} must link its own source module '
         f'(a Markdown link containing `{expected}`), so parity tooling can find the implementation.'
     )
+
+
+@pytest.mark.parametrize('package', _CAPABILITY_PACKAGES, ids=lambda p: str(p.relative_to(_ROOT)))
+def test_capability_readme_names_models_not_aliases(package: Path) -> None:
+    """GitHub and PyPI render READMEs as-is, so the docs site's `{{ provider:size }}` model aliases stay literal there."""
+    readme = (package / 'README.md').read_text(encoding='utf-8')
+    assert not re.findall(r'\{\{\s*[\w-]+:[\w.-]+\s*\}\}', readme)
 
 
 # The Coder blown-out example is repeated on four markdown surfaces (plus, parameterized,
