@@ -93,10 +93,15 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 
 ## Framing tags
 
-A capability that writes a tag into prompt text, such as `<memory>`, `<judge_feedback>` or
-`<task_output>`, registers it once at module level with `pydantic_ai.framing.register_tag()` and
-renders it with `pydantic_ai.framing.wrap()`. Registering is what makes core's own data frames, such as a
-`<tool_result>`, neutralize the tag, so a tool result can't close the capability's frame. Use
+A capability that tells the model something mid-conversation, such as `<memory>`, `<judge_feedback>` or
+`<task_output>`, defines a `DataCapabilityPart` kind with a declared `tag`. The framework renders it and never
+escapes its body, so don't escape it yourself: text in it that looks like its tag or a framework frame gets a
+note naming its author. See <https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts>.
+
+Only text that isn't a capability part, such as a transcript flattened for a second model, writes a tag into
+prompt text. It registers the tag once at module level with `pydantic_ai.framing.register_tag()` and renders
+it with `pydantic_ai.framing.wrap()`. Registering is what makes core's own data frames, such as a
+`<pyai:tool_result>`, neutralize the tag, so a tool result can't close the capability's frame. Use
 `neutralize_tags()` for untrusted text placed inside a frame some other way. Do not hand-roll an escaper:
 escaping only a frame's own closing tag leaves its opener and the `<system>` voice tag free to forge
 structure. Tag names are lowercase snake_case. See
@@ -117,10 +122,9 @@ structure. Tag names are lowercase snake_case. See
 - capabilities that add to or edit message history, instructions or tools follow core's
   `agent_docs/message-history-and-caching.md`: history is append-only, content goes in the channel
   matching who wrote it, framework records are found by type or metadata, never by their text, and
-  any tag a capability wraps around content follows that guide's tag rules (`snake_case` names,
-  escaping every opening and closing spelling of every registered framing tag, through
-  `pydantic_ai.framing.wrap()`/`neutralize_tags()` with the tag registered (see "Framing tags"), never
-  a hand-rolled escaper, attributes, no preambles)
+  what a capability tells the model mid-conversation is a `CapabilityPart` kind (see "Framing tags"), with
+  `snake_case` tag names, attributes and no preambles; text that can't be one goes through
+  `pydantic_ai.framing.wrap()`/`neutralize_tags()` with the tag registered, never a hand-rolled escaper
 
 ## Writing style
 
@@ -161,7 +165,7 @@ Do not run repository-wide Pyright, pytest, or coverage locally.
 If CI reports a coverage gap, run coverage only for the flagged file or focused test.
 
 The durable-exec contract manifest (`scripts/durable_exec_contract.json`) records the core
-definitions the Harness durable engines (`absurd`, `aws_lambda`, `pgtask`, `render`) depend on, and
+definitions the Harness durable engines (`absurd`, `aws_lambda`, `azure_durable_task`, `pgtask`, `render`) depend on, and
 harness-only PRs run `tests/durable_exec/test_durable_exec_contract_manifest.py`, which fails when
 an engine change leaves it stale: see
 [Core changes that engines depend on](../../pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md#core-changes-that-engines-depend-on).

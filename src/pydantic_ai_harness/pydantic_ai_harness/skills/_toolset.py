@@ -1,4 +1,4 @@
-"""Tools that offer an untrusted workspace's skills to the model as tool output."""
+"""Tools that offer skills below `'operator'` authority to the model as tool output."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.skills._loader import SkillDefinition
 
 UntrustedSkillsReader = Callable[[Workspace], Awaitable[list[SkillDefinition]]]
-"""Reads the skills the model may load from untrusted workspaces, given the run's workspace."""
+"""Reads the skills below `'operator'` authority the model may load, given the run's workspace."""
 
 
 class UntrustedSkillsToolset(FunctionToolset[AgentDepsT]):
-    """`list_skills` and `load_skill`, for skills read from a workspace the operator doesn't control.
+    """`list_skills` and `load_skill`, for skills whose files the operator doesn't control.
 
     One instance serves every run of the agent, so the tools read the libraries again through
     `ctx.workspace` rather than keeping a run's catalog.

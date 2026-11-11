@@ -14,12 +14,14 @@ processes that keep running across the runs of a conversation.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The model calls Shell tools: run_command, start_command, check_command and stop_command, or the opt-in shell tool. Before a command runs, its executable is checked against allowed_commands or denied_commands, its shell operators against denied_operators, and interactive commands are blocked; then it runs as a process in the workspace's working directory with only the workspace's environment plus Shell(env=). Four example calls show pytest running and returning labelled output, rm rejected by the default denylist, a dev server started in the background with an ID, and that ID used to check on or stop it.](../img/harness/shell.svg)
+
 ## The problem
 
 Agents frequently need to run a build, a test suite, a linter, or a quick
-`grep`. Wiring up subprocess handling -- streaming output, timeouts, truncation,
-killing runaway processes, and tracking background jobs across runs --
-is fiddly boilerplate that every agent reinvents.
+`grep`. Doing that well takes subprocess handling: streaming output, timeouts,
+truncation, killing runaway process groups, and tracking background jobs across
+runs.
 
 `Shell` bundles that plumbing into a single [capability](../capabilities/overview.md):
 configurable allow/deny lists, output truncation tuned to keep the useful tail,
@@ -101,28 +103,36 @@ shell operators and interactive commands:
 both. Setting non-empty values for both raises a `ValueError` when the toolset
 is constructed. `denied_commands` defaults to a list of destructive commands
 (`rm`, `rmdir`, `mkfs`, `dd`, `format`, `shutdown`, `reboot`, `halt`,
-`poweroff`, `init`); pass an empty list to disable it. The executable name is
-extracted with `shlex`, so arguments don't bypass the check.
+`poweroff`, `init`). The executable name is extracted with `shlex`, so
+arguments don't bypass the check.
 
-An empty `allowed_commands` collection does not select allowlist mode. The
-configured `denied_commands` remain active; when omitted, this is the built-in
-denylist. Pass `denied_commands=[]` to disable command-name filtering.
+An empty `allowed_commands` collection does not select allowlist mode: the
+configured `denied_commands` (by default the built-in denylist) remain active.
+Pass `denied_commands=[]` to disable command-name filtering.
 
 A denied command surfaces to the model as a
 [`ModelRetry`](../tools-advanced.md#tool-retries), not a hard error:
 the run continues and the model can pick an allowed command instead. So does
-every other failure the model can act on: a working directory an earlier command
-deleted or replaced with a file, and a command the operating system refuses to
-spawn because it holds a NUL byte or contains a character the operating system
-cannot encode, and a command too long for the operating system to start, which
-the model is asked to write to a file and run instead. Failures
-the model can do nothing about still abort the run: a host that cannot allocate
-a process, an application-supplied `env` too large to start even a short
-command, and an invalid character in an application-supplied `env`. A command that runs past its timeout returns its output so far, ending in
-`[Command timed out after Ns]`. A workspace that is gone ends the run.
+every other failure the model can act on:
+
+- a working directory an earlier command deleted or replaced with a file
+- a command the operating system refuses to spawn because it holds a NUL byte or
+  a character the operating system cannot encode
+- a command too long for the operating system to start (the model is asked to
+  write it to a file and run that instead)
+
+Failures the model can do nothing about abort the run:
+
+- a host that cannot allocate a process
+- an application-supplied `env` too large to start even a short command
+- an invalid character in an application-supplied `env`
+- a workspace that is gone
+
+A command that runs past its timeout returns its output so far, ending in
+`[Command timed out after Ns]`.
 
 !!! warning "Best-effort, not a security boundary"
-    `allowed_commands` is a guardrail against accidents, not a security boundary.
+    `allowed_commands` is a guardrail against accidents.
     Validation checks only the first token, and allowlisted commands such as
     `python`, `git`, `uv`, and `make` can spawn arbitrary processes. A model that
     wants to work around the allowlist can. For untrusted work, give the run an
@@ -246,6 +256,16 @@ result = agent.run_sync(
 print(result.output)
 ```
 
+`stop_command` signals the entire process group, including children left after
+the wrapper exits, then removes the job's output files. When the command took
+write permission away from `.pydantic-ai-harness/shell/` (as `chmod -R a-w .`
+does), the job's directory stays behind and the result ends with
+`[job directory not removed: permission denied]`. In a workspace without
+`setsid` where the job cannot get a process group of its own, only the wrapper
+process is signalled, which does not stop the command or its children.
+
+Background commands and the `shell` tool keep their status and output in files, which needs `mv` and `base64` on the workspace's `PATH`. Without them the call fails at once and names the missing tool.
+
 ## Persistent commands
 
 Name `shell` in `tools` to register the persistent tool instead of the four
@@ -329,10 +349,6 @@ agent = Agent(
 Each run gets a fresh toolset instance, so the tracked directory is isolated
 between concurrent runs and always starts back at the workspace's working
 directory.
-
-`stop_command` signals the entire process group, including children left after the wrapper exits, then removes the job's output files. In a workspace without `setsid` where the job cannot get a process group of its own, only the wrapper process is signalled, which does not stop the command or its children.
-
-Background commands and the `shell` tool keep their status and output in files, which needs `mv` and `base64` on the workspace's `PATH`. Without them the call fails at once and names the missing tool.
 
 The model sees a capped preview of command output. For large output, redirect it to a file in the workspace, then use `grep` or `tail` to inspect bounded portions rather than printing the whole file.
 

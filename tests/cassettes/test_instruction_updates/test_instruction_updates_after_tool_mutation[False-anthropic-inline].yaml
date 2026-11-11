@@ -32,10 +32,10 @@ interactions:
           text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
         - type: text
           text: |-
-            <context id="capability:todos:state">
+            <pyai:context id="capability:todos:state">
             Todo status: pending.
-            </context>
-            A later <context> element with the same id replaces this one.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one.
         tool_choice:
           type: auto
         tools:
@@ -147,9 +147,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:todos:state">
+              <pyai:context id="capability:todos:state">
               Todo status: done.
-              </context>
+              </pyai:context>
             type: text
         model: claude-opus-5
         stream: true
@@ -158,10 +158,10 @@ interactions:
           text: When the todo is pending, call finish_todo once. When it is done, reply DONE.
         - type: text
           text: |-
-            <context id="capability:todos:state">
+            <pyai:context id="capability:todos:state">
             Todo status: pending.
-            </context>
-            A later <context> element with the same id replaces this one.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one.
         tool_choice:
           type: auto
         tools:

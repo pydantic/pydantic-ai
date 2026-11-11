@@ -51,6 +51,25 @@ _SQLITE_METADATA_SCHEMA = (
 )
 
 
+def _create_schema(connection: sqlite3.Connection) -> None:
+    """Create the tables, adding the `memory_files` columns that earlier releases' databases lack."""
+    connection.execute('BEGIN IMMEDIATE')
+    connection.execute(_SQLITE_MEMORY_SCHEMA)
+    columns = {str(row[1]) for row in connection.execute('PRAGMA table_info(memory_files)').fetchall()}
+    if 'version' not in columns:
+        connection.execute('ALTER TABLE memory_files ADD COLUMN version INTEGER NOT NULL DEFAULT 1')
+    if 'last_operation_id' not in columns:
+        connection.execute('ALTER TABLE memory_files ADD COLUMN last_operation_id TEXT')
+    if 'write_metadata' not in columns:
+        connection.execute('ALTER TABLE memory_files ADD COLUMN write_metadata TEXT')
+    connection.execute(_SQLITE_OPERATIONS_SCHEMA)
+    connection.execute(_SQLITE_METADATA_SCHEMA)
+    connection.execute(
+        'INSERT OR IGNORE INTO memory_metadata(id, generation) SELECT 1, COALESCE(MAX(version), 0) FROM memory_files'
+    )
+    connection.commit()
+
+
 def _prefix_end(prefix: str) -> str:
     """An upper bound for the paths starting with `prefix`, so SQLite can seek the path index for the range.
 
@@ -96,22 +115,7 @@ class SqliteMemoryStore:
             if owned:
                 _enable_wal(connection)
             if not self._schema_ready:
-                connection.execute('BEGIN IMMEDIATE')
-                connection.execute(_SQLITE_MEMORY_SCHEMA)
-                columns = {str(row[1]) for row in connection.execute('PRAGMA table_info(memory_files)').fetchall()}
-                if 'version' not in columns:
-                    connection.execute('ALTER TABLE memory_files ADD COLUMN version INTEGER NOT NULL DEFAULT 1')
-                if 'last_operation_id' not in columns:
-                    connection.execute('ALTER TABLE memory_files ADD COLUMN last_operation_id TEXT')
-                if 'write_metadata' not in columns:
-                    connection.execute('ALTER TABLE memory_files ADD COLUMN write_metadata TEXT')
-                connection.execute(_SQLITE_OPERATIONS_SCHEMA)
-                connection.execute(_SQLITE_METADATA_SCHEMA)
-                connection.execute(
-                    'INSERT OR IGNORE INTO memory_metadata(id, generation) '
-                    'SELECT 1, COALESCE(MAX(version), 0) FROM memory_files'
-                )
-                connection.commit()
+                _create_schema(connection)
                 self._schema_ready = True
             return connection, owned
         except BaseException:

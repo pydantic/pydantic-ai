@@ -8,6 +8,7 @@ from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
 from pydantic_ai import messages as _messages
+from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT, ToolNamePath
 from pydantic_ai.capabilities.abstract import select_workspace
 from pydantic_ai.exceptions import UserError
@@ -17,7 +18,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
 from pydantic_ai.workspaces.unavailable import NO_WORKSPACE, UnavailableWorkspace
 
-from ._toolset import DispatchSnapshots, EnqueueGuard, enqueue_not_supported_message, validation_context_from_agent
+from ._toolset import DispatchSnapshots, validation_context_from_agent
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -63,6 +64,7 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
 # `realtime_session` is a live session object that cannot cross the boundary, and its contract
 # already makes `None` mean "not available here". `_run_held_toolsets` is the same: a unit may run
 # in another process, so it enters its own toolset instead of reusing the one the run holds.
+# `_dispatched_tool_name` names a tool in `tool_manager`, so it has nothing to name inside a unit.
 _NONE_UNLESS_ATTACHED = (
     'agent',
     'root_capability',
@@ -72,6 +74,7 @@ _NONE_UNLESS_ATTACHED = (
     '_durable_operations',
     '_run_capabilities_by_id',
     '_run_held_toolsets',
+    '_dispatched_tool_name',
 )
 
 # Reading any other omitted field raises instead of returning the `RunContext` dataclass default,
@@ -362,7 +365,7 @@ class DurableRunContext(RunContext[AgentDepsT]):
         # (a tool, a `process_tool_call` hook, an `event_stream_handler`) has its result replayed
         # without re-running it, so an enqueue would be dropped.
         ctx.__dict__['pending_messages'] = EnqueueGuard(
-            enqueue_not_supported_message(engine_spec.durable_unit_noun, engine_spec.durable_container_noun)
+            engine_spec.durable_unit_noun, engine_spec.durable_container_noun
         )
         return ctx
 

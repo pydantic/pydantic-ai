@@ -13,7 +13,9 @@ import anyio
 from typing_extensions import get_protocol_members
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import Authority
 
+from ._authority_paths import AuthorityLayer, is_within, layer_authority, lowest_authority, merge_path_authority
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -389,12 +391,86 @@ class Workspace(WorkspaceBackend):
         return isinstance(self._backend, Workspace) and self._backend.read_only
 
     @property
-    def trusted(self) -> bool:
-        """Whether the operator controls this workspace's files, so capabilities may put their text in instructions.
+    def authority(self) -> Authority:
+        """The [authority][pydantic_ai.messages.Authority] of this workspace's files, so capabilities know how to send their text.
 
-        `False` under an [`UntrustedWorkspace`][pydantic_ai.workspaces.UntrustedWorkspace]; tools work the same either way.
+        `'operator'` unless an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] wrapper lowers it;
+        with several, the lowest wins. Tools work the same either way. A wrapper's `path_authority` can set
+        other levels for some paths: ask [`authority_of`][pydantic_ai.workspaces.Workspace.authority_of] for a
+        given file's.
+
+        Set authority with `AuthorityWorkspace`. Overriding this property on another wrapper changes neither
+        `authority_of` nor what the layers around that wrapper report, so its files would keep a higher level.
         """
-        return not isinstance(self._backend, Workspace) or self._backend.trusted
+        return lowest_authority(level for level, _ in self._authority_layers())
+
+    def _authority_layers(self) -> list[AuthorityLayer]:
+        """The authority each wrapper sets, innermost first."""
+        backend = self._backend
+        return backend._authority_layers() if isinstance(backend, Workspace) else []
+
+    async def _resolve_path_authority(
+        self, path_authority: Mapping[str, Authority], level: Authority, root: str
+    ) -> dict[str, Authority]:
+        """A wrapper's keys, each at the location it's written and at the real path it leads to.
+
+        A key that's a link also covers its target, but no higher than the link's location would be without that key:
+        a link inside a lower path mustn't raise whatever it points at. A link outside the workspace has no such cap.
+        """
+        written = merge_path_authority(
+            [(await self.resolve(key, base=root), key_level) for key, key_level in path_authority.items()]
+        )
+        resolved = list(written.items())
+        for key, key_level in written.items():
+            real_key = await self.realpath(key)
+            if real_key != key:
+                others: dict[str, Authority] = {
+                    other: other_level for other, other_level in written.items() if other != key
+                }
+                in_workspace = any(is_within(key, zone) for zone in (root, *others))
+                cap = layer_authority(key, (level, others)) if in_workspace else key_level
+                resolved.append((real_key, lowest_authority((key_level, cap))))
+        return merge_path_authority(resolved)
+
+    async def authority_of(self, path: str) -> Authority:
+        """The [authority][pydantic_ai.messages.Authority] of the file at `path`, so a capability knows how to send its text.
+
+        A file in the working directory has [`authority`][pydantic_ai.workspaces.Workspace.authority], unless a
+        wrapper's `path_authority` sets another level for a directory or file containing it: the longest matching
+        path wins, and with several wrappers, the lowest of their levels. A path outside the working directory that no
+        wrapper's `path_authority` contains is outside the workspace, so its level is `'none'`.
+
+        The path is resolved like file methods resolve it, and the level is the lower of where it's written and
+        where it leads: a symlink in the workspace takes the lower of its own level and its target's, so a link
+        can't raise its target's level, nor launder a lower one. A link that only another link's target leads
+        through, in a chain of links, isn't seen: `realpath` resolves a chain at once. On a backend whose
+        [`realpath`][pydantic_ai.workspaces.Workspace.realpath] can't follow symlinks, only the path as written
+        counts.
+
+        The answer reflects the filesystem now: call it when reading the file, and keep the level with the text,
+        rather than asking again when the text is sent.
+        """
+        root = await self.working_dir()
+        layers: list[AuthorityLayer] = []
+        for level, path_authority in self._authority_layers():
+            layers.append((level, await self._resolve_path_authority(path_authority, level, root)))
+        zones = [root, *(key for _, path_authority in layers for key in path_authority)]
+
+        written = await self.resolve(path)
+        target = await self.realpath(written)
+        if not any(is_within(target, zone) for zone in zones):
+            return 'none'
+        locations = [target]
+        if target != written:
+            # A symlink is on the way: walk the path to find each link, and count where it is, not only where it
+            # leads. A link outside the workspace, such as a system directory above it, isn't the workspace's.
+            parent = '/'
+            for part in written.split('/')[1:]:
+                location = posixpath.join(parent, part)
+                parent = await self.realpath(location)
+                if parent != location and any(is_within(location, zone) for zone in zones):
+                    locations.append(location)
+        return lowest_authority(layer_authority(location, layer) for location in locations for layer in layers)
 
     def durable_policy(self) -> tuple[object, ...]:
         """Configuration a durable unit must rebuild with this wrapper.

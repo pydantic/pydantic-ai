@@ -8017,7 +8017,7 @@ def test_tool_availability_delta_keeps_its_place_among_other_parts():
     )
     announcement = request.parts[1]
     assert isinstance(announcement, UserPromptPart)
-    assert announcement.content == '<system>The following tool(s) are now available: `new_tool`</system>'
+    assert announcement.content == ('<system>The following tool(s) are now available: `new_tool`</system>')
 
 
 def test_tool_availability_delta_adding_nothing_leaves_no_empty_request():

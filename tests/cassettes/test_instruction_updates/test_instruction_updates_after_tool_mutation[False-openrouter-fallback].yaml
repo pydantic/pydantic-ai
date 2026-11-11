@@ -24,10 +24,10 @@ interactions:
           content: When the todo is pending, call finish_todo once. When it is done, reply DONE.
         - role: system
           content: |-
-            <context id="capability:todos:state">
+            <pyai:context id="capability:todos:state">
             Todo status: pending.
-            </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one and stays in effect until replaced again.
         - role: user
           content: Process the todo.
         model: deepseek/deepseek-chat
@@ -132,10 +132,10 @@ interactions:
           content: When the todo is pending, call finish_todo once. When it is done, reply DONE.
         - role: system
           content: |-
-            <context id="capability:todos:state">
+            <pyai:context id="capability:todos:state">
             Todo status: pending.
-            </context>
-            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one and stays in effect until replaced again.
         - role: user
           content: Process the todo.
         - role: assistant
@@ -151,9 +151,9 @@ interactions:
           content: Saved.
         - role: user
           content: |-
-            <system><context id="capability:todos:state">
+            <system><pyai:context id="capability:todos:state">
             Todo status: done.
-            </context></system>
+            </pyai:context></system>
         model: deepseek/deepseek-chat
         stream: false
         tool_choice: auto

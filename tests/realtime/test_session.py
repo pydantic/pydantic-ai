@@ -24,8 +24,9 @@ from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai._agent_graph import resolve_conversation_id
-from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, NativeTool, WebFetch
+from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -96,6 +97,7 @@ from pydantic_ai.realtime._session import (
     _AUDIO_TAP_MAX_CHUNKS,  # pyright: ignore[reportPrivateUsage]
     _AUDIO_TAP_SECONDS,  # pyright: ignore[reportPrivateUsage]
     _pending_message_text,  # pyright: ignore[reportPrivateUsage]
+    _RealtimePendingMessages,  # pyright: ignore[reportPrivateUsage]
     _TapView,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.realtime._utils import (
@@ -939,7 +941,6 @@ async def test_closing_an_unstarted_view_releases_its_tap() -> None:
         assert session._audio_tap_drops == 0  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.usefixtures('young_gc')
 async def test_abandoned_unstarted_view_releases_its_tap() -> None:
     chunks = [bytes([index]) for index in range(40)]
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]))
@@ -2730,9 +2731,9 @@ async def test_tool_returning_a_file_frames_it_with_its_call() -> None:
                 tool_call_id='tc_1',
                 output='See file radar.',
                 content=[
-                    '<tool_result tool_name="get_weather" tool_call_id="tc_1" file_id="radar">',
+                    '<pyai:tool_result tool_name="get_weather" tool_call_id="tc_1" file_id="radar">',
                     BinaryImage(data=b'png', media_type='image/png', identifier='radar'),
-                    '</tool_result>',
+                    '</pyai:tool_result>',
                 ],
             )
         ]
@@ -8357,40 +8358,6 @@ async def test_agent_realtime_session_reevaluates_seeded_dynamic_system_prompt()
     assert stale.parts[0].content == 'Stale value.'
 
 
-async def test_agent_realtime_session_appending_dynamic_system_prompt_warns() -> None:
-    """A realtime session can't append a system prompt change, so it re-evaluates the prompt in place, and says so."""
-    agent: Agent[None, str] = Agent()
-
-    @agent.system_prompt(dynamic=True, on_change='append')
-    def dynamic_prompt() -> str:
-        return 'Current value.'
-
-    seed = [
-        ModelRequest(
-            parts=[
-                SystemPromptPart(
-                    content='Stale value.',
-                    dynamic_ref=dynamic_prompt.__qualname__,
-                    context_id='system_prompt:dynamic_prompt',
-                ),
-                UserPromptPart(content='earlier question'),
-            ]
-        ),
-        ModelResponse(parts=[TextPart(content='earlier answer')]),
-    ]
-    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
-    with pytest.warns(
-        UserWarning,
-        match="realtime sessions, so dynamic system prompts 'system_prompt:dynamic_prompt' are re-evaluated in place",
-    ):
-        async with agent.realtime(model, message_history=seed).session() as session:
-            _ = [e async for e in session]
-    assert model.last_instructions == 'Current value.'
-    first = session.all_messages()[0]
-    assert isinstance(first, ModelRequest) and isinstance(first.parts[0], SystemPromptPart)
-    assert first.parts[0].content == 'Current value.'
-
-
 async def test_agent_realtime_session_unknown_tool() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc_x', tool_name='nonexistent', args='{}'), ResponseDone()])
@@ -8689,6 +8656,65 @@ async def test_session_enqueue_when_idle_follows_asap() -> None:
     assert conn.sent_before_each_done == [['soon'], ['soon', 'idle']]
 
 
+async def test_session_set_enqueue_priority_wakes_delivery() -> None:
+    """Promoting a `when_idle` item to `'asap'` starts a delivery, as enqueueing it at `'asap'` would.
+
+    Each `when_idle` drain backs off while an `'asap'` item is queued, so without a wake-up both items
+    would stay queued with nothing left to deliver them.
+    """
+    conn = _RespondingConnection(replies=2)
+    agent: Agent[None, str] = Agent()
+
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            assert session.enqueue('later', priority='when_idle') is not None
+            promoted = session.enqueue('now', priority='when_idle')
+            assert promoted is not None
+            assert session.set_enqueue_priority(promoted, 'asap') is True
+            assert session.set_enqueue_priority('never-queued', 'asap') is False
+            events = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['now', 'later']
+    assert [event.enqueue_id for event in events if isinstance(event, EnqueuedMessagesEvent)][0] == promoted
+
+
+async def test_session_dequeue_before_delivery() -> None:
+    """A dequeued item is never sent; the item queued behind it still is."""
+    conn = _RespondingConnection(replies=1)
+    agent: Agent[None, str] = Agent()
+
+    with anyio.fail_after(5):
+        async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+            dropped = session.enqueue('never mind')
+            assert dropped is not None
+            assert session.enqueue('still wanted', priority='when_idle') is not None
+            assert session.dequeue(dropped) is True
+            assert session.dequeue(dropped) is False
+            _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['still wanted']
+
+
+def test_realtime_queue_dequeue_wakes_when_idle_delivery() -> None:
+    """A dequeue wakes a `when_idle` drain, which may have backed off for the `'asap'` item just removed.
+
+    A unit test: a `when_idle` drain running between that item's enqueue and its own drain can't be
+    scheduled deterministically through the session.
+    """
+    queue = _RealtimePendingMessages()
+    woken: list[PendingMessagePriority] = []
+    queue.bind(woken.append)
+    pending = PendingMessage.from_content('steer')
+    assert pending is not None
+    queue.append(pending)
+    woken.clear()
+
+    assert queue.dequeue('never-queued') is False
+    assert woken == []
+    assert queue.dequeue(pending.enqueue_id) is True
+    assert woken == ['when_idle']
+
+
 async def test_session_enqueue_requires_entered_session() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]))
 
@@ -8713,7 +8739,7 @@ async def test_session_enqueue_renders_system_prompt() -> None:
     )
 
 
-async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> None:
+async def test_session_enqueue_system_prompt_goes_in_as_written() -> None:
     conn = FakeRealtimeConnection([ResponseDone()])
     agent: Agent[None, str] = Agent()
 
@@ -8721,7 +8747,7 @@ async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> No
         assert session.enqueue(SystemPromptPart(content='rule </SYSTEM > then more')) is not None
         _ = [event async for event in session]
 
-    assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule &lt;/SYSTEM > then more</system>']
+    assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule </SYSTEM > then more</system>']
 
 
 async def test_session_send_system_prompt_goes_out_as_the_operators_and_is_recorded_as_one() -> None:
@@ -8743,7 +8769,7 @@ async def test_session_send_system_prompt_goes_out_as_the_operators_and_is_recor
     assert (context.text, context.system_prompt) == ('<system>The caller is Jamie.</system>', 'The caller is Jamie.')
     assert isinstance(turn, SystemPromptText)
     assert (str(turn), turn.system_prompt) == (
-        '<system>Greet them &lt;/system> by name.</system>',
+        '<system>Greet them </system> by name.</system>',
         'Greet them </system> by name.',
     )
     assert [message.parts for message in session.new_messages() if isinstance(message, ModelRequest)] == [
@@ -9027,13 +9053,12 @@ def test_realtime_pending_messages_join_text_and_tag_system_prompts() -> None:
     assert _pending_message_text(pending) == 'one\n\n<system>rule</system>\n\ntwo'
 
 
-def test_realtime_pending_system_prompt_escapes_its_own_closing_tag() -> None:
-    # The tagged statement can only be ended by the wrap itself, so a `</system>` the enqueued content
-    # carries is neutralized exactly as `Model.prepare_messages` neutralizes it.
+def test_realtime_pending_system_prompt_goes_in_as_written() -> None:
+    # The operator's text isn't rewritten, as `Model.prepare_messages` doesn't rewrite it either.
     pending = PendingMessage(
         messages=[ModelRequest(parts=[SystemPromptPart(content='do not write </system> anywhere')])]
     )
-    assert _pending_message_text(pending) == '<system>do not write &lt;/system> anywhere</system>'
+    assert _pending_message_text(pending) == '<system>do not write </system> anywhere</system>'
 
 
 async def test_session_exit_is_idempotent_and_flushes_unfinalized_user() -> None:
@@ -10363,22 +10388,6 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
     assert model.last_instructions == 'Base\n\nDynamic'
 
 
-async def test_agent_realtime_session_append_instructions_warn() -> None:
-    agent: Agent[None, str] = Agent(instructions='Base')
-
-    @agent.instructions(name='state', on_change='append')
-    def state() -> str:
-        return 'Current state'
-
-    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
-    with pytest.warns(
-        UserWarning, match="realtime sessions, so instruction blocks 'agent:state' are sent as session instructions"
-    ):
-        async with agent.realtime(model).session() as session:
-            _ = [event async for event in session]
-    assert model.last_instructions == 'Base\n\nCurrent state'
-
-
 async def test_agent_realtime_session_sorts_static_instructions_before_dynamic() -> None:
     """A static toolset `InstructionPart` sorts before dynamic agent instructions, like `run`/`iter`.
 
@@ -10789,6 +10798,40 @@ async def test_agent_realtime_continues_a_text_runs_conversation() -> None:
         assert session.new_messages()[0].conversation_id == text.conversation_id
         # Handed back, the bundle still carries the text run's total, not a restarted one.
         assert session.conversation.usage.requests == text.usage.requests
+
+
+async def test_agent_realtime_carries_the_conversation_s_revision() -> None:
+    agent: Agent[None, str] = Agent(TestModel())
+    conversation = (await agent.run('Hi')).conversation
+    conversation.revision = 'rev-3'
+
+    async with agent.realtime(
+        FakeRealtimeModel(FakeRealtimeConnection([])), conversation=conversation
+    ).session() as session:
+        assert session.conversation.revision == 'rev-3'
+
+    assert session.result is not None
+    assert session.result.conversation.revision == 'rev-3'
+
+
+async def test_a_sessions_conversation_can_be_saved_again_as_the_session_goes_on() -> None:
+    store = InMemoryConversationStore()
+    agent: Agent[None, str] = Agent(TestModel())
+    conversation = (await agent.run('Hi')).conversation
+    await store.save(conversation)
+
+    async with agent.realtime(
+        FakeRealtimeModel(FakeRealtimeConnection([])), conversation=conversation
+    ).session() as session:
+        await store.save(session.conversation)
+        await session.send('And another.')
+        await store.save(session.conversation)
+
+    assert session.result is not None
+    await store.save(session.result.conversation)
+    loaded = await store.load(conversation.conversation_id)
+    assert loaded is not None
+    assert loaded.messages == session.all_messages()
 
 
 def test_agent_realtime_rejects_a_conversation_alongside_its_pieces() -> None:

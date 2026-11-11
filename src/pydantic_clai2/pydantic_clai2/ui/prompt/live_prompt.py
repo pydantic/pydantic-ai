@@ -234,36 +234,37 @@ class LivePrompt:
 
     def _route(self, key: str, data: str) -> None:
         cycles = key in ('up', 'down') and self._arrows_cycle_completions()
-        if key == 'ctrl-c':
-            self.interrupt()
-        elif key == 'escape':
-            self.escape()
-        elif key == 'ctrl-d':
-            if self.buffer.text:
-                self.buffer.edit('delete')
-            else:
-                self.submit(EOFError())
-        elif key == 'ctrl-l':
-            # As in Claude Code: a clean screen; the conversation, draft, and queue stay.
-            self.output.clear(keep_current=self.interrupts.active)
-        elif key in ('paste', 'ctrl-v', 'alt-v'):
-            self.paste(data if key == 'paste' else None)
-        elif key == 'ctrl-r' or self.buffer.search is not None:
-            self.search(key)
-        elif key in ('tab', 'backtab'):
-            self.complete(backwards=key == 'backtab')
-        elif key == 'enter':
-            self.accept()
-        elif key == 'alt-enter':
-            self.steer_draft() if self.buffer.text.strip() else self.steer_queued()
-        elif key in ('shift-enter', 'ctrl-j'):
-            self.buffer.insert('\n')
-        elif cycles:
-            self.complete(backwards=key == 'up', accept_single=False)
-        elif key in ('up', 'down'):
-            self.recall(backwards=key == 'up')
-        else:
-            self.buffer.edit(key)
+        match key:
+            case 'ctrl-c':
+                self.interrupt()
+            case 'escape':
+                self.escape()
+            case 'ctrl-d':
+                if self.buffer.text:
+                    self.buffer.edit('delete')
+                else:
+                    self.submit(EOFError())
+            case 'ctrl-l':
+                # As in Claude Code: a clean screen; the conversation, draft, and queue stay.
+                self.output.clear(keep_current=self.interrupts.active)
+            case 'paste' | 'ctrl-v' | 'alt-v':
+                self.paste(data if key == 'paste' else None)
+            case _ if key == 'ctrl-r' or self.buffer.search is not None:
+                self.search(key)
+            case 'tab' | 'backtab':
+                self.complete(backwards=key == 'backtab')
+            case 'enter':
+                self.accept()
+            case 'alt-enter':
+                self.steer_draft() if self.buffer.text.strip() else self.steer_queued()
+            case 'shift-enter' | 'ctrl-j':
+                self.buffer.insert('\n')
+            case 'up' | 'down' if cycles:
+                self.complete(backwards=key == 'up', accept_single=False)
+            case 'up' | 'down':
+                self.recall(backwards=key == 'up')
+            case _:
+                self.buffer.edit(key)
         if key not in ('tab', 'backtab', 'escape') and not cycles:
             self.refresh_completions()
 
@@ -365,18 +366,22 @@ class LivePrompt:
         self.output.view.follow()
         self.history.append_string(text)
         self.buffer.history.append(text)
+        route = self._deliver(command, recorded=text, target=target)
+        telemetry.record('prompt submitted', route=route, recalled=recalled, **_submission(command, self.commands))
+
+    def _deliver(self, command: str, *, recorded: str, target: QueuedPrompt | None) -> str:
+        """Run, rewrite, or queue an accepted draft, returning the route telemetry records."""
         if self.run_now is not None and self.run_now(command):
-            route = 'run now'
             if target is not None:
                 self._discard(target)
-        elif target is not None:
-            route = 'edited queued'
-            target.text, target.recorded = command, text
+            return 'run now'
+        if target is not None:
+            target.text, target.recorded = command, recorded
             self.queue_changed()
-        else:
-            route = 'queued' if self.interrupts.active else 'submitted'
-            self._enqueue(QueuedPrompt(command, recorded=text))
-        telemetry.record('prompt submitted', route=route, recalled=recalled, **_submission(command, self.commands))
+            return 'edited queued'
+        route = 'queued' if self.interrupts.active else 'submitted'
+        self._enqueue(QueuedPrompt(command, recorded=recorded))
+        return route
 
     def recall(self, *, backwards: bool) -> None:
         """Walk queued prompts, newest first, before command history.
@@ -589,22 +594,25 @@ class LivePrompt:
         rows.append(muted + '─' * width + reset)
         if pinned:
             rows.append(truncate(pinned, width) + reset)
-        if self.buffer.search is not None:
-            footer = f'reverse-i-search: {self.buffer.search}'
-        else:
-            notice = self.notice or self.images.notice or self._completion_error
-            footer = (
-                ' '.join(terminal_text(notice).split())
-                if notice
-                else ''.join(
-                    (theme.sgr(style) if style else muted) + ' '.join(terminal_text(text).splitlines())
-                    for style, text in self.toolbar()
-                )
-            )
-            if self.queued_messages:
-                footer += f' | queued: {len(self.queued_messages)}'
-        rows.append(muted + truncate(footer, width) + reset)
+        rows.append(muted + truncate(self._footer(muted=muted), width) + reset)
         return tuple(rows)
+
+    def _footer(self, *, muted: str) -> str:
+        """The bottom row: the history search, or else a notice or the toolbar, with the queue's length."""
+        if self.buffer.search is not None:
+            return f'reverse-i-search: {self.buffer.search}'
+        notice = self.notice or self.images.notice or self._completion_error
+        footer = (
+            ' '.join(terminal_text(notice).split())
+            if notice
+            else ''.join(
+                (theme.sgr(style) if style else muted) + ' '.join(terminal_text(text).splitlines())
+                for style, text in self.toolbar()
+            )
+        )
+        if self.queued_messages:
+            footer += f' | queued: {len(self.queued_messages)}'
+        return footer
 
     def paint(self) -> None:
         """Draw only when the editor owns the terminal."""

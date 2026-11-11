@@ -46,7 +46,7 @@ from pydantic_ai_harness.compaction import (
     pin,
 )
 from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY
-from pydantic_ai_harness.subagents import DelegationTask
+from pydantic_ai_harness.subagents import DelegationTask, TaskOutputPart
 
 from ...conftest import try_import
 
@@ -448,9 +448,9 @@ This file is off limits; read the copy instead.
 </message>
 <message role="retry_feedback" cause="model_retry">
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-&lt;retry_feedback>
+&lt;pyai:retry_feedback>
 Say more.
-&lt;/retry_feedback>
+&lt;/pyai:retry_feedback>
 </message>
 </earlier_step>\
 """)
@@ -1093,7 +1093,7 @@ async def test_nimble_keeps_the_steps_the_task_needs(allow_model_requests: None)
     ]
 
 
-def _report(output: str) -> UserPromptPart:
+def _report(output: str) -> TaskOutputPart:
     return DelegationTask(
         id='a' * 32, agent_name='worker', prompt='p', conversation_id='c', outcome='ok', output=output
     ).report()

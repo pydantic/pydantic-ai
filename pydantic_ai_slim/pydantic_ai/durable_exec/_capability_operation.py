@@ -569,7 +569,7 @@ async def recover_capability(ctx: RunContext[Any], *, capability_id: str) -> Abs
     capability = matches[0]
     if type(capability).for_run is AbstractCapability.for_run:
         return capability
-    return await capability.for_run(ctx)
+    return await capability._for_run_keeping_authority(ctx)  # pyright: ignore[reportPrivateUsage]
 
 
 CapabilityBoundOperation = BoundDurableOperation[CapabilityOperationParams, Any, Any]

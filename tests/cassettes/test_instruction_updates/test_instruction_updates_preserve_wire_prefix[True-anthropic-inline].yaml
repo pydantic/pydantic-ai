@@ -36,10 +36,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one.
   response:
     status: 200
     headers:
@@ -138,9 +138,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse B.
-              </context>
+              </pyai:context>
             type: text
         model: claude-opus-5
         stream: true
@@ -151,10 +151,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one.
   response:
     status: 200
     headers:
@@ -253,9 +253,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse B.
-              </context>
+              </pyai:context>
             type: text
         - role: assistant
           content:
@@ -278,10 +278,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one.
   response:
     status: 200
     headers:
@@ -380,9 +380,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse B.
-              </context>
+              </pyai:context>
             type: text
         - role: assistant
           content:
@@ -411,9 +411,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse A.
-              </context>
+              </pyai:context>
             type: text
         model: claude-opus-5
         stream: true
@@ -424,10 +424,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one.
   response:
     status: 200
     headers:
@@ -526,9 +526,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse B.
-              </context>
+              </pyai:context>
             type: text
         - role: assistant
           content:
@@ -557,9 +557,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse A.
-              </context>
+              </pyai:context>
             type: text
         - role: assistant
           content:
@@ -576,9 +576,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               This context has been withdrawn.
-              </context>
+              </pyai:context>
             type: text
         model: claude-opus-5
         stream: true
@@ -589,10 +589,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one.
   response:
     status: 200
     headers:
@@ -694,9 +694,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse B.
-              </context>
+              </pyai:context>
             type: text
         - role: assistant
           content:
@@ -725,9 +725,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse A.
-              </context>
+              </pyai:context>
             type: text
         - role: assistant
           content:
@@ -744,9 +744,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               This context has been withdrawn.
-              </context>
+              </pyai:context>
             type: text
         - role: assistant
           content:
@@ -763,9 +763,9 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:memory:state">
+              <pyai:context id="capability:memory:state">
               Send parcels to warehouse C.
-              </context>
+              </pyai:context>
             type: text
         model: claude-opus-5
         stream: true
@@ -776,10 +776,10 @@ interactions:
             Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
         - type: text
           text: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
-            A later <context> element with the same id replaces this one.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces this one.
   response:
     status: 200
     headers:

@@ -6,6 +6,8 @@ Notice when an agent repeats the same actions without making progress, and inter
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+![DetectLoops records each response in after_model_request and checks the run in before_model_request. Here the model called read_file(path='missing.txt') three times and got the same error each time, a repeated_result loop. With action='nudge', the default, a system prompt telling the model to change its approach joins the next request; with action='error', LoopDetectedError ends the run.](https://pydantic.dev/docs/ai/img/harness/detect-loops.svg)
+
 ## Usage
 
 uv:
@@ -63,19 +65,19 @@ A tool polled until a job finishes, with arguments that don't change, is a `repe
 
 ### `'nudge'` (default)
 
-The capability enqueues a [`SystemPromptPart`](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/#pydantic_ai.messages.SystemPromptPart) with [`RunContext.enqueue`](https://pydantic.dev/docs/ai/core-concepts/message-history/#injecting-messages-mid-run), which joins the request being prepared. It keeps the default conversation scope, so like a course correction it keeps applying on later requests instead of being shown once, and later requests send it unchanged. For example:
+The capability enqueues a `LoopNudgePart`, an [`InstructionCapabilityPart`](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/#pydantic_ai.messages.InstructionCapabilityPart) kind (a [capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts) in the application's voice), with [`RunContext.enqueue`](https://pydantic.dev/docs/ai/core-concepts/message-history/#injecting-messages-mid-run), which joins the request being prepared. It keeps the default conversation scope, so like a course correction it keeps applying on later requests instead of being shown once, and later requests send it unchanged. The model sees its text as a [mid-conversation system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#mid-conversation-system-prompts), or as `<system>` user text on a model without inline system prompts. For example:
 
 ```text
 Your last 3 calls to `read_file` used the same arguments and returned the same result, so calling it again will not change the outcome. Change your approach, or explain what is blocking you.
 ```
 
-The text names tools using only letters, digits, and `_`; any other character becomes `_`. The real names, and the pattern, are in the part's `metadata`:
+The text names tools using only letters, digits, and `_`; any other character becomes `_`. The part's `pattern` and `tool_names` fields hold the pattern and the real names, and never reach the model. Find nudges in history by their type, not by their text:
 
-```python
-{'origin': 'pydantic-ai-harness.detect_loops.nudge.v1', 'pattern': 'repeated_result', 'tool_names': ['read_file']}
+```python {test="skip" lint="skip"}
+from pydantic_ai_harness.detect_loops import LoopNudgePart
+
+nudges = [part for message in messages for part in message.parts if isinstance(part, LoopNudgePart)]
 ```
-
-Find nudges in history by that `origin`, not by their text ([identifying system prompts](https://pydantic.dev/docs/ai/core-concepts/message-history/#identifying-system-prompts)). On a model without inline system prompts, Pydantic AI sends the part as `<system>` user text, as it does any [mid-conversation system prompt](https://pydantic.dev/docs/ai/core-concepts/message-history/#mid-conversation-system-prompts).
 
 A nudge doesn't stop a model that ignores it. Combine it with [`UsageLimits`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) for a hard stop.
 

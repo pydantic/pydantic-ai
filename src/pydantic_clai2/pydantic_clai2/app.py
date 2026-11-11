@@ -4,7 +4,6 @@ import os
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from threading import Thread
 from typing import TypeVar
 
@@ -19,15 +18,15 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_clai2 import warm_imports
+from pydantic_clai2.clai_docs import ClaiDocs
 from pydantic_clai2.cli.self_update import WebHandoff
 from pydantic_clai2.commands import (
     Commands,
 )
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
-from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings
+from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings, with_current_approvals
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import (
     SessionEndReason,
@@ -45,8 +44,10 @@ from pydantic_clai2.runtime.session import (
     resolve_model_name,
 )
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
+from pydantic_clai2.runtime.temporary_directory import temporary_directory
 from pydantic_clai2.runtime.worktrees import Worktree
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
+from pydantic_clai2.ui.prompt.terminal import Terminal
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.welcome import print_welcome
 from pydantic_clai2.ui.stderr_relay import relay_stderr
@@ -58,7 +59,7 @@ OutputT = TypeVar('OutputT')
 
 def create_agent(model: str | None = None) -> Agent[None, str]:
     """Build the base CLAI agent. The coding tools come from the built-in `coder` plugin, not from here."""
-    return Agent(model, deps_type=type(None), capabilities=[customization_guide()])
+    return Agent(model, deps_type=type(None), capabilities=[ClaiDocs()])
 
 
 def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
@@ -66,7 +67,7 @@ def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str
 
     It is named `clai2`, which its run spans carry and which Logfire Agent Control addresses it by.
     """
-    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()], name='clai2')
+    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[ClaiDocs()], name='clai2')
 
 
 @asynccontextmanager
@@ -119,44 +120,45 @@ async def open_stock_agent(
     reason: SessionEndReason = 'error'
     # A private settings store keeps the user's saved and drop-in plugins out; plugin output goes nowhere.
     root = Path(workspace).resolve()
-    with TemporaryDirectory(prefix='clai2-') as config, open(os.devnull, 'w', encoding='utf-8') as sink:
-        console = Console(file=sink, force_terminal=False)
-        store = SettingsStore(Path(config) / 'config.db')
-        models = ModelResolver(console=console, store=store)
-        model_defaults = ModelDefaults[None](lambda name: default_model_settings(model=name, saved={}))
-        loader = SessionPlugins[None](
-            store=store,
-            console=console,
-            commands=Commands(workspace=lambda: root),
-            session_start=lambda: SessionStart(
-                agent=template, settings=Settings(model=model if isinstance(model, str) else None)
-            ),
-            builtin=declarations,
-            workspace=lambda: root,
-            resolve_model=models.resolve,
-            model_settings=model_defaults.defaults,
-        )
-        models.plugins = loader.model_providers
-        try:
-            for declaration in declarations:
-                await loader.load(declaration.id)
-            bound: list[AgentCapability[None]] = [*loader.run_capabilities(), *capabilities]
-            if (local := local_workspace(bound, root)) is not None:
-                bound.append(local)
-            agent = template.with_plugins(
-                [
-                    *bound,
-                    SessionModels[None](lambda _, name: resolve_model_name(models.resolve, name)),
-                    model_defaults,
-                ],
-                model=model if isinstance(model, str) else None,
+    async with temporary_directory(prefix='clai2-') as config:
+        with open(os.devnull, 'w', encoding='utf-8') as sink:
+            console = Console(file=sink, force_terminal=False)
+            store = SettingsStore(config / 'config.db')
+            models = ModelResolver(console=console, store=store)
+            model_defaults = ModelDefaults[None](lambda name: default_model_settings(model=name, saved={}))
+            loader = SessionPlugins[None](
+                store=store,
+                console=console,
+                commands=Commands(workspace=lambda: root),
+                session_start=lambda: SessionStart(
+                    agent=template, settings=Settings(model=model if isinstance(model, str) else None)
+                ),
+                builtin=declarations,
+                workspace=lambda: root,
+                resolve_model=models.resolve,
+                model_settings=model_defaults.defaults,
             )
-            async with agent:
-                yield agent
-            reason = 'exit'
-        finally:
-            with CancelScope(shield=True):
-                await loader.close(reason)
+            models.plugins = loader.model_providers
+            try:
+                for declaration in declarations:
+                    await loader.load(declaration.id)
+                bound: list[AgentCapability[None]] = [*loader.run_capabilities(), *capabilities]
+                if (local := local_workspace(bound, root)) is not None:
+                    bound.append(local)
+                agent = template.with_plugins(
+                    [
+                        *bound,
+                        SessionModels[None](lambda _, name: resolve_model_name(models.resolve, name)),
+                        model_defaults,
+                    ],
+                    model=model if isinstance(model, str) else None,
+                )
+                async with agent:
+                    yield agent
+                reason = 'exit'
+            finally:
+                with CancelScope(shield=True):
+                    await loader.close(reason)
 
 
 async def chat(
@@ -202,24 +204,23 @@ async def chat(
     console = console or Console()
     rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
-    with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
-        project = project or ProjectSettings()
-        print_welcome(project, console, worktree=worktree)
-        use_defaults = builtin_plugins is DEFAULT_PLUGINS
-        use_stock_defaults = builtin_plugins is STOCK_PLUGINS
-        shell = create_shell(
-            agent,
-            deps=deps,
-            plugins=plugins,
-            usage_limits=usage_limits,
-            console=console,
-            settings=settings,
-            store=store,
-            builtin_plugins=builtin_plugins,
-            project=project,
-            transcript=transcript,
-            load_plugins=load_plugins,
-        )
+    use_defaults = builtin_plugins is DEFAULT_PLUGINS
+    use_stock_defaults = builtin_plugins is STOCK_PLUGINS
+    shell = _create_home_shell(
+        agent,
+        deps=deps,
+        plugins=plugins,
+        usage_limits=usage_limits,
+        console=console,
+        settings=settings,
+        store=store,
+        builtin_plugins=builtin_plugins,
+        project=project,
+        transcript=transcript,
+        load_plugins=load_plugins,
+        settings_for=settings_for,
+        worktree=worktree,
+    )
     fresh = False
     warming: Thread | None = None
     served: WebHandoff | None = None
@@ -256,39 +257,18 @@ async def chat(
                             workers.start_soon(shell.process.namer.run)
                             try:
                                 with transcript.capture(console):
-                                    # Apply launch options first, so plugins start with the conversation they
-                                    # name. The browser waits for plugins, whose models may name its sessions,
-                                    # and until it picks one, telemetry has no session to assign.
-                                    browse = resume == ''
-                                    restored = bool(resume)
-                                    notice = ''
-                                    if not browse and (resume is not None or session_id is not None):
-                                        notice = await shell.sessions.start(
-                                            resume=resume,
-                                            resume_from=resume_from,
-                                            session_id=session_id,
-                                            fork=fork_session,
-                                        )
-                                    with shell.defer_identity() if browse else nullcontext():
-                                        await shell.loader.load_all(fresh=fresh)
-                                        _report_project_plugins(shell.loader, console)
-                                        await _serve_again(shell.loader, web, console=console)
-                                        web = None
-                                        if restored:
-                                            # Now that observability has subscribed and renderers have loaded.
-                                            shell.session.record_resumed()
-                                            await shell.sessions.show_resumed()
-                                        if browse:
-                                            notice = await shell.sessions.start(
-                                                resume='',
-                                                resume_from=resume_from,
-                                                session_id=session_id,
-                                                fork=fork_session,
-                                            )
-                                        if notice:
-                                            console.print(notice, markup=False)
+                                    await _start_session(
+                                        shell,
+                                        resume=resume,
+                                        resume_from=resume_from,
+                                        session_id=session_id,
+                                        fork=fork_session,
+                                        fresh=fresh,
+                                        web=web,
+                                        console=console,
+                                    )
                                     # Applied once: a failed reload resumes the session shown without them.
-                                    resume = session_id = resume_from = None
+                                    resume = session_id = resume_from = web = None
                                     fork_session = False
                                 warming = warming or warm_imports.start()
                                 reason = await shell.run()
@@ -299,56 +279,176 @@ async def chat(
                             raise exc.exceptions[0] from None
                         raise
                     finally:
-                        # The session shown last restarts CLAI: `/reload` and `/update` work in it.
-                        last = terminal.ended_in or shell
                         served = terminal.served
-                        if not terminal.home_closed:
-                            with transcript.capture(console):
-                                # It ends for good when another session's reload or exit restarts or ends CLAI.
-                                await shell.close(reason if last is shell else 'exit')
-                if not last.reload_requested:
-                    if (relaunch := last.relaunch(web=served)) is not None:
-                        raise relaunch
-                    return
-                last.reload_requested = False
-                if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
-                    warming.join()
-                try:
-                    shell = reload_clai(
-                        lambda shell=last: create_shell(
-                            rebuild_stock(()) if rebuild_stock is not None else agent,
-                            deps=deps,
-                            plugins=plugins,
-                            usage_limits=shell.session.usage_limits,
-                            console=console,
-                            settings=shell.context.settings,
-                            store=SettingsStore(shell.context.store.path),
-                            builtin_plugins=(
-                                STOCK_PLUGINS
-                                if use_stock_defaults
-                                else DEFAULT_PLUGINS
-                                if use_defaults
-                                else builtin_plugins
-                            ),
-                            project=shell.context.project,
-                            message_history=shell.session.messages,
-                            summary=shell.session.summary,
-                            launched=shell.sessions.launched,
-                            transcript=transcript,
-                            load_plugins=load_plugins,
-                            workspace=Path(shell.session.workspace),
+                        last = await _close_home_shell(
+                            shell, terminal, reason=reason, transcript=transcript, console=console
                         )
+                if not last.reload_requested:
+                    break
+                last.reload_requested = False
+                assert warming is not None, 'a reload follows a run, which started warming'
+                warming.join()
+                try:
+                    shell = _reload_shell(
+                        last,
+                        agent=agent,
+                        rebuild_stock=rebuild_stock,
+                        deps=deps,
+                        plugins=plugins,
+                        console=console,
+                        builtin_plugins=builtin_plugins,
+                        use_defaults=use_defaults,
+                        use_stock_defaults=use_stock_defaults,
+                        transcript=transcript,
+                        load_plugins=load_plugins,
                     )
                 except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
                     with transcript.capture(console):
                         _report_reload_failure(exc, console=console)
                     fresh = False
-                    # When the session shown asked for the reload, the one CLAI started with continues its conversation.
-                    resume = None if last is shell else last.session.conversation_id
+                    resume = _continued_conversation(last, home=shell)
                 else:
                     with transcript.capture(console):
                         console.print('CLAI2 reloaded. Conversation preserved.', style=theme.color(theme.INFO))
                     fresh = True
+            if (relaunch := last.relaunch(web=served)) is not None:
+                raise relaunch
+
+
+def _create_home_shell(
+    agent: AbstractAgent[DepsT, OutputT],
+    *,
+    deps: DepsT,
+    plugins: Sequence[AgentCapability[DepsT]],
+    usage_limits: UsageLimits | None,
+    console: Console,
+    settings: Settings | None,
+    store: SettingsStore | None,
+    builtin_plugins: Sequence[PluginSettings],
+    project: ProjectSettings | None,
+    transcript: TranscriptBuffer,
+    load_plugins: bool,
+    settings_for: Callable[[ProjectSettings], Settings] | None,
+    worktree: Worktree | None,
+) -> SessionRuntime[DepsT, OutputT]:
+    """Build the session CLAI starts with, under the launch banner."""
+    with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
+        project = project or ProjectSettings()
+        print_welcome(project, console, worktree=worktree)
+        return create_shell(
+            agent,
+            deps=deps,
+            plugins=plugins,
+            usage_limits=usage_limits,
+            console=console,
+            settings=settings,
+            store=store,
+            builtin_plugins=builtin_plugins,
+            project=project,
+            transcript=transcript,
+            load_plugins=load_plugins,
+            settings_for=settings_for,
+        )
+
+
+async def _start_session(
+    shell: SessionRuntime[DepsT, OutputT],
+    *,
+    resume: str | None,
+    resume_from: ImportSource | None,
+    session_id: str | None,
+    fork: bool,
+    fresh: bool,
+    web: WebHandoff | None,
+    console: Console,
+) -> None:
+    """Apply the launch options to `shell`, then load its plugins and serve `web` again."""
+    # Apply launch options first, so plugins start with the conversation they name. The browser waits for
+    # plugins, whose models may name its sessions, and until it picks one, telemetry has no session to assign.
+    browse = resume == ''
+    restored = bool(resume)
+    notice = ''
+    if not browse and (resume is not None or session_id is not None):
+        notice = await shell.sessions.start(resume=resume, resume_from=resume_from, session_id=session_id, fork=fork)
+    with shell.defer_identity() if browse else nullcontext():
+        await shell.loader.load_all(fresh=fresh)
+        _report_project_plugins(shell.loader, console)
+        await _serve_again(shell.loader, web, console=console)
+        if restored:
+            # Now that observability has subscribed and renderers have loaded.
+            shell.session.record_resumed()
+            await shell.sessions.show_resumed()
+        if browse:
+            notice = await shell.sessions.start(resume='', resume_from=resume_from, session_id=session_id, fork=fork)
+        if notice:
+            console.print(notice, markup=False)
+
+
+async def _close_home_shell(
+    shell: SessionRuntime[DepsT, OutputT],
+    terminal: Terminal[DepsT, OutputT],
+    *,
+    reason: SessionEndReason,
+    transcript: TranscriptBuffer,
+    console: Console,
+) -> SessionRuntime[DepsT, OutputT]:
+    """Close `shell`, the session CLAI started with, unless it closed already; return the session shown last."""
+    # The session shown last restarts CLAI: `/reload` and `/update` work in it.
+    last = terminal.ended_in or shell
+    if not terminal.home_closed:
+        with transcript.capture(console):
+            # It ends for good when another session's reload or exit restarts or ends CLAI.
+            await shell.close(reason if last is shell else 'exit')
+    return last
+
+
+def _reload_shell(
+    last: SessionRuntime[DepsT, OutputT],
+    *,
+    agent: AbstractAgent[DepsT, OutputT],
+    rebuild_stock: Callable[[Sequence[AgentCapability[DepsT]]], AbstractAgent[DepsT, OutputT]] | None,
+    deps: DepsT,
+    plugins: Sequence[AgentCapability[DepsT]],
+    console: Console,
+    builtin_plugins: Sequence[PluginSettings],
+    use_defaults: bool,
+    use_stock_defaults: bool,
+    transcript: TranscriptBuffer,
+    load_plugins: bool,
+) -> SessionRuntime[DepsT, OutputT]:
+    """Reload CLAI's modules and rebuild the session CLAI started with from `last`, the session shown last."""
+    return reload_clai(
+        lambda shell=last: create_shell(
+            rebuild_stock(()) if rebuild_stock is not None else agent,
+            deps=deps,
+            plugins=plugins,
+            usage_limits=shell.session.usage_limits,
+            console=console,
+            settings=shell.context.settings,
+            store=SettingsStore(shell.context.store.path),
+            builtin_plugins=(
+                STOCK_PLUGINS if use_stock_defaults else DEFAULT_PLUGINS if use_defaults else builtin_plugins
+            ),
+            project=shell.context.project,
+            message_history=shell.session.messages,
+            summary=shell.session.summary,
+            launched=shell.sessions.launched,
+            transcript=transcript,
+            load_plugins=load_plugins,
+            workspace=Path(shell.session.workspace),
+            settings_for=shell.context.settings_for,
+        )
+    )
+
+
+def _continued_conversation(
+    last: SessionRuntime[DepsT, OutputT], *, home: SessionRuntime[DepsT, OutputT]
+) -> str | None:
+    """The conversation `home` resumes after a failed reload: that of `last`, the session shown that asked for it.
+
+    `home`, the session CLAI started with, resumes nothing when it asked for the reload itself.
+    """
+    return None if last is home else last.session.conversation_id
 
 
 def _report_reload_failure(exc: Exception, *, console: Console) -> None:
@@ -384,7 +484,11 @@ def _opener(
     launched_in, launch_project = Path(shell.session.workspace), shell.context.project
 
     def build(directory: Path | None) -> SessionRuntime[DepsT, OutputT]:
-        project = launch_project if directory in (None, launched_in) else load_project_settings(directory)
+        project = (
+            with_current_approvals(launch_project, store=shell.context.store)
+            if directory in (None, launched_in)
+            else load_project_settings(directory, store=shell.context.store)
+        )
         return create_shell(
             agent(),
             deps=deps,
@@ -400,6 +504,7 @@ def _opener(
             workspace=directory or launched_in,
             process=shell.process,
             signals=False,
+            settings_for=settings,
         )
 
     return build

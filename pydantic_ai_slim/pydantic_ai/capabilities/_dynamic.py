@@ -98,8 +98,9 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
         if capability is None:
             return None
         assert ctx.agent is not None, 'CapabilityFunc requires an agent run context'
-        capability = capability.for_agent(ctx.agent)
-        return await capability.for_run(ctx)
+        # The factory's capability keeps its own authority through its lifecycle hooks, as any other does.
+        capability = capability._keep_authority(capability.for_agent(ctx.agent))
+        return await capability._for_run_keeping_authority(ctx)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         capability = await self._resolve_capability(ctx)

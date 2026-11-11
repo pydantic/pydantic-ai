@@ -23,6 +23,7 @@ from ...messages import (
     tool_return_content_ta,
 )
 from .._adapter import parse_tool_retry, retry_feedback_from_payload, retry_feedback_payload, tool_retry_payload
+from .._utils import without_internal_text_metadata
 
 ENCRYPTED_VALUE_VERSION = (0, 1, 11)
 """AG-UI version that added the `encrypted_value` field to `ToolCall` and to `BaseMessage` (so to
@@ -92,6 +93,9 @@ UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_tool_availability_delta'
 """Activity type for tool availability changes stored as AG-UI ActivityMessages."""
 
+CAPABILITY_LOAD_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_capability_load_delta'
+"""Activity type for capabilities loaded from code stored as AG-UI ActivityMessages."""
+
 MODEL_SETTINGS_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_model_settings_delta'
 """Activity type for changes to the thinking effort in effect stored as AG-UI ActivityMessages."""
 
@@ -107,6 +111,7 @@ class FileActivityContent(TypedDict, total=False):
     id: str
     provider_name: str
     provider_details: dict[str, Any]
+    canonical_system: str
     vendor_metadata: dict[str, Any]
 
 
@@ -156,8 +161,11 @@ REASONING_MESSAGE_ROLE: str = (
 """The correct `role` value for `ReasoningMessageStartEvent`, based on the installed SDK version."""
 
 
-def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
-    """Collect non-None metadata fields from a ThinkingPart for AG-UI encrypted_value."""
+def thinking_encrypted_metadata(part: ThinkingPart, *, canonical_system: str | None = None) -> dict[str, Any]:
+    """Collect non-None metadata fields from a ThinkingPart for AG-UI encrypted_value.
+
+    `canonical_system` is the response's, when it applies to the part (see `part_canonical_system`).
+    """
     encrypted: dict[str, Any] = {}
     if part.id is not None:
         encrypted['id'] = part.id
@@ -167,6 +175,8 @@ def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
         encrypted['provider_name'] = part.provider_name
     if part.provider_details is not None:
         encrypted['provider_details'] = part.provider_details
+    if canonical_system is not None:
+        encrypted['canonical_system'] = canonical_system
     return encrypted
 
 
@@ -401,6 +411,7 @@ def dump_tool_return_content(content: Any) -> str:
       through `tool_return_content_ta`, so nested `BinaryContent`/`ImageUrl`/... become base64/URL dicts
       that the loader restores to their subclasses. Nested raw `bytes` use UTF-8, so they can change the
       model-facing text after a round trip; use `BinaryContent` for binary data.
+      The reserved `__pydantic_ai__` namespace of `TextContent` metadata in it stays server-side.
     - A scalar is JSON-dumped too, but reloads as its string form because AG-UI content is text-only. A
       scalar whose JSON form is a string (a `datetime`, say) is emitted as the same unquoted text the model
       sees, so the reloaded `str` renders to the model exactly as the original value did.
@@ -409,7 +420,7 @@ def dump_tool_return_content(content: Any) -> str:
         return content
     if content is None:
         return ''
-    dumped = tool_return_content_ta.dump_json(content)
+    dumped = tool_return_content_ta.dump_json(without_internal_text_metadata(content))
     if dumped.startswith(b'"'):
         # The model's adapter uses base64 for bytes; this adapter defaults to UTF-8.
         return _tool_return_text(content)

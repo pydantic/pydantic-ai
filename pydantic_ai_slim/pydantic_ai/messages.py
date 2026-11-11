@@ -4,6 +4,7 @@ import base64
 import dataclasses
 import difflib
 import hashlib
+import json
 import mimetypes
 import os
 import re
@@ -11,6 +12,7 @@ import sys
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Mapping, Sequence
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import KW_ONLY, InitVar, dataclass, field, replace
 from datetime import datetime, timedelta
@@ -23,9 +25,12 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
+    Final,
     Generic,
     Literal,
+    LiteralString,
     NotRequired,
+    Self,
     TypeAlias,
     TypeGuard,
     assert_never,
@@ -42,6 +47,7 @@ import pydantic_core
 from genai_prices import types as genai_types
 from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic_core import PydanticCustomError
 from typing_extensions import TypeAliasType, TypedDict, TypeVar, deprecated
 
 from pydantic_ai._genai_prices import calculate_price_for_usage
@@ -65,13 +71,16 @@ from ._framing import (
     RETRY_FEEDBACK_TAG,
     TOOL_RESULT_TAG,
     VALIDATION_ERRORS_TAG,
+    FrameworkTag,
     FramingTag,
-    close_tag,
-    open_tag,
-    wrap,
+    check_capability_frame,
+    frame,
+    frame_tags,
+    model_visible_name_error,
 )
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
+from ._uuid import uuid7
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from .format_prompt import format_as_xml
@@ -80,6 +89,7 @@ from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
+    from .workspaces import Workspace
 
 # Key used to wrap malformed tool-call arguments so they can still be round-tripped
 # through a model API without crashing.  The specific string 'INVALID_JSON' is the
@@ -95,6 +105,11 @@ for file in mimetypes.knownfiles:
         _mime_types.read(file)  # pragma: lax no cover
 # Document types
 _mime_types.add_type('application/rtf', '.rtf')
+# Office and OpenDocument types that Python's `mimetypes` only knows by default from 3.14
+_mime_types.add_type('application/vnd.oasis.opendocument.presentation', '.odp')
+_mime_types.add_type('application/vnd.oasis.opendocument.spreadsheet', '.ods')
+_mime_types.add_type('application/vnd.oasis.opendocument.text', '.odt')
+_mime_types.add_type('application/vnd.openxmlformats-officedocument.presentationml.presentation', '.pptx')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx')
 _mime_types.add_type('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx')
 _mime_types.add_type('text/markdown', '.mdx')
@@ -250,7 +265,7 @@ class SystemPromptPart:
     """
 
     context_id: str | None = None
-    """The id of the `<context>` element this prompt is sent to the model as, or `None` to send its content as is.
+    """The id of the `<pyai:context>` element this prompt is sent to the model as, or `None` to send its content as is.
 
     Set by a dynamic system prompt registered with `on_change='append'`, as `'system_prompt:<name>'`. The model
     sees this id. The first part with an id in a conversation opens it, and each later part with that id is sent as
@@ -286,7 +301,7 @@ class SystemPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
-        return [_otel_messages.TextPart(type='text', **{'content': self.content} if settings.include_content else {})]
+        return [_otel_messages.text_part(self.content, include_content=settings.include_content)]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -377,7 +392,7 @@ class FileUrl(ABC):
     def _serialize(self, handler: pydantic.SerializerFunctionWrapHandler, info: pydantic.SerializationInfo):
         # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
         try:
-            return handler(self)
+            dumped = handler(self)
         except ValueError:
             try:
                 self.media_type
@@ -385,6 +400,9 @@ class FileUrl(ABC):
                 pass
             else:
                 raise
+        else:
+            _record_file(dumped)
+            return dumped
         # A URL with no usable extension and no given media type: `media_type` raises, and the computed field
         # reads it before any serializer of its own could step in. Dumping must not raise, or a history that
         # ran can't be saved or sent to a frontend (https://github.com/pydantic/pydantic-ai/issues/8388).
@@ -396,6 +414,7 @@ class FileUrl(ABC):
             del serialized['media_type']
         else:
             serialized['media_type'] = None
+        _record_file(serialized)
         return serialized
 
     @abstractmethod
@@ -609,16 +628,11 @@ class DocumentUrl(FileUrl):
         return mime_type
 
     @property
-    def format(self) -> DocumentFormat:
-        """The file format of the document.
-
-        The choice of supported formats were based on the Bedrock Converse API. Other APIs don't require to use a format.
-        """
-        media_type = self.media_type
-        try:
-            return _document_format_lookup[media_type]
-        except KeyError as e:
-            raise ValueError(f'Unknown document media type: {media_type}') from e
+    def format(self) -> str:
+        """The file format of the document, such as `'pdf'` or `'pptx'`: the extension its media type is known by."""
+        if format := _document_format(self.media_type):
+            return format
+        raise ValueError(f'Unknown document media type: {self.media_type}')
 
 
 @dataclass(repr=False)
@@ -652,7 +666,6 @@ class TextContent:
 StructuredContentFormat: TypeAlias = Literal['json', 'xml']
 """A built-in text format for [`StructuredContent`][pydantic_ai.messages.StructuredContent]."""
 
-_STRUCTURED_CONTENT_TAG_RE = re.compile(r'[a-z_][a-z0-9_]*')
 _FRAMING_TAG_NAMES = frozenset(get_args(FramingTag))
 
 
@@ -726,15 +739,14 @@ class StructuredContent(TextContent):
             # history fail to load once a later release adds its tag to the framework's own.
             return
         if self.tag is not None:
-            if not _STRUCTURED_CONTENT_TAG_RE.fullmatch(self.tag):
-                raise ValueError(
-                    '`StructuredContent.tag` must be lowercase letters, digits and `_`, '
-                    f'starting with a letter or `_`, got {self.tag!r}.'
-                )
+            if error := model_visible_name_error(
+                self.tag,
+                what='`StructuredContent.tag`',
+                legacy_stacklevel=3,  # user -> `__init__` -> here
+            ):
+                raise ValueError(error)
             if self.tag in _FRAMING_TAG_NAMES:
-                raise ValueError(
-                    f'`StructuredContent.tag` cannot be {self.tag!r}, a tag the framework frames its own text in.'
-                )
+                raise ValueError(f'`StructuredContent.tag` cannot be {self.tag!r}, a built-in framing tag.')
         if format is None:
             content = self.render()
         elif callable(format):
@@ -911,23 +923,33 @@ class BinaryContent:
 
     @property
     def is_document(self) -> bool:
-        """Return `True` if the media type is a document type."""
-        return self.media_type in _document_format_lookup
+        """Return `True` if the media type is a document type.
+
+        A known document type is one, and so is any other media type that `mimetypes` knows a file extension for
+        and that isn't audio, image, video or text-like. Text-like content outside the known types (JSON, YAML,
+        XML, ...) is left to the model adapter, which inlines it as text where the API has no file part, and so is
+        a media type no extension is known for.
+        """
+        if self.media_type in _document_format_lookup:
+            return True
+        if self.is_audio or self.is_image or self.is_video or _utils.is_text_like_media_type(self.media_type):
+            return False
+        return _document_format(self.media_type) is not None
 
     @property
     def format(self) -> str:
         """The file format of the binary content."""
-        try:
-            if self.is_audio:
-                return _audio_format_lookup[self.media_type]
-            elif self.is_image:
-                return _image_format_lookup[self.media_type]
-            elif self.is_video:
-                return _video_format_lookup[self.media_type]
-            else:
-                return _document_format_lookup[self.media_type]
-        except KeyError as e:
-            raise ValueError(f'Unknown media type: {self.media_type}') from e
+        if self.is_audio:
+            format = _audio_format_lookup.get(self.media_type)
+        elif self.is_image:
+            format = _image_format_lookup.get(self.media_type)
+        elif self.is_video:
+            format = _video_format_lookup.get(self.media_type)
+        else:
+            format = _document_format(self.media_type)
+        if format is None:
+            raise ValueError(f'Unknown media type: {self.media_type}')
+        return format
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1144,6 +1166,13 @@ class UploadedFile:
         """
         return self._identifier or _multi_modal_content_identifier(self.file_id)
 
+    @pydantic.model_serializer(mode='wrap')
+    def _serialize(self, handler: pydantic.SerializerFunctionWrapHandler):
+        # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
+        serialized = handler(self)
+        _record_file(serialized)
+        return serialized
+
     @property
     def format(self) -> str:
         """A general-purpose media-type-to-format mapping.
@@ -1204,6 +1233,247 @@ _NOT_USER_CONTENT = (
 )
 
 
+_FILE_DIGESTS_KEY = 'content_file_digests'
+"""The key a tool result records the files its content holds under when serialized; see `_RecordsContentFiles`."""
+
+
+class _Unrecorded:
+    """The file record of a tool result serialized before records existed."""
+
+
+_UNRECORDED = _Unrecorded()
+
+
+class _RebuildAll:
+    """The file record of a tool result saved before records existed, loaded with `rebuild_unrecorded_tool_files`."""
+
+
+_REBUILD_ALL = _RebuildAll()
+
+
+@dataclass
+class _ContentFileRecord:
+    """What serializing a tool result's content found, for the result to write next to it."""
+
+    digests: list[str] = field(default_factory=list[str])
+    needed: bool = False
+
+
+_dumped_file_digests: ContextVar[list[str] | None] = ContextVar('_dumped_file_digests', default=None)
+"""Collects the digests of the file items serialized while a tool result's content is."""
+
+_content_file_record: ContextVar[_ContentFileRecord | None] = ContextVar('_content_file_record', default=None)
+"""The record of the tool result being serialized, which its content's serializer fills."""
+
+_loaded_file_digests: ContextVar[frozenset[str] | _Unrecorded | _RebuildAll | None] = ContextVar(
+    '_loaded_file_digests', default=None
+)
+"""The file record of the tool result being validated, or `None` outside one."""
+
+
+def _file_digest(serialized: Mapping[str, Any]) -> str | None:
+    """A digest of a file item's serialized form, or `None` for one that has no JSON form.
+
+    The digest is taken of the item's default JSON form, so it is the same for a JSON dump, a python dump,
+    and a python dump encoded as JSON later. A file item with no JSON form, such as one whose
+    `vendor_metadata` holds an arbitrary object, isn't recorded, so it loads as a mapping rather than
+    making the dump fail.
+    """
+    try:
+        jsonable = pydantic_core.to_jsonable_python(serialized)
+        canonical = json.dumps(jsonable, sort_keys=True, separators=(',', ':'))
+    except (TypeError, ValueError, pydantic_core.PydanticSerializationError):
+        return None
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _record_file(serialized: Any) -> None:
+    """Record a file item serialized in a tool result's content, so validating the result rebuilds it."""
+    digests = _dumped_file_digests.get()
+    if digests is not None and isinstance(serialized, Mapping):
+        digest = _file_digest(cast(Mapping[str, Any], serialized))
+        if digest is not None:
+            digests.append(digest)
+
+
+class _OwnSerializer:
+    """A class's own pydantic serializer, built on first use, so serializing an instance by inference uses it.
+
+    `pydantic_core.to_json` and `to_jsonable_python`, and the converters that call them, such as Temporal's,
+    serialize a plain dataclass field by field and skip its serializer decorators. A pydantic dataclass
+    carries `__pydantic_serializer__`, which inference uses instead; this gives a plain dataclass the same,
+    so its tool result content is serialized with its file record either way.
+    """
+
+    def __init__(self) -> None:
+        self._serializers: dict[type, pydantic_core.SchemaSerializer] = {}
+
+    def __get__(self, instance: object, owner: type) -> pydantic_core.SchemaSerializer:
+        if (serializer := self._serializers.get(owner)) is not None:
+            return serializer
+        # The same bytes encoding as `ModelMessagesTypeAdapter`, so a history dumps the same either way.
+        # `TypeAdapter` takes no config for a dataclass, so the config goes to the serializer itself.
+        serializer = self._serializers[owner] = pydantic_core.SchemaSerializer(
+            pydantic.TypeAdapter(owner).core_schema, pydantic_core.core_schema.CoreConfig(ser_json_bytes='base64')
+        )
+        return serializer
+
+
+class _RecordsContentFiles:
+    """Keep the file items in a tool result's content, and only those, file items across serialization.
+
+    A tool result is arbitrary data: a mapping a tool returns can spell out the serialized form of one of
+    our file items, and is then indistinguishable from one in a dump. Rebuilding such a mapping as a file
+    would hand back something other than what the tool returned: an item of ours, sent to the model as a
+    file, without the keys its type doesn't declare.
+
+    So a tool result records the digest of each file item its content held when serialized, under
+    `content_file_digests`, next to the content where the data can't reach it. It writes the record, empty
+    if need be, whenever the content isn't a scalar, so a missing record means history saved before records
+    existed. On validation, a mapping in the content claiming a URL or uploaded-file `kind` is rebuilt as
+    that item only if its digest is in the record (see `_check_file_provenance`); otherwise it stays a
+    mapping, with the keys the tool put in it. A mapping identical to a recorded item is that item, and is
+    rebuilt too: it can only ever be a file the application itself serialized in the content.
+
+    The content is the field a subclass names in `_content_field`. Files elsewhere, such as in `metadata`
+    or `ToolReturn.content`, aren't recorded. An object held in the content is part of it, so a file anywhere
+    inside one, even in a nested result's `metadata`, is recorded with the content.
+
+    Serializing costs a few Python calls per tool result and one per file item, and validating one per tool
+    result and one per mapping claiming a file `kind`: never one per node, which
+    `test_tool_return_content_json_paths_make_no_per_node_python_calls` pins.
+    """
+
+    _content_field: ClassVar[str]
+    __pydantic_serializer__: ClassVar[Any] = _OwnSerializer()
+
+    @pydantic.field_serializer('content', 'return_value', 'result', mode='wrap', check_fields=False)
+    def _serialize_content_recording_files(
+        self, value: Any, handler: pydantic.SerializerFunctionWrapHandler, info: pydantic.FieldSerializationInfo
+    ):
+        # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
+        record = _content_file_record.get()
+        if record is None or info.field_name != self._content_field:
+            return handler(value)
+        record.needed = not isinstance(value, str | int | float | bool | None)
+        outer_digests = _dumped_file_digests.get()
+        token = _dumped_file_digests.set(record.digests)
+        try:
+            return handler(value)
+        finally:
+            _dumped_file_digests.reset(token)
+            # A result nested in another one's content is part of that content, and so are its files.
+            if outer_digests is not None:
+                outer_digests.extend(record.digests)
+
+    @pydantic.model_serializer(mode='wrap')
+    def _serialize_recording_files(self, handler: pydantic.SerializerFunctionWrapHandler):
+        # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
+        record = _ContentFileRecord()
+        token = _content_file_record.set(record)
+        try:
+            serialized = handler(self)
+        finally:
+            _content_file_record.reset(token)
+        if record.needed and isinstance(serialized, dict):
+            return {**cast(dict[str, Any], serialized), _FILE_DIGESTS_KEY: sorted(set(record.digests))}
+        return serialized
+
+    @pydantic.model_validator(mode='wrap')
+    @classmethod
+    def _validate_recorded_files(
+        cls, value: Any, handler: pydantic.ModelWrapValidatorHandler[Any], info: pydantic.ValidationInfo
+    ) -> Any:
+        if not isinstance(value, Mapping):
+            return handler(value)
+        mapping = cast(Mapping[str, Any], value)
+        digests = mapping.get(_FILE_DIGESTS_KEY)
+        own: frozenset[str] | None = None
+        if isinstance(digests, list):
+            entries = cast(list[Any], digests)
+            if not all(isinstance(digest, str) for digest in entries):
+                raise PydanticCustomError('invalid_file_record', '`content_file_digests` must be a list of strings')
+            own = frozenset(cast(list[str], entries))
+        enclosing = _loaded_file_digests.get()
+        record: frozenset[str] | _Unrecorded | _RebuildAll
+        if isinstance(enclosing, frozenset):
+            # A result nested in another one's content was serialized into that content, so the enclosing
+            # record already holds its files. Its own record, which the enclosing data could have written,
+            # can only narrow that.
+            record = enclosing if own is None else enclosing & own
+        elif isinstance(enclosing, _Unrecorded):
+            record = _UNRECORDED
+        elif own is not None:
+            record = own
+        elif isinstance(enclosing, _RebuildAll) or _rebuilds_unrecorded_tool_files(info.context):
+            # History saved before records existed: its file-shaped data is rebuilt only when the caller asks.
+            record = _REBUILD_ALL
+        else:
+            record = _UNRECORDED
+        token = _loaded_file_digests.set(record)
+        try:
+            return handler({key: item for key, item in mapping.items() if key != _FILE_DIGESTS_KEY})
+        finally:
+            _loaded_file_digests.reset(token)
+
+
+_JOURNAL_CONTEXT: Mapping[str, Any] = {'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}
+"""The validation context durable execution decodes its own journal with.
+
+A journal entry written before tool results recorded their files carries no record, and the worker that
+wrote it is the application's own, so it loads as it did then rather than losing files mid-run.
+"""
+
+
+def _rebuilds_unrecorded_tool_files(context: Any) -> bool:
+    """Whether a validation context carries `{'pydantic_ai': {'rebuild_unrecorded_tool_files': True}}`."""
+    if not isinstance(context, Mapping):
+        return False
+    options = cast(Mapping[str, Any], context).get('pydantic_ai')
+    return (
+        isinstance(options, Mapping) and cast(Mapping[str, Any], options).get('rebuild_unrecorded_tool_files') is True
+    )
+
+
+def _check_file_provenance(value: Any) -> Any:
+    """Let a mapping claiming a file `kind` in a tool result validate as that file only if the result recorded it.
+
+    Outside a tool result (a user prompt, or a UI adapter rehydrating a client-side tool's output on
+    purpose), and for an instance of ours, this passes the value through.
+
+    History saved before records existed can't tell its files from mappings shaped like them. In it, such a
+    mapping is rebuilt only into what a client-submitted file may be after `sanitize_messages`: an HTTP(S)
+    URL with `force_download` reset. An `UploadedFile` or a non-HTTP URL stays a mapping.
+    """
+    record = _loaded_file_digests.get()
+    if record is None or isinstance(record, _RebuildAll) or not isinstance(value, Mapping):
+        return value
+    mapping = cast(Mapping[str, Any], value)
+    if isinstance(record, _Unrecorded):
+        url = mapping.get('url')
+        if mapping.get('kind') == 'uploaded-file' or not (
+            isinstance(url, str) and urlparse(url).scheme.lower() in ('http', 'https')
+        ):
+            raise PydanticCustomError('unrecorded_file', 'Not a file this tool result recorded')
+        if mapping.get('force_download', False) is not False:
+            return {**mapping, 'force_download': False}
+        return mapping
+    # Only a mapping with no keys beyond those a dump of its kind writes can be a recorded item, so anything
+    # else is told apart without serializing and hashing it, which nested data would otherwise pay per level.
+    if record and set(mapping) <= _FILE_ITEM_KEYS.get(mapping.get('kind'), frozenset()):
+        if _file_digest(mapping) in record:
+            return mapping
+    raise PydanticCustomError('unrecorded_file', 'Not a file this tool result recorded')
+
+
+_FILE_URL_ITEM_KEYS = frozenset({'url', 'force_download', 'vendor_metadata', 'kind', 'media_type', 'identifier'})
+_FILE_ITEM_KEYS: dict[Any, frozenset[str]] = {
+    **{kind: _FILE_URL_ITEM_KEYS for kind in ('image-url', 'audio-url', 'document-url', 'video-url')},
+    'uploaded-file': frozenset({'file_id', 'provider_name', 'vendor_metadata', 'kind', 'media_type', 'identifier'}),
+}
+"""The keys a dump of each recorded file kind can write; `test_file_item_keys_match_their_dumps` pins them."""
+
+
 _ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
 """Type variable for the return value type in `ToolReturn[T]`.
 
@@ -1214,13 +1484,15 @@ schema is generated from the inner type.
 
 
 @dataclass(repr=False)
-class ToolReturn(Generic[_ToolReturnValueT]):
+class ToolReturn(_RecordsContentFiles, Generic[_ToolReturnValueT]):
     """A structured tool return that separates the tool result from additional content sent to the model.
 
     Can be parameterized with a type to enable return schema generation:
     - `ToolReturn[User]` — generates a return schema for `User`
     - `ToolReturn` (bare) — no return schema generated
     """
+
+    _content_field: ClassVar[str] = 'return_value'
 
     return_value: ToolReturnContent
     """The return value to be used in the tool response."""
@@ -1263,6 +1535,26 @@ _document_format_lookup: dict[str, DocumentFormat] = {
     'application/msword': 'doc',
     'application/vnd.ms-excel': 'xls',
 }
+
+
+def _document_format(media_type: str) -> str | None:
+    """The file format of a document with `media_type`: the extension it's known by, without the dot, or `None`.
+
+    `_document_format_lookup` holds the formats model APIs expect for the types they name (Bedrock's `format`, the
+    `filename` OpenAI reads the type from); any other media type is looked up in `mimetypes`, so a document of any
+    type can be sent, and a model that doesn't read it rejects it. Where `mimetypes` knows several extensions, the
+    one spelling the subtype wins (`application/xml` is `xml`, not the `xsl` the stdlib lists first), then the first
+    known: `_mime_types` registers the stdlib's own table before the OS mime files and the Windows registry.
+    """
+    if format := _document_format_lookup.get(media_type):
+        return format
+    extensions = [extension.removeprefix('.') for extension in _mime_types.guess_all_extensions(media_type)]
+    if not extensions:
+        return None
+    subtype = media_type.partition('/')[2]
+    return subtype if subtype in extensions else extensions[0]
+
+
 _audio_format_lookup: dict[str, AudioFormat] = {
     'audio/mpeg': 'mp3',
     'audio/wav': 'wav',
@@ -1325,6 +1617,45 @@ def _convert_binary_to_otel_part(
         return converted_part
 
 
+def _convert_media_url_to_otel_part(
+    part: ImageUrl | AudioUrl | DocumentUrl | VideoUrl, settings: InstrumentationSettings
+) -> _otel_messages.UriPart | _otel_messages.MediaUrlPart:
+    """Convert a media URL to an OTel message part based on version."""
+    if settings.version >= 4:
+        uri_part = _otel_messages.UriPart(type='uri')
+        modality = _kind_to_modality_lookup.get(part.kind)
+        if modality is not None:
+            uri_part['modality'] = modality
+        try:  # don't fail the whole message if media type can't be inferred for some reason, just omit it
+            uri_part['mime_type'] = part.media_type
+        except ValueError:
+            pass
+        if settings.include_content:
+            uri_part['uri'] = part.url
+        return uri_part
+    else:
+        return _otel_messages.MediaUrlPart(
+            type=part.kind,
+            **{'url': part.url} if settings.include_content else {},
+        )
+
+
+def _convert_uploaded_file_to_otel_part(
+    part: UploadedFile, settings: InstrumentationSettings
+) -> _otel_messages.FilePart:
+    """Convert an uploaded file, a provider-hosted file referenced by `file_id`, to an OTel `FilePart`."""
+    # Infer modality from media_type - OTel spec defines: image, video, audio (or any string)
+    category = part.media_type.split('/', 1)[0]
+    if category in ('image', 'audio', 'video'):
+        modality = category
+    else:
+        modality = 'document'  # default for PDFs, text, etc.
+    file_part = _otel_messages.FilePart(type='file', modality=modality, mime_type=part.media_type)
+    if settings.include_content:
+        file_part['file_id'] = part.file_id
+    return file_part
+
+
 @dataclass(repr=False)
 class UserPromptPart:
     """A user prompt, generally written by the end user.
@@ -1374,45 +1705,13 @@ class UserPromptPart:
         for part in content:
             if isinstance(part, str | TextContent):
                 content_str = part if isinstance(part, str) else part.content
-                parts.append(
-                    _otel_messages.TextPart(
-                        type='text', **({'content': content_str} if settings.include_content else {})
-                    )
-                )
+                parts.append(_otel_messages.text_part(content_str, include_content=settings.include_content))
             elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
-                if settings.version >= 4:
-                    uri_part = _otel_messages.UriPart(type='uri')
-                    modality = _kind_to_modality_lookup.get(part.kind)
-                    if modality is not None:
-                        uri_part['modality'] = modality
-                    try:  # don't fail the whole message if media type can't be inferred for some reason, just omit it
-                        uri_part['mime_type'] = part.media_type
-                    except ValueError:
-                        pass
-                    if settings.include_content:
-                        uri_part['uri'] = part.url
-                    parts.append(uri_part)
-                else:
-                    parts.append(
-                        _otel_messages.MediaUrlPart(
-                            type=part.kind,
-                            **{'url': part.url} if settings.include_content else {},
-                        )
-                    )
+                parts.append(_convert_media_url_to_otel_part(part, settings))
             elif isinstance(part, BinaryContent):
                 parts.append(_convert_binary_to_otel_part(part.media_type, lambda p=part: p.base64, settings))
             elif isinstance(part, UploadedFile):
-                # UploadedFile references provider-hosted files by file_id (OTel GenAI spec FilePart)
-                # Infer modality from media_type - OTel spec defines: image, video, audio (or any string)
-                category = part.media_type.split('/', 1)[0]
-                if category in ('image', 'audio', 'video'):
-                    modality = category
-                else:
-                    modality = 'document'  # default for PDFs, text, etc.
-                file_part = _otel_messages.FilePart(type='file', modality=modality, mime_type=part.media_type)
-                if settings.include_content:
-                    file_part['file_id'] = part.file_id
-                parts.append(file_part)
+                parts.append(_convert_uploaded_file_to_otel_part(part, settings))
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
                 pass
@@ -1516,10 +1815,12 @@ class _RequireUrlMediaType:
     ) -> pydantic_core.CoreSchema:
         schema = deepcopy(handler(source_type))
         assert schema['type'] == 'tagged-union', schema['type']
-        for kind in _FILE_URL_KINDS:
+        check_provenance = pydantic_core.core_schema.no_info_plain_validator_function(_check_file_provenance)
+        for kind in (*_FILE_URL_KINDS, UploadedFile.kind):
             choice = schema['choices'][kind]
             assert isinstance(choice, dict), choice
-            schema['choices'][kind] = pydantic_core.core_schema.chain_schema([cls._carries_media_type(), choice])
+            gates = [check_provenance, cls._carries_media_type()] if kind in _FILE_URL_KINDS else [check_provenance]
+            schema['choices'][kind] = pydantic_core.core_schema.chain_schema([*gates, choice])
         return schema
 
     @classmethod
@@ -1535,7 +1836,7 @@ class _RequireUrlMediaType:
         """
         assert schema['type'] == 'tagged-union', schema['type']
         choices = dict(schema['choices'])
-        for kind in _FILE_URL_KINDS:
+        for kind in (*_FILE_URL_KINDS, UploadedFile.kind):
             gated = choices[kind]
             assert isinstance(gated, dict) and gated['type'] == 'chain', gated
             choices[kind] = gated['steps'][-1]
@@ -1636,13 +1937,13 @@ RetryFeedbackCause: TypeAlias = Literal['validation_error', 'no_output', 'model_
 
 - `'validation_error'`: the output failed validation against the expected schema. The feedback
   quotes what the model itself wrote, which may in turn quote untrusted user input, so it goes in
-  the user voice inside a `<validation_errors>` fence rather than in the harness's own.
+  the user voice inside a `<pyai:validation_errors>` fence rather than in the harness's own.
 - `'no_output'`: the response carried nothing usable as output (e.g. thinking only). The agent
   loop's fixed text goes in the system voice; a `'no_output'` part with any other content, such as
   one your own code builds, is fenced in the user voice like a `'model_retry'`.
 - `'model_retry'`: an output validator, output function, or model hook raised
   [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]. Its message commonly interpolates the output it
-  rejects, so it goes in the user voice too, inside a `<retry_feedback>` fence.
+  rejects, so it goes in the user voice too, inside a `<pyai:retry_feedback>` fence.
 
 Only `'no_output'` carries fixed framework text, so only it reaches the model in the system voice.
 """
@@ -1935,6 +2236,27 @@ def _register_typed_tool_part(
         return
     else:
         _check_declared_shape(cls, base, kind, payload_field)
+    _check_no_added_fields(cls, base, payload_field)
+    key = (base.part_kind, kind.id)
+    existing = registry.get(key)
+    if existing is not None and recreated is None and not _is_redefinition(existing, cls):
+        raise UserError(
+            f'Tool kind {kind.id!r} already has a typed {base.__name__} subclass: '
+            f'{existing.__module__}.{existing.__qualname__}.'
+        )
+    # A Temporal workflow sandbox re-executes application modules; its copy must not displace the
+    # host's class, or the host would promote parts to a class its own `isinstance` checks don't match.
+    if existing is None or not _keeps_canonical_registration():
+        registry[key] = cls
+    cls._kind = kind  # pyright: ignore[reportPrivateUsage]
+    if kind.namespace is not None and recreated is None:
+        _make_typed_part_dataclass(cls, kind.id)
+
+
+def _check_no_added_fields(
+    cls: type[_ToolPartT], base: type[_ToolPartT], payload_field: Literal['args', 'content']
+) -> None:
+    """Refuse a typed part that adds fields to its base part, which it would lose when it falls back to the base."""
     base_fields = {f.name for f in dataclasses.fields(base)}
     # `cls` isn't a dataclass yet, so its own fields come from its annotations; fields it inherits
     # from dataclasses between it and `base` are already built.
@@ -1956,20 +2278,6 @@ def _register_typed_tool_part(
             f'Its kind declares the shape of its `{payload_field}`, and it may only add properties, so that it '
             'loses nothing when it falls back to the base part because its kind is not defined.'
         )
-    key = (base.part_kind, kind.id)
-    existing = registry.get(key)
-    if existing is not None and recreated is None and not _is_redefinition(existing, cls):
-        raise UserError(
-            f'Tool kind {kind.id!r} already has a typed {base.__name__} subclass: '
-            f'{existing.__module__}.{existing.__qualname__}.'
-        )
-    # A Temporal workflow sandbox re-executes application modules; its copy must not displace the
-    # host's class, or the host would promote parts to a class its own `isinstance` checks don't match.
-    if existing is None or not _keeps_canonical_registration():
-        registry[key] = cls
-    cls._kind = kind  # pyright: ignore[reportPrivateUsage]
-    if kind.namespace is not None and recreated is None:
-        _make_typed_part_dataclass(cls, kind.id)
 
 
 def _check_declared_shape(
@@ -2051,22 +2359,21 @@ def _tool_result_provenance_tags(tool_name: str, tool_call_id: str, file_identif
     could not name.
 
     They identify rather than prove. This is prompt text like any other, so a tool can emit the
-    closing tag and a user can type the opening one; the attribute values are escaped, and a provider
-    that accepts media in its tool result channel sends it there and never renders these at all.
+    closing tag and a user can type the opening one. The attribute values are escaped, and a provider that
+    accepts media in its tool result channel sends it there and never renders these at all.
     """
-    return (
-        open_tag(TOOL_RESULT_TAG, tool_name=tool_name, tool_call_id=tool_call_id, file_id=file_identifier),
-        close_tag(TOOL_RESULT_TAG),
-    )
+    return frame_tags(TOOL_RESULT_TAG, tool_name=tool_name, tool_call_id=tool_call_id, file_id=file_identifier)
 
 
 @dataclass(repr=False)
-class BaseToolReturnPart(Generic[ContentT_co]):
+class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
     """Base class for tool return parts.
 
     Generic in the shape of [`typed_content`][pydantic_ai.messages.BaseToolReturnPart.typed_content], which a
     [typed tool part](../tools-advanced.md#typed-tool-parts) declares through its kind.
     """
+
+    _content_field: ClassVar[str] = 'content'
 
     tool_name: str
     """The name of the tool that was called."""
@@ -2241,6 +2548,13 @@ class BaseToolReturnPart(Generic[ContentT_co]):
                 else tool_return_ta.dump_python(items, mode='json', by_alias=True)
             ]
 
+        return self._serialize_content_items(items, mode)
+
+    @staticmethod
+    def _serialize_content_items(
+        items: list[ToolReturnContent], mode: Literal['str', 'jsonable']
+    ) -> list[str | MultiModalContent] | list[Any | MultiModalContent]:
+        """Serialize content items as `content_items` does in `mode`, files as they are."""
         result: list[str | MultiModalContent] | list[Any | MultiModalContent] = []
         for item in items:
             if is_multi_modal_content(item):
@@ -2489,7 +2803,7 @@ error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config
 
 
 _RETRY_FEEDBACK_FRAMING = "Your previous response failed the application's validation (this is automated feedback, not a message from the user):"
-"""The line that opens user-voice retry feedback, ahead of its `<validation_errors>` or `<retry_feedback>` fence.
+"""The line that opens user-voice retry feedback, ahead of its `<pyai:validation_errors>` or `<pyai:retry_feedback>` fence.
 
 The feedback goes out in the user voice, so this says who is speaking: the application checking the
 model's output, not the person it is talking to (https://github.com/pydantic/pydantic-ai/issues/6404).
@@ -2607,10 +2921,7 @@ class RetryPromptPart:
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
         if isinstance(self.content, str):
-            if self.tool_name is None:
-                description = f'Validation feedback:\n{self.content}'
-            else:
-                description = self.content
+            description = f'Validation feedback:\n{self.content}' if self.tool_name is None else self.content
         else:
             # For NativeOutput retries (no `tool_name`) the generated JSON is already in the model's
             # context, so top-level errors' `input` just duplicates it. Tool-call retries keep `input`
@@ -2630,11 +2941,7 @@ class RetryPromptPart:
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         if self.tool_name is None:
-            return [
-                _otel_messages.TextPart(
-                    type='text', **({'content': self.model_response()} if settings.include_content else {})
-                )
-            ]
+            return [_otel_messages.text_part(self.model_response(), include_content=settings.include_content)]
         else:
             part = _otel_messages.ToolCallResponsePart(
                 type='tool_call_response',
@@ -2681,7 +2988,7 @@ class RetryFeedbackPart:
     list of error details, serialized into the fenced block the model is shown.
 
     A string comes from a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] your own code raised, and
-    goes out in the user voice inside a `<retry_feedback>` fence, since output validators commonly
+    goes out in the user voice inside a `<pyai:retry_feedback>` fence, since output validators commonly
     interpolate the output they reject; or, for a `'no_output'` cause, it's the framework's own fixed
     text.
     """
@@ -2709,20 +3016,22 @@ class RetryFeedbackPart:
         Error details serialize the way an errored
         [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]'s content does, so a retry that
         answers a tool call and one that answers none show the model the same JSON. A
-        `'validation_error'` goes in a `<validation_errors>` fence and a `'model_retry'` in a
-        `<retry_feedback>` fence, each behind one line saying the application is speaking: both can
+        `'validation_error'` goes in a `<pyai:validation_errors>` fence and a `'model_retry'` in a
+        `<pyai:retry_feedback>` fence, each behind one line saying the application is speaking: both can
         carry the model's own words, a `ModelRetry` message because output validators routinely
         interpolate the output they reject. Only `'no_output'` is left unfenced, as its text is fixed
         and carries nothing the model wrote.
 
-        What `prepare_messages` adds around this is the voice, not the wording: the part type it goes
-        into, and the `<system>` tagging a provider without a mid-conversation system message needs.
+        The content goes in the fence exactly as written. What `prepare_messages` adds around this is the
+        voice, not the wording: the part type it goes into, and the `<system>` tagging a provider without a
+        mid-conversation system message needs.
         """
         content = _retry_feedback_text(self)
         if _retry_feedback_speaks_for_the_harness(self):
             return content
         return _fenced_retry_feedback(
-            content, tag=VALIDATION_ERRORS_TAG if self.retry.cause == 'validation_error' else RETRY_FEEDBACK_TAG
+            content,
+            tag=VALIDATION_ERRORS_TAG if self.retry.cause == 'validation_error' else RETRY_FEEDBACK_TAG,
         )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
@@ -2736,11 +3045,7 @@ class RetryFeedbackPart:
         `prepare_messages` has already replaced this part with the part its `retry.cause` calls for, so it
         shows the same text at every instrumentation version.
         """
-        return [
-            _otel_messages.TextPart(
-                type='text', **{'content': self.model_response()} if settings.include_content else {}
-            )
-        ]
+        return [_otel_messages.text_part(self.model_response(), include_content=settings.include_content)]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -2752,15 +3057,14 @@ def _retry_feedback_text(part: RetryFeedbackPart) -> str:
     return tool_return_ta.dump_json(_dump_error_details(part.content), by_alias=True).decode()
 
 
-def _fenced_retry_feedback(content: str, *, tag: FramingTag) -> str:
+def _fenced_retry_feedback(content: str, *, tag: FrameworkTag) -> str:
     """Feedback in the user voice: the application attribution line, then the content fenced in `tag`.
 
-    `wrap` neutralizes every framing tag in the content, since it carries the model's own words: a
-    validation error's `loc` is a key it invented for a mapping output, and a `value_error`'s `msg` is
-    whatever a validator raised, commonly with the offending value interpolated in. Without that, the
-    content could end the fence early, or open a `<system>` block of its own.
+    The content carries the model's own words (a validation error's `loc` is a key it invented for a mapping
+    output, a `value_error`'s `msg` is whatever a validator raised, commonly with the offending value interpolated
+    in) and goes in as written.
     """
-    fence = wrap(tag, f'\n{content}\n')
+    fence = frame(tag, f'\n{content}\n')
     return f'{_RETRY_FEEDBACK_FRAMING}\n{fence}'
 
 
@@ -3129,9 +3433,9 @@ class InstructionDeltaPart:
     """Part type identifier, used as a discriminator for deserialization."""
 
     def render(self, *, inline_system: bool = True, previous: str | None = None) -> str:
-        """Render this change as a `<context>` element that replaces the block's earlier one.
+        """Render this change as a `<pyai:context>` element that replaces the block's earlier one.
 
-        A replacement is rendered as a `<context_diff>` element instead, holding a unified diff against
+        A replacement is rendered as a `<pyai:context_diff>` element instead, holding a unified diff against
         `previous`, when `previous` is the text this change replaces (per `base_hash`) and the diff is
         shorter than the full replacement.
 
@@ -3168,7 +3472,7 @@ def _instruction_text_hash(text: str) -> str:
 
 
 def _withdrawal_text(*, inline_system: bool) -> str:
-    """What a withdrawn `<context>` element says, which `<system>`-tagged user text has to say stays in effect."""
+    """What a withdrawn `<pyai:context>` element says, which `<system>`-tagged user text has to say stays in effect."""
     if inline_system:
         return 'This context has been withdrawn.'
     return 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
@@ -3177,10 +3481,10 @@ def _withdrawal_text(*, inline_system: bool) -> str:
 def _context_element(instruction_id: InstructionId | str | None, content: str) -> str:
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
 
-    `wrap` neutralizes every framing tag in the text, including `</system>`: the element is itself
-    `<system>`-wrapped on a model without mid-conversation system messages.
+    The text is the operator's and goes in as written. The element speaks in system voice, like `<system>`, so it
+    is a system-voice tag: a lookalike `<pyai:context>` in user or tool text gets a note instead.
     """
-    return wrap(CONTEXT_TAG, f'\n{content}\n', id=_id_attribute(instruction_id))
+    return frame(CONTEXT_TAG, f'\n{content}\n', id=_id_attribute(instruction_id))
 
 
 def _id_attribute(instruction_id: InstructionId | str | None) -> str | None:
@@ -3193,16 +3497,17 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
     diff = '\n'.join(
         difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
     )
-    return wrap(CONTEXT_DIFF_TAG, f'\n{diff}\n', id=_id_attribute(instruction_id))
+    return frame(CONTEXT_DIFF_TAG, f'\n{diff}\n', id=_id_attribute(instruction_id))
 
 
 _SUPERSESSION_SENTENCE = (
-    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+    f'A later <{CONTEXT_TAG}> element with the same id replaces the earlier one '
+    'and stays in effect until replaced again.'
 )
 
 
 def _render_system_prompt_context(part: SystemPromptPart, *, inline_system: bool, states_rule: bool) -> str:  # pyright: ignore[reportUnusedFunction]
-    """Render a statement of an appending dynamic system prompt as the `<context>` element its `context_id` names.
+    """Render a statement of an appending dynamic system prompt as the `<pyai:context>` element its `context_id` names.
 
     An empty statement withdraws the prompt. With `states_rule`, the element is followed by the sentence an
     appending instruction prefix ends with, so the model knows a later element with the same id replaces it.
@@ -3213,14 +3518,14 @@ def _render_system_prompt_context(part: SystemPromptPart, *, inline_system: bool
 
 
 def _tagged_append_parts(parts: Sequence[InstructionPart]) -> list[int]:
-    """The positions of the parts `_render_append_parts` sends as `<context>` elements."""
+    """The positions of the parts `_render_append_parts` sends as `<pyai:context>` elements."""
     return [index for index, part in enumerate(parts) if part.on_change == 'append' and part.id is not None]
 
 
 def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPart]:  # pyright: ignore[reportUnusedFunction]
-    """Render the prefix's append-mode blocks as tagged `<context>` elements, followed once by how later ones apply.
+    """Render the prefix's append-mode blocks as `<pyai:context>` elements, followed once by how later ones apply.
 
-    Each addressable append-mode part is wrapped in a `<context id>` element. The last of them is followed by
+    Each addressable append-mode part is wrapped in a `<pyai:context id>` element. The last of them is followed by
     one sentence telling the model that a later [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]
     with the same id replaces it and stays in effect, which models need to keep following an update on later
     turns, whether it arrives as system content or `<system>`-wrapped in a user turn. Other parts go out as
@@ -3299,6 +3604,41 @@ class ToolAvailabilityDeltaPart:
         """
         changes = ', '.join(f'+{name}' for name in self.tools_added)
         return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {changes}')]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class CapabilityLoadDeltaPart:
+    """Records a change to the set of loaded [on-demand capabilities](../capabilities/on-demand.md) at this point, without a `load_capability` call.
+
+    Additions only, in `loaded`: unloading a capability isn't supported yet.
+
+    [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] records one on the request after the
+    tool call that loaded the capability, followed by a
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] revealing its tools, if it has any. A
+    load's record is the model's exchange, or else this delta: a capability the model loads through the
+    `load_capability` tool is recorded by that call and its return, as with tool search, and writes no delta. Either
+    way, the capability is loaded from the next model request on: its tools are callable, its instructions are stated,
+    and its model settings and hooks apply.
+
+    Never sent to the model: `prepare_messages` drops it, and the model sees the capability's instructions and
+    tools instead.
+    """
+
+    loaded: list[str] = field(default_factory=lambda: [])
+    """IDs of the capabilities loaded at this point in history, in load order."""
+
+    tool_call_id: str | None = None
+    """The tool call being handled when the capabilities were loaded, if any."""
+
+    part_kind: Literal['capability-load-delta'] = 'capability-load-delta'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Render the change as trace content: capability IDs aren't user content, so they're always recorded."""
+        changes = ', '.join(f'+{capability_id}' for capability_id in self.loaded)
+        return [_otel_messages.TextPart(type='text', content=f'Loaded capabilities changed: {changes}')]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -3618,6 +3958,10 @@ class TextPart:
     """An optional identifier of the text part.
 
     When this field is set, `provider_name` is required to identify the provider that generated this data.
+
+    If you edit `content`, such as in a [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] processor, set
+    this to `None` too: the OpenAI Responses API uses its stored copy of an item sent with its ID and ignores the text
+    sent alongside.
     """
 
     provider_name: str | None = None
@@ -3729,7 +4073,7 @@ class CompactionPart:
     `SummarizingCompaction`, lives in a [`ModelRequest`][pydantic_ai.messages.ModelRequest] instead,
     with no `provider_name`, `id` or `provider_details`. The assistant continuing the conversation
     didn't write it, so every provider model sends its `content` as user-voice text inside
-    `<conversation_summary>`, after a line saying a separate summarization model wrote it. A
+    `<pyai:conversation_summary>`, after a line saying a separate summarization model wrote it. A
     `FunctionModel` receives the part itself, a `DecisionModel` passes it on as a summary entry, and
     realtime sessions send it as user text.
     """
@@ -3940,11 +4284,7 @@ class SpeechPart:
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []
         if self.transcript is not None:
-            parts.append(
-                _otel_messages.TextPart(
-                    type='text', **({'content': self.transcript} if settings.include_content else {})
-                )
-            )
+            parts.append(_otel_messages.text_part(self.transcript, include_content=settings.include_content))
         if (audio := self.audio) is not None:
             parts.append(_convert_binary_to_otel_part(audio.media_type, lambda: audio.base64, settings))
         return parts
@@ -4251,36 +4591,43 @@ def _check_parts(
     promoted: list[ModelRequestPart | ModelResponsePart] | None = None
     for index, part in enumerate(parts):
         if isinstance(part, SpeechPart):
-            if part.speaker != speaker:
-                owner = 'ModelRequest' if speaker == 'user' else 'ModelResponse'
-                # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
-                # message history, where a `ValueError` becomes a `ValidationError` with location info.
-                raise ValueError(
-                    f'`SpeechPart` in `{owner}.parts` must have `speaker={speaker!r}`, got {part.speaker!r}'
-                )
-            continue
-        if isinstance(part, CompactionPart):
-            if speaker == 'user' and (
-                part.provider_name is not None or part.id is not None or part.provider_details is not None
-            ):
-                raise ValueError(
-                    'A `CompactionPart` in `ModelRequest.parts` is a summary no provider produced, so it must not '
-                    "set `provider_name`, `id` or `provider_details`; a provider's own compaction part belongs "
-                    'in `ModelResponse.parts`.'
-                )
-            continue
-        if type(part) not in _BASE_TOOL_PART_TYPES:
-            continue
-        if isinstance(part, ToolCallPart | NativeToolCallPart):
-            new: ModelRequestPart | ModelResponsePart = _narrow_call(part, None)
-        else:
-            assert isinstance(part, ToolReturnPart | NativeToolReturnPart)
-            new = _narrow_return(part, None)
-        if new is not part:
+            _check_speech_part(part, speaker)
+        elif isinstance(part, CompactionPart):
+            _check_compaction_part(part, speaker)
+        elif (new := _promote_base_tool_part(part)) is not part:
             if promoted is None:
                 promoted = parts if isinstance(parts, list) else list(parts)
             promoted[index] = new
     return parts if promoted is None else promoted
+
+
+def _check_speech_part(part: SpeechPart, speaker: Literal['user', 'assistant']) -> None:
+    if part.speaker != speaker:
+        owner = 'ModelRequest' if speaker == 'user' else 'ModelResponse'
+        # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
+        # message history, where a `ValueError` becomes a `ValidationError` with location info.
+        raise ValueError(f'`SpeechPart` in `{owner}.parts` must have `speaker={speaker!r}`, got {part.speaker!r}')
+
+
+def _check_compaction_part(part: CompactionPart, speaker: Literal['user', 'assistant']) -> None:
+    if speaker == 'user' and (
+        part.provider_name is not None or part.id is not None or part.provider_details is not None
+    ):
+        raise ValueError(
+            'A `CompactionPart` in `ModelRequest.parts` is a summary no provider produced, so it must not '
+            "set `provider_name`, `id` or `provider_details`; a provider's own compaction part belongs "
+            'in `ModelResponse.parts`.'
+        )
+
+
+def _promote_base_tool_part(part: ModelRequestPart | ModelResponsePart) -> ModelRequestPart | ModelResponsePart:
+    """The typed part a base tool part's registered `tool_kind` promotes it to, or `part` itself."""
+    if type(part) not in _BASE_TOOL_PART_TYPES:
+        return part
+    if isinstance(part, ToolCallPart | NativeToolCallPart):
+        return _narrow_call(part, None)
+    assert isinstance(part, ToolReturnPart | NativeToolReturnPart)
+    return _narrow_return(part, None)
 
 
 def _narrow_return(part: _ReturnPartT, tool_kind: ToolPartKind | None) -> _ReturnPartT:
@@ -4355,6 +4702,722 @@ from ._tool_search import (  # noqa: E402  (intentional late import: typed subcl
     ToolSearchReturnPart as ToolSearchReturnPart,
 )
 
+CapabilityPartVoice: TypeAlias = Literal['data', 'instruction']
+"""How a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] reaches the model.
+
+- `'data'`: on the user channel, in a frame with the tag the kind declares, optionally with a fixed note in
+  the application's voice about it.
+- `'instruction'`: in the application's voice, as a mid-conversation system message.
+"""
+
+
+Authority: TypeAlias = Literal['operator', 'user', 'none']
+"""How much authority content in a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] carries with the model.
+
+- `'operator'`: the application's own: it reaches the model in the application's voice, as a system message.
+- `'user'`: the user's: it reaches the model in the user's turn, labelled as attached by the application on the user's
+  behalf, since the user didn't type it now.
+- `'none'`: data, such as a tool's output, another model's text or a file someone else wrote: it reaches the model in
+  a frame, with a note naming who wrote it.
+
+Every [source][pydantic_ai.messages.CapabilityPartSource] has one. A part reaches the model with the lower of its
+source's authority and the authority its kind asks for: an
+[`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart] asks for `'operator'` and a
+[`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] for `'none'`. A part whose source has less authority
+than its kind asks for is downgraded, never refused.
+"""
+
+_AUTHORITY_RANK: Final[dict[Authority, int]] = {'none': 0, 'user': 1, 'operator': 2}
+
+
+def _lower_authority(a: Authority, b: Authority) -> Authority:
+    return a if _AUTHORITY_RANK[a] <= _AUTHORITY_RANK[b] else b
+
+
+async def _workspace_authority(workspace: Workspace, path: str) -> Authority:
+    """The [authority][pydantic_ai.messages.Authority] of the file at `path` in `workspace`.
+
+    That's [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of], asked when the file is read, so
+    the level stays with the text.
+    """
+    return await workspace.authority_of(path)
+
+
+class OperatorText(str):
+    """Text the operator controls, for the `content` of an [`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart].
+
+    The model gives the application's voice the operator's authority, so an instruction part's content is either a string
+    literal in your code (a `LiteralString`) or an `OperatorText`: text from the operator's own configuration, or a
+    file in a workspace. Wrapping a string in `OperatorText(...)` is how your code says it's meant for the application's
+    voice; whether it gets there is up to the part's [source][pydantic_ai.messages.CapabilityPartSource].
+
+    Build one from a workspace file with [`from_workspace`][pydantic_ai.messages.OperatorText.from_workspace], which
+    remembers where the text came from: a part holding it never has more authority than that workspace, whatever source
+    the part names. Only that instance remembers: a string method such as `strip()` returns a plain `str`, and wrapping
+    the result in a new `OperatorText` claims the operator's voice for it. To change text read from a workspace, pass
+    [`WorkspaceSource.from_workspace`][pydantic_ai.messages.WorkspaceSource.from_workspace] as the part's source too.
+    """
+
+    _source: WorkspaceSource | None = None
+    """The workspace the text was read from, which caps the authority of a part holding it."""
+
+    @classmethod
+    async def from_workspace(cls, workspace: Workspace, path: str) -> Self:
+        """Read the text file at `path` in `workspace` as operator text.
+
+        The text has no more authority than the file
+        ([`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]): a part holding it is downgraded as if its
+        source were [`WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace],
+        to the user's turn for the user's files and to data for files nobody on the application's side wrote, such as a
+        cloned third-party repository.
+        """
+        text = cls(await workspace.read_text(path))
+        text._source = await WorkspaceSource.from_workspace(workspace, path)
+        return text
+
+
+_ContentAuthor: TypeAlias = Literal['user', 'tool', 'file', 'model', 'application']
+"""Who wrote content from a `CapabilityPartSource`, as the lookalike note names them: the application writes its own."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class OperatorSource:
+    """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose content the application's own code or the operator's configuration wrote."""
+
+    source_kind: Literal['operator'] = 'operator'
+    """Source type identifier, used as a discriminator."""
+
+    _author: ClassVar[_ContentAuthor] = 'application'
+    """Who wrote content from this source, for the lookalike note."""
+
+    @property
+    def authority(self) -> Authority:
+        """Always `'operator'`: the operator speaks for itself."""
+        return 'operator'
+
+
+@dataclass(frozen=True, init=False)
+class WorkspaceSource:
+    """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose content was read from a file in a workspace.
+
+    Built only with [`from_workspace`][pydantic_ai.messages.WorkspaceSource.from_workspace], which asks the workspace
+    for the [authority][pydantic_ai.workspaces.Workspace.authority_of] of the file: there's no constructor to state it
+    yourself.
+    """
+
+    path: str
+    """The path the content was read from."""
+
+    authority: Authority
+    """The [authority][pydantic_ai.workspaces.Workspace.authority_of] of the file when the content was read.
+
+    Stored with the part, so a workspace whose authority changes later doesn't change parts already in the history.
+    """
+
+    source_kind: Literal['workspace'] = 'workspace'
+    """Source type identifier, used as a discriminator."""
+
+    _author: ClassVar[_ContentAuthor] = 'file'
+    """Who wrote content from this source, for the lookalike note."""
+
+    @classmethod
+    async def from_workspace(cls, workspace: Workspace, path: str) -> WorkspaceSource:
+        """The source for content read from `path` in `workspace`, with the authority of that file.
+
+        That's [`workspace.authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of]: `'operator'` unless an
+        [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] lowers it for the workspace or for the path.
+        """
+        source = cls.__new__(cls)
+        # Frozen, and with no generated `__init__`, so the fields are set the way a frozen dataclass sets them.
+        object.__setattr__(source, 'path', path)
+        object.__setattr__(source, 'authority', await _workspace_authority(workspace, path))
+        object.__setattr__(source, 'source_kind', 'workspace')
+        return source
+
+
+@dataclass(frozen=True, kw_only=True)
+class ToolResultSource:
+    """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose content is a tool's output, such as a background tool's result."""
+
+    tool_name: str
+    """The name of the tool that produced the content."""
+
+    tool_call_id: str | None = None
+    """The id of the call that produced the content, if there was one."""
+
+    source_kind: Literal['tool-result'] = 'tool-result'
+    """Source type identifier, used as a discriminator."""
+
+    _author: ClassVar[_ContentAuthor] = 'tool'
+    """Who wrote content from this source, for the lookalike note."""
+
+    @property
+    def authority(self) -> Authority:
+        """Always `'none'`: a tool's output is data, whoever wrote the tool."""
+        return 'none'
+
+
+@dataclass(frozen=True, kw_only=True)
+class UserSource:
+    """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose content the user wrote, such as a prompt they saved earlier or text imported from another conversation."""
+
+    source_kind: Literal['user'] = 'user'
+    """Source type identifier, used as a discriminator."""
+
+    _author: ClassVar[_ContentAuthor] = 'user'
+    """Who wrote content from this source, for the lookalike note."""
+
+    @property
+    def authority(self) -> Authority:
+        """Always `'user'`: the user's own words, though not typed in the current turn."""
+        return 'user'
+
+
+@dataclass(frozen=True)
+class ModelSource:
+    """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose content another model wrote, such as a judge's assessment, a generated reminder, a summary or a sub-agent's report."""
+
+    author: str
+    """The model's role, as the notes about its text name it, such as `'trajectory judge'`: "the trajectory judge"."""
+
+    _: KW_ONLY
+
+    source_kind: Literal['model'] = 'model'
+    """Source type identifier, used as a discriminator."""
+
+    _author: ClassVar[_ContentAuthor] = 'model'
+    """Who wrote content from this source, for the lookalike note."""
+
+    @property
+    def authority(self) -> Authority:
+        """Always `'none'`: another model's text is data, whatever it says."""
+        return 'none'
+
+
+@dataclass(frozen=True)
+class CapabilitySource:
+    """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose source was lowered to its capability's authority ceiling.
+
+    When a capability whose [`authority`][pydantic_ai.capabilities.AbstractCapability] is below
+    `'operator'` enqueues a part whose source has more authority than that, `ctx.enqueue` stores this source in its
+    place, so the history says which capability wrote the content and with how much authority. A note about content
+    with `'none'` authority names the capability as its author.
+    """
+
+    capability_id: str
+    """The id of the capability that enqueued the part."""
+
+    _: KW_ONLY
+
+    authority: Authority
+    """The capability's authority ceiling, which the part's content carries."""
+
+    source_kind: Literal['capability'] = 'capability'
+    """Source type identifier, used as a discriminator."""
+
+    @property
+    def _author(self) -> _ContentAuthor:
+        """Who wrote content from this source, for the lookalike note: the user's, or the capability's like a model's."""
+        return 'application' if self.authority == 'operator' else 'user' if self.authority == 'user' else 'model'
+
+
+CapabilityPartSource = Annotated[
+    OperatorSource | WorkspaceSource | ToolResultSource | UserSource | ModelSource | CapabilitySource,
+    pydantic.Discriminator('source_kind'),
+]
+"""Where a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]'s content came from, which gives it its [`Authority`][pydantic_ai.messages.Authority].
+
+An [`OperatorSource`][pydantic_ai.messages.OperatorSource] has `'operator'` authority, a
+[`UserSource`][pydantic_ai.messages.UserSource] `'user'`, and a [`ToolResultSource`][pydantic_ai.messages.ToolResultSource]
+or [`ModelSource`][pydantic_ai.messages.ModelSource] `'none'`. A [`WorkspaceSource`][pydantic_ai.messages.WorkspaceSource]
+has its file's [authority][pydantic_ai.workspaces.Workspace.authority_of], and a
+[`CapabilitySource`][pydantic_ai.messages.CapabilitySource] its capability's authority ceiling.
+"""
+
+
+@dataclass(repr=False, frozen=True, kw_only=True)
+class CapabilityPartRendering:
+    """How a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is rendered: the facts its class declared, stored on each part.
+
+    A part keeps the facts it was created with, so changing a kind's tag, note or attributes later only changes
+    how new parts render, and a conversation saved before then keeps sending the same bytes, and its prompt cache.
+    """
+
+    voice: CapabilityPartVoice = 'data'
+    """How the part reaches the model. See [`CapabilityPartVoice`][pydantic_ai.messages.CapabilityPartVoice]."""
+
+    tag: str | None = None
+    """The tag a data part's content goes in."""
+
+    note: str | None = None
+    """A fixed note in the application's voice that goes with a data part, naming its frame with `{frame}`."""
+
+    attributes: tuple[str, ...] = ()
+    """The names of the part's typed fields whose values are rendered as attributes on a data part's tag."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_FRAME_PLACEHOLDER: Final = '{frame}'
+_KIND_SEGMENT: Final = re.compile(r'[a-z][a-z0-9_]*')
+"""Each dot-separated segment of a capability part kind's namespace, and its name, is lowercase snake_case."""
+
+
+def _check_capability_rendering(owner: str, rendering: CapabilityPartRendering) -> None:
+    """Raise unless `rendering` describes a part that can be rendered."""
+    if rendering.voice not in get_args(CapabilityPartVoice):
+        raise UserError(f"{owner} has `voice={rendering.voice!r}`; it must be `'data'` or `'instruction'`.")
+    if rendering.voice == 'instruction':
+        if rendering.tag is not None or rendering.note is not None or rendering.attributes:
+            raise UserError(
+                f"{owner} speaks in the application's voice, which renders the content as a system message: it takes no "
+                '`tag`, `note` or `attributes`.'
+            )
+        return
+    if rendering.tag is None:
+        raise UserError(f'{owner} is data and needs a `tag` to frame its content in.')
+    check_capability_frame(rendering.tag, rendering.attributes)
+    if rendering.note is not None and rendering.note.count(_FRAME_PLACEHOLDER) != 1:
+        raise UserError(f'{owner} has a `note` that must name its frame exactly once, as `{_FRAME_PLACEHOLDER}`.')
+
+
+CAPABILITY_PART_TYPES: dict[str, type[CapabilityPart]] = _EventRegistry[type['CapabilityPart']]()
+"""Registry of [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] subclasses, keyed by `kind`."""
+
+
+@dataclass(repr=False, kw_only=True)
+class CapabilityPart:
+    """Something a capability or the application tells the model mid-conversation, with the framework owning how.
+
+    The base of every capability part, and what to check for to recognize one. Define a kind by subclassing one of
+    its two voices, [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] for data and
+    [`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart] for the application's own words, and pass
+    instances to [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue]. The framework renders each part before any
+    model sees it, and your code finds its parts again by type, never by their text.
+
+    Every kind takes the class arguments `namespace` (required, inherited by subclasses) and `name` (defaults to the
+    class name in snake_case, without a `Part` suffix), which make up its
+    [`kind`][pydantic_ai.messages.CapabilityPart.kind], `namespace.name`.
+
+    Only the content, a data kind's note and its declared attributes reach the model. Everything else, including
+    typed fields that aren't attributes, is for your code.
+    """
+
+    source: CapabilityPartSource
+    """Where the content came from, which gives it its [`Authority`][pydantic_ai.messages.Authority].
+
+    The part reaches the model with the lower of the source's authority and the one its kind asks for: an instruction
+    part from a source without `'operator'` authority is downgraded, to the user's turn or to framed data.
+    """
+
+    scope: Literal['conversation', 'request'] = 'conversation'
+    """How long the model sees the part, as [`SystemPromptPart.scope`][pydantic_ai.messages.SystemPromptPart.scope].
+
+    Only an [`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart] can be `'request'`-scoped.
+    """
+
+    capability_id: str | None = None
+    """The run id of the capability that enqueued this part.
+
+    Stamped by [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue] when it's called from a capability's hook or
+    tool; `None` for a part the application created. A pre-set value is kept.
+    """
+
+    metadata: dict[str, Any] | None = None
+    """Additional data for your code. Never sent to the model."""
+
+    timestamp: datetime = field(default_factory=_now_utc)
+    """When the part was created."""
+
+    record_id: str = field(default_factory=lambda: str(uuid7()))
+    """A unique id for this record, generated once and stored with it. Never sent to the model."""
+
+    rendering: CapabilityPartRendering = field(default_factory=CapabilityPartRendering)
+    """How the part is rendered, taken from its class when it's created and stored with it."""
+
+    kind: str = ''
+    """The part's kind, `namespace.name`, injected as the default on registered subclasses."""
+
+    part_kind: Literal['capability'] = 'capability'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    _voice: ClassVar[CapabilityPartVoice | None] = None
+    """The voice the base a kind subclasses gives it; `None` here and on an unknown part, which keeps its stored one."""
+
+    _registered_kind: ClassVar[str | None] = None
+    """The kind this class is registered under; `None` on the bases and unregistered subclasses."""
+
+    _class_rendering: ClassVar[CapabilityPartRendering | None] = None
+    """The rendering facts this class declares, which new instances store."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+    def __post_init__(self) -> None:
+        cls = type(self)
+        if cls in (CapabilityPart, DataCapabilityPart, InstructionCapabilityPart):
+            raise UserError(
+                f'`{cls.__name__}` is a base class; define a dataclass subclass with a `namespace`, and pass that.'
+            )
+        if '__dataclass_fields__' not in cls.__dict__:
+            raise UserError(f'Capability part subclass `{cls.__name__}` must be decorated with `@dataclass`.')
+        if (registered := cls._registered_kind) is not None and self.kind != registered:
+            raise UserError(
+                f'`{cls.__name__}` serializes under its registered kind {registered!r} and cannot override `kind` per '
+                f'instance (got {self.kind!r}).'
+            )
+        owner = f'Capability part {self.kind!r}'
+        if cls._voice is not None and self.rendering.voice != cls._voice:
+            raise UserError(
+                f'{owner} has `voice={cls._voice!r}` from its base, so it cannot render with `voice={self.rendering.voice!r}`.'
+            )
+        _check_capability_rendering(owner, self.rendering)
+        self._check_voice(owner)
+        for name in self.rendering.attributes:
+            value = self._attribute_value(name)
+            if value is not None and (not isinstance(value, str | int) or isinstance(value, bool)):
+                raise UserError(f'{owner} renders `{name}` as an attribute, so it must be a string or an integer.')
+
+    def _check_voice(self, owner: str) -> None:
+        """Raise unless the content and scope fit the part's voice, and lower an instruction's source to its text's.
+
+        An instruction's content must be a string, and data can't be `'request'`-scoped.
+        """
+        content = self.model_content()
+        if self.rendering.voice == 'instruction':
+            if not isinstance(content, str):
+                raise UserError(f"{owner} speaks in the application's voice, so its `content` must be a string.")
+            # Text read from a workspace never has more authority than that workspace, whatever source the part names.
+            origin = content._source if isinstance(content, OperatorText) else None  # pyright: ignore[reportPrivateUsage]
+            if (
+                origin is not None
+                and _lower_authority(origin.authority, self.source.authority) != self.source.authority
+            ):
+                self.source = origin
+        elif self.scope == 'request':
+            raise UserError(f"{owner} is data; only an `InstructionCapabilityPart` can have `scope='request'`.")
+
+    def __init_subclass__(
+        cls,
+        *,
+        namespace: str | None = None,
+        name: str | None = None,
+        tag: str | None = None,
+        attributes: Sequence[str] | None = None,
+        note: str | None = None,
+        _register: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        super().__init_subclass__(**kwargs)
+        _guard_post_init(cls, CapabilityPart.__post_init__)
+        if base := _undecorated_field_base(cls, CapabilityPart):
+            raise UserError(
+                f'Capability part {cls.__qualname__} inherits from {base.__qualname__}, which declares fields but is '
+                f'not a dataclass, so those fields would be silently dropped. Decorate it with `@dataclass(kw_only=True)`.'
+            )
+        if not _register:
+            return
+        # `@dataclass(slots=True)` recreates the class, re-invoking registration without the original class
+        # arguments; the copied class body carries the original registration.
+        recreated = cls.__dict__.get('_registered_kind') is not None and all(
+            arg is None for arg in (namespace, name, tag, attributes, note)
+        )
+        if recreated:
+            part_kind = cls.__dict__['_registered_kind']
+            rendering = cls.__dict__['_class_rendering']
+        else:
+            part_kind = _capability_part_kind(cls, namespace, name)
+            rendering = _class_rendering(cls, tag=tag, attributes=attributes, note=note)
+        existing = CAPABILITY_PART_TYPES.get(part_kind)
+        if existing is not None and not recreated and not _is_redefinition(existing, cls):
+            raise UserError(
+                f'Duplicate capability part kind {part_kind!r}: already registered by {existing.__qualname__}. '
+                f'Pass an explicit `name`.'
+            )
+        if not recreated and (shadowed := _shadowed_envelope_fields(cls, _CAPABILITY_PART_ENVELOPE_FIELDS)):
+            raise UserError(
+                f'Capability part {cls.__qualname__} declares field(s) reserved for the part envelope: {shadowed}.'
+            )
+        # See the matching note in `CustomEvent.__init_subclass__`.
+        if existing is None or not _keeps_canonical_registration():
+            CAPABILITY_PART_TYPES[part_kind] = cls
+        cls._registered_kind = part_kind
+        cls._class_rendering = rendering
+        injected: dict[str, Any] = {'kind': str, 'rendering': CapabilityPartRendering}
+        if (content_type := _narrowed_content_type(cls)) is not None:
+            # `DataCapabilityPart[str]` narrows `content` for type checkers; this narrows it for validation too.
+            injected['content'] = content_type
+            setattr(cls, 'content', field(kw_only=True))
+        # As `_inject_tag_field` does for `kind`, in one call: on Python 3.14+ a second one would drop the first's.
+        _utils.prepend_class_annotations(cls, injected)
+        setattr(cls, 'kind', field(default=part_kind, kw_only=True))
+        setattr(cls, 'rendering', field(default_factory=lambda: rendering, kw_only=True))
+
+    def model_content(self) -> str | StructuredContent | Sequence[UserContent]:
+        """What the model sees of this part: its `content`, which every kind declares with the type its base allows.
+
+        For code that reads any capability part, such as a summarizer or a UI, without narrowing it to its base first.
+        A data part's frame and note, and an instruction part's system-message rendering, aren't included.
+        """
+        raise NotImplementedError
+
+    def _attribute_value(self, name: str) -> object:
+        """The value of the typed field `name`, which the part renders as an attribute."""
+        # A kind's fields aren't statically known here, and `rendering.attributes` was checked against them.
+        return getattr(self, name, None)
+
+    def _rendered_attributes(self) -> dict[str, str | None]:
+        """The attributes this part's frame carries, in their declared order: `None` leaves one off."""
+        return {
+            name: None if (value := self._attribute_value(name)) is None else str(value)
+            for name in self.rendering.attributes
+        }
+
+    def _with_attribute_values(self, values: dict[str, str]) -> Self:
+        """A copy of this part with the attributes named in `values` set to them, leaving this part as it is."""
+        return replace(self, **values)
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        content = self.model_content()
+        return UserPromptPart([content] if isinstance(content, StructuredContent) else content).otel_message_parts(
+            settings
+        )
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source: Any, handler: pydantic.GetCoreSchemaHandler
+    ) -> pydantic_core.core_schema.CoreSchema:
+        """Build the union over every registered kind, instead of the plain dataclass schema pydantic would infer.
+
+        Like [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]'s, it's built from the registry each time
+        a schema is generated, and a kind no class has registered validates as
+        [`UnknownCapabilityPart`][pydantic_ai.messages.UnknownCapabilityPart], so history from a process that
+        imported a module this one didn't still round-trips, and renders the same.
+        """
+        if cls is not CapabilityPart:
+            return handler(source)
+        return _event_family_schema(
+            handler,
+            registry=CAPABILITY_PART_TYPES,
+            tag_field='kind',
+            unknown_type=UnknownCapabilityPart,
+            envelope_fields=_CAPABILITY_PART_ENVELOPE_FIELDS,
+            family='capability part',
+            # A kind defined after a message schema was built still loads as itself, so code that finds its parts by
+            # type finds them whatever the import order. Dumped with `ModelMessagesTypeAdapter`'s config.
+            late_registration=pydantic.ConfigDict(ser_json_bytes='base64', val_json_bytes='base64'),
+        )
+
+
+def _narrowed_content_type(cls: type[CapabilityPart]) -> Any:
+    """The `content` type `cls` gives `DataCapabilityPart` as a type argument, or `None` when it gives none."""
+    for base in cls.__dict__.get('__orig_bases__', ()):
+        origin = get_origin(base)
+        if isinstance(origin, type) and issubclass(origin, DataCapabilityPart):
+            [content_type] = get_args(base)
+            return None if isinstance(content_type, TypeVar) else content_type
+    return None
+
+
+def _capability_part_kind(cls: type[CapabilityPart], namespace: str | None, name: str | None) -> str:
+    """The kind `cls` registers under, from its class arguments."""
+    if cls._voice is None:  # pyright: ignore[reportPrivateUsage]
+        raise UserError(
+            f'Capability part {cls.__qualname__} must subclass `DataCapabilityPart` or `InstructionCapabilityPart`, '
+            'which say how it reaches the model.'
+        )
+    if namespace is None:
+        namespace = _inherited_namespace(cls, CapabilityPart)
+    if namespace is None:
+        raise UserError(
+            f'Capability part {cls.__qualname__} requires a namespace, e.g. '
+            f"`class {cls.__name__}(DataCapabilityPart, namespace='my_capability', tag='my_data')`."
+        )
+    part_name = name or to_snake(cls.__name__.removesuffix('Part'))
+    if not all(_KIND_SEGMENT.fullmatch(segment) for segment in (*namespace.split('.'), part_name)):
+        raise UserError(
+            f'Capability part {cls.__qualname__} has kind {namespace}.{part_name!s}; its namespace segments and name '
+            'must be lowercase snake_case.'
+        )
+    if cls._voice == 'instruction':  # pyright: ignore[reportPrivateUsage]
+        # A downgraded instruction part is framed in a tag named after its kind.
+        try:
+            check_capability_frame(part_name, ())
+        except UserError as e:
+            raise UserError(
+                f'Capability part {cls.__qualname__} is named {part_name!r}, which a part downgraded from the '
+                f"application's voice is framed in, so it must work as a data tag: {e} Pass another `name`."
+            ) from e
+    return f'{namespace}.{part_name}'
+
+
+def _class_rendering(
+    cls: type[CapabilityPart], *, tag: str | None, attributes: Sequence[str] | None, note: str | None
+) -> CapabilityPartRendering:
+    """The rendering facts `cls` declares: its voice's, with the class arguments over those of the kind it extends."""
+    voice = cls._voice  # pyright: ignore[reportPrivateUsage]
+    assert voice is not None  # checked by `_capability_part_kind`
+    inherited = cls._class_rendering or CapabilityPartRendering(voice=voice)  # pyright: ignore[reportPrivateUsage]
+    rendering = CapabilityPartRendering(
+        voice=voice,
+        tag=tag if tag is not None else inherited.tag,
+        note=note if note is not None else inherited.note,
+        attributes=tuple(attributes) if attributes is not None else inherited.attributes,
+    )
+    _check_capability_rendering(f'Capability part {cls.__qualname__}', rendering)
+    # A kind's own typed fields: `content` and the other fields every part has can't be attributes, which an unknown
+    # part would then have nowhere to read from.
+    declared = {
+        field_name
+        for klass in cls.__mro__
+        if issubclass(klass, CapabilityPart) and klass is not CapabilityPart
+        for field_name in _utils.own_annotations(klass)
+    } - _CAPABILITY_PART_ENVELOPE_FIELDS
+    if missing := [attribute for attribute in rendering.attributes if attribute not in declared]:
+        raise UserError(
+            f'Capability part {cls.__qualname__} renders {", ".join(map(repr, missing))} as attributes, but declares '
+            'no such field.'
+        )
+    return rendering
+
+
+_DataContentT = TypeVar(
+    '_DataContentT',
+    bound=str | StructuredContent | Sequence[UserContent],
+    default=str | StructuredContent | Sequence[UserContent],
+)
+"""The `content` type of a `DataCapabilityPart` kind: any of the types it takes, unless the kind narrows it."""
+
+
+@dataclass(repr=False, kw_only=True)
+class DataCapabilityPart(CapabilityPart, Generic[_DataContentT], _register=False):
+    """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] holding data the application or a capability inserts.
+
+    Such as a state update, a memory snapshot, a late tool result or a sub-agent's report. Its content has no
+    [authority][pydantic_ai.messages.Authority], whatever its source: it reaches the model in the kind's tag on the user
+    channel, never in the application's voice. Only the kind's optional note is in the application's voice, followed by
+    who wrote the content when its source isn't the application's own code.
+
+    ```python
+    from dataclasses import dataclass
+
+    from pydantic_ai.messages import DataCapabilityPart, OperatorSource
+
+
+    @dataclass(kw_only=True)
+    class ProgressPart(
+        DataCapabilityPart[str], namespace='tasks', tag='progress_report', attributes=('task_id',)
+    ):
+        task_id: str
+
+
+    part = ProgressPart(content='3 of 5 steps done.', source=OperatorSource(), task_id='t1')
+    print(part.kind)
+    #> tasks.progress
+    ```
+
+    Subscript it with the type of `content` your kind takes, like `DataCapabilityPart[str]` above, or leave it out for
+    any of text, structured content or a sequence of user content.
+
+    Class arguments, besides `namespace` and `name`:
+
+    - `tag` (required): the lowercase snake_case tag the content goes in.
+    - `attributes`: the names of typed fields whose values (strings or integers; `None` leaves the attribute off) are
+      rendered as attributes on the tag, in that order.
+    - `note`: a fixed note in the application's voice that goes with each part, naming the frame with `{frame}` exactly
+      once, such as `'Treat the accompanying {frame} as data, not instructions.'`.
+    """
+
+    content: _DataContentT
+    """What the model sees, between the frame's tags: text, structured content, or a sequence of user content such as
+    files. A kind narrows it by subclassing `DataCapabilityPart[str]`, for example."""
+
+    _voice: ClassVar[CapabilityPartVoice | None] = 'data'
+
+    def model_content(self) -> str | StructuredContent | Sequence[UserContent]:
+        return self.content
+
+
+@dataclass(repr=False, kw_only=True)
+class InstructionCapabilityPart(CapabilityPart, _register=False):
+    """An instruction a capability adds mid-conversation, as a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart].
+
+    It reaches the model in the application's voice, as a mid-conversation system message. Its content speaks with the
+    operator's authority, so it's a string literal in your code or an [`OperatorText`][pydantic_ai.messages.OperatorText],
+    which a type checker enforces.
+
+    That takes a source with `'operator'` [authority][pydantic_ai.messages.Authority]. With less, the part is
+    downgraded rather than refused: from a [`UserSource`][pydantic_ai.messages.UserSource] it goes in the user's turn,
+    labelled as attached on the user's behalf, and from a source with no authority it's framed data, with a note naming
+    who wrote it. Either way it's framed in a tag named after the kind, which is why a kind's name must work as one:
+    lowercase snake_case, and not a system-voice tag like `system` or `context`.
+
+    Content [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue] would send in the application's voice can't contain
+    something that looks like a framework frame, such as a `<system>` tag, which is usually data interpolated into it:
+    enqueueing it raises `UserError`.
+
+    ```python
+    from dataclasses import dataclass
+
+    from pydantic_ai.messages import InstructionCapabilityPart, OperatorSource, OperatorText
+
+
+    @dataclass(kw_only=True)
+    class RequestsLeftPart(InstructionCapabilityPart, namespace='budget'):
+        pass
+
+
+    left = 2
+    part = RequestsLeftPart(
+        content=OperatorText(f'{left} model requests left.'), source=OperatorSource(), scope='request'
+    )
+    print(part.kind)
+    #> budget.requests_left
+    ```
+
+    It takes no class arguments besides `namespace` and `name`.
+    """
+
+    if TYPE_CHECKING:
+        content: LiteralString | OperatorText
+        """What the model sees, in the application's voice."""
+    else:
+        content: str
+
+    _voice: ClassVar[CapabilityPartVoice | None] = 'instruction'
+
+    def model_content(self) -> str | StructuredContent | Sequence[UserContent]:
+        return self.content
+
+
+@dataclass(repr=False, kw_only=True)
+class UnknownCapabilityPart(CapabilityPart, _register=False):
+    """A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose `kind` isn't registered in this process.
+
+    Produced when loading history from a process that had the defining module imported. It renders from its stored
+    [`rendering`][pydantic_ai.messages.CapabilityPart.rendering] facts exactly as the original part did, its typed fields
+    ride in `data`, and serialization flattens them again, so a process that does have the defining module imported
+    recovers the typed part.
+    """
+
+    content: str | StructuredContent | Sequence[UserContent]
+    """What the model sees."""
+
+    data: dict[str, Any] | None = None
+    """The original part's typed fields, or `None` if it had none."""
+
+    def model_content(self) -> str | StructuredContent | Sequence[UserContent]:
+        return self.content
+
+    def _attribute_value(self, name: str) -> object:
+        return (self.data or {}).get(name)
+
+    def _with_attribute_values(self, values: dict[str, str]) -> Self:
+        return replace(self, data={**(self.data or {}), **values})
+
+
+_CAPABILITY_PART_ENVELOPE_FIELDS = frozenset(f.name for f in dataclasses.fields(UnknownCapabilityPart))
+"""Fields every capability part has, as opposed to a kind's typed fields, which ride in `data` on an unknown part."""
+
 
 def _model_request_part_discriminator(v: Any) -> str | None:
     """Callable discriminator for [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart].
@@ -4414,10 +5477,12 @@ ModelRequestPart = Annotated[
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]  # pyright: ignore[reportDeprecated]
     | Annotated[RetryFeedbackPart, pydantic.Tag('retry-feedback')]
     | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')]
+    | Annotated[CapabilityLoadDeltaPart, pydantic.Tag('capability-load-delta')]
     | Annotated[ModelSettingsDeltaPart, pydantic.Tag('model-settings-delta')]
     | Annotated[InstructionDeltaPart, pydantic.Tag('instruction-delta')]
     | Annotated[InstructionBaselinePart, pydantic.Tag('instruction-baseline')]
     | Annotated[CompactionPart, pydantic.Tag('compaction')]
+    | Annotated[CapabilityPart, pydantic.Tag('capability')]
     # A legacy part is translated on the way in, so a stored history is upgraded by loading it and
     # the deprecated class is never constructed. `SerializeAsAny` covers the other direction: an
     # instance a caller built by hand and never validated still dumps in its own shape rather than
@@ -4583,6 +5648,22 @@ class ModelResponse:
     model_name: str | None = None
     """The name of the model that generated the response."""
 
+    model_id: str | None = None
+    """The identifier of the model the agent sent the request to.
+
+    That's the string the model was selected by, like `'openai:gpt-5'` or an alias that a
+    [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] capability resolved, or
+    otherwise the model's [`model_id`][pydantic_ai.models.Model.model_id]. Unlike `model_name`, which is what the
+    provider reports, often a dated version, it identifies the model as you configured it, so a later step or run
+    can tell which of your models answered and send a request back to it, as
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] does to continue a suspended response.
+
+    Set by the agent on every response it commits to history from a model request, including one a capability moved
+    to another model, like a fallback; `None` on a response that didn't come from a request, like one a
+    [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest] returned before any was made. A response that
+    already has one keeps it.
+    """
+
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp when the response was received locally.
 
@@ -4664,10 +5745,9 @@ class ModelResponse:
 
     Unless the model was given a key, it's a plain SHA-256, which anyone holding the stored history
     can use to test guesses at content that was redacted from it later, such as a PIN or an account
-    number. If you redact history after it was sent, give the model a key. Don't just clear this
-    field: a response without one is trusted and continued from, and the provider still holds the
-    unredacted copy. If you do strip it, clear `provider_response_id` on the same responses too, so
-    nothing continues from them.
+    number. If you redact history after it was sent, give the model a key, or clear this field: a
+    response without one isn't continued from, and the full history is sent instead. Either way, clear
+    the [`id`][pydantic_ai.messages.TextPart.id] of a part you redact, or the provider uses its stored copy.
 
     Computing it serializes the whole history before the response on every request that continues
     server-side state, so it costs local work proportional to the conversation's length.
@@ -4791,12 +5871,7 @@ class ModelResponse:
         parts: list[_otel_messages.MessagePart] = []
         for part in self.parts:
             if isinstance(part, TextPart):
-                parts.append(
-                    _otel_messages.TextPart(
-                        type='text',
-                        **({'content': part.content} if settings.include_content else {}),
-                    )
-                )
+                parts.append(_otel_messages.text_part(part.content, include_content=settings.include_content))
             elif isinstance(part, ThinkingPart):
                 parts.append(
                     _otel_messages.ThinkingPart(
@@ -4912,22 +5987,27 @@ def _post_compaction_window_start(messages: Sequence[ModelMessage]) -> tuple[int
     """
     for message_index in range(len(messages) - 1, -1, -1):
         message = messages[message_index]
-        if isinstance(message, ModelRequest):
-            if any(isinstance(part, CompactionPart) for part in message.parts):
-                # A summary the application wrote sits in a request, and the window opens with that
-                # request's turn: the run of consecutive requests that history normalization merges into
-                # one, hoisting its tool results ahead of the summary as providers require. Cutting at the
-                # part instead would let that reordering decide what was discovered or loaded.
-                start = message_index
-                while start > 0 and isinstance(messages[start - 1], ModelRequest):
-                    start -= 1
-                return start, 0
-            continue
-        # A provider's compaction part sits in a response, which the provider replays from that part on.
-        for part_index in range(len(message.parts) - 1, -1, -1):
-            if isinstance(message.parts[part_index], CompactionPart):
-                return message_index, part_index
+        if isinstance(message, ModelResponse):
+            # A provider's compaction part sits in a response, which the provider replays from that part on.
+            for part_index in range(len(message.parts) - 1, -1, -1):
+                if isinstance(message.parts[part_index], CompactionPart):
+                    return message_index, part_index
+        elif any(isinstance(part, CompactionPart) for part in message.parts):
+            return _request_turn_start(messages, message_index), 0
     return 0, 0
+
+
+def _request_turn_start(messages: Sequence[ModelMessage], message_index: int) -> int:
+    """Where the turn of the request at `message_index` starts.
+
+    A summary the application wrote sits in a request, and the window opens with that request's turn: the run of
+    consecutive requests that history normalization merges into one, hoisting its tool results ahead of the summary
+    as providers require. Cutting at the part instead would let that reordering decide what was discovered or loaded.
+    """
+    start = message_index
+    while start > 0 and isinstance(messages[start - 1], ModelRequest):
+        start -= 1
+    return start
 
 
 _StatelessArtifactPredicate: TypeAlias = Callable[[ModelResponse, ModelResponsePart | None], bool]
@@ -5000,14 +6080,15 @@ def _post_compaction_window_for_response(  # pyright: ignore[reportUnusedFunctio
     assert serving_index is not None, '`serving_response` must be present in `messages`'
     for message_index in range(serving_index - 1, -1, -1):
         message = messages[message_index]
-        if isinstance(message, ModelResponse):
-            for part_index in range(len(message.parts) - 1, -1, -1):
-                part = message.parts[part_index]
-                if isinstance(part, CompactionPart) and _compaction_part_is_wire_boundary(message, part, accepts):
-                    return [
-                        replace(message, parts=list(message.parts[part_index:])),
-                        *(messages[i] for i in range(message_index + 1, len(messages))),
-                    ]
+        if not isinstance(message, ModelResponse):
+            continue
+        for part_index in range(len(message.parts) - 1, -1, -1):
+            part = message.parts[part_index]
+            if isinstance(part, CompactionPart) and _compaction_part_is_wire_boundary(message, part, accepts):
+                return [
+                    replace(message, parts=list(message.parts[part_index:])),
+                    *(messages[i] for i in range(message_index + 1, len(messages))),
+                ]
     return list(messages)
 
 
@@ -5044,17 +6125,27 @@ def narrow_message_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]
     narrowed: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelResponse):
-            new_response_parts = [_narrow_response_part(part) for part in message.parts]
-            if any(new is not old for new, old in zip(new_response_parts, message.parts)):
-                message = replace(message, parts=new_response_parts)
+            message = _narrow_response(message)
         elif isinstance(message, ModelRequest):
-            new_request_parts = [_narrow_request_part(part) for part in message.parts]
-            if any(new is not old for new, old in zip(new_request_parts, message.parts)):
-                message = replace(message, parts=new_request_parts)
+            message = _narrow_request(message)
         else:
             assert_never(message)
         narrowed.append(message)
     return narrowed
+
+
+def _narrow_response(message: ModelResponse) -> ModelResponse:
+    new_response_parts = [_narrow_response_part(part) for part in message.parts]
+    if any(new is not old for new, old in zip(new_response_parts, message.parts)):
+        return replace(message, parts=new_response_parts)
+    return message
+
+
+def _narrow_request(message: ModelRequest) -> ModelRequest:
+    new_request_parts = [_narrow_request_part(part) for part in message.parts]
+    if any(new is not old for new, old in zip(new_request_parts, message.parts)):
+        return replace(message, parts=new_request_parts)
+    return message
 
 
 _FileUrlT = TypeVar('_FileUrlT', bound=FileUrl)
@@ -5078,17 +6169,13 @@ def _drop_compaction_parts(messages: Sequence[ModelMessage]) -> list[ModelMessag
     """
     result: list[ModelMessage] = []
     for message in messages:
-        if isinstance(message, ModelResponse) and any(isinstance(part, CompactionPart) for part in message.parts):
-            parts = [part for part in message.parts if not isinstance(part, CompactionPart)]
-            if parts:
-                result.append(replace(message, parts=parts))
-        elif isinstance(message, ModelRequest) and any(isinstance(part, CompactionPart) for part in message.parts):
-            # A summary the client wrote stands in for history just as a provider's would.
-            request_parts = [part for part in message.parts if not isinstance(part, CompactionPart)]
-            if request_parts:
-                result.append(replace(message, parts=request_parts))
-        else:
+        if not any(isinstance(part, CompactionPart) for part in message.parts):
             result.append(message)
+            continue
+        # In a request, a summary the client wrote stands in for history just as a provider's would.
+        parts = [part for part in message.parts if not isinstance(part, CompactionPart)]
+        if parts:
+            result.append(replace(message, parts=parts))
     return result
 
 
@@ -5114,26 +6201,42 @@ def _dangling_tool_calls_by_response(messages: list[ModelMessage]) -> dict[int, 
     dangling_by_response: dict[int, list[ToolCallPart]] = {}
     for index, message in enumerate(messages):
         if isinstance(message, ModelResponse):
-            for part in message.parts:
-                if isinstance(part, ToolCallPart):
-                    pending = open_calls.get(part.tool_call_id)
-                    if pending and pending[-1][0] != index:
-                        # A call reusing the ID of calls from an earlier response means those calls
-                        # can no longer be answered: any later result answers the new call instead.
-                        for shadowed_index, shadowed in pending:
-                            dangling_by_response.setdefault(shadowed_index, []).append(shadowed)
-                        pending.clear()
-                    open_calls.setdefault(part.tool_call_id, []).append((index, part))
+            _open_tool_calls(message, index, open_calls, dangling_by_response)
         elif isinstance(message, ModelRequest):  # pragma: no branch
-            for part in message.parts:
-                if _is_tool_result_part(part):
-                    pending = open_calls.get(part.tool_call_id)
-                    if pending:
-                        pending.pop(0)
+            _answer_tool_calls(message, open_calls)
     for calls in open_calls.values():
         for response_index, call in calls:
             dangling_by_response.setdefault(response_index, []).append(call)
     return dangling_by_response
+
+
+def _open_tool_calls(
+    response: ModelResponse,
+    index: int,
+    open_calls: dict[str, list[tuple[int, ToolCallPart]]],
+    dangling_by_response: dict[int, list[ToolCallPart]],
+) -> None:
+    """Open the tool calls of the response at `index`, for `_dangling_tool_calls_by_response`."""
+    for part in response.parts:
+        if not isinstance(part, ToolCallPart):
+            continue
+        pending = open_calls.get(part.tool_call_id)
+        if pending and pending[-1][0] != index:
+            # A call reusing the ID of calls from an earlier response means those calls
+            # can no longer be answered: any later result answers the new call instead.
+            for shadowed_index, shadowed in pending:
+                dangling_by_response.setdefault(shadowed_index, []).append(shadowed)
+            pending.clear()
+        open_calls.setdefault(part.tool_call_id, []).append((index, part))
+
+
+def _answer_tool_calls(request: ModelRequest, open_calls: dict[str, list[tuple[int, ToolCallPart]]]) -> None:
+    """Answer the oldest open call matching each tool result in `request`, for `_dangling_tool_calls_by_response`."""
+    for part in request.parts:
+        if _is_tool_result_part(part):
+            pending = open_calls.get(part.tool_call_id)
+            if pending:
+                pending.pop(0)
 
 
 def _insert_synthesized_returns(request: ModelRequest, synthesized: list[ToolReturnPart]) -> ModelRequest:
@@ -5199,9 +6302,7 @@ def _drop_orphaned_tool_results(messages: list[ModelMessage]) -> list[ModelMessa
     repaired: list[ModelMessage] = []
     changed = False
     for index, message in enumerate(messages):
-        for part in message.parts:
-            if isinstance(part, ToolCallPart):
-                seen_call_ids.add(part.tool_call_id)
+        seen_call_ids.update(part.tool_call_id for part in message.parts if isinstance(part, ToolCallPart))
         kept_parts = [
             part
             for part in message.parts
@@ -5253,14 +6354,7 @@ def _repair_dangling_tool_calls(
     the other pipeline passes — with the `SYNTHESIZED_TOOL_RETURN_METADATA_KEY` marker as the
     mechanism for inspecting what was synthesized.
     """
-    dangling_by_response = _dangling_tool_calls_by_response(messages)
-    if not repair_last_response:
-        last_response_index = next(
-            (index for index in range(len(messages) - 1, -1, -1) if isinstance(messages[index], ModelResponse)),
-            None,
-        )
-        if last_response_index is not None:
-            dangling_by_response.pop(last_response_index, None)
+    dangling_by_response = _dangling_tool_calls_to_repair(messages, repair_last_response=repair_last_response)
     if not dangling_by_response:
         return messages
 
@@ -5275,18 +6369,7 @@ def _repair_dangling_tool_calls(
                 synthesized = []
 
             if dangling := dangling_by_response.get(index):
-                for call in dangling:
-                    synthesized.append(
-                        ToolReturnPart(
-                            tool_name=call.tool_name,
-                            content=INTERRUPTED_TOOL_RETURN_CONTENT,
-                            tool_call_id=call.tool_call_id,
-                            tool_kind=call.tool_kind,
-                            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
-                            timestamp=message.timestamp,
-                            outcome='interrupted',
-                        )
-                    )
+                synthesized.extend(_synthesized_tool_returns(message, dangling))
             repaired.append(message)
         elif isinstance(message, ModelRequest):  # pragma: no branch
             if synthesized:
@@ -5298,6 +6381,37 @@ def _repair_dangling_tool_calls(
         repaired.append(ModelRequest(parts=synthesized))
 
     return repaired
+
+
+def _dangling_tool_calls_to_repair(
+    messages: list[ModelMessage], *, repair_last_response: bool
+) -> dict[int, list[ToolCallPart]]:
+    """The dangling tool calls `_repair_dangling_tool_calls` repairs, keyed by the index of their response."""
+    dangling_by_response = _dangling_tool_calls_by_response(messages)
+    if not repair_last_response:
+        last_response_index = next(
+            (index for index in range(len(messages) - 1, -1, -1) if isinstance(messages[index], ModelResponse)),
+            None,
+        )
+        if last_response_index is not None:
+            dangling_by_response.pop(last_response_index, None)
+    return dangling_by_response
+
+
+def _synthesized_tool_returns(response: ModelResponse, calls: list[ToolCallPart]) -> list[ToolReturnPart]:
+    """A return for each of `response`'s dangling `calls`, as `_repair_dangling_tool_calls` describes."""
+    return [
+        ToolReturnPart(
+            tool_name=call.tool_name,
+            content=INTERRUPTED_TOOL_RETURN_CONTENT,
+            tool_call_id=call.tool_call_id,
+            tool_kind=call.tool_kind,
+            metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
+            timestamp=response.timestamp,
+            outcome='interrupted',
+        )
+        for call in calls
+    ]
 
 
 def _move_parts_from_between_tool_results(request: ModelRequest) -> ModelRequest:
@@ -5334,67 +6448,77 @@ def _merge_consecutive_messages(messages: list[ModelMessage]) -> list[ModelMessa
     """
     clean_messages: list[ModelMessage] = []
     for message in messages:
-        last_message = clean_messages[-1] if len(clean_messages) > 0 else None
-
         if isinstance(message, ModelRequest):
-            if (
-                last_message
-                and isinstance(last_message, ModelRequest)
-                # Requests can only be merged if they have the same instructions
-                and (
-                    not last_message.instructions
-                    or not message.instructions
-                    or last_message.instructions == message.instructions
-                )
-                # We intentionally don't block merging when `conversation_id` or application metadata
-                # differ. These fields are only bookkeeping for callers; they're never part of what gets
-                # sent to the model. Refusing to merge on a mismatch would leave two consecutive requests
-                # where the model expects one. Framework protocol state in `__pydantic_ai__` is different:
-                # model implementations read it, so combine only that reserved namespace below.
-            ):
-                parts = [*last_message.parts, *message.parts]
-                parts.sort(key=_tool_results_first_sort_key)
-                metadata: dict[str, Any] | None = None
-                last_namespace = (last_message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-                namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-                if _utils.is_str_dict(last_namespace) or _utils.is_str_dict(namespace):
-                    metadata = {
-                        _PYDANTIC_AI_METADATA_KEY: {
-                            **(last_namespace if _utils.is_str_dict(last_namespace) else {}),
-                            **(namespace if _utils.is_str_dict(namespace) else {}),
-                        }
-                    }
-                merged_message = ModelRequest(
-                    parts=parts,
-                    instructions=last_message.instructions or message.instructions,
-                    timestamp=message.timestamp or last_message.timestamp,
-                    metadata=metadata,
-                )
-                clean_messages[-1] = merged_message
-            else:
-                clean_messages.append(_move_parts_from_between_tool_results(message))
+            _append_request(clean_messages, message)
         elif isinstance(message, ModelResponse):  # pragma: no branch
-            if (
-                last_message
-                and isinstance(last_message, ModelResponse)
-                # Responses can only be merged if they didn't really come from an API
-                and last_message.provider_response_id is None
-                and last_message.provider_name is None
-                and last_message.model_name is None
-                and message.provider_response_id is None
-                and message.provider_name is None
-                and message.model_name is None
-            ):
-                merged_message = replace(last_message, parts=[*last_message.parts, *message.parts])
-                clean_messages[-1] = merged_message
-            else:
-                clean_messages.append(message)
+            _append_response(clean_messages, message)
     return clean_messages
 
 
+def _append_request(clean_messages: list[ModelMessage], message: ModelRequest) -> None:
+    """Append `message` to `clean_messages`, merged into the last message if that's a request it can join."""
+    last_message = clean_messages[-1] if len(clean_messages) > 0 else None
+    if (
+        last_message
+        and isinstance(last_message, ModelRequest)
+        # Requests can only be merged if they have the same instructions
+        and (
+            not last_message.instructions
+            or not message.instructions
+            or last_message.instructions == message.instructions
+        )
+        # We intentionally don't block merging when `conversation_id` or application metadata
+        # differ. These fields are only bookkeeping for callers; they're never part of what gets
+        # sent to the model. Refusing to merge on a mismatch would leave two consecutive requests
+        # where the model expects one. Framework protocol state in `__pydantic_ai__` is different:
+        # model implementations read it, so combine only that reserved namespace below.
+    ):
+        parts = [*last_message.parts, *message.parts]
+        parts.sort(key=_tool_results_first_sort_key)
+        metadata: dict[str, Any] | None = None
+        last_namespace = (last_message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+        namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+        if _utils.is_str_dict(last_namespace) or _utils.is_str_dict(namespace):
+            metadata = {
+                _PYDANTIC_AI_METADATA_KEY: {
+                    **(last_namespace if _utils.is_str_dict(last_namespace) else {}),
+                    **(namespace if _utils.is_str_dict(namespace) else {}),
+                }
+            }
+        merged_message = ModelRequest(
+            parts=parts,
+            instructions=last_message.instructions or message.instructions,
+            timestamp=message.timestamp or last_message.timestamp,
+            metadata=metadata,
+        )
+        clean_messages[-1] = merged_message
+    else:
+        clean_messages.append(_move_parts_from_between_tool_results(message))
+
+
+def _append_response(clean_messages: list[ModelMessage], message: ModelResponse) -> None:
+    """Append `message` to `clean_messages`, merged into the last message if both are synthetic responses."""
+    last_message = clean_messages[-1] if len(clean_messages) > 0 else None
+    if (
+        last_message
+        and isinstance(last_message, ModelResponse)
+        # Responses can only be merged if they didn't really come from an API
+        and last_message.provider_response_id is None
+        and last_message.provider_name is None
+        and last_message.model_name is None
+        and message.provider_response_id is None
+        and message.provider_name is None
+        and message.model_name is None
+    ):
+        merged_message = replace(last_message, parts=[*last_message.parts, *message.parts])
+        clean_messages[-1] = merged_message
+    else:
+        clean_messages.append(message)
+
+
 def _is_request_scoped(part: ModelRequestPart) -> bool:  # pyright: ignore[reportUnusedFunction]
-    """Whether `part` is a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt."""
-    return isinstance(part, SystemPromptPart) and part.scope == 'request'
+    """Whether `part` is a [request-scoped][pydantic_ai.messages.SystemPromptPart.scope] system prompt, or a capability part that renders as one."""
+    return isinstance(part, SystemPromptPart | CapabilityPart) and part.scope == 'request'
 
 
 def _clean_message_history(messages: list[ModelMessage], *, repair_last_response: bool = False) -> list[ModelMessage]:
@@ -5470,9 +6594,11 @@ def sanitize_messages(
 
     By default it strips:
 
-    - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and instruction records (disable
-      with `strip_system_prompts=False`). The system prompt is the server's to own; a client that
-      can inject one can override the agent's behavior. If stripping leaves a `ModelRequest` with no
+    - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and instruction records (disable with
+      `strip_system_prompts=False`). The system prompt is the server's to own; a client that can inject one can
+      override the agent's behavior. [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]s are always
+      dropped: the UI adapters never send one to a client, one can speak in the system voice, and its content
+      isn't checked like a user prompt's. If stripping leaves a `ModelRequest` with no
       parts, the request is dropped from history entirely.
       [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s are kept, so the model still
       sees why it corrected itself: feedback that reaches the model in the user voice is kept as
@@ -5495,10 +6621,10 @@ def sanitize_messages(
       `True` and `'allow-local'` are reset by default. Applies to file URLs in user content and
       those nested in tool return parts.
     - [`TextContent.metadata`][pydantic_ai.messages.TextContent.metadata] on the text items of a
-      [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], resetting it to `None` and keeping the
-      text. Metadata is never sent to the model, but application code and capabilities read it to
-      recognize content they added themselves, such as a background task's report, so a client that
-      can set it could make its own text pass as theirs.
+      [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] and nested in tool return parts,
+      resetting it to `None` and keeping the text. Metadata is never sent to the model, but
+      application code and capabilities read it to recognize content they added themselves, such as a
+      background task's report, so a client that can set it could make its own text pass as theirs.
     - [`UploadedFile`][pydantic_ai.messages.UploadedFile] items unless `allow_uploaded_files=True`.
       Like a non-HTTP `FileUrl`, an `UploadedFile` references an object the model provider fetches
       using the server-side IAM role. Applies to uploaded files in user content and those nested in
@@ -5508,6 +6634,10 @@ def sanitize_messages(
       otherwise offered to a capability's `get_workspace`, so a client that can set it could point a
       reconnecting capability at an environment it attaches to using server-side provider
       credentials. Reconnect explicitly by passing an authorized `workspace=` instead.
+    - [`ModelResponse.model_id`][pydantic_ai.messages.ModelResponse.model_id], resetting it to `None`.
+      Pydantic AI routes later requests by it, like a suspended response's continuation going back to the
+      [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] candidate that started it, so it is only honored on
+      trusted server-side `message_history`.
     - The framework-reserved `__pydantic_ai__` key from
       [`ModelRequest.metadata`][pydantic_ai.messages.ModelRequest.metadata] and
       [`ModelResponse.metadata`][pydantic_ai.messages.ModelResponse.metadata], keeping your own keys
@@ -5515,7 +6645,9 @@ def sanitize_messages(
       keep state there that they act on in later runs, so it is only honored on trusted server-side
       `message_history`. On client-held history that state is computed again where it's needed: a
       file [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] described is described
-      again, for example.
+      again, for example. A request holding an [on-demand capability](../capabilities/on-demand.md)'s load is
+      marked there instead, so the next request states the capability's current instructions on it again, where
+      server-held history states them.
     - [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s at the end of the history that aren't in
       `resolved_tool_call_ids`. An unresolved tool call at the end of client-supplied history doesn't
       correspond to a paused agent run and shouldn't be executed.
@@ -5598,156 +6730,216 @@ def _sanitize_messages(
     state it wrote into the reserved namespace itself past the sanitization. Warnings point at the caller of
     the public function that called this one.
     """
-    allowed_schemes = {scheme.lower() for scheme in allowed_file_url_schemes}
-    allowed_force_download = set(allowed_file_url_force_download)
+    context = _SanitizeMessagesContext(
+        strip_system_prompts=strip_system_prompts,
+        strip_instructions=strip_instructions,
+        allowed_schemes={scheme.lower() for scheme in allowed_file_url_schemes},
+        allowed_force_download=set(allowed_file_url_force_download),
+        allow_uploaded_files=allow_uploaded_files,
+        strip_workspace_refs=strip_workspace_refs,
+    )
     resolved_ids = set(resolved_tool_call_ids)
-
-    stripped_system_prompt = False
-    disallowed_url_schemes: set[str] = set()
-    reset_force_download_values: set[ForceDownloadMode] = set()
-    dropped_uploaded_file_providers: set[str] = set()
-    stripped_text_metadata: list[TextContent] = []
-    reserved_metadata_messages: list[ModelMessage] = []
-    dangling_tool_call_names: list[str] = []
 
     sanitized: list[ModelMessage] = []
     sources: list[int] = []
     for index, message in enumerate(messages):
         if isinstance(message, ModelRequest):
-            new_request_parts, request_stripped_system_prompt = _sanitize_request_parts(
-                message.parts,
-                strip_system_prompts=strip_system_prompts,
-                allowed_file_url_schemes=allowed_schemes,
-                allowed_file_url_force_download=allowed_force_download,
-                allow_uploaded_files=allow_uploaded_files,
-                disallowed_schemes=disallowed_url_schemes,
-                reset_force_download_values=reset_force_download_values,
-                dropped_uploaded_file_providers=dropped_uploaded_file_providers,
-                stripped_text_metadata=stripped_text_metadata,
-            )
-            stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
-            if new_request_parts:
-                # Reset silently: every request an agent run records carries the agent's own instructions, so
-                # a warning would fire on every turn of a normal round trip, and agent runs never send them.
-                instructions = None if strip_instructions else message.instructions
-                metadata = _without_reserved_metadata(message, reserved_metadata_messages)
-                sanitized.append(
-                    replace(message, parts=new_request_parts, instructions=instructions, metadata=metadata)
-                )
-                sources.append(index)
-            # Otherwise drop the request entirely so we don't leave an empty
-            # `ModelRequest(parts=[])` in history.
+            new_message = _sanitize_request(context, message)
         elif isinstance(message, ModelResponse):
-            new_response_parts = _sanitize_response_parts(
-                message.parts,
-                allowed_file_url_schemes=allowed_schemes,
-                allowed_file_url_force_download=allowed_force_download,
-                allow_uploaded_files=allow_uploaded_files,
-                disallowed_schemes=disallowed_url_schemes,
-                reset_force_download_values=reset_force_download_values,
-                dropped_uploaded_file_providers=dropped_uploaded_file_providers,
-            )
-            if new_response_parts:
-                # Drop `workspace_ref`: a client that can set it could point a reconnecting
-                # capability at an environment it attaches to with server-side credentials.
-                workspace_ref = None if strip_workspace_refs else message.workspace_ref
-                metadata = _without_reserved_metadata(message, reserved_metadata_messages)
-                sanitized.append(
-                    replace(message, parts=new_response_parts, workspace_ref=workspace_ref, metadata=metadata)
-                )
-                sources.append(index)
-            # Otherwise drop the response entirely so we don't leave an empty
-            # `ModelResponse(parts=[])` in history.
+            new_message = _sanitize_response(context, message)
         else:
             assert_never(message)
-
+        if new_message is not None:
+            sanitized.append(new_message)
+            sources.append(index)
     # This must stay the last step that drops or merges messages, here and in every caller: it can only
     # check the end of the history once that end is final. See `_strip_dangling_tail_tool_calls`.
-    _strip_dangling_tail_tool_calls(sanitized, resolved_ids, dangling_tool_call_names)
+    _strip_dangling_tail_tool_calls(sanitized, resolved_ids, context.dangling_tool_call_names)
     # Stripping only drops or rewrites messages at the end, so the remaining sources still line up.
     del sources[len(sanitized) :]
+    _warn_sanitized(context)
+    return sanitized, sources
 
-    if stripped_system_prompt:
+
+@dataclass
+class _SanitizeMessagesContext:
+    """The options of one `_sanitize_messages` call, and what it dropped or reset, for its warnings."""
+
+    strip_system_prompts: bool
+    strip_instructions: bool
+    allowed_schemes: set[str]
+    allowed_force_download: set[ForceDownloadMode]
+    allow_uploaded_files: bool
+    strip_workspace_refs: bool
+
+    stripped_system_prompt: bool = False
+    dropped_capability_part: bool = False
+    disallowed_url_schemes: set[str] = field(default_factory=set[str])
+    reset_force_download_values: set[ForceDownloadMode] = field(default_factory=set[ForceDownloadMode])
+    dropped_uploaded_file_providers: set[str] = field(default_factory=set[str])
+    stripped_text_metadata: list[TextContent] = field(default_factory=list[TextContent])
+    reserved_metadata_messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    dangling_tool_call_names: list[str] = field(default_factory=list[str])
+
+
+def _sanitize_request(context: _SanitizeMessagesContext, message: ModelRequest) -> ModelRequest | None:
+    new_request_parts, request_stripped_system_prompt, request_dropped_capability_part = _sanitize_request_parts(
+        message.parts,
+        strip_system_prompts=context.strip_system_prompts,
+        allowed_file_url_schemes=context.allowed_schemes,
+        allowed_file_url_force_download=context.allowed_force_download,
+        allow_uploaded_files=context.allow_uploaded_files,
+        disallowed_schemes=context.disallowed_url_schemes,
+        reset_force_download_values=context.reset_force_download_values,
+        dropped_uploaded_file_providers=context.dropped_uploaded_file_providers,
+        stripped_text_metadata=context.stripped_text_metadata,
+    )
+    context.stripped_system_prompt = context.stripped_system_prompt or request_stripped_system_prompt
+    context.dropped_capability_part = context.dropped_capability_part or request_dropped_capability_part
+    if not new_request_parts:
+        # Drop the request entirely so we don't leave an empty `ModelRequest(parts=[])` in history.
+        return None
+    # Reset silently: every request an agent run records carries the agent's own instructions, so
+    # a warning would fire on every turn of a normal round trip, and agent runs never send them.
+    instructions = None if context.strip_instructions else message.instructions
+    metadata = _sanitized_request_metadata(message, new_request_parts, context.reserved_metadata_messages)
+    return replace(message, parts=new_request_parts, instructions=instructions, metadata=metadata)
+
+
+def _sanitize_response(context: _SanitizeMessagesContext, message: ModelResponse) -> ModelResponse | None:
+    new_response_parts = _sanitize_response_parts(
+        message.parts,
+        allowed_file_url_schemes=context.allowed_schemes,
+        allowed_file_url_force_download=context.allowed_force_download,
+        allow_uploaded_files=context.allow_uploaded_files,
+        disallowed_schemes=context.disallowed_url_schemes,
+        reset_force_download_values=context.reset_force_download_values,
+        dropped_uploaded_file_providers=context.dropped_uploaded_file_providers,
+        stripped_text_metadata=context.stripped_text_metadata,
+    )
+    if not new_response_parts:
+        # Drop the response entirely so we don't leave an empty `ModelResponse(parts=[])` in history.
+        return None
+    # Drop `workspace_ref`: a client that can set it could point a reconnecting
+    # capability at an environment it attaches to with server-side credentials.
+    workspace_ref = None if context.strip_workspace_refs else message.workspace_ref
+    metadata = _without_reserved_metadata(message, context.reserved_metadata_messages)
+    # Drop `model_id` too: Pydantic AI routes later requests by it.
+    return replace(message, parts=new_response_parts, model_id=None, workspace_ref=workspace_ref, metadata=metadata)
+
+
+def _warn_sanitized(context: _SanitizeMessagesContext) -> None:
+    """Warn about each kind of content the sanitization dropped or reset, at the caller of the public function."""
+    if context.dropped_capability_part:
+        warnings.warn(
+            'Capability parts were dropped from the client-submitted messages: they only ever come from the server, '
+            'so one a client sends back is forged. No setting keeps them; a conversation whose model should keep '
+            'seeing them keeps its history on the server.',
+            UserWarning,
+            stacklevel=4,
+        )
+
+    if context.stripped_system_prompt:
         warnings.warn(
             'Parts carrying the system voice were stripped from the client-submitted messages: system '
             'prompts and instruction records, which a client can forge as easily as a round-trip brings '
             'them back. Pass `strip_system_prompts=False` only when the client is trusted to own the '
             "system prompt, or set `manage_system_prompt='client'` on a UI adapter.",
             UserWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
 
-    if disallowed_url_schemes:
+    if context.disallowed_url_schemes:
         warnings.warn(
-            f'Client-submitted file URLs with scheme(s) {sorted(disallowed_url_schemes)!r} '
+            f'Client-submitted file URLs with scheme(s) {sorted(context.disallowed_url_schemes)!r} '
             f'were dropped because those schemes are not in `allowed_file_url_schemes` '
-            f'(currently {sorted(allowed_schemes)!r}). Non-HTTP schemes like '
+            f'(currently {sorted(context.allowed_schemes)!r}). Non-HTTP schemes like '
             f'`s3://` or `gs://` are fetched by the model provider using the server-side IAM role, '
             f'so they should only be accepted from trusted clients. To allow a scheme, add it to '
             f'`allowed_file_url_schemes`.',
             UserWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
 
-    if reset_force_download_values:
+    if context.reset_force_download_values:
         warnings.warn(
             f'Client-submitted file URLs with `force_download` value(s) '
-            f'{sorted(reset_force_download_values, key=repr)!r} were reset to `False` because '
+            f'{sorted(context.reset_force_download_values, key=repr)!r} were reset to `False` because '
             f'those values are not in `allowed_file_url_force_download` '
-            f'(currently {sorted(allowed_force_download, key=repr)!r}). '
+            f'(currently {sorted(context.allowed_force_download, key=repr)!r}). '
             f"`'allow-local'` opts the URL out of the SSRF private-IP block and `True` makes "
             f'the server fetch the file itself, so neither should be accepted from untrusted '
             f'clients. To allow a value, add it to `allowed_file_url_force_download`, or set '
             f'it only on trusted server-side `message_history` passed directly to `Agent.run`.',
             UserWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
 
-    if dropped_uploaded_file_providers:
+    if context.dropped_uploaded_file_providers:
         warnings.warn(
-            f'Client-submitted uploaded file(s) for provider(s) {sorted(dropped_uploaded_file_providers)!r} '
+            f'Client-submitted uploaded file(s) for provider(s) {sorted(context.dropped_uploaded_file_providers)!r} '
             f'were dropped because `allow_uploaded_files` is `False` (the default). Like a non-HTTP file URL, '
             f'an uploaded file references an object the model provider fetches using the server-side IAM role '
             f'or service account, so it should only be accepted from trusted clients. To keep uploaded files '
             f'from the client, set `allow_uploaded_files=True`, or pass them on trusted server-side '
             f'`message_history` directly to `Agent.run`.',
             UserWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
 
-    if reserved_metadata_messages:
+    if context.reserved_metadata_messages:
         warnings.warn(
-            f'Framework-reserved `__pydantic_ai__` metadata was dropped from {len(reserved_metadata_messages)} '
-            f'client-submitted message(s). Pydantic AI and its capabilities keep state there that they act on, '
+            f'Framework-reserved `__pydantic_ai__` metadata was dropped from '
+            f'{len(context.reserved_metadata_messages)} client-submitted message(s). '
+            f'Pydantic AI and its capabilities keep state there that they act on, '
             f'so it is not accepted from untrusted clients. Your own metadata keys are kept. Pass history that '
             f'should keep this state as trusted server-side `message_history` instead.',
             UserWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
 
-    if stripped_text_metadata:
+    if context.stripped_text_metadata:
         warnings.warn(
-            f'`TextContent.metadata` was dropped from {len(stripped_text_metadata)} client-submitted user prompt '
-            f'item(s). Metadata is never sent to the model, but application code and capabilities read it to '
-            f'recognize content they added themselves, so it is not accepted from untrusted clients. Pass '
-            f'history that carries your own metadata as trusted server-side `message_history` instead.',
+            f'`TextContent.metadata` was dropped from {len(context.stripped_text_metadata)} client-submitted user '
+            f'prompt or tool return item(s) (on tool return content, only its reserved `__pydantic_ai__` key). '
+            f'Metadata is never sent to the model, but application code and capabilities read it to recognize '
+            f'content they added themselves, so it is not accepted from untrusted clients. Pass history that '
+            f'carries your own metadata as trusted server-side `message_history` instead.',
             UserWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
 
-    if dangling_tool_call_names:
+    if context.dangling_tool_call_names:
         warnings.warn(
             f'Client-submitted history ended with unresolved tool call(s) '
-            f'{sorted(set(dangling_tool_call_names))!r}, which were stripped. Tool calls are '
+            f'{sorted(set(context.dangling_tool_call_names))!r}, which were stripped. Tool calls are '
             f'produced by the model on the server side, so an unresolved tool call at the end '
             f'of client-supplied history does not correspond to a paused agent run. For '
             f'human-in-the-loop resumption, pass matching tool call IDs to `resolved_tool_call_ids`, '
             f'or pass matching `deferred_tool_results` to a UI adapter run method.',
             UserWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
 
-    return sanitized, sources
+
+_UNSTATED_LOADS_KEY = 'unstated_loads'
+"""Marks a request from untrusted history that holds a capability load, in the reserved namespace.
+
+The history came from a client, which doesn't keep the framework's instruction records, so a load it holds with no
+statement of the capability's instructions after it lost that statement: the next request restores it there. Only
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] sets it, after dropping the client's own reserved
+metadata, so server-held history never carries it and is never rewritten.
+"""
+
+
+def _sanitized_request_metadata(
+    request: ModelRequest, parts: Sequence[ModelRequestPart], stripped: list[ModelMessage]
+) -> dict[str, Any] | None:
+    """The metadata of an untrusted request keeping `parts`: without the reserved key, marked if it holds a load."""
+    metadata = _without_reserved_metadata(request, stripped)
+    if not any(isinstance(part, (LoadCapabilityReturnPart, CapabilityLoadDeltaPart)) for part in parts):
+        return metadata
+    return {**(metadata or {}), _PYDANTIC_AI_METADATA_KEY: {_UNSTATED_LOADS_KEY: True}}
 
 
 def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessage]) -> dict[str, Any] | None:
@@ -5758,7 +6950,9 @@ def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessag
     metadata = message.metadata
     if metadata is None or _PYDANTIC_AI_METADATA_KEY not in metadata:
         return metadata
-    stripped.append(message)
+    # History sanitized before carries only `sanitize_messages`' own mark, which it sets again where it applies.
+    if metadata[_PYDANTIC_AI_METADATA_KEY] != {_UNSTATED_LOADS_KEY: True}:
+        stripped.append(message)
     return {key: value for key, value in metadata.items() if key != _PYDANTIC_AI_METADATA_KEY} or None
 
 
@@ -5807,7 +7001,9 @@ def _client_safe_retry_feedback(part: ModelRequestPart) -> ModelRequestPart:
     and `'model_retry'` feedback reach the model in the user voice, inside a fence, which a client
     could write anyway. `'no_output'` feedback is the one cause rendered in the system voice, and a
     client can forge the part as easily as a system prompt, so it's demoted to the same fenced,
-    attributed user text: provenance, not wording, is what earns the system voice. A tool-less legacy
+    attributed user text: provenance, not wording, is what earns the system voice. As user text, its
+    `<pyai:retry_feedback>` fence is a copy of the framework's frame, so it also gets a lookalike note
+    saying the user wrote it. A tool-less legacy
     `RetryPromptPart` is translated into the feedback part it always meant first, so it takes the
     same rule.
     """
@@ -5816,7 +7012,7 @@ def _client_safe_retry_feedback(part: ModelRequestPart) -> ModelRequestPart:
         part = _translate_legacy_retry_part(part)
     if isinstance(part, RetryFeedbackPart) and part.retry.cause == 'no_output':
         return UserPromptPart(
-            content=_fenced_retry_feedback(_retry_feedback_text(part), tag='retry_feedback'),
+            content=_fenced_retry_feedback(_retry_feedback_text(part), tag=RETRY_FEEDBACK_TAG),
             timestamp=part.timestamp,
         )
     return part
@@ -5833,21 +7029,28 @@ def _sanitize_request_parts(
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
     stripped_text_metadata: list[TextContent],
-) -> tuple[list[ModelRequestPart], bool]:
+) -> tuple[list[ModelRequestPart], bool, bool]:
     """Sanitize the parts of an untrusted [`ModelRequest`][pydantic_ai.messages.ModelRequest].
 
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any non-allowlisted file URL schemes, `force_download` values, and dropped
     uploaded file providers encountered, and `stripped_text_metadata` with the user prompt
-    [`TextContent`][pydantic_ai.messages.TextContent] items whose metadata was dropped.
-    Returns the kept parts and whether any part carrying the system voice
-    ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or an instruction part) was
-    stripped. Retry feedback is kept, in a form that can't carry client-written system text; see
+    [`TextContent`][pydantic_ai.messages.TextContent] items whose metadata was dropped and the tool
+    return ones whose reserved `__pydantic_ai__` metadata key was dropped.
+    Returns the kept parts, whether any part carrying the system voice
+    ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or an instruction part) was stripped, and whether a
+    [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] was dropped. Retry feedback is kept, in a form that can't carry client-written system text; see
     `_client_safe_retry_feedback`.
     """
     stripped_system_prompt = False
+    dropped_capability_part = False
     new_parts: list[ModelRequestPart] = []
     for part in parts:
+        # The UI adapters never send a capability part to a client, so one a client sends is forged: it could speak
+        # in the system voice, or carry file references the checks below don't reach. Dropped whatever the setting.
+        if isinstance(part, CapabilityPart):
+            dropped_capability_part = True
+            continue
         if strip_system_prompts and isinstance(part, SystemPromptPart | InstructionDeltaPart | InstructionBaselinePart):
             stripped_system_prompt = True
             continue
@@ -5875,11 +7078,12 @@ def _sanitize_request_parts(
                     disallowed_schemes,
                     reset_force_download_values,
                     dropped_uploaded_file_providers,
+                    stripped_text_metadata,
                 )
             )
         else:
             new_parts.append(part)
-    return new_parts, stripped_system_prompt
+    return new_parts, stripped_system_prompt, dropped_capability_part
 
 
 def _filter_user_content(
@@ -5921,13 +7125,27 @@ def _without_text_metadata(content: list[UserContent], stripped: list[TextConten
 
     `stripped` is updated in place with the original items whose metadata was dropped.
     """
-    kept: list[UserContent] = []
-    for item in content:
-        if isinstance(item, TextContent) and item.metadata is not None:
-            stripped.append(item)
-            item = replace(item, metadata=None)
-        kept.append(item)
-    return kept
+    return [_text_without_metadata(item, stripped) if isinstance(item, TextContent) else item for item in content]
+
+
+def _text_without_metadata(item: TextContent, stripped: list[TextContent]) -> TextContent:
+    """An untrusted `item` without its metadata; `stripped` is updated in place with it when it had any."""
+    if item.metadata is None:
+        return item
+    stripped.append(item)
+    return replace(item, metadata=None)
+
+
+def _text_without_internal_metadata(item: TextContent) -> TextContent:
+    """`item` without the reserved `__pydantic_ai__` metadata namespace, or `item` itself if it has none.
+
+    The application's own keys are kept. The one definition of that strip, for client-submitted tool return content
+    (`sanitize_messages`) and for tool return content the UI adapters dump to a client.
+    """
+    if item.metadata is None or _PYDANTIC_AI_METADATA_KEY not in item.metadata:
+        return item
+    metadata = {key: value for key, value in item.metadata.items() if key != _PYDANTIC_AI_METADATA_KEY}
+    return replace(item, metadata=metadata or None)
 
 
 def _sanitize_file_url(
@@ -5954,6 +7172,7 @@ def _sanitize_tool_return_part(
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
+    stripped_text_metadata: list[TextContent],
 ) -> _ReturnPartT:
     """Sanitize the file references in a tool return part's content; see `_sanitize_tool_return_content`.
 
@@ -5970,6 +7189,7 @@ def _sanitize_tool_return_part(
         disallowed_schemes,
         reset_force_download_values,
         dropped_uploaded_file_providers,
+        stripped_text_metadata,
     )
     content = sanitized_content if keep_content else None
     if type(part) is base:
@@ -5987,6 +7207,7 @@ def _sanitize_tool_return_content(
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
+    stripped_text_metadata: list[TextContent],
 ) -> tuple[bool, ToolReturnContent]:
     """Recursively sanitize file references (file URLs and uploaded files) nested in tool return content.
 
@@ -5996,21 +7217,26 @@ def _sanitize_tool_return_content(
     schemes and `force_download` are checked, and uploaded files are dropped unless `allow_uploaded_files`
     is set.
 
+    The reserved `__pydantic_ai__` key of any [`TextContent`][pydantic_ai.messages.TextContent]'s metadata
+    is dropped too, keeping the application's own keys: the framework keeps state there, such as the mark an earlier
+    version put on a frame a capability wrote, which a client must not be able to claim.
+
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
-    file providers encountered.
+    file providers encountered, and `stripped_text_metadata` with the `TextContent` items whose
+    reserved `__pydantic_ai__` metadata key was dropped.
     """
-    if isinstance(content, FileUrl):
-        scheme = urlparse(content.url).scheme.lower()
-        if scheme and scheme not in allowed_file_url_schemes:
-            disallowed_schemes.add(scheme)
-            return False, content
-        return True, _sanitize_file_url(content, allowed_file_url_force_download, reset_force_download_values)
-    if isinstance(content, UploadedFile):
-        if not allow_uploaded_files:
-            dropped_uploaded_file_providers.add(content.provider_name)
-            return False, content
-        return True, content
+    if isinstance(content, FileUrl | UploadedFile | TextContent):
+        return _sanitize_tool_return_item(
+            content,
+            allowed_file_url_schemes,
+            allowed_file_url_force_download,
+            allow_uploaded_files,
+            disallowed_schemes,
+            reset_force_download_values,
+            dropped_uploaded_file_providers,
+            stripped_text_metadata,
+        )
     # `ToolReturnContent` is a recursive `TypeAliasType` at runtime (for Pydantic validation)
     # but resolves to `Any` at type-check time, so pyright can't infer the element types.
     if isinstance(content, Mapping):
@@ -6025,6 +7251,7 @@ def _sanitize_tool_return_content(
                 disallowed_schemes,
                 reset_force_download_values,
                 dropped_uploaded_file_providers,
+                stripped_text_metadata,
             )
             if keep:
                 sanitized_mapping[key] = sanitized_value
@@ -6041,11 +7268,40 @@ def _sanitize_tool_return_content(
                 disallowed_schemes,
                 reset_force_download_values,
                 dropped_uploaded_file_providers,
+                stripped_text_metadata,
             )
             if keep:
                 sanitized_sequence.append(sanitized_item)
         return True, sanitized_sequence
     return True, content
+
+
+def _sanitize_tool_return_item(
+    item: FileUrl | UploadedFile | TextContent,
+    allowed_file_url_schemes: set[str],
+    allowed_file_url_force_download: set[ForceDownloadMode],
+    allow_uploaded_files: bool,
+    disallowed_schemes: set[str],
+    reset_force_download_values: set[ForceDownloadMode],
+    dropped_uploaded_file_providers: set[str],
+    stripped_text_metadata: list[TextContent],
+) -> tuple[bool, FileUrl | UploadedFile | TextContent]:
+    """Sanitize a file reference or text item in tool return content, as `_sanitize_tool_return_content` describes."""
+    if isinstance(item, TextContent):
+        sanitized = _text_without_internal_metadata(item)
+        if sanitized is not item:
+            stripped_text_metadata.append(item)
+        return True, sanitized
+    if isinstance(item, FileUrl):
+        scheme = urlparse(item.url).scheme.lower()
+        if scheme and scheme not in allowed_file_url_schemes:
+            disallowed_schemes.add(scheme)
+            return False, item
+        return True, _sanitize_file_url(item, allowed_file_url_force_download, reset_force_download_values)
+    if not allow_uploaded_files:
+        dropped_uploaded_file_providers.add(item.provider_name)
+        return False, item
+    return True, item
 
 
 def _sanitize_response_parts(
@@ -6057,6 +7313,7 @@ def _sanitize_response_parts(
     disallowed_schemes: set[str],
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
+    stripped_text_metadata: list[TextContent],
 ) -> list[ModelResponsePart]:
     """Sanitize unsafe metadata and file references in an untrusted response's parts.
 
@@ -6069,7 +7326,9 @@ def _sanitize_response_parts(
 
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any disallowed schemes, reset `force_download` values, and dropped uploaded
-    file providers encountered.
+    file providers encountered, and `stripped_text_metadata` with the tool return
+    [`TextContent`][pydantic_ai.messages.TextContent] items whose reserved `__pydantic_ai__` metadata
+    key was dropped.
     """
     new_parts: list[ModelResponsePart] = []
     for part in parts:
@@ -6093,6 +7352,7 @@ def _sanitize_response_parts(
                     disallowed_schemes,
                     reset_force_download_values,
                     dropped_uploaded_file_providers,
+                    stripped_text_metadata,
                 )
             )
         else:
@@ -6214,61 +7474,67 @@ class ThinkingPartDelta:
             ValueError: If `part` is not a `ThinkingPart`.
         """
         if isinstance(part, ThinkingPart):
-            new_content = part.content + self.content_delta if self.content_delta else part.content
-            new_signature = self.signature_delta if self.signature_delta is not None else part.signature
-            new_provider_name = self.provider_name if self.provider_name is not None else part.provider_name
-            # Resolve callable provider_details if needed
-            resolved_details = (
-                self.provider_details(part.provider_details)
-                if callable(self.provider_details)
-                else self.provider_details
-            )
-            new_provider_details = {**(part.provider_details or {}), **(resolved_details or {})} or None
-            return replace(
-                part,
-                content=new_content,
-                signature=new_signature,
-                provider_name=new_provider_name,
-                provider_details=new_provider_details,
-            )
+            return self._apply_to_part(part)
         elif isinstance(part, ThinkingPartDelta):
-            if self.content_delta is None and self.signature_delta is None:
-                raise ValueError('Cannot apply ThinkingPartDelta with no content or signature')
-            if self.content_delta is not None:
-                part = replace(part, content_delta=(part.content_delta or '') + self.content_delta)
-            if self.signature_delta is not None:
-                part = replace(part, signature_delta=self.signature_delta)
-            if self.provider_name is not None:
-                part = replace(part, provider_name=self.provider_name)
-            if self.provider_details is not None:
-                if callable(self.provider_details):
-                    if callable(part.provider_details):
-                        existing_fn = part.provider_details
-                        new_fn = self.provider_details
-
-                        def chained_both(d: dict[str, Any] | None) -> dict[str, Any]:
-                            return new_fn(existing_fn(d))
-
-                        part = replace(part, provider_details=chained_both)
-                    else:
-                        part = replace(part, provider_details=self.provider_details)  # pragma: no cover
-                elif callable(part.provider_details):
-                    existing_fn = part.provider_details
-                    new_dict = self.provider_details
-
-                    def chained_dict(d: dict[str, Any] | None) -> dict[str, Any]:
-                        return {**existing_fn(d), **new_dict}
-
-                    part = replace(part, provider_details=chained_dict)
-                else:
-                    existing = part.provider_details if isinstance(part.provider_details, dict) else {}
-                    part = replace(part, provider_details={**existing, **self.provider_details})
-            return part
+            return self._apply_to_delta(part)
         raise ValueError(  # pragma: no cover
             f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
         )
 
+    def _apply_to_part(self, part: ThinkingPart) -> ThinkingPart:
+        new_content = part.content + self.content_delta if self.content_delta else part.content
+        new_signature = self.signature_delta if self.signature_delta is not None else part.signature
+        new_provider_name = self.provider_name if self.provider_name is not None else part.provider_name
+        # Resolve callable provider_details if needed
+        resolved_details = (
+            self.provider_details(part.provider_details) if callable(self.provider_details) else self.provider_details
+        )
+        new_provider_details = {**(part.provider_details or {}), **(resolved_details or {})} or None
+        return replace(
+            part,
+            content=new_content,
+            signature=new_signature,
+            provider_name=new_provider_name,
+            provider_details=new_provider_details,
+        )
+
+    def _apply_to_delta(self, part: ThinkingPartDelta) -> ThinkingPartDelta:
+        if self.content_delta is None and self.signature_delta is None:
+            raise ValueError('Cannot apply ThinkingPartDelta with no content or signature')
+        if self.content_delta is not None:
+            part = replace(part, content_delta=(part.content_delta or '') + self.content_delta)
+        if self.signature_delta is not None:
+            part = replace(part, signature_delta=self.signature_delta)
+        if self.provider_name is not None:
+            part = replace(part, provider_name=self.provider_name)
+        if self.provider_details is not None:
+            part = replace(part, provider_details=_chain_provider_details(part.provider_details, self.provider_details))
+        return part
+
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _chain_provider_details(
+    existing: ProviderDetailsDelta,
+    new: dict[str, Any] | Callable[[dict[str, Any] | None], dict[str, Any]],
+) -> ProviderDetailsDelta:
+    """Combine two `ThinkingPartDelta`s' `provider_details`, `new` applying on top of `existing`."""
+    if callable(new):
+        if callable(existing):
+
+            def chained_both(d: dict[str, Any] | None) -> dict[str, Any]:
+                return new(existing(d))
+
+            return chained_both
+        return new  # pragma: no cover
+    if callable(existing):
+
+        def chained_dict(d: dict[str, Any] | None) -> dict[str, Any]:
+            return {**existing(d), **new}
+
+        return chained_dict
+    existing_dict = existing if isinstance(existing, dict) else {}
+    return {**existing_dict, **new}
 
 
 @dataclass(repr=False, kw_only=True)
@@ -6626,7 +7892,14 @@ class PartEndEvent:
 
 @dataclass(repr=False, kw_only=True)
 class FinalResultEvent:
-    """An event indicating the response to the current model request matches the output schema and will produce a result."""
+    """An event indicating the response to the current model request matches the output schema and could produce a result.
+
+    [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] takes the first matching part as the final result.
+    Methods that run the agent graph to completion, like
+    [`Agent.run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events] and
+    [`Agent.iter`][pydantic_ai.agent.AbstractAgent.iter], can end with a different result,
+    for example from an output tool call that follows matching text.
+    """
 
     tool_name: str | None
     """The name of the output tool that was called. `None` if the result is from text content and not from a tool."""
@@ -6778,6 +8051,24 @@ class ToolAvailabilityDeltaEvent:
     """The tool availability delta part that will be recorded in message history."""
 
     event_kind: Literal['tool_availability_delta'] = 'tool_availability_delta'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class CapabilityLoadDeltaEvent:
+    """An event indicating on-demand capabilities were loaded without a `load_capability` call, carrying the recorded part.
+
+    Emitted when a request records a
+    [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart], so a UI that
+    rebuilds history from the event stream keeps it.
+    """
+
+    part: CapabilityLoadDeltaPart
+    """The capability load delta part that will be recorded in message history."""
+
+    event_kind: Literal['capability_load_delta'] = 'capability_load_delta'
     """Event type identifier, used as a discriminator."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -7083,6 +8374,7 @@ HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
     | ToolAvailabilityDeltaEvent
+    | CapabilityLoadDeltaEvent
     | ModelSettingsDeltaEvent
     | OutputToolCallEvent
     | OutputToolResultEvent
@@ -7361,6 +8653,31 @@ CAPABILITY_EVENT_TYPES: dict[str, type[CapabilityEvent]] = _EventRegistry[type['
 """Registry of [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] subclasses, keyed by `kind`."""
 
 
+def _new_capability_event_kind(cls: type[CapabilityEvent], namespace: str | None, name: str | None) -> str:
+    """The kind `CapabilityEvent.__init_subclass__` registers `cls` under, refusing one another class has."""
+    if namespace is None:
+        namespace = _inherited_namespace(cls, CapabilityEvent)
+    if namespace is None:
+        raise UserError(
+            f'Capability event {cls.__qualname__} requires a namespace, e.g. '
+            f"`class {cls.__name__}(CapabilityEvent, namespace='my_capability')`."
+        )
+    _validate_capability_namespace(cls, namespace)
+    event_name = name or to_snake(cls.__name__.removesuffix('Event'))
+    if not event_name:
+        raise UserError(
+            f'Capability event {cls.__qualname__} derives an empty name from its class name; pass an explicit `name`.'
+        )
+    event_kind = f'{namespace}.{event_name}'
+    existing = CAPABILITY_EVENT_TYPES.get(event_kind)
+    if existing is not None and not _is_redefinition(existing, cls):
+        raise UserError(
+            f'Duplicate capability event kind {event_kind!r}: already registered by {existing.__qualname__}. '
+            f"Pass an explicit name, e.g. `class {cls.__name__}(CapabilityEvent, namespace={namespace!r}, name='...')`."
+        )
+    return event_kind
+
+
 def _validate_capability_namespace(cls: type, namespace: str) -> None:
     """Reject an unusable capability event namespace.
 
@@ -7497,27 +8814,8 @@ class CapabilityEvent:
         if recreated_kind is not None:
             event_kind = recreated_kind
         else:
-            if namespace is None:
-                namespace = _inherited_namespace(cls, CapabilityEvent)
-            if namespace is None:
-                raise UserError(
-                    f'Capability event {cls.__qualname__} requires a namespace, e.g. '
-                    f"`class {cls.__name__}(CapabilityEvent, namespace='my_capability')`."
-                )
-            _validate_capability_namespace(cls, namespace)
-            event_name = name or to_snake(cls.__name__.removesuffix('Event'))
-            if not event_name:
-                raise UserError(
-                    f'Capability event {cls.__qualname__} derives an empty name from its class name; '
-                    f'pass an explicit `name`.'
-                )
-            event_kind = f'{namespace}.{event_name}'
+            event_kind = _new_capability_event_kind(cls, namespace, name)
         existing = CAPABILITY_EVENT_TYPES.get(event_kind)
-        if existing is not None and recreated_kind is None and not _is_redefinition(existing, cls):
-            raise UserError(
-                f'Duplicate capability event kind {event_kind!r}: already registered by {existing.__qualname__}. '
-                f"Pass an explicit name, e.g. `class {cls.__name__}(CapabilityEvent, namespace={namespace!r}, name='...')`."
-            )
         if shadowed := _shadowed_envelope_fields(cls, _CAPABILITY_EVENT_ENVELOPE_FIELDS - {'kind'}):
             raise UserError(
                 f'Capability event {cls.__qualname__} declares field(s) reserved for the event envelope: {shadowed}.'

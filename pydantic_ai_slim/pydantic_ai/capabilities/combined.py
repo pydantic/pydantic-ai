@@ -4,7 +4,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequenc
 from copy import copy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from pydantic import ValidationError
 from typing_extensions import TypeIs
@@ -19,7 +19,7 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry, RetryModelRequest
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, Authority, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -114,7 +114,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         new_capabilities: Sequence[AbstractCapability[AgentDepsT]],
         replacements: Mapping[int, Sequence[AbstractCapability[AgentDepsT] | None]] | None = None,
-    ) -> CombinedCapability[AgentDepsT]:
+    ) -> Self:
         """A shallow copy holding `new_capabilities`, with the composition view carried across.
 
         The only supported way to swap a container's children. `replace()` would re-run
@@ -294,14 +294,23 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             or any(c.listens_to(event) for c in self._dispatch)
         )
 
+    def with_authority(self, authority: Authority) -> Self:
+        """Return a copy whose children, and so what each of them enqueues, carry no more than `authority`.
+
+        Composition merges a container's children into the enclosing one and dispatches each on its own, so the ceiling
+        is set on every child as well as on the container.
+        """
+        lowered = super().with_authority(authority)
+        return lowered._rebound([child.with_authority(authority) for child in self.capabilities])
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
-        new_caps = [capability.for_agent(agent) for capability in self.capabilities]
+        new_caps = [capability._keep_authority(capability.for_agent(agent)) for capability in self.capabilities]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
+        new_caps = await gather(*(c._for_run_keeping_authority(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
@@ -689,17 +698,21 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         node: _agent_graph.AgentNode[AgentDepsT, Any],
         error: Exception,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-        for capability in reversed(self._dispatch):
-            if not capability._has_on_node_run_error:
-                continue
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None:
-                continue
-            try:
-                return await capability.on_node_run_error(cap_ctx, node=node, error=error)
-            except Exception as new_error:
-                error = new_error
-        raise error
+        try:
+            for capability in reversed(self._dispatch):
+                if not capability._has_on_node_run_error:
+                    continue
+                cap_ctx = _ctx_for_active_cap(capability, ctx)
+                if cap_ctx is None:
+                    continue
+                try:
+                    return await capability.on_node_run_error(cap_ctx, node=node, error=error)
+                except Exception as new_error:
+                    error = new_error
+            raise error
+        finally:
+            # The raised error's traceback holds this frame; retaining error would keep ctx.deps in a cycle.
+            del error
 
     # --- Event hooks ---
 
@@ -790,22 +803,28 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         error: Exception,
     ) -> ModelResponse:
-        for capability in reversed(self._dispatch):
-            if not capability._has_on_model_request_error:
-                continue
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None or not capability._handles_model_request_error(cap_ctx, request_context):
-                continue
-            try:
-                return await capability.on_model_request_error(cap_ctx, request_context=request_context, error=error)
-            except RetryModelRequest:
-                # Control flow, not a replacement error: a capability asking for another attempt has
-                # answered for the whole chain. Handing it to the next capability as `error` would let
-                # an outer one recover from — or re-wrap — the request for another attempt.
-                raise
-            except Exception as new_error:
-                error = new_error
-        raise error
+        try:
+            for capability in reversed(self._dispatch):
+                if not capability._has_on_model_request_error:
+                    continue
+                cap_ctx = _ctx_for_active_cap(capability, ctx)
+                if cap_ctx is None or not capability._handles_model_request_error(cap_ctx, request_context):
+                    continue
+                try:
+                    return await capability.on_model_request_error(
+                        cap_ctx, request_context=request_context, error=error
+                    )
+                except RetryModelRequest:
+                    # Control flow, not a replacement error: a capability asking for another attempt has
+                    # answered for the whole chain. Handing it to the next capability as `error` would let
+                    # an outer one recover from — or re-wrap — the request for another attempt.
+                    raise
+                except Exception as new_error:
+                    error = new_error
+            raise error
+        finally:
+            # The raised error's traceback holds this frame; retaining error would keep ctx.deps in a cycle.
+            del error
 
     # --- Tool validate lifecycle hooks ---
 
@@ -928,17 +947,21 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         error: Exception,
     ) -> Any:
-        for capability in reversed(self._dispatch):
-            cap_ctx = _ctx_for_active_cap(capability, ctx)
-            if cap_ctx is None:
-                continue
-            try:
-                return await capability.on_tool_execute_error(
-                    cap_ctx, call=call, tool_def=tool_def, args=args, error=error
-                )
-            except Exception as new_error:
-                error = new_error
-        raise error
+        try:
+            for capability in reversed(self._dispatch):
+                cap_ctx = _ctx_for_active_cap(capability, ctx)
+                if cap_ctx is None:
+                    continue
+                try:
+                    return await capability.on_tool_execute_error(
+                        cap_ctx, call=call, tool_def=tool_def, args=args, error=error
+                    )
+                except Exception as new_error:
+                    error = new_error
+            raise error
+        finally:
+            # The raised error's traceback holds this frame; retaining error would keep ctx.deps in a cycle.
+            del error
 
     # --- Output validate lifecycle hooks ---
 
@@ -1214,7 +1237,11 @@ def bind_capabilities_tier(
         if is_deferred_group(capability):
             # Each child of a deferred group binds in its own tier, as it would outside the group.
             return bind_capabilities_tier(capability, agent, innermost=innermost)
-        return capability.for_agent(agent) if is_innermost(capability) == innermost else capability
+        return (
+            capability._keep_authority(capability.for_agent(agent))  # pyright: ignore[reportPrivateUsage]
+            if is_innermost(capability) == innermost
+            else capability
+        )
 
     branches = combined.capabilities
     new_caps = [bind(c) for c in branches]

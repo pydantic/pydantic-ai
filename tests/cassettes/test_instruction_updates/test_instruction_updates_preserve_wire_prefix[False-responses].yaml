@@ -29,10 +29,10 @@ interactions:
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          <context id="capability:memory:state">
+          <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         model: gpt-5.6
         reasoning:
           effort: none
@@ -79,10 +79,10 @@ interactions:
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          <context id="capability:memory:state">
+          <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol
@@ -185,16 +185,16 @@ interactions:
           content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse B.
-            </context>
+            </pyai:context>
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          <context id="capability:memory:state">
+          <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         model: gpt-5.6
         reasoning:
           effort: none
@@ -241,10 +241,10 @@ interactions:
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          <context id="capability:memory:state">
+          <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol
@@ -347,9 +347,9 @@ interactions:
           content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse B.
-            </context>
+            </pyai:context>
         - role: assistant
           id: msg_0a41b0402ce2536a006abc26b390c487d1ba05a3d43c07a1b0
           content:
@@ -364,10 +364,10 @@ interactions:
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          <context id="capability:memory:state">
+          <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         model: gpt-5.6
         reasoning:
           effort: none
@@ -414,10 +414,10 @@ interactions:
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          <context id="capability:memory:state">
+          <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol
@@ -520,9 +520,9 @@ interactions:
           content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse B.
-            </context>
+            </pyai:context>
         - role: assistant
           id: msg_0a41b0402ce2536a006abc26b390c487d1ba05a3d43c07a1b0
           content:
@@ -547,16 +547,16 @@ interactions:
           content: An envelope with signed contracts. Routing?
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
+            </pyai:context>
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          <context id="capability:memory:state">
+          <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         model: gpt-5.6
         reasoning:
           effort: none
@@ -603,10 +603,10 @@ interactions:
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          <context id="capability:memory:state">
+          <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol
@@ -709,9 +709,9 @@ interactions:
           content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse B.
-            </context>
+            </pyai:context>
         - role: assistant
           id: msg_0a41b0402ce2536a006abc26b390c487d1ba05a3d43c07a1b0
           content:
@@ -736,9 +736,9 @@ interactions:
           content: An envelope with signed contracts. Routing?
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
+            </pyai:context>
         - role: assistant
           id: msg_0a41b0402ce2536a006abc26b60ce487d1a627cd68198ec208
           content:
@@ -752,16 +752,16 @@ interactions:
           content: A pallet of bottled water arrived at the dock. Where to?
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             This context has been withdrawn.
-            </context>
+            </pyai:context>
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          <context id="capability:memory:state">
+          <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         model: gpt-5.6
         reasoning:
           effort: none
@@ -808,10 +808,10 @@ interactions:
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          <context id="capability:memory:state">
+          <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol
@@ -914,9 +914,9 @@ interactions:
           content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse B.
-            </context>
+            </pyai:context>
         - role: assistant
           id: msg_0a41b0402ce2536a006abc26b390c487d1ba05a3d43c07a1b0
           content:
@@ -941,9 +941,9 @@ interactions:
           content: An envelope with signed contracts. Routing?
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse A.
-            </context>
+            </pyai:context>
         - role: assistant
           id: msg_0a41b0402ce2536a006abc26b60ce487d1a627cd68198ec208
           content:
@@ -957,9 +957,9 @@ interactions:
           content: A pallet of bottled water arrived at the dock. Where to?
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             This context has been withdrawn.
-            </context>
+            </pyai:context>
         - role: assistant
           id: msg_0a41b0402ce2536a006abc26b7707887d199c64387d918b0de
           content:
@@ -973,16 +973,16 @@ interactions:
           content: Finally, a small parcel of replacement laptop batteries. Which warehouse?
         - role: system
           content: |-
-            <context id="capability:memory:state">
+            <pyai:context id="capability:memory:state">
             Send parcels to warehouse C.
-            </context>
+            </pyai:context>
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          <context id="capability:memory:state">
+          <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         model: gpt-5.6
         reasoning:
           effort: none
@@ -1029,10 +1029,10 @@ interactions:
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
 
-          <context id="capability:memory:state">
+          <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
-          </context>
-          A later <context> element with the same id replaces this one.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces this one.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol

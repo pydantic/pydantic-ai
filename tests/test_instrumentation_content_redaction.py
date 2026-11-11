@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -42,19 +43,29 @@ from pydantic_ai import (
 from pydantic_ai._instrumentation import (
     ContentPolicy,
     MessageJsonCache,
+    current_model_request_span,
     has_stale_message_json,
     include_content_ctx,
     model_request_parameters_attributes,
     open_request_policy,
     span_include_content,
 )
-from pydantic_ai.capabilities import Hooks, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, Hooks, LocalWorkspace
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, ToolFailed, UnexpectedModelBehavior
-from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart, UploadedFile
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.messages import (
+    DataCapabilityPart,
+    InstructionCapabilityPart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    OperatorSource,
+    OperatorText,
+    ToolResultSource,
+    UploadedFile,
+)
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -102,6 +113,8 @@ SECRETS = {
     'model_text': 'SENTINEL-model-text',
     'provider_error_body': 'SENTINEL-provider-error-body',
     'prompted_output_template': 'SENTINEL-prompted-output-template',
+    'capability_instruction': 'SENTINEL-capability-instruction',
+    'capability_data': 'SENTINEL-capability-data',
 }
 
 
@@ -176,7 +189,9 @@ def test_native_mcp_credentials_are_masked_but_explicit_id_is_retained(include_c
         native_tools=[
             tool,
             CodeExecutionTool(files=[UploadedFile(file_id='file-123', provider_name='openai')]),
-            FileSearchTool(file_store_ids=['store'], instructions='search only these files'),
+            FileSearchTool(
+                file_store_ids=['store'], provider_settings={'xai': {'instructions': 'search only these files'}}
+            ),
         ],
     )
     serialized = model_request_parameters_attributes(parameters, include_content=include_content)[
@@ -194,7 +209,7 @@ def test_native_mcp_credentials_are_masked_but_explicit_id_is_retained(include_c
     assert native_tool['allowed_tools'] == ['search']
     assert exported['function_tools'][0]['metadata'] == {'source': 'user'}
     assert exported['native_tools'][1]['files'][0]['file_id'] == 'file-123'
-    assert exported['native_tools'][2]['instructions'] == 'search only these files'
+    assert exported['native_tools'][2]['provider_settings']['xai']['instructions'] == 'search only these files'
     assert tool.authorization_token == 'SENTINEL-token'
     response = ModelResponse(parts=[NativeToolCallPart(tool_name='mcp_server:docs', tool_call_id='call-1')])
     settings, exporter = redacted_setup(include_content)
@@ -212,7 +227,9 @@ def test_unrelated_request_telemetry_matches_the_existing_serializer() -> None:
         ],
         native_tools=[
             CodeExecutionTool(files=[UploadedFile(file_id='file-123', provider_name='openai')]),
-            FileSearchTool(file_store_ids=['store'], instructions='search only these files'),
+            FileSearchTool(
+                file_store_ids=['store'], provider_settings={'xai': {'instructions': 'search only these files'}}
+            ),
         ],
     )
     expected = TypeAdapter(ModelRequestParameters).dump_python(parameters, mode='json')
@@ -221,7 +238,7 @@ def test_unrelated_request_telemetry_matches_the_existing_serializer() -> None:
     assert json.loads(serialized) == expected
     assert expected['function_tools'][0]['metadata'] == {'x': 1}
     assert expected['native_tools'][0]['files'][0]['file_id'] == 'file-123'
-    assert expected['native_tools'][1]['instructions'] == 'search only these files'
+    assert expected['native_tools'][1]['provider_settings']['xai']['instructions'] == 'search only these files'
 
 
 def test_native_mcp_redaction_survives_serializer_fallback() -> None:
@@ -852,6 +869,52 @@ async def test_no_content_reaches_telemetry_from_message_history(include_content
     check(exporter, include_content, {'user_prompt', 'message_history', 'model_text'})
 
 
+@dataclass(kw_only=True)
+class _RedactedNudgePart(InstructionCapabilityPart, namespace='test_redaction', name='nudge'):
+    pass
+
+
+@dataclass(kw_only=True)
+class _RedactedPagePart(DataCapabilityPart, namespace='test_redaction', name='page', tag='fetched_page'):
+    pass
+
+
+@dataclass
+class _CapabilityPartReporter(AbstractCapability[object]):
+    """Enqueues an operator-voice part, which renders on the system role, and a data part framed on the user channel."""
+
+    enqueued: bool = False
+
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if not self.enqueued:
+            self.enqueued = True
+            ctx.enqueue(
+                _RedactedNudgePart(content=OperatorText(SECRETS['capability_instruction']), source=OperatorSource()),
+                _RedactedPagePart(content=SECRETS['capability_data'], source=ToolResultSource(tool_name='fetch')),
+            )
+        return request_context
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_capability_parts(include_content: bool) -> None:
+    """What a capability enqueues, on the system role in the application's voice and framed on the user channel."""
+    settings, exporter = redacted_setup(include_content)
+    received: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    agent = Agent(FunctionModel(respond), capabilities=[_CapabilityPartReporter(), Instrumentation(settings=settings)])
+    await agent.run(SECRETS['user_prompt'])
+    # Both parts have to have reached the model, or their sentinels prove nothing.
+    assert SECRETS['capability_instruction'] in str(received) and SECRETS['capability_data'] in str(received)
+
+    check(exporter, include_content, {'user_prompt', 'capability_instruction', 'capability_data', 'model_text'})
+
+
 @pytest.mark.parametrize('include_content', [True, False])
 async def test_no_content_reaches_telemetry_when_a_tool_retries_to_exhaustion(include_content: bool) -> None:
     """The retry prompt, and the error chained from it that ends the run."""
@@ -1057,6 +1120,27 @@ def test_a_content_policy_from_another_span_is_not_trusted() -> None:
         # No request open at all.
         include_content_ctx.set(None)
         assert span_include_content(span) is False
+
+
+def test_current_model_request_span_requires_the_owned_span() -> None:
+    """A model records request attributes on the open `chat` span only while it's the current span.
+
+    Not on a span opened inside the request, which is the current span instead, nor on a finished request's span.
+    """
+    settings, _ = redacted_setup(include_content=False)
+    tracer = settings.tracer
+    previous = include_content_ctx.get()
+    try:
+        include_content_ctx.set(None)
+        assert current_model_request_span() is None
+        with tracer.start_as_current_span('chat') as chat_span:
+            include_content_ctx.set(ContentPolicy(chat_span, include_content=False, tracer=tracer))
+            assert current_model_request_span() is chat_span
+            with tracer.start_as_current_span('nested span'):
+                assert current_model_request_span() is None
+        assert current_model_request_span() is None
+    finally:
+        include_content_ctx.set(previous)
 
 
 def test_a_span_inside_a_request_needs_the_request_still_open() -> None:

@@ -20,7 +20,7 @@ import pytest
 from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import _agent_graph
-from pydantic_ai._enqueue import PendingMessage, PendingMessagePriority, PendingMessageQueue
+from pydantic_ai._enqueue import EnqueueGuard, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
@@ -67,6 +67,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import AgentStream
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
@@ -231,6 +232,7 @@ async def test_enqueue_asap_message_from_tool():
                 parts=[ToolCallPart(tool_name='inject_msg', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -253,6 +255,7 @@ async def test_enqueue_asap_message_from_tool():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -724,6 +727,7 @@ async def test_enqueue_when_idle_message_prevents_end():
                 parts=[ToolCallPart(tool_name='inject_follow_up', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -745,6 +749,7 @@ async def test_enqueue_when_idle_message_prevents_end():
                 parts=[TextPart(content='premature end')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -759,6 +764,7 @@ async def test_enqueue_when_idle_message_prevents_end():
                 parts=[TextPart(content='final answer after follow-up')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -827,6 +833,7 @@ async def test_enqueue_when_idle_redirects_after_output_tool_end():
                 parts=[ToolCallPart(tool_name='inject_follow_up', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -854,6 +861,7 @@ async def test_enqueue_when_idle_redirects_after_output_tool_end():
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -887,6 +895,7 @@ async def test_enqueue_when_idle_redirects_after_output_tool_end():
                 ],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -946,6 +955,7 @@ async def test_enqueue_from_agent_run():
                 parts=[TextPart(content='response 1')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -960,6 +970,7 @@ async def test_enqueue_from_agent_run():
                 parts=[TextPart(content='response 2')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1035,6 +1046,7 @@ async def test_pending_messages_accessible_on_run_context():
                 parts=[ToolCallPart(tool_name='check_queue', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1057,6 +1069,7 @@ async def test_pending_messages_accessible_on_run_context():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1871,6 +1884,7 @@ async def test_enqueue_interleaved_response_and_request():
                 parts=[ToolCallPart(tool_name='inject_exchange', args='{}', tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1892,6 +1906,7 @@ async def test_enqueue_interleaved_response_and_request():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1913,6 +1928,7 @@ async def test_enqueue_interleaved_response_and_request():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2058,6 +2074,7 @@ async def test_enqueue_asap_with_rich_message_history_tail():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2152,6 +2169,7 @@ async def test_enqueue_asap_drains_at_end_if_arrived_during_final_step():
                 parts=[TextPart(content='would-have-ended')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2166,12 +2184,114 @@ async def test_enqueue_asap_drains_at_end_if_arrived_during_final_step():
                 parts=[TextPart(content='final after late asap')],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
         ]
     )
+
+
+async def test_enqueue_at_deferred_tool_pause_is_recorded_without_another_model_request():
+    """Content left in the queue when a run pauses for deferred tools goes into the history and the pause stands.
+
+    A redirect would give the model a turn while the deferred call is unanswered.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[ToolCallPart(tool_name='lookup'), ToolCallPart(tool_name='gated')])
+
+    @dataclass
+    class LateContentCap(AbstractCapability[Any]):
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            ctx.enqueue('late content')
+            return response
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[LateContentCap()])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:
+        # Never approved in this test.
+        return 'approved'  # pragma: no cover
+
+    result = await agent.run('Hello')
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert call_count == 1
+    assert result.all_messages()[-1] == snapshot(
+        ModelRequest(
+            parts=[UserPromptPart(content='late content', timestamp=IsDatetime())],
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
+@pytest.mark.parametrize('case', ['all_calls_deferred', 'queued_response'])
+async def test_enqueue_at_deferred_tool_pause_redirects_when_history_cannot_record_it(case: str):
+    """The pause redirects as before when recording would change how the paused history resumes.
+
+    After a step whose calls all deferred, a trailing request would read as interrupting them; a queued
+    `ModelResponse` would read as the paused response.
+    """
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count > 1:
+            return ModelResponse(parts=[TextPart(content='done')])
+        calls = [ToolCallPart(tool_name='gated')]
+        if case == 'queued_response':
+            calls.insert(0, ToolCallPart(tool_name='lookup'))
+        return ModelResponse(parts=calls)
+
+    @dataclass
+    class LateContentCap(AbstractCapability[Any]):
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            if call_count == 1:
+                if case == 'queued_response':
+                    ctx.enqueue(ModelResponse(parts=[TextPart(content='synthetic turn')]), 'late content')
+                else:
+                    ctx.enqueue('late content')
+            return response
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[LateContentCap()])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'found'
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:
+        # Never approved in this test.
+        return 'approved'  # pragma: no cover
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'done'
+    assert call_count == 2
 
 
 async def test_enqueue_when_idle_drains_after_leftover_asap():
@@ -2308,3 +2428,382 @@ async def test_enqueue_priorities_stay_separate_when_both_drain_at_end_of_run():
     )
     # Each priority bucket got its own ModelRequest (not merged into one).
     assert all(len([p for p in r.parts if isinstance(p, UserPromptPart)]) == 1 for r in drained)
+
+
+async def test_agent_run_dequeue_removes_only_that_message():
+    """`dequeue` removes the named message and keeps the others in order; a second call finds nothing."""
+    agent = Agent(TestModel())
+
+    async with agent.iter('Hello') as agent_run:
+        first = agent_run.enqueue('first', priority='when_idle')
+        second = agent_run.enqueue('second', priority='when_idle')
+        third = agent_run.enqueue('third', priority='when_idle')
+        assert first is not None and second is not None and third is not None
+
+        assert agent_run.dequeue(second) is True
+        assert [pending.enqueue_id for pending in agent_run.pending_messages] == [first, third]
+        assert agent_run.dequeue(second) is False
+        assert agent_run.dequeue('never-queued') is False
+        assert agent_run.set_enqueue_priority(second, 'asap') is False
+
+
+async def test_new_priority_keeps_the_message_in_place():
+    """A promoted message is delivered ahead of `'asap'` messages queued after it, as it keeps its place."""
+    agent = Agent(TestModel())
+
+    async with agent.iter('Hello') as agent_run:
+        promoted = agent_run.enqueue('queued first', priority='when_idle')
+        assert promoted is not None
+        assert agent_run.enqueue('queued second') is not None
+        assert agent_run.set_enqueue_priority(promoted, 'asap') is True
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.result is not None
+    delivered = [
+        part.content
+        for message in agent_run.result.all_messages()
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and part.content != 'Hello'
+    ]
+    assert delivered == ['queued first', 'queued second']
+
+
+async def test_dequeued_message_never_reaches_the_model():
+    """A dequeued `when_idle` message isn't delivered, so it no longer keeps the run from ending."""
+    seen: list[list[ModelMessage]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    async with agent.iter('Hello') as agent_run:
+        enqueue_id = agent_run.enqueue('Never mind', priority='when_idle')
+        assert enqueue_id is not None
+        assert agent_run.dequeue(enqueue_id) is True
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.result is not None
+    assert len(seen) == 1
+    assert not any(
+        isinstance(part, UserPromptPart) and part.content == 'Never mind'
+        for message in agent_run.result.all_messages()
+        for part in message.parts
+    )
+
+
+async def test_set_enqueue_priority_promotes_when_idle_message_to_the_next_request():
+    """A `when_idle` message promoted to `'asap'` mid-run goes into the next request, under its original id.
+
+    Left at `when_idle`, it would wait for the run to end and redirect it into a third request.
+    """
+    call_count = 0
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            yield {0: DeltaToolCall(name='work', json_args='{}', tool_call_id='call-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool_plain
+    def work() -> str:
+        return 'worked'
+
+    events: list[AgentStreamEvent] = []
+    async with agent.iter('Hello') as agent_run:
+        enqueue_id = agent_run.enqueue('Send this now', priority='when_idle')
+        assert enqueue_id is not None
+        promoted = False
+        node = agent_run.next_node
+        while not isinstance(node, End):
+            if Agent.is_call_tools_node(node) and not promoted:
+                # The user pressed "send now" while the agent was working.
+                assert agent_run.set_enqueue_priority(enqueue_id, 'asap') is True
+                promoted = True
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as stream:
+                    events.extend([event async for event in stream])
+            node = await agent_run.next(node)
+
+    assert agent_run.result is not None
+    assert call_count == 2
+    messages = agent_run.result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='work', args='{}', tool_call_id='call-1')],
+                usage=RequestUsage(output_tokens=1, input_tokens=50),
+                model_name='function::stream_fn',
+                model_id='function:function::stream_fn',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='work', content='worked', tool_call_id='call-1', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='Send this now', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(output_tokens=1, input_tokens=50),
+                model_name='function::stream_fn',
+                model_id='function:function::stream_fn',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    delivered = [event for event in events if isinstance(event, EnqueuedMessagesEvent)]
+    assert [event.enqueue_id for event in delivered] == [enqueue_id]
+
+
+async def test_run_context_dequeue_and_demote_from_a_tool():
+    """From a tool, `ctx.dequeue` drops a message and `ctx.set_enqueue_priority` demotes one.
+
+    Demoted content no longer goes next to the tool's return: it's delivered as its own request when the
+    run would otherwise end, like content enqueued with `when_idle` in the first place.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('work', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content=f'done {len(messages)}')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def work(ctx: RunContext[object]) -> str:
+        dropped = ctx.enqueue('dropped')
+        demoted = ctx.enqueue('later, please')
+        assert dropped is not None and demoted is not None
+        assert ctx.dequeue(dropped) is True
+        assert ctx.set_enqueue_priority(demoted, 'when_idle') is True
+        return 'worked'
+
+    result = await agent.run('Hello')
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='work', args={}, tool_call_id='call-1')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='work', content='worked', tool_call_id='call-1', timestamp=IsDatetime())
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done 3')],
+                usage=RequestUsage(input_tokens=52, output_tokens=4),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[UserPromptPart(content='later, please', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done 5')],
+                usage=RequestUsage(input_tokens=54, output_tokens=6),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_tool_content_promoted_back_goes_next_to_the_tool_result():
+    """Tool content demoted, then promoted back before the next request, still goes next to the tool's result."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('work', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    def work(ctx: RunContext[object]) -> str:
+        note = ctx.enqueue('note')
+        assert note is not None
+        assert ctx.set_enqueue_priority(note, 'when_idle') is True
+        assert ctx.set_enqueue_priority(note, 'asap') is True
+        return 'worked'
+
+    result = await agent.run('Hello')
+
+    tool_request = result.all_messages()[2]
+    assert isinstance(tool_request, ModelRequest)
+    assert tool_request.parts == snapshot(
+        [
+            ToolReturnPart(tool_name='work', content='worked', tool_call_id='call-1', timestamp=IsDatetime()),
+            UserPromptPart(content='note', timestamp=IsDatetime()),
+        ]
+    )
+    assert len(result.all_messages()) == 4
+
+
+@pytest.mark.parametrize('end', ['delivered', 'run-ended', 'early-exit'])
+async def test_dequeue_and_set_enqueue_priority_return_false_once_no_longer_queued(end: str):
+    """Both return `False` for a delivered message, and after the run ends, instead of raising like `enqueue`.
+
+    A run left early keeps undelivered messages in its closed queue; they can't be delivered any more either.
+    """
+    agent = Agent(TestModel())
+
+    async with agent.iter('Hello') as agent_run:
+        enqueue_id = agent_run.enqueue('steer', priority='when_idle' if end == 'early-exit' else 'asap')
+        assert enqueue_id is not None
+        if end == 'early-exit':
+            pass
+        elif end == 'delivered':
+            node = agent_run.next_node
+            while not isinstance(node, End) and not Agent.is_call_tools_node(node):
+                node = await agent_run.next(node)
+            assert Agent.is_call_tools_node(node)  # the message went out with the first request
+            assert agent_run.pending_messages == []
+        else:
+            async for _ in agent_run:
+                pass
+
+    assert agent_run.dequeue(enqueue_id) is False
+    assert agent_run.set_enqueue_priority(enqueue_id, 'when_idle') is False
+
+
+@pytest.mark.parametrize('method', ['dequeue', 'set_enqueue_priority'])
+def test_queue_change_does_not_race_pending_message_drain(method: str):
+    """A change from a worker thread waits for a drain in progress, then finds the message delivered.
+
+    A unit test: the window between a drain taking the lock and a worker's call can't be held open
+    through the public API.
+    """
+    drain_started = threading.Event()
+    change_started = threading.Event()
+    release_drain = threading.Event()
+
+    class BlockingQueue(PendingMessageQueue):
+        def dequeue(self, enqueue_id: str) -> bool:
+            change_started.set()
+            return super().dequeue(enqueue_id)
+
+        def set_enqueue_priority(self, enqueue_id: str, priority: PendingMessagePriority) -> bool:
+            change_started.set()
+            return super().set_enqueue_priority(enqueue_id, priority)
+
+        def _pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
+            drain_started.set()
+            assert release_drain.wait(timeout=5)
+            return super()._pop_priority(priority)
+
+    queue = BlockingQueue()
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=queue)
+    enqueue_id = ctx.enqueue('steer')
+    assert enqueue_id is not None
+
+    def change() -> bool:
+        return ctx.dequeue(enqueue_id) if method == 'dequeue' else ctx.set_enqueue_priority(enqueue_id, 'when_idle')
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        drain_future = executor.submit(queue.pop_priority, 'asap')
+        assert drain_started.wait(timeout=5)
+        change_future = executor.submit(change)
+        assert change_started.wait(timeout=5)
+        assert not change_future.done()
+        release_drain.set()
+        assert [pending.enqueue_id for pending in drain_future.result(timeout=5)] == [enqueue_id]
+        assert change_future.result(timeout=5) is False
+
+
+def test_run_context_queue_changes_work_on_a_hand_built_context():
+    """A tool unit-tested with a hand-built `RunContext(pending_messages=[])` can dequeue and change priority, as it can enqueue.
+
+    A unit test: this is the context users build by hand to test a tool outside a run.
+    """
+    pending_messages: list[PendingMessage] = []
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=pending_messages)
+    kept = ctx.enqueue('kept')
+    dropped = ctx.enqueue('dropped')
+    assert kept is not None and dropped is not None
+
+    assert ctx.dequeue(dropped) is True
+    assert ctx.dequeue(dropped) is False
+    assert ctx.set_enqueue_priority(kept, 'when_idle') is True
+    assert ctx.set_enqueue_priority(dropped, 'asap') is False
+    assert [(pending.enqueue_id, pending.priority) for pending in pending_messages] == [(kept, 'when_idle')]
+
+
+@pytest.mark.parametrize('method', ['dequeue', 'set_enqueue_priority'])
+@pytest.mark.parametrize(
+    'pending_messages, match',
+    [
+        (None, r'^`{method}` is only available during an agent run'),
+        (
+            EnqueueGuard('activity', 'workflow'),
+            r'^`ctx\.{method}\(\)` is not supported inside a durable activity.*change to the queued message would be lost',
+        ),
+    ],
+    ids=['no-queue', 'durable-unit'],
+)
+def test_run_context_queue_changes_need_a_live_queue(
+    method: str, pending_messages: list[PendingMessage] | None, match: str
+):
+    """Without a queue there's nothing to change, and inside a durable unit a change would be lost on replay.
+
+    A unit test: the durable-unit path is also covered end to end in the Prefect, Temporal and DBOS
+    suites; a context without a queue is only built by hand.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=pending_messages)
+
+    # The error names the method that was called.
+    with pytest.raises(UserError, match=match.format(method=method)):
+        if method == 'dequeue':
+            ctx.dequeue('some-id')
+        else:
+            ctx.set_enqueue_priority('some-id', 'asap')
