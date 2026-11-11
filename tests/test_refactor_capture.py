@@ -523,8 +523,9 @@ async def test_capture_leaves_out_a_sigv4_session_token(tmp_path: Path):
 async def test_capture_records_a_prefect_request_once_and_not_the_ones_prefect_sends_itself(tmp_path: Path):
     """Prefect's client retries a request by sending it again, which the capture records once.
 
-    The log batches and server version checks it sends of its own accord aren't recorded at all. When its test server is
-    busy, the client retries, and its background worker sends logs and checks the version in whichever test is running.
+    The log batches, server version checks and CSRF token fetches it sends of its own accord aren't recorded at all. When
+    its test server is busy, the client retries, and its background worker sends logs, checks the version and fetches a
+    token in whichever test is running.
     """
     from prefect.client.orchestration import PrefectClient
 
@@ -562,9 +563,7 @@ async def test_capture_records_a_prefect_request_once_and_not_the_ones_prefect_s
             '/api/logs/',
         ]
     )
-    assert [record['target'] for record in capture.records] == snapshot(
-        ['GET http://127.0.0.1:PORT/api/health', 'GET http://127.0.0.1:PORT/api/csrf-token?client=UUID']
-    )
+    assert [record['target'] for record in capture.records] == snapshot(['GET http://127.0.0.1:PORT/api/health'])
 
 
 async def test_capture_normalizes_the_custom_id_of_an_in_memory_batch_request(tmp_path: Path):
