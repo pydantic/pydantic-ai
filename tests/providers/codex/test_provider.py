@@ -728,7 +728,9 @@ async def test_base_url_takes_requests_and_credentials_to_its_host():
         await client.get(f'{CODEX_URL}/x')
 
     assert seen == [True, False, False]
-    with pytest.raises(UserError, match='`OpenAICodexProvider` only sends credentials over HTTPS'):
+    with pytest.raises(
+        UserError, match=r'^`OpenAICodexProvider` only sends credentials over HTTPS, got a `http://` `base_url`\.$'
+    ):
         OpenAICodexProvider(credentials=provider.credentials, base_url='http://gateway.example/codex')
 
 

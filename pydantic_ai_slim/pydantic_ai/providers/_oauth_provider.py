@@ -296,7 +296,7 @@ class OAuthCredentialsProvider(_OpenAISDKProvider, ABC, Generic[CredentialsT]):
         url = httpx2.URL(self.base_url)
         if url.scheme != 'https':
             raise UserError(
-                f'`{type(self).__name__}` only sends credentials over HTTPS, got `base_url` {self.base_url!r}.'
+                f'`{type(self).__name__}` only sends credentials over HTTPS, got a `{url.scheme}://` `base_url`.'
             )
         self._origin = (url.host, url.port)
         self._revision = 0

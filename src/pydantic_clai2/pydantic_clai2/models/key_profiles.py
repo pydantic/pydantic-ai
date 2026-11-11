@@ -205,7 +205,7 @@ def _grpc_host(base_url: str) -> str:
     if not url.netloc:
         return base_url
     if url.scheme != 'https' or url.path.strip('/') or url.username or url.password or url.query:
-        raise UserError(f'xai connects over gRPC with TLS, so give base_url as https://HOST[:PORT], not {base_url!r}.')
+        raise UserError('xai connects over gRPC with TLS, so give base_url as https://HOST[:PORT].')
     return url.netloc
 
 
