@@ -377,7 +377,9 @@ Gotchas:
 - Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
   pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one. Under `ModelFallback`,
   each model that answers is told its own coordinates; one that can't take images, or would see the latest screenshot
-  scaled down, ends the run with a `UserError` before its request.
+  scaled down, ends the run with a `UserError` before its request. The agent tells a grid model its grid in the tool
+  description and labels each `ComputerCallPart` from the model that made it (`coordinate_grid`,
+  `screenshot_max_side`, `screenshot_max_pixels`); a custom runner reads those instead of the run's model.
 - A screen larger than the model takes (profile `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`) is sent scaled
   down if the display can scale screenshots; otherwise the run stops with an error. 1280x800 fits every model.
 - Under durable execution each `computer` call's screen work is one unit, so replay and recovery don't repeat a finished
