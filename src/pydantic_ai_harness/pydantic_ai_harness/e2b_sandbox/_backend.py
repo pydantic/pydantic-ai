@@ -726,6 +726,30 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             # still be running, and the sandbox ref stays available for explicit cleanup.
             logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id, exc_info=True)
 
+    async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
+        """Run `argv` as root in the sandbox with `stdin` as its input, which reaches no command line or log."""
+        sandbox = await self._sandbox_for_operation()
+        async with self._sdk_errors(sandbox.sandbox_id, 'Could not mount storage in the E2B sandbox'):
+            # `user='root'`, not `sudo`: the sandbox's journal records `sudo`'s arguments, though not its stdin.
+            handle = await sandbox.commands.run(
+                shlex.join(argv), background=True, stdin=True, user='root', cwd='/', timeout=_SDK_STREAM_UNBOUNDED
+            )
+            try:
+                # The helper reads one line, so stdin is left open rather than closed.
+                try:
+                    await sandbox.commands.send_stdin(handle.pid, stdin)
+                except e2b.NotFoundException:
+                    # The command exited before its input arrived; its output says why.
+                    pass
+                try:
+                    result = await handle.wait()
+                except e2b.CommandExitException as exited:
+                    result = exited
+            except BaseException:
+                await stop_shielded(handle.kill, grace=_INTERNAL_EXEC_TIMEOUT)
+                raise
+        return CommandResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+
 
 class _OutputCounter:
     """The output bytes the SDK has delivered for one command, cancelling `overflow` once they pass the cap."""

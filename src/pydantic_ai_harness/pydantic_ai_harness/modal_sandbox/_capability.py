@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Never
+from typing import TYPE_CHECKING, Any, Literal, Never
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._mounts import S3Mount, mounted
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_renamed
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
@@ -154,6 +155,16 @@ def _sandbox_id_ref(sandbox_id: object) -> WorkspaceRef | None:
     return WorkspaceRef(provider='modal', id=sandbox_id)
 
 
+def _check_runtime(runtime: object, mounts: object) -> None:
+    if runtime not in ('gvisor', 'vm', None):
+        raise UserError(f"runtime must be 'gvisor', 'vm' or None, got {runtime!r}.")
+    # A function of the run may return no buckets, so only a list is known to need the VM runtime here.
+    if runtime == 'gvisor' and isinstance(mounts, Sequence) and mounts:
+        raise UserError(
+            "mounts need Modal's VM runtime: gVisor can't mount the FUSE file systems they use. Pass `runtime='vm'`."
+        )
+
+
 @dataclass(kw_only=True, init=False)
 class ModalSandbox(AbstractCapability[AgentDepsT]):
     """Supply a Modal sandbox as the run's workspace.
@@ -188,6 +199,19 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
 
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command in the sandbox gets; a command's own `env` is layered on top."""
+
+    runtime: Literal['gvisor', 'vm'] | None = None
+    """Modal's runtime for a newly created sandbox, `'gvisor'` or `'vm'`; `None` lets Modal choose.
+
+    `mounts` needs `'vm'`: gVisor can't mount the FUSE file systems they use.
+    """
+
+    mounts: (
+        Sequence[S3Mount]
+        | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]]
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Sequence[S3Mount]]]
+    ) = ()
+    """Buckets to show as folders in the sandbox, or a function of the run, sync or async, returning them with fresh keys."""
 
     client: modal.Client | None = None
     """The `modal.Client` to create, attach and destroy with, such as one from `modal.Client.from_credentials`;
@@ -228,6 +252,12 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         warn_if_no_tools: bool = True,
         workdir: str | None = None,
         client: modal.Client | None = None,
+        runtime: Literal['gvisor', 'vm'] | None = None,
+        mounts: (
+            Sequence[S3Mount]
+            | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]]
+            | Callable[[RunContext[AgentDepsT]], Awaitable[Sequence[S3Mount]]]
+        ) = (),
         **removed_arguments: Never,
     ) -> None:
         # Hand-written, with the same parameters a dataclass would generate, so the previous
@@ -255,6 +285,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             )
         check_integer('idle_timeout', idle_timeout, optional=True)
         check_working_dir(working_dir)
+        _check_runtime(runtime, mounts)
         self.id = id
         self.description = description
         self.defer_loading = defer_loading
@@ -265,6 +296,8 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         self.idle_timeout = idle_timeout
         self.working_dir = working_dir
         self.env = env
+        self.runtime = runtime
+        self.mounts = mounts
         self.client = client
         self.warn_if_no_tools = warn_if_no_tools
         self._warned_no_tools = False
@@ -283,6 +316,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         idle_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        runtime: Literal['gvisor', 'vm'] | None = None,
         warn_if_no_tools: bool = True,
         **kwargs: Any,
     ) -> ModalSandbox[Any]:
@@ -293,8 +327,10 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
         `TYPE_CHECKING` import, and publishes only the bare `'ModalSandbox'`. A spec names an
         image by its registry tag. `**kwargs` reaches
         `__init__` unchanged, so deprecated arguments keep their guidance and `defer_loading`
-        its refusal.
+        its refusal. `mounts` is not one of them: it holds keys.
         """
+        if 'mounts' in kwargs:
+            raise UserError('`mounts` holds keys, so an agent spec cannot set it. Pass it to `ModalSandbox` in code.')
         return cls(
             id=id,
             description=description,
@@ -305,6 +341,7 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             idle_timeout=idle_timeout,
             working_dir=working_dir,
             env=env,
+            runtime=runtime,
             warn_if_no_tools=warn_if_no_tools,
             **kwargs,
         )
@@ -323,10 +360,9 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build a backend without performing Modal I/O."""
-        del ctx
         if ref is not None and ref.provider != 'modal':
             return None
-        return ModalSandboxBackend(
+        backend = ModalSandboxBackend(
             ref=ref or self._sandbox_id_ref,
             image=self.image,
             app_name=self.app_name,
@@ -335,8 +371,10 @@ class ModalSandbox(AbstractCapability[AgentDepsT]):
             idle_timeout=self.idle_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            runtime=self.runtime,
             client=self.client,
         )
+        return mounted(backend, backend._run_as_root, self.mounts, ctx)  # pyright: ignore[reportPrivateUsage]
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         # The previous `ModalSandbox` registered its own tools, so `ModalSandbox(image=...)` on its

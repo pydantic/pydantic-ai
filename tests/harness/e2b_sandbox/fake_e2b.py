@@ -38,6 +38,7 @@ from e2b.exceptions import (
     AuthenticationException,
     FileNotFoundException,
     InvalidArgumentException,
+    NotFoundException,
     RateLimitException,
     SandboxException,
     SandboxNotFoundException,
@@ -94,6 +95,7 @@ class FakeCommandCall:
     envs: dict[str, str] | None
     timeout: float | None
     user: str | None
+    stdin: bool = False
 
 
 @dataclass(frozen=True)
@@ -129,10 +131,15 @@ class FakeCommandHandle:
         stdout: str,
         stderr: str,
         exit_code: int,
+        pid: int = 0,
+        user: str | None = None,
     ) -> None:
         self._control = control
         self._sandbox = sandbox
         self._command = command
+        self.pid = pid
+        self._user = user
+        self.killed = False
         self._stdout = stdout
         self._stderr = stderr
         self._exit_code = exit_code
@@ -143,6 +150,11 @@ class FakeCommandHandle:
     def terminate(self) -> None:
         """End everything the command started, as killing the sandbox does; then release it."""
         self.close()
+
+    async def kill(self) -> bool:
+        await anyio.lowlevel.checkpoint()
+        self.killed = True
+        return True
 
     @property
     def stdout(self) -> str:
@@ -159,6 +171,8 @@ class FakeCommandHandle:
         self._sandbox.check_alive()
         if self._control.wait_error is not None:
             raise self._control.wait_error
+        if self._user == 'root' and self._control.root_wait_error is not None:
+            raise self._control.root_wait_error
         if self._control.command_hangs and 'kill -TERM ' not in self._command:
             await anyio.sleep_forever()
         if self._exit_code != 0:
@@ -181,6 +195,15 @@ class FakeCommands:
         self.calls: list[FakeCommandCall] = []
         self.handles: list[FakeCommandHandle] = []
         self.group_stops: list[str] = []
+        self.stdin_sent: list[tuple[int, bytes]] = []
+        """What `send_stdin` sent, as (pid, data)."""
+
+    async def send_stdin(self, pid: int, data: str | bytes, request_timeout: float | None = None) -> None:
+        await anyio.lowlevel.checkpoint()
+        self._sandbox.check_alive()
+        if self._control.stdin_error is not None:
+            raise self._control.stdin_error
+        self.stdin_sent.append((pid, data.encode() if isinstance(data, str) else data))
 
     async def run(
         self,
@@ -192,12 +215,13 @@ class FakeCommands:
         timeout: float | None = 60,
         on_stdout: Callable[[str], object] | None = None,
         on_stderr: Callable[[str], object] | None = None,
+        stdin: bool | None = None,
     ) -> FakeCommandHandle:
         # Closed signature on purpose: the real `run` rejects unknown kwargs, so the fake must
         # too, or a bad kwarg in the backend would only fail in production.
         await anyio.lowlevel.checkpoint()
         self._sandbox.check_alive()
-        self.calls.append(FakeCommandCall(cmd, background is True, cwd, envs, timeout, user))
+        self.calls.append(FakeCommandCall(cmd, background is True, cwd, envs, timeout, user, stdin is True))
         assert background is True, 'the backend always starts commands in the background'
         if self._control.run_error is not None:
             raise self._control.run_error
@@ -220,6 +244,8 @@ class FakeCommands:
             stdout=stdout,
             stderr=stderr,
             exit_code=exit_code,
+            pid=len(self.handles) + 1,
+            user=user,
         )
         # The SDK's event pump hands output to the callbacks as it arrives, before `wait()` returns.
         for callback, output in ((on_stdout, stdout), (on_stderr, stderr)):
@@ -460,9 +486,12 @@ class _HostCommands(FakeCommands):
         timeout: float | None = 60,
         on_stdout: Callable[[str], object] | None = None,
         on_stderr: Callable[[str], object] | None = None,
+        stdin: bool | None = None,
     ) -> FakeCommandHandle:
         # Host output is not streamed to the callbacks; the output cap is tested on the in-memory fake.
         del on_stdout, on_stderr
+        # The host tier runs only the workspace's own commands, which never take input.
+        assert not stdin
         await anyio.lowlevel.checkpoint()
         self._sandbox.check_alive()
         self.calls.append(FakeCommandCall(cmd, background is True, cwd, envs, timeout, user))
@@ -742,6 +771,9 @@ class FakeE2B:
     connect_error: Exception | None = None
     run_error: Exception | None = None
     wait_error: Exception | None = None
+    stdin_error: Exception | None = None
+    # Raised by `wait()` only for a command run as `root`, so the backend's own probes still answer.
+    root_wait_error: Exception | None = None
     command_hangs: bool = False
     kill_command_error: Exception | None = None
     # Raised by the `AsyncSandbox.kill(id)` class method that `destroy` uses.
@@ -782,6 +814,7 @@ class FakeE2B:
         module.FileNotFoundException = FileNotFoundException  # type: ignore[attr-defined]
         module.FileType = FileType  # type: ignore[attr-defined]
         module.InvalidArgumentException = InvalidArgumentException  # type: ignore[attr-defined]
+        module.NotFoundException = NotFoundException  # type: ignore[attr-defined]
         module.RateLimitException = RateLimitException  # type: ignore[attr-defined]
         module.SandboxException = SandboxException  # type: ignore[attr-defined]
         module.SandboxNotFoundException = SandboxNotFoundException  # type: ignore[attr-defined]
@@ -827,7 +860,12 @@ if TYPE_CHECKING:
         @property
         def stderr(self) -> str: ...
 
+        @property
+        def pid(self) -> int: ...
+
         async def wait(self) -> CommandResult: ...
+
+        async def kill(self) -> bool: ...
 
     _fake_entry_conforms: _EntryInfoSurface = FakeEntryInfo(name='n', path='/n', type=FileType.FILE, size=0)
     _real_entry_conforms: _EntryInfoSurface = e2b.EntryInfo.__new__(e2b.EntryInfo)

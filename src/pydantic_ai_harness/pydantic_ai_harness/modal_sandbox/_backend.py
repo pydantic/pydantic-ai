@@ -8,6 +8,8 @@ SDK assumptions verified 2026-10-20 against Modal Python SDK 1.5.5:
   https://modal.com/docs/guide/sandbox-spawn
 * the native filesystem API supplies the operations used here:
   https://modal.com/docs/sdk/py/latest/Sandbox
+* `Sandbox.create(runtime=...)`, which `runtime=` passes on, needs SDK 1.6.0, the `modal` extra's floor (checked
+  2026-11-10 against 1.6.3): https://modal.com/docs/guide/sandboxes#runtimes
 
 Re-check these SDK methods before changing the protocol integration.
 """
@@ -26,7 +28,7 @@ import time
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 import anyio
@@ -45,6 +47,8 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._mounts import MountError
+from pydantic_ai_harness._mounts._helper import DEADLINE_SECONDS
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -242,6 +246,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             applied to every command, including in an attached sandbox. `None` (the default) is
             `/root` on the default image, otherwise the image's own working directory.
         env: Environment variables every command gets; a command's own `env` is layered on top.
+        runtime: Modal's runtime for a newly created sandbox, `'gvisor'` or `'vm'`; `None` (the default) lets
+            Modal choose.
     """
 
     def __init__(
@@ -257,6 +263,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         idle_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        runtime: Literal['gvisor', 'vm'] | None = None,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'modal')
@@ -281,6 +288,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         self._idle_timeout = idle_timeout
         self._working_dir = absolute_path('working_dir', working_dir)
         self._env = dict(env) if env is not None else {}
+        self._runtime: Literal['gvisor', 'vm'] | None = runtime
         # `_working_dir` is what was configured (`None` for the image's); the protocol needs the
         # canonical absolute path, which only `pwd -P` in the sandbox can give.
         self._resolved_working_dir: str | None = None
@@ -511,6 +519,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                     env=variables,
                     timeout=self._sandbox_timeout,
                     idle_timeout=self._idle_timeout,
+                    runtime=self._runtime,
                     client=self._client,
                 )
         except Exception as error:
@@ -770,6 +779,30 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             raise WorkspaceError(
                 f'working_dir {workdir!r} does not exist in Modal sandbox {sandbox.object_id!r}. '
                 'Create it there, or pass a working_dir that exists.'
+            )
+        return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
+
+    async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
+        """Run `argv` with `stdin` as its input, which reaches no command line or log; Modal runs commands as root."""
+        # gVisor shows a `/dev/fuse` but refuses to mount one, so the kernel's name (`4.19.0-gvisor`) is what tells;
+        # the input is read first, so it never waits on a pipe nothing reads.
+        gvisor_exit = 86
+        fuse_check = f'case "$(uname -r)" in *gvisor*) head -n 1 > /dev/null; exit {gvisor_exit} ;; esac; exec "$@"'
+        sandbox = await self.get_sandbox()
+        async with self._mapped_errors(sandbox, 'Could not mount storage in the Modal sandbox'):
+            # Modal stops the helper 30 seconds past its own deadline, if its alarm never fired, which is before the
+            # mount call stops waiting for it.
+            process = await sandbox.exec.aio(
+                'sh', '-c', fuse_check, 'sh', *argv, timeout=DEADLINE_SECONDS + 30, workdir='/', text=False
+            )
+            process.stdin.write(stdin)
+            process.stdin.write_eof()
+            await process.stdin.drain.aio()
+            stdout, stderr, exit_code, _ = await _collect_output(process, ['', ''], anyio.Event())
+        if exit_code == gvisor_exit:
+            raise MountError(
+                f'Modal sandbox {sandbox.object_id} runs on gVisor, which cannot mount the FUSE file systems mounts '
+                "use. Create it on Modal's VM runtime: `ModalSandbox(runtime='vm')`."
             )
         return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 

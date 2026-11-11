@@ -184,6 +184,9 @@ Files belong to the owner of the working directory. Writes are cached on the san
 | Sandbox | What it needs |
 | --- | --- |
 | [Docker Sandbox](docker-sandbox.md) | The FUSE device, added when the container is created: `docker_args=['--device', '/dev/fuse', '--cap-add', 'SYS_ADMIN', '--security-opt', 'apparmor:unconfined']`. A container without it is refused with `MountError` naming these flags. The container must reach the store, so leave `allow_internet_access` on; to limit where it connects, pass a `--network` of your own in `docker_args`. |
+| [E2B Sandbox](e2b-sandbox.md) | Internet access, on by default, to reach the store and install FUSE and rclone. The helper runs through E2B's `user='root'`, not `sudo`. |
+| [Modal Sandbox](modal-sandbox.md) | Modal's VM runtime: `ModalSandbox(runtime='vm')`. A sandbox on gVisor is refused with `MountError`, as gVisor can't mount FUSE file systems. |
+| [Sprites Sandbox](sprites-sandbox.md) | The FUSE device, `/dev/fuse`, which the Sprites tested had; a Sprite without it is refused with `MountError`. A network path to the store. Its `sprite` user runs the helper through passwordless `sudo`. |
 
 The other sandboxes don't support `mounts=` yet.
 
@@ -192,6 +195,8 @@ The other sandboxes don't support `mounts=` yet.
 Code in the sandbox can read the keys, so pass keys limited to that bucket, or to the prefix you mount, and prefer short-lived ones, as in the STS example above. For R2, a token scoped to one bucket is the closest equivalent; revoke it to cut off a sandbox. `S3Mount` keeps the keys out of its `repr` and out of the sandbox's durable policy, and `MountError` messages leave them out.
 
 The keys keep working after the run, through the mount and for anything else code in the sandbox does with them, until they expire or you revoke them. A folder whose keys don't expire can't be given to another bucket until the sandbox is destroyed. `read_only=True` only refuses writes through the folder.
+
+In a Sprite, the `sprite` user that runs every command can read any file and become root, so it can also ask the rclone daemon for the keys of every mount there.
 
 In Docker, `--cap-add SYS_ADMIN` and `apparmor:unconfined` give every command in the container more access to the kernel it shares with your machine, which makes it a weaker boundary, so add these flags only to containers that use mounts.
 

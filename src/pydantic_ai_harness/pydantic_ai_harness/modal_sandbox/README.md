@@ -188,6 +188,46 @@ if __name__ == '__main__':
 
 The `finally` terminates the sandbox even when setup or the run fails. If the task is cancelled while Modal is still creating the sandbox, `backend.ref` is still `None` there, and the sandbox Modal goes on to create keeps running; its ID is logged at `WARNING` (see [Telemetry](#telemetry)), so terminate it with `ModalSandbox().destroy(WorkspaceRef(provider='modal', id=...))`. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later.
 
+## Choose the runtime
+
+Modal runs a sandbox under one of two runtimes: gVisor, a kernel written in user space that stands between the sandbox and the host, or a VM. Pick one with `runtime=`:
+
+```python
+from pydantic_ai_harness.modal_sandbox import ModalSandbox
+
+sandbox = ModalSandbox(runtime='vm')
+```
+
+The default, `None`, lets Modal choose, as [Modal's runtimes guide](https://modal.com/docs/guide/sandboxes#runtimes) describes. `runtime=` applies only to a sandbox `ModalSandbox` creates: an attached one keeps the runtime it was created with. It takes precedence over Modal's `MODAL_FUNCTION_RUNTIME` setting, which otherwise picks the runtime for every sandbox the process creates. [Mounting a bucket](#mount-a-bucket) needs `'vm'`, since gVisor can't mount the FUSE file systems mounts use.
+
+## Mount a bucket
+
+To show an S3 or S3-compatible bucket as a folder in the sandbox, pass `mounts=` and create the sandbox on Modal's VM runtime:
+
+```python {names="defined"}
+import os
+from datetime import UTC, datetime, timedelta
+
+from pydantic_ai_harness import S3Mount
+from pydantic_ai_harness.modal_sandbox import ModalSandbox
+
+sandbox = ModalSandbox(
+    runtime='vm',
+    mounts=[
+        S3Mount(
+            path='data',
+            url='s3://acme-data/',
+            access_key_id=os.environ['DATA_ACCESS_KEY_ID'],
+            secret_access_key=os.environ['DATA_SECRET_ACCESS_KEY'],
+            session_token=os.environ['DATA_SESSION_TOKEN'],
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    ],
+)
+```
+
+The run's first command or file operation mounts the bucket at `/root/data` on the default image. A sandbox on gVisor, including an attached one, is refused with `MountError`: gVisor can't mount the FUSE file system a mount uses. The sandbox must reach the store, and its image needs `python3`. See [Mounting Cloud Storage](https://pydantic.dev/docs/ai/harness/cloud-storage-mounts/) for fresh keys per run, other stores, read-only mounts and how long a mount lasts.
+
 ## Clean up
 
 The sandbox keeps running, and billing, after the run ends. Pydantic AI never terminates it. Terminate it with the ref you stored:
@@ -245,6 +285,8 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()
 | `idle_timeout` | Seconds without activity before Modal stops a new sandbox. Default: `None`, no idle limit. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `/root` on the default image, otherwise the image's own working directory. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
+| `runtime` | Modal's runtime for a new sandbox: `'gvisor'` or `'vm'`. Default: `None`, which lets Modal choose. `mounts` needs `'vm'`. |
+| `mounts` | Buckets to show as folders in the sandbox, as `S3Mount`s, or a function of the run returning them with fresh keys. The sandbox must be on the VM runtime; see [Mount a bucket](#mount-a-bucket). Default: `()`. Left out of agent specs, since it holds keys. |
 | `client` | A `modal.Client`, such as one from `modal.Client.from_credentials`. Default: `None`, Modal's client from the environment or config. See [Use different credentials for each user](#use-different-credentials-for-each-user). |
 | `warn_if_no_tools` | Warn when the agent has no `Shell` or `FileSystem` tool. Default: `True`. |
 

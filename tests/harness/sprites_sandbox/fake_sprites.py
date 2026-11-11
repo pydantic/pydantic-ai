@@ -45,7 +45,7 @@ from websockets.datastructures import Headers
 from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
-_STDOUT, _EXIT, _STDIN_EOF = 1, 3, 4
+_STDIN, _STDOUT, _EXIT, _STDIN_EOF = 0, 1, 3, 4
 
 
 class FakeSocketTransport:
@@ -131,8 +131,14 @@ class FakeExecSocket:
         return frame
 
     async def send(self, message: bytes) -> None:
-        # The backend sends no stdin data, only the EOF the SDK sends once the socket is open.
-        assert message == bytes([_STDIN_EOF]) and self.process.stdin is not None
+        # Stdin data, which only the mount helper's root command gets, or the EOF the SDK sends once the socket is open.
+        assert message[:1] in (bytes([_STDIN]), bytes([_STDIN_EOF])) and self.process.stdin is not None
+        if message[0] == _STDIN:
+            self.sprite_transport.stdin_sent.append(message[1:])
+            self.attached = True
+            stdin = self.process.stdin
+            await anyio.to_thread.run_sync(lambda: (stdin.write(message[1:]), stdin.flush()))
+            return
         if self.sprite_transport.release_stdin_eof is not None:
             await self.sprite_transport.release_stdin_eof.wait()
         self.attached = True
@@ -198,6 +204,8 @@ class SpriteTransport:
         # Seconds each exec handshake takes from now on; a live one takes about two (2026-09-28).
         self.exec_latency = 0.0
         self.fs_writes: list[str] = []
+        # Each stdin data frame a command was sent.
+        self.stdin_sent: list[bytes] = []
 
     def client(self, token: str) -> AsyncSpritesClient:
         client = AsyncSpritesClient(token=token)

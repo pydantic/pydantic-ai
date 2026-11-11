@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +11,7 @@ from sprites import AsyncSpritesClient
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness._mounts import S3Mount, mounted
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
 from pydantic_ai_harness.sprites_sandbox._backend import SpritesSandboxBackend, destroy_sprite
@@ -63,6 +64,13 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, on top of the Sprite's own; a command's `env` is layered on top."""
 
+    mounts: (
+        Sequence[S3Mount]
+        | Callable[[RunContext[AgentDepsT]], Sequence[S3Mount]]
+        | Callable[[RunContext[AgentDepsT]], Awaitable[Sequence[S3Mount]]]
+    ) = ()
+    """Buckets to show as folders in the Sprite, or a function of the run, sync or async, returning them with fresh keys."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('SpritesSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
@@ -83,6 +91,7 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
 
         Core reads this signature to generate the spec's JSON schema. Inherited, core reads `__init__`, and
         `client`'s `AsyncSpritesClient` hint has no JSON schema, so only the bare `'SpritesSandbox'` is published.
+        `mounts` is left out: a spec can't hold keys.
         """
         return cls(
             id=id,
@@ -111,7 +120,7 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""
         if ref is not None and ref.provider != 'sprites':
             return None
-        return _SuppliedBackend(
+        backend = _SuppliedBackend(
             run_id=ctx.run_id,
             client=self.client,
             ref=ref,
@@ -119,6 +128,7 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
         )
+        return mounted(backend, backend._run_as_root, self.mounts, ctx)  # pyright: ignore[reportPrivateUsage]
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         # Only the backend this run built: one passed in as `workspace=`, such as a parent run's

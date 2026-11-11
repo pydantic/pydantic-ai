@@ -148,6 +148,25 @@ class _FakeStream:
         yield self._data
 
 
+class _FakeStdin:
+    """Mimics a process's `stdin` writer: what it was sent, and whether the end of input followed."""
+
+    def __init__(self) -> None:
+        self.data = b''
+        self.closed = False
+        self.drain = _AioCallable(self._drain)
+
+    def write(self, data: bytes | bytearray | memoryview | str) -> None:
+        assert not self.closed, 'written after write_eof'
+        self.data += data.encode() if isinstance(data, str) else bytes(data)
+
+    def write_eof(self) -> None:
+        self.closed = True
+
+    def _drain(self) -> None:
+        pass
+
+
 class _FakeProcess:
     def __init__(
         self,
@@ -162,6 +181,7 @@ class _FakeProcess:
     ) -> None:
         self.stdout = _FakeStream(stdout, stdout_hangs, stdout_delay, stdout_error)
         self.stderr = _FakeStream(stderr)
+        self.stdin = _FakeStdin()
         self._returncode = returncode
         self._wait_error = wait_error
         self.returncode: int | None = None
@@ -421,6 +441,8 @@ class FakeSandbox:
         self.object_id = object_id
         self.name = name
         self.exec_calls: list[ExecCall] = []
+        self.processes: list[_FakeProcess] = []
+        """Each in-memory `exec`'s process, in order, beside `exec_calls`; a stop's process is left out."""
         self.start_scripts: list[str] = []
         self.exec = _HangingExec(self._exec) if control.exec_hangs else _AioCallable(self._exec)
         self.poll = _AioCallable(self._poll)
@@ -574,7 +596,7 @@ class FakeSandbox:
             stdout, stderr, code = (
                 ('', '', self._control.kind_probe_exit) if probing_kind else self._control.responder(program, timeout)
             )
-        return _FakeProcess(
+        process = _FakeProcess(
             _stream_bytes(stdout),
             _stream_bytes(stderr),
             code,
@@ -584,6 +606,8 @@ class FakeSandbox:
             self._control.stdout_delay,
             self._control.stdout_error,
         )
+        self.processes.append(process)
+        return process
 
     def _poll(self) -> int | None:
         if self.poll_error is not None:
@@ -658,6 +682,7 @@ class FakeModal:
             idle_timeout: int | None = None,
             workdir: str | None = None,
             env: dict[str, str | None] | None = None,
+            runtime: str | None = None,
             client: object = None,
         ) -> FakeSandbox:
             control.clients.append(client)
@@ -672,6 +697,7 @@ class FakeModal:
                     'env': env,
                     'timeout': timeout,
                     'idle_timeout': idle_timeout,
+                    'runtime': runtime,
                 }
             )
             control.owned_creates += 1

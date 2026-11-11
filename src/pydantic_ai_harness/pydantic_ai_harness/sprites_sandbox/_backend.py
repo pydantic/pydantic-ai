@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import io
 import logging
 import math
 import os
@@ -62,7 +63,7 @@ import re
 import threading
 import time
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
@@ -85,6 +86,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness._mounts import MountError
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env_types,
@@ -699,13 +701,15 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         check_working_dir: bool = True,
         sandbox: AsyncSprite | None = None,
         cwd: str | None = None,
+        stdin: bytes | None = None,
     ) -> CommandResult:
         """`run` inside an operation, with the switches the backend's own commands need.
 
         `capture_stderr=False` skips reading a stopped command's stderr capture back, and
         `check_working_dir=False` skips confirming a missing `working_dir` on failure: both are for
         the backend's own commands, which must not recurse into another capture read or check. `sandbox` is for a
-        command run while `_lock` is held, and `cwd` replaces `working_dir` as the directory.
+        command run while `_lock` is held, and `cwd` replaces `working_dir` as the directory. `stdin` is sent to a
+        command that reads it before printing anything, which then waits for it in place of the stdin EOF.
         """
         _check_command_timeout(timeout)
         directory = cwd or self._working_dir
@@ -713,13 +717,18 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         capture = f'/tmp/pydantic-ai-stderr-{uuid.uuid4().hex}'
         # `env` runs inside the wrapper: a `sh` such as dash drops variables whose names are not shell
         # identifiers from the environment it passes on.
-        args = _ending_with(marker, capture, self._command_args(command, shell, env))
+        args = _ending_with(marker, capture, self._command_args(command, shell, env), gated=stdin is None)
+
+        def exec_command_for(sandbox: AsyncSprite) -> _ExecCommand:
+            # A fresh reader for each handshake attempt, as the SDK reads it to its end.
+            source = None if stdin is None else io.BytesIO(stdin)
+            return _ExecCommand(sandbox.command(*args, cwd=directory, stdin=source), marker)
 
         # Acquiring the Sprite has its own bound; the command's deadline starts after it.
         if sandbox is None:
             sandbox = await self._get_sandbox()
         deadline = anyio.CancelScope(deadline=math.inf if timeout is None else anyio.current_time() + timeout)
-        exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
+        exec_command = exec_command_for(sandbox)
         code = -1
         interrupted = False
         try:
@@ -729,7 +738,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
                 for delay in (*_HANDSHAKE_RETRY_DELAYS, None):  # pragma: no branch - each breaks or raises
                     if await _start_or_back_off(exec_command, delay):
                         break
-                    exec_command = _ExecCommand(sandbox.command(*args, cwd=directory), marker)
+                    exec_command = exec_command_for(sandbox)
                 try:
                     code = await exec_command.wait()
                 except NetworkError as error:
@@ -902,12 +911,32 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         async with self._operation():
             return await _ShellFilesystem(self).exists(path)
 
+    async def _run_as_root(self, argv: Sequence[str], stdin: bytes) -> CommandResult:
+        """Run `argv` as root in the Sprite with `stdin` as its input, which reaches no command line or log."""
+        # Runs the command only in a Sprite with the FUSE device that mounting needs; it reads the stdin line either way.
+        no_fuse = 86
+        fuse_check = f'if [ -c /dev/fuse ]; then exec "$@"; fi; head -n 1 > /dev/null; exit {no_fuse}'
+        async with self._operation():
+            sandbox = await self._get_sandbox()
+            # The Sprite's user has passwordless `sudo`; `-n` fails rather than prompting where it does not.
+            result = await self._run(
+                ['sudo', '-n', '--', 'sh', '-c', fuse_check, 'sh', *argv],
+                check_working_dir=False,
+                sandbox=sandbox,
+                cwd='/',
+                stdin=stdin,
+            )
+        if result.exit_code == no_fuse:
+            raise MountError(f'Sprite {sandbox.name} has no FUSE device (`/dev/fuse`), which mounts need.')
+        return result
 
-def _ending_with(marker: str, capture: str, args: list[str]) -> list[str]:
+
+def _ending_with(marker: str, capture: str, args: list[str], *, gated: bool = True) -> list[str]:
     """`args` run under a `sh` that reports their stdout, a `marker` line, then their stderr, all on stdout.
 
-    The `sh` first reads stdin to its EOF, which the client sends once its socket is open: output
-    printed before the client's stream attaches is lost, beyond a short replay.
+    When `gated`, the `sh` first reads stdin to its EOF, which the client sends once its socket is open: output
+    printed before the client's stream attaches is lost, beyond a short replay. A command given stdin is not gated, as
+    it reads that input itself before printing, and the client sends it once its socket is open.
 
     The live Sprite's stderr stream is not dependable: the same command's stderr arrived on the stderr
     stream in one run and on the stdout stream in the next, whole lines included (2026-09-25), while
@@ -918,7 +947,7 @@ def _ending_with(marker: str, capture: str, args: list[str]) -> list[str]:
     command's.
     """
     script = (
-        'cat >/dev/null; err=$1; shift; : >"$err" || exit 125; '
+        ('cat >/dev/null; ' if gated else '') + 'err=$1; shift; : >"$err" || exit 125; '
         f'"$@" 2>"$err"; status=$?; printf "\\n%s\\n" {marker}; cat "$err"; rm -f "$err"; exit "$status"'
     )
     return ['sh', '-c', script, 'sh', capture, *args]

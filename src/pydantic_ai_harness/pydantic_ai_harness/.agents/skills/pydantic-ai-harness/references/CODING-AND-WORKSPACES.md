@@ -466,6 +466,9 @@ Python up to 3.14.
   Overlapping paths or a bad `S3Mount` raise `UserError`. Code in the sandbox can read the keys: pass keys scoped
   to the bucket, short-lived where possible. Not in agent specs.
   See `docs/harness/cloud-storage-mounts.md`.
+- `E2BSandbox`, `ModalSandbox` and `SpritesSandbox` take the same `mounts=`. Modal needs `runtime='vm'`: a gVisor
+  sandbox is refused with `MountError`. A Sprite's user can read any file and has passwordless `sudo`, so every
+  command there can read the keys.
 
 ### OpenSandbox
 
