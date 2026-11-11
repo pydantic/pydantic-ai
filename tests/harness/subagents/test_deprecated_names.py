@@ -90,7 +90,7 @@ def test_agent_created_event_name_is_agent_name() -> None:
             usage=None,
             task_id='child',
             parent_task_id='parent',
-            duration_seconds=1.0,
+            duration_ms=1000.0,
         ),
     ],
 )

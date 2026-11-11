@@ -326,7 +326,7 @@ class TestShellLogLimits:
         assert recorder.output.startswith('0' * 1500)
         assert recorder.output.endswith(f'{NOTICE}\nafter\n')
         assert recorder.finished.truncated
-        assert recorder.finished.total_lines is None
+        assert recorder.finished.line_count is None
 
     async def test_events_report_a_log_cleared_and_regrown_between_reads(self, tmp_path: Path) -> None:
         # The command overflows the log only once its start has been read, and writes past that point again
@@ -347,7 +347,7 @@ class TestShellLogLimits:
         assert '"exit_code": 0' in output
         assert recorder.output.endswith(f'{NOTICE}\n{"0" * 1800}\nafter\n')
         assert recorder.finished.truncated
-        assert recorder.finished.total_lines is None
+        assert recorder.finished.line_count is None
 
     async def test_events_skip_a_read_while_a_clear_is_under_way(self, tmp_path: Path) -> None:
         # A chunk read while a clear is under way is dropped, and the log is read again from its notice once it's done.
@@ -412,7 +412,7 @@ class TestShellLogLimits:
         )
         assert '"exit_code": 0' in output
         assert recorder.finished.truncated
-        assert recorder.finished.total_lines is None
+        assert recorder.finished.line_count is None
 
     async def test_logs_are_still_cleared_under_a_file_limit(self, tmp_path: Path) -> None:
         # The command fills `log_clears` up to the file limit (one `ulimit -f` block) before its output passes the
@@ -512,7 +512,7 @@ class TestShellLogLimits:
             )
         assert '"exit_code": 0' in output
         assert recorder.finished.truncated
-        assert recorder.finished.total_lines is None
+        assert recorder.finished.line_count is None
 
     async def test_events_without_a_limit(self, tmp_path: Path) -> None:
         recorder = Recorder()
@@ -522,7 +522,7 @@ class TestShellLogLimits:
         assert '"exit_code": 0' in output
         assert recorder.output == 'hi\n'
         assert not recorder.finished.truncated
-        assert recorder.finished.total_lines == 1
+        assert recorder.finished.line_count == 1
 
     async def test_chatty_shell_command_keeps_running(self, tmp_path: Path) -> None:
         output = await shell(

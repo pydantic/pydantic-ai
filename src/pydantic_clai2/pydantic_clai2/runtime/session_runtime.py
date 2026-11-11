@@ -79,6 +79,7 @@ from pydantic_clai2.runtime.live_runtimes import Served
 from pydantic_clai2.runtime.permissions import permissions_command, session_permissions
 from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.project_instructions import ProjectInstructions
+from pydantic_clai2.runtime.question_status import QuestionStatus
 from pydantic_clai2.runtime.session import (
     Session,
     StockAgent,
@@ -99,7 +100,7 @@ from pydantic_clai2.ui.menus.rewind import rewind
 from pydantic_clai2.ui.menus.set_menu import set_command, settings_menu
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
 from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command, system_prompt_menu
-from pydantic_clai2.ui.menus.task_menu import open_tasks
+from pydantic_clai2.ui.menus.task_view import open_tasks
 from pydantic_clai2.ui.menus.theme_picker import theme_command
 from pydantic_clai2.ui.menus.update_menu import update_menu
 from pydantic_clai2.ui.prompt.image_input import ImageInput
@@ -236,6 +237,7 @@ def create_shell(
     session.instructions = settings.instructions
     models = ModelResolver(console=console, store=store, codex_providers=process.codex_providers)
     session.resolve_model = models.resolve
+    session.expand_model = models.expand
     if session.model is None and agent.model is None:
         console.print('Add a model with /model add.', style=theme.color(theme.INFO))
 
@@ -722,6 +724,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
+    _question_status: QuestionStatus[DepsT] = field(init=False, repr=False)
     _measured_model: str | None = field(default=None, init=False, repr=False)
     """The model whose completed turn measured the status row's figures; `None` once the model changes."""
     _inbox: PromptInbox = field(default_factory=PromptInbox, init=False, repr=False)
@@ -877,6 +880,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         telemetry.conversation_selected()
 
     def __post_init__(self) -> None:
+        self._question_status = QuestionStatus(self.live_session)
         self.tasks = Tasks(
             console=self.console,
             conversation_id=lambda: self.session.summary.id,
@@ -906,7 +910,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         mount stays within every `FileSystem` and `ToolGuardrail` the run has.
         """
         granted = (*self.plugins, *self.loader.capabilities(), *self.permissions)
-        bound = (*self.plugins, *self.loader.run_capabilities(), *self.permissions)
+        bound = (*self.plugins, *self.loader.run_capabilities(), *self.permissions, self._question_status)
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)
@@ -934,6 +938,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         child.tool_retries = self.session.tool_retries
         child.instructions = self.session.instructions
         child.resolve_model = self.session.resolve_model
+        child.expand_model = self.session.expand_model
         child.model_settings = self.context.live_model_overrides(child.model or _model_label(self.agent))
         child.model_defaults = self.context.model_defaults(child.model or _model_label(self.agent))
         child.on_setup_error = self.capability_failed
