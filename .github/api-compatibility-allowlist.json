@@ -77,7 +77,7 @@
       "symbol": "LatestMistralModelNames"
     },
     {
-      "path": "pydantic_ai_slim/pydantic_ai/models/openai.py",
+      "path": "pydantic_ai_slim/pydantic_ai/models/openai/_model_names.py",
       "symbol": "OpenAIModelName"
     },
     {

@@ -899,8 +899,8 @@ _NOT_API_BACKED = frozenset(
 def test_every_api_backed_model_class_is_probed():
     """A new `Model` class in a `pydantic_ai.models` module has to join `CASES`.
 
-    The walk is not recursive, matching the package's flat layout; a model added inside a subpackage would
-    escape it.
+    The walk is not recursive: a provider package such as `models.openai` counts the classes its `__init__`
+    re-exports from its submodules, and a model it does not re-export would escape it.
 
     Derived from the package rather than a hardcoded list because the hardcoded list is the failure
     this file exists to prevent: `CrusoeModel`, `SnowflakeModel` and the Bedrock Mantle models drifted
@@ -915,7 +915,9 @@ def test_every_api_backed_model_class_is_probed():
         for name, obj in vars(module).items():
             if not isinstance(obj, type) or isinstance(obj, types.GenericAlias):
                 continue
-            if obj.__module__ != module_info.name or not issubclass(obj, Model):
+            if obj.__module__ != module_info.name and not obj.__module__.startswith(f'{module_info.name}.'):
+                continue
+            if not issubclass(obj, Model):
                 continue
             # An abstract base such as `DecisionModel` has no wire of its own; its concrete subclasses are probed.
             if not inspect.isabstract(cast('type[Model[Any]]', obj)):
