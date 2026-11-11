@@ -51,10 +51,7 @@ from pydantic_ai.profiles import CompactionInstructionsMode, ModelProfile
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, try_import
-
-with try_import() as openai_available:
-    pass
+from .conftest import IsDatetime
 
 COMPACTION_USAGE = RequestUsage(input_tokens=1000, output_tokens=50)
 TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)

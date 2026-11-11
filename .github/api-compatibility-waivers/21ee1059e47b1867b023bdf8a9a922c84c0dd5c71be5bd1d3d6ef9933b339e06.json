@@ -1,5 +1,5 @@
 {
-  "against": "v2.66.0",
+  "against": "v2.67.0",
   "reason": "Adds `may_tokenize_special_tokens_in_content` (#12556) and the `supports_compaction_on_demand`, `compaction_instructions` and `compaction_result_readable` defaults to `DEFAULT_PROFILE`; every existing entry is unchanged. Against v2.66.0 the additions are one change, so this replaces #12556's waiver.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11581"
 }
