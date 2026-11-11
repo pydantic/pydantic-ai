@@ -10,7 +10,7 @@ tasks to the Exa Agent API as deferred tool calls.
 ```mermaid
 flowchart TB
     accTitle: Exa Search: excerpts first, full pages on request
-    accDescr: The model calls the ExaSearch tools and gets their results: web_search gives excerpts per hit, get_page one page in full, and the opt-in deep_search one cited answer. ExaSearch calls the Exa API for search and get_contents. The model also calls exa_agent of the ExaAgent capability, which creates a run in the Exa Agent API and defers until it completes.
+    accDescr: The model calls the ExaSearch tools and gets their results: web_search gives excerpts per hit, get_page one page in full, and the opt-in deep_search one cited answer. ExaSearch calls the Exa API for search and get_contents. The model also calls exa_agent of the ExaAgent capability, which creates a run in the Exa Agent API and defers until it completes. Both pass metadata['sources'] to your app, and exa_agent also passes the run id.
     model(["model"])
     subgraph exa["ExaSearch()"]
         direction LR
@@ -21,10 +21,13 @@ flowchart TB
     exaagent["ExaAgent()<br/>exa_agent"]:::capability
     api["Exa API<br/>search, get_contents"]:::external
     runs["Exa Agent API"]:::external
+    app["your app"]
     model <-->|"tool call, result"| exa
     model <-->|"tool call, result"| exaagent
     exa <--> api
-    exaagent <-->|"creates a run, defers<br/>until it completes"| runs
+    exaagent <-->|"creates a run,<br/>defers until<br/>it completes"| runs
+    exa -.->|"metadata['sources']"| app
+    exaagent -.->|"metadata['sources'],<br/>run id"| app
     classDef capability stroke:#E520E9,stroke-width:2px
     classDef external stroke:#0E9C86,stroke-width:2px
 ```
