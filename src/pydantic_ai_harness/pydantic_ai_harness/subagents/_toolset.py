@@ -814,7 +814,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry(RESUME_DIRECTORY_MISMATCH)
         if ctx.workspace.read_only:
             workspace = ReadOnlyWorkspace(workspace)
-        return await _with_parent_authority(ctx.workspace, workspace), directory
+        return await _with_parent_authority(ctx.workspace, workspace, directory), directory
 
     def _is_self(self, agent_name: str) -> bool:
         """Whether `agent_name` names the running agent, which `include_self` makes a delegate."""
@@ -1566,18 +1566,34 @@ def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: Usage
     )
 
 
-async def _with_parent_authority(parent: Workspace, workspace: Workspace) -> Workspace:
-    """`workspace`, wrapped in each of `parent`'s [authority][pydantic_ai.messages.Authority] layers.
+async def _with_parent_authority(parent: Workspace, workspace: Workspace, directory: str) -> Workspace:
+    """`workspace`, rooted at `directory`, with no more [authority][pydantic_ai.messages.Authority] than `parent` gives it.
 
     A delegate's `working_directory` workspace comes from the host's resolver, which knows nothing of the parent's
-    levels, as it knows nothing of its read-only policy. Each of the parent's `AuthorityWorkspace` layers is repeated
-    around it, with its `path_authority` paths made absolute, so a file has no more authority in the delegate than the
-    parent's layers give it. Wrapping only ever lowers, so the resolver's own levels still apply where they're lower.
+    levels, as it knows nothing of its read-only policy. The delegate's files all get one level: the lowest of what the
+    parent gives `directory` (`authority_of`, which accounts for links; the parent's own level for a directory outside
+    its working directory) and of every `path_authority` entry the parent has inside it, where it's written or where
+    it leads. A
+    file the parent gives more keeps less in the delegate, but none gets more. Wrapping only ever lowers, so the
+    resolver's own levels still apply where they're lower.
     """
-    root = await parent.working_dir()
-    for level, path_authority in parent._authority_layers():  # pyright: ignore[reportPrivateUsage]
-        paths: dict[str, Authority] = {
-            await parent.resolve(path, base=root): path_level for path, path_level in path_authority.items()
-        }
-        workspace = AuthorityWorkspace(workspace, authority=level, path_authority=paths)
-    return workspace
+    layers = parent._authority_layers()  # pyright: ignore[reportPrivateUsage]
+    if not layers:
+        return workspace
+    parent_root = await parent.working_dir()
+    inside = directory.casefold().rstrip('/') + '/'
+    # A directory outside the parent's working directory is the host's choice, not the parent's files, so it starts
+    # at the parent's own level rather than at the `'none'` `authority_of` gives a path outside the workspace.
+    in_parent = inside.startswith(parent_root.casefold().rstrip('/') + '/')
+    levels: list[Authority] = [await parent.authority_of(directory) if in_parent else parent.authority]
+    for _, path_authority in layers:
+        for path, level in path_authority.items():
+            written = await parent.resolve(path, base=parent_root)
+            for location in {written, await parent.realpath(written)}:
+                if (location.casefold().rstrip('/') + '/').startswith(inside):
+                    levels.append(level)
+    lowest = min(levels, key=_AUTHORITY_ORDER.index)
+    return workspace if lowest == 'operator' else AuthorityWorkspace(workspace, authority=lowest)
+
+
+_AUTHORITY_ORDER: tuple[Authority, ...] = ('none', 'user', 'operator')

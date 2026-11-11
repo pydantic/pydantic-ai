@@ -13,7 +13,7 @@ from typing_extensions import TypeIs
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import Authority, ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -61,19 +61,50 @@ async def test_directory_schema_is_opt_in(tmp_path: Path, enabled: bool) -> None
     assert (await agent.run('inspect schema')).output == 'checked'
 
 
-async def test_selected_directory_keeps_the_parents_path_authority(tmp_path: Path) -> None:
-    # The parent's levels for paths inside the delegate's directory carry over; the resolver knows nothing of them.
+@pytest.mark.parametrize(
+    'path_authority,directory,expected',
+    [
+        # A lower entry inside the delegate's directory lowers all of it: no file gets more than the parent gives it.
+        ({'vendor/lib': 'none'}, 'vendor', 'none'),
+        # A lower entry elsewhere leaves the delegate at the directory's own level.
+        ({'other': 'none'}, 'vendor', 'operator'),
+        # An operator entry inside an untrusted parent doesn't raise the rest of the directory.
+        ({'vendor/lib': 'operator'}, 'vendor', 'none'),
+    ],
+)
+async def test_selected_directory_keeps_the_parents_authority(
+    tmp_path: Path, path_authority: dict[str, Authority], directory: str, expected: Authority
+) -> None:
     parent_dir = tmp_path / 'parent'
-    (parent_dir / 'vendor').mkdir(parents=True)
+    (parent_dir / 'vendor' / 'lib').mkdir(parents=True)
+    default: Authority = 'none' if 'operator' in path_authority.values() else 'operator'
     workspace = AuthorityWorkspace(
-        Workspace(LocalWorkspaceBackend(parent_dir)), authority='operator', path_authority={'vendor/lib': 'none'}
+        Workspace(LocalWorkspaceBackend(parent_dir)), authority=default, path_authority=path_authority
     )
+    await _assert_delegate_levels(workspace, directory, expected)
+
+
+async def test_a_linked_directory_keeps_the_parents_cap(tmp_path: Path) -> None:
+    # `rules` is an operator entry, but it's a link the repository controls to `evil`, so the parent caps it at
+    # `none`; delegating to `evil` mustn't give the link's target the entry's level.
+    parent_dir = tmp_path / 'parent'
+    (parent_dir / 'evil').mkdir(parents=True)
+    (parent_dir / 'rules').symlink_to(parent_dir / 'evil', target_is_directory=True)
+    workspace = AuthorityWorkspace(
+        Workspace(LocalWorkspaceBackend(parent_dir)), authority='none', path_authority={'rules': 'operator'}
+    )
+    assert await workspace.authority_of('evil/AGENTS.md') == 'none'
+    await _assert_delegate_levels(workspace, 'evil', 'none')
+
+
+async def _assert_delegate_levels(workspace: Workspace, directory: str, expected: Authority) -> None:
     child: Agent[object, str] = Agent(TestModel(call_tools=['inspect']), name='worker')
-    levels: list[tuple[str, str]] = []
+    levels: list[Authority] = []
 
     @child.tool
     async def inspect(ctx: RunContext[object]) -> str:
-        levels.append((await ctx.workspace.authority_of('own.md'), await ctx.workspace.authority_of('lib/x.md')))
+        levels.append(await ctx.workspace.authority_of('AGENTS.md'))
+        levels.append(await ctx.workspace.authority_of('lib/AGENTS.md'))
         return 'inspected'
 
     async def resolve(ctx: RunContext[object], request: DelegationWorkspaceRequest) -> Workspace:
@@ -82,8 +113,8 @@ async def test_selected_directory_keeps_the_parents_path_authority(tmp_path: Pat
     toolset = SubAgents[object](agents=[SubAgent(child)], workspace_resolver=resolve).get_toolset()
     assert is_toolset(toolset)
     ctx = RunContext(deps=object(), model=TestModel(), usage=RunUsage(), workspace=workspace, conversation_id='parent')
-    await toolset.delegate_task(ctx, 'worker', 'inspect', working_directory='vendor')
-    assert levels == [('operator', 'none')]
+    await toolset.delegate_task(ctx, 'worker', 'inspect', working_directory=directory)
+    assert levels == [expected, expected]
 
 
 @pytest.mark.parametrize('mode', ['plain', 'owned', 'controlled'])
