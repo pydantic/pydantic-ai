@@ -258,6 +258,7 @@ every model. Other models, including ones this doesn't recognize, like a tuned m
 
 
 def _google_cloud_supports_penalties(model_name: str) -> bool:
+    """Whether Google Cloud accepts penalties for the model; apart from `google_model_profile` to keep it simple enough."""
     if model_name.startswith(_GOOGLE_CLOUD_PENALTY_REJECTING_MODELS):
         return False
     return not ('image' in model_name and model_name.startswith('gemini-3'))
