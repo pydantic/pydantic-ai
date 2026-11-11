@@ -645,7 +645,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     This limits the summary, not the recent messages preserved alongside it; a smaller
     budget can omit useful details. It's the request's output-token limit, which includes
     reasoning and thinking tokens on providers that count them: on a reasoning summary model,
-    set it well above the expected reasoning, or disable thinking via `model_settings`.
+    set it well above the expected reasoning, or disable thinking via `model_settings`. Keep it
+    at or below any `max_tokens` already set for the summary call: the prompt states this
+    budget, while the request is capped at the lower of the two.
     """
 
     event_stream_handler: EventStreamHandler[object] | None = field(default=None, kw_only=True)

@@ -608,13 +608,13 @@ compaction raises a `UserError` saying so. A summary that is empty or only white
 within the summary run's output retries. Exhausting those retries raises `UnexpectedModelBehavior`
 rather than replacing history with an empty summary. A response with `finish_reason='length'` is
 also rejected, even when it contains text, and retried within the same output retries (`retries`,
-one by default) with the output limit restated; exhausting them raises `UnexpectedModelBehavior`.
-A truncated summary does not replace the history. Its nested summary run inherits the parent usage limits and reserves
-one request from a finite request limit for the pending parent request. These limits also apply to
-retries: if the summary run exhausts its budget first, it raises `UsageLimitExceeded` instead. To
-fall back on either failure, set `FallbackCompaction`'s
-`fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded)`, preferably with a fallback strategy that
-makes no model requests. This does not increase the parent run's limits.
+one by default) with the output limit restated; exhausting them raises `UnexpectedModelBehavior`. A
+truncated summary does not replace the history. Its nested summary run inherits the parent usage
+limits and reserves one request from a finite request limit for the pending parent request. These
+limits also apply to retries: if the summary run exhausts its budget first, it raises
+`UsageLimitExceeded` instead. To fall back on either failure, set `FallbackCompaction`'s
+`fallback_on=(UnexpectedModelBehavior, UsageLimitExceeded)`, preferably with a fallback strategy
+that makes no model requests. This does not increase the parent run's limits.
 
 Pass `model_settings` to give the dedicated summary call
 settings that differ from defaults carried by that model; the supplied settings merge over the model defaults
@@ -655,10 +655,13 @@ and the summary request's `max_tokens` becomes the smaller of the budget and the
 summary agent's merged settings (the summary model's defaults, `model_settings` and summarization
 capabilities). Defaults on the individual models inside a `FallbackModel` aren't considered, so a
 smaller limit there can be raised to the budget. With the default `None`, output settings are
-unchanged. The budget is the summary request's output-token limit, which on providers that count them
-includes reasoning and thinking tokens: OpenAI sends it as `max_completion_tokens`, and Anthropic
-counts an extended-thinking `budget_tokens` toward it and rejects a request whose limit isn't larger
-than that budget. On a reasoning summary model, a small budget can be used up by reasoning, leaving a
+unchanged. Keep `max_summary_tokens` at or below any `max_tokens` already set for the summary call:
+the prompt states `max_summary_tokens`, while the request is capped at the lower of the two, so a
+larger budget tells the model it has more room than it does and spends the first output retry. The
+budget is the summary request's output-token limit, which on providers that count them includes
+reasoning and thinking tokens: OpenAI sends it as `max_completion_tokens`, and Anthropic counts an
+extended-thinking `budget_tokens` toward it and rejects a request whose limit isn't larger than that
+budget. On a reasoning summary model, a small budget can be used up by reasoning, leaving a
 length-stopped response that's retried and then raises `UnexpectedModelBehavior`. Set it well above
 the expected reasoning, or disable thinking for the summary call through `model_settings`.
 
