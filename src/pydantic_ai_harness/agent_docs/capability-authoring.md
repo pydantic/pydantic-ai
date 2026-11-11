@@ -292,8 +292,9 @@ adds no spans because core's `Instrumentation` already covers the run, and
 would grow the trace without recording a decision. Write the reason down. An
 undocumented silence is indistinguishable from an oversight.
 
-The house pattern uses four functions from `pydantic_ai._telemetry`. Each takes the run's `ctx`
-first and traces on `ctx.tracer`, so an uninstrumented run pays nothing:
+The house pattern uses four functions from `pydantic_ai._telemetry`. Each takes the run first, as
+its `ctx` or, where there is none, `current_run_telemetry()`, and does nothing when that run isn't
+traced, so an uninstrumented run pays nothing:
 
 ```python
 from pydantic_ai._telemetry import current_span, open_span, record_decision, set_content_attribute

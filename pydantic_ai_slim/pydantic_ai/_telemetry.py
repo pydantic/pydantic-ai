@@ -127,8 +127,9 @@ def record_decision(
 ) -> None:
     """Record that a capability decided something that changed the run's course, such as a guard blocking a value.
 
-    The record is currently a zero-duration span named `name`, on the run's tracer. `attributes` are always recorded; `content`, which can quote what the
-    decision was about, only when the run captures content.
+    The record is currently a zero-duration span named `name`, on the run's tracer. `attributes` are
+    always recorded; `content`, which can quote what the decision was about, only when the run captures
+    content.
     """
     if (telemetry := _telemetry_of(ctx)) is not None:
         telemetry.tracer.start_span(name, attributes=_with_content(telemetry, attributes, content)).end()
@@ -139,8 +140,7 @@ def set_content_attribute(
 ) -> None:
     """Set an attribute that can quote content, such as a path or a command, only when the run captures content.
 
-    For content known when the span opens, pass
-    `content=` to `open_span` instead.
+    For content known when the span opens, pass `content=` to `open_span` instead.
     """
     if (telemetry := _telemetry_of(ctx)) is not None and telemetry.include_content:
         span.set_attribute(key, value)
@@ -150,8 +150,9 @@ def current_span(ctx: RunContext[Any] | RunTelemetry | None) -> Span:
     """The span open where the caller runs, to add attributes to, or `INVALID_SPAN` when the run isn't traced.
 
     In a tool hook that is the call's `execute_tool` span, and in `before_model_request` the request's
-    `chat` span. Unlike `opentelemetry.trace.get_current_span()`, it never returns a span the run didn't
-    open, such as the application's own request span around an uninstrumented run.
+    `chat` span. Unlike `opentelemetry.trace.get_current_span()`, it returns `INVALID_SPAN` when the run
+    isn't traced, so an uninstrumented run doesn't write to the application's own span. In `for_run`, or
+    in a capability ordered outside `Instrumentation`, the open span is the one around the run.
     """
     return get_current_span() if _telemetry_of(ctx) is not None else INVALID_SPAN
 
