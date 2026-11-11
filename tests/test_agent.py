@@ -4802,6 +4802,23 @@ def test_tool_exceeds_token_limit_but_complete_args():
     assert result.output == 'done'
 
 
+def test_tool_exceeds_token_limit_but_complete_non_object_args():
+    """Complete JSON wasn't cut off, so a function tool call whose args aren't an object isn't an `IncompleteToolCall`."""
+
+    def return_non_object_args(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('dummy_tool', args='["bar"]')], finish_reason='length')
+
+    agent = Agent(FunctionModel(return_non_object_args), output_type=str)
+
+    @agent.tool_plain
+    def dummy_tool(foo: str) -> str:
+        return 'tool-ok'  # pragma: no cover
+
+    with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'dummy_tool' exceeded max retries count of 1") as exc_info:
+        agent.run_sync('Hello')
+    assert not isinstance(exc_info.value, IncompleteToolCall)
+
+
 def test_empty_response_with_finish_reason_length():
     def return_empty_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         resp = ModelResponse(parts=[])
