@@ -13,6 +13,7 @@ from hashlib import sha256
 from itertools import takewhile
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
+from pydantic_ai._telemetry import record_decision
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import AgentRunError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, ToolReturnPart
@@ -346,17 +347,19 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
 
     async def _act(self, ctx: RunContext[AgentDepsT], loop: DetectedLoop) -> None:
         action = self.action
-        attributes: dict[str, str | int | tuple[str, ...]] = {
-            'detect_loops.pattern': loop.pattern,
-            'detect_loops.action': action if isinstance(action, str) else 'handler',
-            'detect_loops.count': loop.count,
-            'detect_loops.window': loop.window,
-            'detect_loops.tool_names': loop.tool_names,
-        }
-        if ctx.trace_include_content:
+        record_decision(
+            ctx,
+            'loop detected',
+            attributes={
+                'detect_loops.pattern': loop.pattern,
+                'detect_loops.action': action if isinstance(action, str) else 'handler',
+                'detect_loops.count': loop.count,
+                'detect_loops.window': loop.window,
+                'detect_loops.tool_names': loop.tool_names,
+            },
             # Hashes of short arguments, such as a user id, can be reversed by trying candidate values.
-            attributes['detect_loops.fingerprints'] = loop.fingerprints
-        ctx.tracer.start_span('loop detected', attributes=attributes).end()
+            content={'detect_loops.fingerprints': loop.fingerprints},
+        )
         if not isinstance(action, str):
             result = action(ctx, loop)
             if inspect.isawaitable(result):

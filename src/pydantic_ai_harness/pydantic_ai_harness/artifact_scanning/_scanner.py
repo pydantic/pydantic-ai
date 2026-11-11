@@ -7,11 +7,11 @@ import unicodedata
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, TypeAlias, get_args
+from typing import Any, Literal, TypeAlias, get_args
 
-from opentelemetry.trace import Tracer
-
+from pydantic_ai._telemetry import record_decision
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.tools import RunContext
 
 ArtifactThreat: TypeAlias = Literal[
     'injection', 'role_override', 'exfiltration', 'html_comment', 'invisible_unicode', 'custom'
@@ -256,29 +256,29 @@ def _excerpt(text: str) -> str:
 
 
 def record_flagged(
-    tracer: Tracer,
+    ctx: RunContext[Any],
     result: ArtifactScanResult,
     *,
     artifact: Literal['memory', 'skill'],
     action: Literal['rejected_write', 'withheld', 'skipped'],
-    include_content: bool,
 ) -> None:
     """Mark the decision taken on a flagged artifact with a zero-duration span.
 
-    The artifact's name and the matched text are only recorded with `include_content`: a memory filename is
+    The artifact's name and the matched text are only recorded with content: a memory filename is
     chosen by the model, and the matches are the artifact's content.
     """
-    span = tracer.start_span('artifact_scan flagged')
-    if span.is_recording():
-        attributes: dict[str, str | int | list[str]] = {
+    record_decision(
+        ctx,
+        'artifact_scan flagged',
+        attributes={
             'artifact_scan.artifact': artifact,
             'artifact_scan.action': action,
             'artifact_scan.threats': list(result.threats),
             'artifact_scan.patterns': sorted({finding.pattern for finding in result.findings}),
             'artifact_scan.findings': len(result.findings),
-        }
-        if include_content:
-            attributes['artifact_scan.source'] = result.source
-            attributes['artifact_scan.excerpts'] = [finding.excerpt for finding in result.findings]
-        span.set_attributes(attributes)
-    span.end()
+        },
+        content={
+            'artifact_scan.source': result.source,
+            'artifact_scan.excerpts': [finding.excerpt for finding in result.findings],
+        },
+    )

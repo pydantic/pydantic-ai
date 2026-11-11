@@ -19,6 +19,7 @@ from pydantic import Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import core_schema
 from typing_extensions import TypeIs
 
+from pydantic_ai._telemetry import record_decision
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._callable import takes_context
@@ -429,10 +430,12 @@ def trace_block(
     set -- it can quote sensitive content from the guarded value, and ops
     audiences are broader than the user who sees the refusal text.
     """
-    attributes = direction_attributes(direction, 'block', tool_name)
-    if ctx.trace_include_content:
-        attributes['guardrail.message'] = message
-    ctx.tracer.start_span(f'guardrail blocked {direction}', attributes=attributes).end()
+    record_decision(
+        ctx,
+        f'guardrail blocked {direction}',
+        attributes=direction_attributes(direction, 'block', tool_name),
+        content={'guardrail.message': message},
+    )
 
 
 def trace_redaction(
@@ -449,10 +452,12 @@ def trace_redaction(
     recording it would put a redacted secret into the trace that core's own
     spans, which see the rewritten value, keep out.
     """
-    attributes = direction_attributes(direction, 'replace', tool_name)
-    if ctx.trace_include_content:
-        attributes['guardrail.replacement'] = str(replacement)
-    ctx.tracer.start_span(f'guardrail redacted {direction}', attributes=attributes).end()
+    record_decision(
+        ctx,
+        f'guardrail redacted {direction}',
+        attributes=direction_attributes(direction, 'replace', tool_name),
+        content={'guardrail.replacement': str(replacement)},
+    )
 
 
 def trace_approval(
@@ -471,8 +476,9 @@ def trace_approval(
     application answers, and the arguments when `trace_include_content` allows
     it -- the one case where an operator most needs to see them.
     """
-    attributes = direction_attributes(direction, 'approve', tool_name)
-    attributes['guardrail.tool_call_id'] = tool_call_id
-    if ctx.trace_include_content:
-        attributes['guardrail.arguments'] = str(args)
-    ctx.tracer.start_span(f'guardrail deferred {direction}', attributes=attributes).end()
+    record_decision(
+        ctx,
+        f'guardrail deferred {direction}',
+        attributes={**direction_attributes(direction, 'approve', tool_name), 'guardrail.tool_call_id': tool_call_id},
+        content={'guardrail.arguments': str(args)},
+    )
