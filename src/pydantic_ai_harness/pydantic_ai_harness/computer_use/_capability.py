@@ -5,10 +5,9 @@ from __future__ import annotations as _annotations
 import math
 import weakref
 from collections import Counter
-from collections.abc import AsyncGenerator, Iterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field, replace
-from itertools import accumulate
 from typing import TYPE_CHECKING, Annotated, Any, Literal, NotRequired, TypeAlias
 
 import anyio
@@ -39,18 +38,14 @@ from pydantic_ai.computer_use import (
 )
 from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
 from pydantic_ai.messages import (
-    BaseToolReturnPart,
-    BinaryContent,
     BinaryImage,
-    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ToolCallPart,
     ToolReturn,
-    UserPromptPart,
 )
-from pydantic_ai.models import AbstractModel, Model, ModelRequestParameters
+from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import ComputerTool
@@ -97,18 +92,6 @@ _GRID = (
     'Coordinates are on a grid from 0 to {last} over the most recent screenshot, whatever its size: (0, 0) is the '
     'top left corner and ({last}, {last}) the bottom right.'
 )
-
-_DROP_BATCH = 25
-"""How many old screenshots are dropped at once, as Anthropic recommends for prompt caching."""
-
-_MAX_SCREENSHOTS = 100
-"""The most screenshots one request carries: Anthropic refuses a request with more than 100 images."""
-
-_MAX_SCREENSHOT_BYTES = 15_000_000
-"""The most screenshot bytes one request carries, about 20 MB once base64-encoded: Gemini refuses a request over 20 MB
-and Anthropic one over 32 MB."""
-
-_SCREENSHOT_REMOVED = '[Older screenshot removed to save context; the latest screenshot shows the current screen.]'
 
 _OBSERVING_ACTIONS = frozenset({'wait', 'screenshot', 'zoom', 'cursor_position'})
 """Action types that change nothing on the screen, so `requires_approval` lets them through."""
@@ -529,24 +512,6 @@ def _plural(count: int, noun: str) -> str:
     return f'{count} {noun}' if count == 1 else f'{count} {noun}s'
 
 
-class _DropOldScreenshots(WrapperModel):
-    """Sends the model only as many screenshots as the settings and provider allow.
-
-    Messages are prepared for the model after every `before_model_request` hook has run, so dropping them here
-    changes only what is sent: no history processor or compaction, whatever its order, sees the dropped request or
-    writes it to the run's history.
-    """
-
-    def __init__(self, wrapped: Model, keep: int | None):
-        super().__init__(wrapped)
-        self.keep = keep
-
-    def prepare_messages(
-        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
-    ) -> list[ModelMessage]:
-        return super().prepare_messages(_drop_old_screenshots(messages, self.keep), model_request_parameters)
-
-
 @dataclass
 class ComputerUse(AbstractCapability[AgentDepsT]):
     """Lets the agent see and control the display of its workspace with one `computer` tool.
@@ -567,16 +532,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     """Pause after acting before the next zoom or the closing screenshot, so animations and page loads can finish. A
     `wait` the model asks for comes on top of it."""
 
-    keep_screenshots: int | None = None
-    """The fewest recent images, screenshots and zooms, each model request carries, or `None` for as many as the
-    provider accepts.
-
-    Older ones are replaced with a short note, 25 at a time, so the request stays the same between drops and the
-    provider's prompt cache keeps working. Only the request changes: the run's history keeps every image. Use it to
-    bound long runs; a short run costs the same either way. With `None`, a request still carries no more than 100
-    images or about 15 MB of them, the most every supported provider accepts.
-    """
-
     native: bool = True
     """Send the tool as the model's own computer use tool where it has one, such as Claude's or OpenAI's.
 
@@ -590,8 +545,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     _toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        if self.keep_screenshots is not None and self.keep_screenshots < 1:
-            raise UserError('`keep_screenshots` must be at least 1, or `None` to keep every screenshot.')
         if not 0 <= self.settle_seconds <= 30:
             raise UserError('`settle_seconds` must be from 0 to 30.')
         tool = Tool[AgentDepsT](
@@ -747,19 +700,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
-        """One display: the later configuration wins, but a restriction either states survives.
-
-        Approval is required if any of them requires it, and the fewest kept screenshots apply.
-        """
+        """One display: the later configuration wins, but approval is required if any of them requires it."""
         combined = [c for c in capabilities if isinstance(c, ComputerUse)]
         # Core only groups instances of the same capability class under one id.
         assert len(combined) == len(capabilities)
-        kept = [c.keep_screenshots for c in combined if c.keep_screenshots is not None]
-        return replace(
-            combined[-1],
-            requires_approval=any(c.requires_approval for c in combined),
-            keep_screenshots=min(kept) if kept else None,
-        )
+        return replace(combined[-1], requires_approval=any(c.requires_approval for c in combined))
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT]:
         """Turn on prompt caching, unless the run's settings already say whether to cache."""
@@ -811,10 +756,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         except WorkspaceError as e:
             return _NotRun(str(e))
         return width, height
-
-    def get_wrapper_model(self, model: Model) -> Model | None:
-        """Drop old screenshots from what is sent, after every other capability has prepared the request."""
-        return _DropOldScreenshots(model, self.keep_screenshots)
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail the run at its start when its workspace has no display.
@@ -878,81 +819,3 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             screenshot_limit=_screenshot_limit(request_context.model),
         )
         return replace(response, metadata={**(response.metadata or {}), _CALL_SPACE: record})
-
-
-def _screenshots(messages: list[ModelMessage]) -> Iterator[tuple[int, int, int, int]]:
-    """Where each `computer` image sits in the messages, oldest first: message, part and item index, and size."""
-    for message_index, message in enumerate(messages):
-        if not isinstance(message, ModelRequest):
-            continue
-        for part_index, part in enumerate(message.parts):
-            # The validated content, so a result stored as a JSON string counts too.
-            if isinstance(part, ComputerReturnPart) and (content := part.typed_content) is not None:
-                for item_index, item in enumerate(content):
-                    if isinstance(item, BinaryContent) and item.is_image:
-                        yield message_index, part_index, item_index, len(item.data)
-
-
-def _other_images(messages: list[ModelMessage]) -> list[int]:
-    """The size of each image the requests carry outside `computer` results, which count toward the provider's caps."""
-    sizes: list[int] = []
-    for message in messages:
-        if not isinstance(message, ModelRequest):
-            continue
-        for part in message.parts:
-            if isinstance(part, UserPromptPart):
-                items = () if isinstance(part.content, str) else part.content
-            elif isinstance(part, BaseToolReturnPart) and not isinstance(part, ComputerReturnPart):
-                items = part.content_items()
-            else:
-                continue
-            for item in items:
-                if isinstance(item, BinaryContent) and item.is_image:
-                    sizes.append(len(item.data))
-                elif isinstance(item, ImageUrl):
-                    sizes.append(0)
-    return sizes
-
-
-def _how_many_to_drop(sizes: list[int], keep: int | None, others: Sequence[int] = ()) -> int:
-    """How many of the oldest screenshots to drop, a number that changes only now and then, so prompt caching works.
-
-    Drops in batches of `_DROP_BATCH` to keep the newest `keep` and stay within `_MAX_SCREENSHOTS`. Past
-    `_MAX_SCREENSHOT_BYTES`, drops the oldest up to a point that moves once per half of that cap of new screenshots,
-    leaving from a quarter to three quarters of it. The `others`, images that aren't screenshots, are never dropped, so
-    the caps left for screenshots are what they leave. Never drops the newest.
-    """
-    count = len(sizes)
-    max_count = _MAX_SCREENSHOTS - len(others)
-    max_bytes = max(2, _MAX_SCREENSHOT_BYTES - sum(others))
-    drop = 0 if keep is None else max(0, count - keep) // _DROP_BATCH * _DROP_BATCH
-    if count > max_count:
-        drop = max(drop, -(-(count - max_count) // _DROP_BATCH) * _DROP_BATCH)
-    if (total := sum(sizes)) > max_bytes:
-        step = max_bytes // 2
-        target = total // step * step - step // 2
-        # `target` is below `total`, so some screenshot takes the running total past it. Dropping through that one
-        # leaves at most `total - target`.
-        crossing = next(index for index, dropped in enumerate(accumulate(sizes)) if dropped > target)
-        drop = max(drop, crossing + 1)
-    return min(drop, count - 1)
-
-
-def _drop_old_screenshots(messages: list[ModelMessage], keep: int | None) -> list[ModelMessage]:
-    """Replace the oldest screenshots with a note, as `_how_many_to_drop` says. Copies the messages that change."""
-    found = list(_screenshots(messages))
-    drop = _how_many_to_drop([size for *_, size in found], keep, _other_images(messages)) if found else 0
-    if not drop:
-        return messages
-    rebuilt = list(messages)
-    for message_index, part_index, item_index, _ in found[:drop]:
-        message = rebuilt[message_index]
-        part = message.parts[part_index]
-        # `_screenshots` found only `computer` results, in requests.
-        assert isinstance(message, ModelRequest) and isinstance(part, ComputerReturnPart)
-        items = list(part.typed_content or [])  # a copy: the history keeps its images
-        items[item_index] = _SCREENSHOT_REMOVED
-        parts = list(message.parts)
-        parts[part_index] = replace(part, content=items)
-        rebuilt[message_index] = replace(message, parts=parts)
-    return rebuilt
