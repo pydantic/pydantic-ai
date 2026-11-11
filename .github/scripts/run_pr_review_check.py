@@ -15,7 +15,7 @@ from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TextIO
 from urllib.parse import quote
 
 from douwebot_opencode_result import final_text
@@ -175,9 +175,9 @@ def step_tokens(line: str) -> int | None:
 
 
 def run_opencode(
-    command: list[str], prompt: str, *, cwd: Path, env: dict[str, str], output: Path, seconds: float
+    command: list[str], prompt: str, *, cwd: Path, env: dict[str, str], log: TextIO, seconds: float
 ) -> Usage:
-    """Stream the event log to `output`, counting steps and tokens, and stop the run at its time budget."""
+    """Stream the event log to `log`, counting steps and tokens, and stop the run at its time budget."""
     usage = Usage()
     started = time.monotonic()
     with subprocess.Popen(
@@ -194,14 +194,13 @@ def run_opencode(
             assert process.stdin is not None and process.stdout is not None
             process.stdin.write(prompt)
             process.stdin.close()
-            with output.open('w', encoding='utf-8') as log:
-                for line in process.stdout:
-                    log.write(line)
-                    tokens = step_tokens(line) if line.strip() else None
-                    if tokens is None:
-                        continue
-                    usage.steps += 1
-                    usage.tokens += tokens
+            for line in process.stdout:
+                log.write(line)
+                tokens = step_tokens(line) if line.strip() else None
+                if tokens is None:
+                    continue
+                usage.steps += 1
+                usage.tokens += tokens
             process.wait()
         finally:
             timer.cancel()
@@ -353,9 +352,9 @@ def main() -> None:
     )
     # A run on the fallback provider gets only what is left of the time budget.
     deadline = time.monotonic() + check.max_minutes * 60
-    usage, _ = run_with_fallback(
-        lambda command, opencode_env: run_opencode(
-            command, prompt, cwd=workspace, env=opencode_env, output=stream, seconds=deadline - time.monotonic()
+    usage, provider = run_with_fallback(
+        lambda command, opencode_env, log: run_opencode(
+            command, prompt, cwd=workspace, env=opencode_env, log=log, seconds=deadline - time.monotonic()
         ),
         agent='reviewer',
         output=stream,
@@ -365,7 +364,7 @@ def main() -> None:
     changed = {change.path: change.positions for change in changes}
     result, private_report = check_result(check, files, stream, usage, changed=changed)
     if token:
-        export_span(endpoint, token, result, attributes, started)
+        export_span(endpoint, token, result, {**attributes, 'pr_review_checks.provider': provider.name}, started)
     else:
         print('::warning::LOGFIRE_TOKEN is empty, so this review exports no telemetry.')
     if private_report:

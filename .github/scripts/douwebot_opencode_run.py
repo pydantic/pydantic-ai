@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar
+from typing import TextIO, TypeVar
 
 from publish_douwebot_review import ReviewEngine, ReviewResult
 from pydantic import TypeAdapter, ValidationError
@@ -92,28 +92,8 @@ def read_only_config(*, agent: str, provider: Provider, steps: int | None = None
     }
 
 
-def quota_rejection(stream: Path) -> str | None:
-    """Return the error type when a quota limit refused OpenCode's run before it finished a step, or None.
-
-    OpenCode 2.2.5 does not retry a quota rejection. It writes `step_start`, then
-    `{"type": "error", "error": {"type": ..., "status": 429}}`, and no `step_finish`: see `toSessionError` in
-    https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts.
-    """
-    kind: object = None
-    for line in stream.read_text(encoding='utf-8').splitlines():
-        try:
-            event = _EVENT.validate_json(line)
-            if event.get('type') == 'error':
-                kind = _EVENT.validate_python(event.get('error')).get('type')
-        except ValidationError:
-            return None
-        if event.get('type') == 'step_finish':
-            return None
-    return kind if isinstance(kind, str) and kind in QUOTA_ERRORS else None
-
-
 def run_with_fallback(
-    launch: Callable[[list[str], dict[str, str]], T],
+    launch: Callable[[list[str], dict[str, str], TextIO], T],
     *,
     agent: str,
     output: Path,
@@ -122,12 +102,16 @@ def run_with_fallback(
 ) -> tuple[T, Provider]:
     """Launch OpenCode on Go, and again on DeepInfra when a Go quota limit refused the run before it finished a step.
 
-    `launch` runs the command in the environment it is given and writes the event stream to `output`. Each run gets
-    a config that allows only its provider, and an environment that holds only that provider's key.
+    `launch` runs the command in the environment it is given and writes the event stream to the stream it is given,
+    which `output` holds after each run. Each run gets a config that allows only its provider, and an environment
+    that holds only that provider's key.
     """
 
     def run_on(provider: Provider, api_key: str) -> tuple[T, Provider]:
-        with tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP'], prefix='opencode-') as temp:
+        with (
+            tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP'], prefix='opencode-') as temp,
+            output.open('w', encoding='utf-8') as stream,
+        ):
             temp_root = Path(temp)
             config_dir = temp_root / 'config' / 'opencode'
             config_dir.mkdir(parents=True)
@@ -153,7 +137,7 @@ def run_with_fallback(
                 '--format',
                 'json',
             ]
-            result = launch(command, env)
+            result = launch(command, env, stream)
         print(f'OpenCode run served by {provider.model}.')
         return result, provider
 
@@ -164,9 +148,23 @@ def run_with_fallback(
         return run_on(OPENCODE_GO, go_key)
     except subprocess.CalledProcessError:
         fallback_key = os.environ.get(DEEPINFRA.key_variable, '')
-        if not fallback_key or not (kind := quota_rejection(output)):
+        # OpenCode 2.2.5 does not retry a quota rejection. It writes `step_start`, then an `error` event whose type
+        # `toSessionError` sets, and no `step_finish`:
+        # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
+        try:
+            events = [_EVENT.validate_json(line) for line in output.read_text(encoding='utf-8').splitlines()]
+            kinds = [
+                _EVENT.validate_python(event.get('error')).get('type')
+                for event in events
+                if event.get('type') == 'error'
+            ]
+        except ValidationError:
+            # A malformed stream is no refusal. Its validation error would copy the stream into the public log.
+            events, kinds = [], []
+        finished = any(event.get('type') == 'step_finish' for event in events)
+        if not fallback_key or finished or not kinds or kinds[-1] not in QUOTA_ERRORS:
             raise
-        print(f'OpenCode Go refused the run before its first step ({kind}); retrying on DeepInfra.')
+        print(f'OpenCode Go refused the run before its first step ({kinds[-1]}); retrying on DeepInfra.')
     return run_on(DEEPINFRA, fallback_key)
 
 
@@ -176,21 +174,20 @@ def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: 
     `timeout` bounds both runs together when Go refuses the first. Returns the provider that served the run.
     """
     deadline = None if timeout is None else time.monotonic() + timeout
-
-    def launch(command: list[str], env: dict[str, str]) -> None:
-        with output.open('w', encoding='utf-8') as stream:
-            subprocess.run(
-                command,
-                input=prompt,
-                text=True,
-                cwd=cwd,
-                env=env,
-                stdout=stream,
-                check=True,
-                timeout=None if deadline is None else deadline - time.monotonic(),
-            )
-
-    _, provider = run_with_fallback(launch, agent=agent, output=output)
+    _, provider = run_with_fallback(
+        lambda command, env, stream: subprocess.run(
+            command,
+            input=prompt,
+            text=True,
+            cwd=cwd,
+            env=env,
+            stdout=stream,
+            check=True,
+            timeout=None if deadline is None else deadline - time.monotonic(),
+        ),
+        agent=agent,
+        output=output,
+    )
     return provider
 
 
