@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, TypeGuard, TypeVar
@@ -15,7 +14,6 @@ from pydantic_ai.durable_exec import (
     ParameterTransports,
     RegisteredOperationBackend,
     RoleBasedOperationConfig,
-    StepPolicy,
     ToolsetCallToolId,
     ToolsetValidateToolArgumentsId,
 )
@@ -65,19 +63,6 @@ def _snapshot_options(options: Options) -> Options:
             else None
         ),
         timeout_seconds=options.timeout_seconds,
-        plan=options.plan,
-    )
-
-
-def _policy_options(options: Options | None, policy: StepPolicy) -> Options:
-    """`options` under `policy`: a step that isn't repeatable gets no retries, and a shorter timeout is raised."""
-    options = _snapshot_options(options) if options is not None else Options()
-    timeout = options.timeout_seconds
-    if policy.timeout is not None:
-        timeout = max(timeout or 0, math.ceil(policy.timeout))
-    return Options(
-        retry=Retry(max_retries=0, wait_duration_ms=0) if not policy.repeatable else options.retry,
-        timeout_seconds=timeout,
         plan=options.plan,
     )
 
@@ -185,12 +170,7 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
         self._validate_tool_options(operation, config=config)
         bound = RenderBoundOperation(
             operation,
-            # Task options are fixed at registration, so the operation's step policy goes into them.
-            registered=self._prepare_task(
-                operation,
-                name=name,
-                config=config if operation.policy is None else _policy_options(config, operation.policy),
-            ),
+            registered=self._prepare_task(operation, name=name, config=config),
             runtime=self._runtime,
         )
         # RenderWorkflows.for_agent registers the queued SDK definitions after core binding.
