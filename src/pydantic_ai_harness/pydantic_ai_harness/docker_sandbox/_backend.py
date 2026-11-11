@@ -49,9 +49,8 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
+from pydantic_ai_harness._x11 import DISPLAY, RECORD_START, START_LOCK, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
-
-from ._x11 import DISPLAY, RECORD_START, START_LOCK, x11_display
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
 
