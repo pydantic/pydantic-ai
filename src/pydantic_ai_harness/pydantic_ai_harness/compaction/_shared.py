@@ -224,25 +224,18 @@ _JSON_STRUCTURE_CHARS = frozenset('{}[],:"')
 _BASE64_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-')
 
 
-def _estimate_dense_text_segment(text: str) -> int | None:
-    """Estimate a dense text segment more closely than the ASCII-prose baseline."""
-    if not text:
-        return None
+def _estimate_ascii_dense_text_segment(text: str) -> int | None:
+    """Estimate dense ASCII text more closely than the ASCII-prose baseline."""
+    if len(text) >= 512 and text.isalpha() and len(set(text)) == 1:
+        # Long single-letter runs are heavily merged by common BPE tokenizers.
+        return len(text) // 8
+    if len(text) >= 32 and sum(char in _JSON_STRUCTURE_CHARS for char in text) * 5 >= len(text):
+        return len(text) // 3
+    return None
 
-    if text.isascii():
-        if len(text) >= 512 and text.isalpha() and len(set(text)) == 1:
-            # Long single-letter runs are heavily merged by common BPE tokenizers.
-            return len(text) // 8
-        if len(text) >= 32 and sum(char in _JSON_STRUCTURE_CHARS for char in text) * 5 >= len(text):
-            return len(text) // 3
 
-    non_ascii_chars = sum(not char.isascii() for char in text)
-    if non_ascii_chars:
-        ascii_chars = len(text) - non_ascii_chars
-        # Cyrillic text averages about 2.7 code points per token in the pinned reference corpus.
-        return ascii_chars // CHARS_PER_TOKEN + (non_ascii_chars * 10 + 13) // 27
-
-    baseline = len(text) // CHARS_PER_TOKEN
+def _estimate_base64_runs(text: str, baseline: int) -> int | None:
+    """Re-price base64 runs at about 2/3 of their length, replacing their baseline share."""
     adjusted = baseline
     found_base64 = False
     index = 0
@@ -266,6 +259,25 @@ def _estimate_dense_text_segment(text: str) -> int | None:
             found_base64 = True
         index = end
     return adjusted if found_base64 else None
+
+
+def _estimate_dense_text_segment(text: str) -> int | None:
+    """Estimate a dense text segment more closely than the ASCII-prose baseline."""
+    if not text:
+        return None
+
+    if text.isascii():
+        ascii_estimate = _estimate_ascii_dense_text_segment(text)
+        if ascii_estimate is not None:
+            return ascii_estimate
+
+    non_ascii_chars = sum(not char.isascii() for char in text)
+    if non_ascii_chars:
+        ascii_chars = len(text) - non_ascii_chars
+        # Cyrillic text averages about 2.7 code points per token in the pinned reference corpus.
+        return ascii_chars // CHARS_PER_TOKEN + (non_ascii_chars * 10 + 13) // 27
+
+    return _estimate_base64_runs(text, len(text) // CHARS_PER_TOKEN)
 
 
 def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = None) -> int:
