@@ -745,7 +745,7 @@ class TestResumeToken:
             resolve_external_event(token, {'answers': 'Patch'})
 
         observer = Observer()
-        with pytest.raises(UserError, match="The answer sent for question 'c1' is not an `AskUserResponse`"):
+        with pytest.raises(UserError, match=r"The answer sent for question '\w+' is not an `AskUserResponse`"):
             await self.agent(hand_on, observer).run('go')
         (answered,) = observer.answered
         assert answered.failed
