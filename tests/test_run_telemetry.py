@@ -7,10 +7,12 @@ from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
+from opentelemetry.trace import INVALID_SPAN
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai._telemetry import current_span, open_span, record_decision, set_content_attribute
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation, ValidatedToolArgs
+from pydantic_ai.durable_exec import DurableRunContext
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -142,3 +144,15 @@ async def test_current_span_in_an_uninstrumented_sub_agent_leaves_the_parents_sp
     await parent.run('go')
 
     assert [span.name for span in exporter.get_finished_spans() if (span.attributes or {}).get('example.marked')] == []
+
+
+def test_a_durable_unit_that_did_not_carry_the_tracer_is_untraced():
+    """Reading an uncarried field of a `DurableRunContext` raises, so telemetry treats the unit as untraced."""
+    ctx = DurableRunContext[None](deps=None)
+
+    with open_span(ctx, 'example work') as span:
+        set_content_attribute(ctx, span, 'example.detail', 'a')
+    record_decision(ctx, 'example decided')
+
+    assert span is INVALID_SPAN
+    assert current_span(ctx) is INVALID_SPAN
