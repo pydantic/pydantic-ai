@@ -21,9 +21,7 @@ async def test_a_desktop_sprite_runs_computer_use(transport: SpriteTransport) ->
 
     transport.answer = answer_display_commands
     sandbox = SpritesSandbox(desktop=True)
-    agent = Agent(
-        FunctionModel(look_click_then_finish), capabilities=[sandbox, ComputerUse(native=False, settle_seconds=0)]
-    )
+    agent = Agent(FunctionModel(look_click_then_finish), capabilities=[sandbox, ComputerUse(native=False)])
 
     result = await agent.run('Click.')
 
