@@ -112,11 +112,13 @@ no telemetry spans; core already traces the tool call.
   cuts the resends to about a tenth.
 - Each call is one model request, so long tasks can hit the default [`request_limit`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) of 50.
   Pass higher [`UsageLimits`](https://pydantic.dev/docs/ai/api/pydantic-ai/usage/#pydantic_ai.usage.UsageLimits).
-- Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each call is one durable step that runs at most once,
-  for up to 15 minutes. If it's cut off, the model is told some actions may have run. Temporal and Render never
-  repeat a call; DBOS, and Prefect when a flow is rerun, can repeat one cut off by a crash; Absurd, pgtask and AWS
-  Lambda use their own retry settings. Use `TemporalDurability`, `PrefectDurability` or `DBOSDurability`; the
-  deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
+- Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each call's work on the screen is one durable step, so a finished call isn't
+  run again on replay or recovery. Like any tool with side effects, a call cut off before its step was recorded can
+  run again under the engine's retry settings for capability steps. On Temporal, those are `TemporalDurability`'s
+  `activity_config`, whose default 60-second timeout and unlimited retries apply to every call: raise
+  `start_to_close_timeout` above your longest call, and set `retry_policy=RetryPolicy(maximum_attempts=1)` so a call
+  isn't repeated. When the engine gives up, the model is told some actions may have run. Use `TemporalDurability`,
+  `PrefectDurability` or `DBOSDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
 - On Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure
   [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads).
 - If the display restarts, the model isn't told; its next screenshot shows the new screen.

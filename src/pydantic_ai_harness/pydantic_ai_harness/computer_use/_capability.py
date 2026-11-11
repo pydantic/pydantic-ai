@@ -37,7 +37,6 @@ from pydantic_ai.computer_use import (
     Wait,
     Zoom,
 )
-from pydantic_ai.durable_exec import StepPolicy
 from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
 from pydantic_ai.messages import (
     BaseToolReturnPart,
@@ -147,13 +146,6 @@ class _SpaceRecord(TypedDict):
 
 
 _SPACE_RECORD = TypeAdapter(_SpaceRecord)
-
-_CALL_POLICY = StepPolicy(repeatable=False, timeout=900)
-"""A `computer` call acts, so under durable execution it runs at most once. A call that takes longer fails, and the
-model is told some of its actions may have run."""
-
-_SIZE_POLICY = StepPolicy(timeout=600)
-"""Reading the screen size before a model request may start the screen, which can install it first."""
 
 _NO_DISPLAY = (
     '`ComputerUse` needs a workspace with a display, such as a sandbox capability started with a desktop. This '
@@ -680,11 +672,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         await ctx.emit(ActionsPerformedEvent(result=result))
         return outcome
 
-    @durable_operation('call', policy=_CALL_POLICY)
+    @durable_operation('call')
     async def _on_display(
         self, ctx: RunContext[AgentDepsT], actions: list[ComputerToolAction], plan: _Plan
     ) -> ToolReturn | _NotRun:
-        """Everything a call does on the display, as one durable unit that runs at most once."""
+        """Everything a call does on the display, as one durable unit."""
         try:
             return await self._run_on_display(ctx, actions, plan)
         except ToolFailed as e:
@@ -806,7 +798,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         seen = _last_screenshot_size(ctx.messages)
         return ComputerTool(display_size=seen or _fit(size, _screenshot_limit(ctx.model)), optional=True)
 
-    @durable_operation('display_size', policy=_SIZE_POLICY)
+    @durable_operation('display_size')
     async def _screen_size(self, ctx: RunContext[AgentDepsT]) -> tuple[int, int] | _NotRun:
         """The display's size, as its own durable unit: the request's tools are prepared in workflow code."""
         display = _display(ctx)

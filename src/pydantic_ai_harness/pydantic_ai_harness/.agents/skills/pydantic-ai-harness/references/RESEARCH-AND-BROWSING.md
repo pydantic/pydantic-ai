@@ -380,9 +380,10 @@ Gotchas:
   scaled down, ends the run with a `UserError` before its request.
 - A screen larger than the model takes (profile `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`) is sent scaled
   down if the display can scale screenshots; otherwise the run stops with an error. 1280x800 fits every model.
-- Under durable execution each `computer` call is one unit that runs at most once; a lost one tells the model to take
-  a screenshot first. Temporal and Render never repeat a call; DBOS, and Prefect when a flow is run again, can repeat
-  the one running when the process crashed; Absurd, pgtask and AWS Lambda retry it under their own config.
+- Under durable execution each `computer` call's screen work is one unit, so replay and recovery don't repeat a finished
+  call. One cut off before it was recorded retries under the engine's config for capability steps; on Temporal set
+  `activity_config` with a longer `start_to_close_timeout` and `RetryPolicy(maximum_attempts=1)`. When the engine gives
+  up, the model is told to take a screenshot first.
 - Under Temporal, screenshots pass the 2 MB payload limit after a few steps; configure external storage.
 
 ## See also
