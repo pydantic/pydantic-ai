@@ -228,8 +228,10 @@ def test_time_budget_stops_the_review(tmp_path: Path, expire_budget: list[float]
     assert (result.outcome, result.coverage) == ('INCOMPLETE', 'Review stopped at its time budget of 5 minutes.')
 
 
-def _fake_opencode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, go: str) -> Path:
-    """Put an `opencode` on `PATH` that runs `go` for OpenCode Go and finishes a step on DeepInfra.
+def _fake_opencode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, go: str, deepinfra: str = f'printf "%s\\n" {shlex.quote(_step(10))}'
+) -> Path:
+    """Put an `opencode` on `PATH` that runs `go` for OpenCode Go and `deepinfra`, by default one step, on DeepInfra.
 
     Each launch appends its model and the keys it received to the returned file.
     """
@@ -239,7 +241,7 @@ def _fake_opencode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, go: str) -> 
     script.write_text(
         '#!/bin/sh\n'
         f'echo "$4 ${{OPENCODE_API_KEY:-}} ${{DEEPINFRA_API_KEY:-}}" >> {shlex.quote(str(launches))}\n'
-        f'case "$4" in opencode-go/*) {go} ;; *) printf "%s\\n" {shlex.quote(_step(10))} ;; esac\n'
+        f'case "$4" in opencode-go/*) {go} ;; *) {deepinfra} ;; esac\n'
     )
     script.chmod(0o755)
     runner_temp = tmp_path / 'runner-temp'
@@ -271,6 +273,26 @@ def test_go_refusal_reruns_the_review_on_deepinfra(tmp_path: Path, monkeypatch: 
         'opencode-go/deepseek-v4.1-flash go-key ',
         'deepinfra/deepseek-ai/DeepSeek-V4.1-Flash  deepinfra-key',
     ]
+
+
+def test_deepinfra_failure_names_its_error_type(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A review DeepInfra fails names its error type in the job log, and fails the job."""
+    refused = json.dumps({'type': 'error', 'error': {'type': 'provider.go-limit', 'status': 429}})
+    failed = json.dumps({'type': 'error', 'error': {'type': 'unknown', 'message': 'Model not found'}})
+    launches = _fake_opencode(
+        tmp_path,
+        monkeypatch,
+        f'printf "%s\\n" {shlex.quote(refused)}; exit 1',
+        f'printf "%s\\n" {shlex.quote(failed)}; exit 1',
+    )
+    with pytest.raises(subprocess.CalledProcessError):
+        _review(tmp_path)
+    assert len(launches.read_text().splitlines()) == 2
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        'OpenCode run on deepinfra/deepseek-ai/DeepSeek-V4.1-Flash failed with error type unknown.'
+    )
 
 
 def test_go_failure_after_a_step_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

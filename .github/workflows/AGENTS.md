@@ -307,9 +307,11 @@ workspace: douwebot's OpenCode fallback, each `PR Review Checks` review and Open
 Every other failure fails as it does on Go alone, including a rejected key, a provider outage, a time-budget stop, a
 timeout and an invalid answer. The DeepInfra run gets only the rest of the time budget. Each run's config allows
 only its provider and pins the `title` and `compaction` agents to its model. Its environment holds only that
-provider's key. The job log names the model that served the run, and on a fallback the error type. It never prints
-the error message, which can repeat the provider's response. A DeepInfra run sends DeepInfra the same content a
-Go run sends Go, fork pull request content included. Start any new CI OpenCode run through `run_with_fallback`.
+provider's key. The job log names the model that served the run. When a run's process fails, Go or DeepInfra, the
+job log names that run's model and the `type` and `status` of its stream's last `error` event. It prints a type
+only when the type is shaped like OpenCode's own, such as `provider.auth`. It never prints the error message or
+response body, which can repeat the provider's response. A DeepInfra run sends DeepInfra the same content a Go run
+sends Go, fork pull request content included. Start any new CI OpenCode run through `run_with_fallback`.
 
 # A copy of the repository picks the `CI` Linux runner
 

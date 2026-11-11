@@ -212,6 +212,32 @@ def test_go_refusal_runs_detection_on_deepinfra(detection_dir: Path, monkeypatch
     assert status(detection_dir) == 'THREAT_DETECTION_STATUS: reason=result_recorded exit=0'
 
 
+def test_deepinfra_failure_names_its_error_type(
+    detection_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Detection that DeepInfra fails names its error type in the job log, then concludes as an engine error."""
+    monkeypatch.setenv('DEEPINFRA_API_KEY', 'deepinfra-key')
+    monkeypatch.setenv('GH_AW_HARNESS_MAX_RETRIES', '0')
+
+    def failed_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        stdout = kwargs['stdout']
+        assert isinstance(stdout, io.TextIOBase)
+        go = args[4].startswith('opencode-go/')
+        error = {'type': 'provider.go-limit' if go else 'provider.auth', 'message': 'Refused', 'status': 429 if go else 401}
+        stdout.write(json.dumps({'type': 'error', 'error': error}) + '\n')
+        raise subprocess.CalledProcessError(1, args)
+
+    monkeypatch.setattr(subprocess, 'run', failed_run)
+
+    with pytest.raises(SystemExit):
+        gh_aw_opencode_detect.main()
+
+    assert capsys.readouterr().out.splitlines()[-2:] == [
+        'OpenCode run on deepinfra/deepseek-ai/DeepSeek-V4.1-Flash failed with error type provider.auth, status 401.',
+        'THREAT_DETECTION_STATUS: reason=engine_error exit=2',
+    ]
+
+
 @pytest.mark.parametrize('deadline_seconds', [gh_aw_opencode_detect.DEADLINE_SECONDS, 0])
 def test_deadline_stops_retries_and_reports_a_timeout(
     detection_dir: Path, monkeypatch: pytest.MonkeyPatch, deadline_seconds: int
