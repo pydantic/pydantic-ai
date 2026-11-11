@@ -38,9 +38,10 @@ Rendering history into a request must be deterministic and must keep every messa
 
 <!-- rule:9 -->
 - Place provider-specific code in the provider's own module (`models/{provider}.py`, or the `models/{provider}/` package), not shared modules — add functions consistently across all providers even if some are simple — Maintains clear architectural boundaries and prevents shared compatibility layers from accumulating provider-specific logic that becomes hard to maintain
-- Turn a provider module into a `models/{provider}/` package once its module-level helpers form concerns that a reader of the `Model` class can skip. `models/anthropic/` is the reference layout:
-  - `__init__.py` defines the `Model` subclass and exposes the public API. Import each public API name a submodule defines (`AnthropicStreamedResponse`, `AnthropicStaleThinkingBlockWarning`) into `__init__.py` and list it in `__all__`, along with every name the module exported before it became a package (the `*_content_ta` type adapters): the API docs render an imported name only when `__all__` lists it. Never list any other submodule helper there.
-  - Each other concern gets its own `_*.py` submodule. A function in a `_*.py` submodule has no leading underscore: the module name already marks it private.
+- Turn a provider module into a `models/{provider}/` package once its module-level helpers form concerns that a reader of the `Model` class can skip. `models/anthropic/` is the reference layout for a provider with one `Model` subclass, and `models/openai/` for a provider with several:
+  - With one `Model` subclass, define it in `__init__.py`. With several, give each `Model` subclass and each `StreamedResponse` subclass its own `_*.py` submodule, and define no class in `__init__.py`.
+  - `__init__.py` exposes the public API. Import each public API name a submodule defines (`AnthropicStreamedResponse`, `AnthropicStaleThinkingBlockWarning`) into `__init__.py` and list it in `__all__`, along with every name the module exported before it became a package (the `*_content_ta` type adapters): the API docs render an imported name only when `__all__` lists it. Never list any other submodule helper there.
+  - Each other concern gets its own `_*.py` submodule. A function in a `_*.py` submodule has no leading underscore, and neither has a class or constant that another module imports: the module name already marks it private.
   - The package's own `AGENTS.md` holds the rules for that provider alone. List it in the root `AGENTS.md`.
 
 A model should read reveal modes through `self.tool_deferral_mode` and
