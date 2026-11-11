@@ -4994,6 +4994,10 @@ class _GraphOutputSubmitter(Generic[DepsT]):
     def record_prepared_tool_defs(self, tool_defs: list[ToolDefinition]) -> None:
         self.ctx.deps.prepared_output_tool_defs = tool_defs
 
+    def discard_submission(self, tool_call_id: str) -> None:
+        # A hook like a guardrail refused the call, so what an earlier hook submitted for it doesn't count.
+        self.ctx.deps.output_submissions.pop(tool_call_id, None)
+
     async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None:
         if ctx._in_durable_unit:  # pyright: ignore[reportPrivateUsage]
             # The engine records the tool's return value, and replaying it wouldn't submit again.
@@ -5153,7 +5157,9 @@ def _run_submission_rejection(error: ValidationError | exceptions.ModelRetry) ->
     """The `ModelRetry` a rejected submission from outside a tool call raises, with validation errors as JSON."""
     if isinstance(error, exceptions.ModelRetry):
         return error
-    details = _messages._dump_error_details(error.errors(include_url=False, include_context=False))  # pyright: ignore[reportPrivateUsage]
+    details = _messages._dump_error_details(  # pyright: ignore[reportPrivateUsage]
+        error.errors(include_url=False, include_context=False, include_input=False)
+    )
     return exceptions.ModelRetry(_messages.tool_return_ta.dump_json(details, by_alias=True).decode())
 
 
@@ -5177,11 +5183,22 @@ def _bind_retry_to_tool_call(
         )
     return _messages.ToolReturnPart(
         tool_name=ctx.tool_name,
-        content=content,
+        content=_without_submitted_values(content),
         tool_call_id=ctx.tool_call_id,
         outcome='retried',
         retry=retry_info,
     )
+
+
+def _without_submitted_values(content: _messages.ToolReturnContent) -> _messages.ToolReturnContent:
+    """Validation errors without the values that failed, which the tool submitted rather than the model wrote.
+
+    The field locations and messages are what the model needs to correct its call; the submitted values could
+    hold data the tool didn't otherwise return to the model.
+    """
+    if not isinstance(content, list) or not all(isinstance(item, dict) for item in content):
+        return content
+    return [{key: value for key, value in item.items() if key != 'input'} for item in content]
 
 
 @dataclasses.dataclass

@@ -77,6 +77,10 @@ class OutputSubmitter(Protocol):
         """Record the output tools as this step's `prepare_output_tools` hooks left them."""
         ...
 
+    def discard_submission(self, tool_call_id: str) -> None:
+        """Drop the output the tool call submitted, since a hook skipped its execution."""
+        ...
+
 
 class EventStreamBuffer(list[_messages.AgentStreamEvent]):
     """The run's event buffer, notifying waiting stream mergers as soon as an event lands.

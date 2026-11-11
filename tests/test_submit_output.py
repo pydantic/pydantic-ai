@@ -48,7 +48,7 @@ from pydantic_ai.capabilities import (
     WrapToolExecuteHandler,
 )
 from pydantic_ai.durable_exec import durable_unit_scope
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import SkipToolExecution, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -187,7 +187,6 @@ async def test_rejected_submission_answers_the_tool_call_and_uses_an_output_retr
                 'type': 'int_parsing',
                 'loc': ['total'],
                 'msg': 'Input should be a valid integer, unable to parse string as an integer',
-                'input': 'lots',
             }
         ]
     )
@@ -436,9 +435,7 @@ async def test_text_submission_with_invalid_arguments_is_rejected():
     assert result.output == 'the report'
     rejected, _ = tool_returns(result.all_messages())
     assert rejected.outcome == 'retried'
-    assert rejected.content == snapshot(
-        [{'type': 'missing', 'loc': ['response'], 'msg': 'Field required', 'input': {'text': 'wrong key'}}]
-    )
+    assert rejected.content == snapshot([{'type': 'missing', 'loc': ['response'], 'msg': 'Field required'}])
 
 
 class Refund(BaseModel):
@@ -948,13 +945,13 @@ async def test_submission_from_a_node_hook_ends_the_run_before_the_next_request(
         pytest.param(
             Invoice,
             {'order_id': 'ord_1'},
-            snapshot('[{"type":"missing","loc":["total"],"msg":"Field required","input":{"order_id":"ord_1"}}]'),
+            snapshot('[{"type":"missing","loc":["total"],"msg":"Field required"}]'),
             id='tool',
         ),
         pytest.param(
             NativeOutput(Invoice),
             {'order_id': 'ord_1'},
-            snapshot('[{"type":"missing","loc":["total"],"msg":"Field required","input":{"order_id":"ord_1"}}]'),
+            snapshot('[{"type":"missing","loc":["total"],"msg":"Field required"}]'),
             id='native',
         ),
         pytest.param(Invoice, None, "Unknown output tool 'nope'.", id='unknown'),
@@ -1194,3 +1191,43 @@ async def test_image_output_and_deferred_tool_requests_cannot_be_submitted(outpu
 
     assert seen == [submittable]
     assert raised == ["Unknown output tool 'DeferredToolRequests'."]
+
+
+async def test_submission_is_discarded_when_a_later_hook_skips_the_call():
+    """A guardrail that blocks a call wins over an earlier hook's submission for it."""
+
+    class SubmitForTheTool(AbstractCapability[None]):
+        async def before_tool_execute(
+            self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+        ) -> ValidatedToolArgs:
+            await ctx.submit_output('final_result', {'order_id': 'submitted', 'total': 1})
+            return args
+
+    class BlockTheTool(AbstractCapability[None]):
+        async def before_tool_execute(
+            self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+        ) -> ValidatedToolArgs:
+            raise SkipToolExecution('Blocked by policy.')
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('assemble', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[ToolCallPart('final_result', {'order_id': 'from_model', 'total': 2})])
+
+    agent = Agent(
+        FunctionModel(model),
+        output_type=Invoice,
+        capabilities=[SubmitForTheTool(), BlockTheTool()],
+        deps_type=type(None),
+    )
+
+    @agent.tool_plain
+    def assemble() -> str:
+        return 'assembled'  # pragma: no cover
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id='from_model', total=2)
+    assert result.usage.requests == 2
+    [tool_return, _] = tool_returns(result.all_messages())
+    assert (tool_return.content, tool_return.outcome) == ('Blocked by policy.', 'success')

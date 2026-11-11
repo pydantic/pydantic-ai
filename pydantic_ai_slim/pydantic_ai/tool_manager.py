@@ -1312,6 +1312,9 @@ class ToolManager(Generic[AgentDepsT]):
         except SkipToolExecution as e:
             _usage_attribution.record_tool_call(usage)
             tool_result = e.result
+            # Only a call that ran can make the output it submitted the final result.
+            if (submitter := validated.ctx._live_output_submitter) is not None:  # pyright: ignore[reportPrivateUsage]
+                submitter.discard_submission(validated.call.tool_call_id)
 
         # Only record success when wrapping is requested, mirroring the `failed_tools` gating:
         # raw-mode callers (e.g. sandboxed dispatch) leave retry-budget state untouched, so a
