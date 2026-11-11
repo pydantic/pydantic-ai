@@ -956,6 +956,8 @@ agent = Agent('{{ anthropic:medium }}', toolsets=[mcp.defer_loading()])
 
 ### Configuring `ToolSearch`
 
+Use [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] to choose which tools are deferred before search runs: `tools='all'` selects every eligible regular tool, a name list like `tools=['get_weather', 'lookup']` selects tools by name, and metadata dictionaries or synchronous/asynchronous callables are also accepted. Selection is additive with per-tool `defer_loading=True` and toolset `.defer_loading()` settings, and output and framework tools — including `search_tools` and `load_capability` — are never deferred. `tools=None` is the default and adds no deferral.
+
 Pass an explicit [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability to control the strategy or provide a custom search function:
 
 ```python {title="tool_search_custom.py"}

@@ -68,7 +68,12 @@ from ..native_tools._tool_search import (
     ToolSearchReturnContent,
     ToolSearchTool,
 )
-from ..tools import Tool, ToolDefinition
+from ..tools import (
+    Tool,
+    ToolDefinition,
+    ToolSelector,
+    matches_tool_selector,
+)
 from ._capability_owned import is_gated_by_deferred_capability
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
@@ -304,6 +309,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     ordered by relevance. Both sync and async implementations are accepted.
     """
 
+    tools: ToolSelector[AgentDepsT] | None = None
+    """Selector determining which regular tools to defer."""
+
     max_results: int = _MAX_SEARCH_RESULTS
     """Maximum number of matches returned from the default algorithm."""
 
@@ -348,6 +356,13 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         for name, tool in all_tools.items():
             if tool.tool_def.defer_loading:
                 deferred[name] = tool
+            elif (
+                self.tools is not None
+                and tool.tool_def.kind != 'output'
+                and tool.tool_def.tool_kind is None
+                and await matches_tool_selector(self.tools, ctx, tool.tool_def)
+            ):
+                deferred[name] = replace(tool, tool_def=replace(tool.tool_def, defer_loading=True))
             else:
                 visible[name] = tool
 

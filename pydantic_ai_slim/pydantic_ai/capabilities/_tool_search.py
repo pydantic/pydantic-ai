@@ -22,6 +22,7 @@ from ..native_tools._tool_search import (
 from ..tools import (
     AgentNativeTool,
     ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401  (resolves forward ref)
+    ToolSelector,
 )
 from ..toolsets import AbstractToolset
 from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
@@ -99,6 +100,13 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         capabilities=[ToolSearch(strategy=my_search)],
     )
     ```
+    """
+
+    tools: ToolSelector[AgentDepsT] | None = None
+    """Select regular tools to defer using any existing selector form.
+
+    `None` adds no deferral and preserves per-tool and toolset deferral. Output and
+    framework tools are not selected for deferral.
     """
 
     strategy: ToolSearchStrategy[AgentDepsT] | None = None
@@ -206,6 +214,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # emitted.
         return ToolSearchToolset(
             wrapped=toolset,
+            tools=self.tools,
             search_fn=self._search_fn,
             max_results=self.max_results,
             tool_description=self.tool_description,

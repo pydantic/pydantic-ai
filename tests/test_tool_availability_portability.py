@@ -10,11 +10,12 @@ from typing import Any, Literal, cast
 import pytest
 from cassetter import Cassette
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 from pytest_mock import MockerFixture
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
-from pydantic_ai.capabilities import ToolSearch
+from pydantic_ai.capabilities import Capability, ToolSearch
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -42,8 +43,9 @@ from pydantic_ai.models import (
     ModelProfile,
     ModelRequestParameters,
 )
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
@@ -1949,3 +1951,147 @@ async def test_responses_streaming_request_carries_additional_tools(allow_model_
     [request] = get_mock_responses_kwargs(client)
     [additional] = [item for item in request['input'] if item.get('type') == 'additional_tools']
     assert [wire_tool['name'] for wire_tool in additional['tools']] == ['revealed_tool']
+
+
+class NoNativeToolSearchModel(FunctionModel):
+    """A `FunctionModel` that drops `ToolSearchTool` from its supported builtins.
+
+    Otherwise the framework assumes the model handles tool search server-side via the native
+    wire shape and swaps the local `search_tools` function tool out of `function_tools`.
+    """
+
+    @classmethod
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        return frozenset(super().supported_native_tools()) - {ToolSearchTool}
+
+
+@pytest.mark.parametrize(
+    ('selector', 'ordinary_tool_is_deferred'),
+    [
+        pytest.param(['selected_tool', 'load_capability'], False, id='name-selector'),
+        pytest.param('all', True, id='all-selector'),
+    ],
+)
+@pytest.mark.anyio
+async def test_tool_search_tools_selector_defers_selected_tools(
+    selector: list[str] | str, ordinary_tool_is_deferred: bool
+) -> None:
+    class FinalOutput(BaseModel):
+        answer: str
+
+    user_toolset = FunctionToolset()
+
+    @user_toolset.tool_plain
+    def selected_tool() -> str:
+        return 'selected'
+
+    @user_toolset.tool_plain
+    def ordinary_tool() -> str:
+        return 'ordinary'
+
+    @user_toolset.tool_plain
+    def toolset_deferred_tool() -> str:
+        return 'deferred by toolset'
+
+    capability_toolset = FunctionToolset()
+
+    @capability_toolset.tool_plain
+    def capability_tool() -> str:
+        return 'deferred capability tool'
+
+    capability = Capability(
+        id='example',
+        description='Example capability.',
+        defer_loading=True,
+        toolsets=[capability_toolset],
+    )
+
+    seen_function_tools: list[set[str]] = []
+    seen_output_tools: list[set[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_function_tools.append({tool.name for tool in info.function_tools})
+        seen_output_tools.append({tool.name for tool in info.output_tools})
+        request_number = len(seen_function_tools)
+        if request_number == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='load_capability', args={'id': 'example'}, tool_call_id='load')]
+            )
+        if request_number == 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='search_tools',
+                        args={'queries': ['selected_tool']},
+                        tool_call_id='search',
+                    )
+                ]
+            )
+        if request_number == 3:
+            return ModelResponse(parts=[ToolCallPart(tool_name='selected_tool', args={}, tool_call_id='selected')])
+
+        [output_tool] = info.output_tools
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name=output_tool.name,
+                    args={'answer': 'done'},
+                    tool_call_id='output',
+                )
+            ]
+        )
+
+    agent = Agent(
+        NoNativeToolSearchModel(model_fn),
+        output_type=FinalOutput,
+        toolsets=[user_toolset.defer_loading(['toolset_deferred_tool'])],
+        capabilities=[ToolSearch(tools=selector), capability],
+    )
+    result = await agent.run('find and use the selected tool')
+
+    assert result.output == FinalOutput(answer='done')
+    initial_tools = seen_function_tools[0]
+    assert {'load_capability', 'search_tools'} <= initial_tools
+    assert 'selected_tool' not in initial_tools
+    assert 'toolset_deferred_tool' not in initial_tools
+    if ordinary_tool_is_deferred:
+        assert 'ordinary_tool' not in initial_tools
+    else:
+        assert 'ordinary_tool' in initial_tools
+    assert 'selected_tool' in seen_function_tools[2]
+    assert all(seen_output_tools)
+
+
+@pytest.mark.anyio
+async def test_tool_search_tools_none_preserves_default_and_exclusions() -> None:
+    seen_function_tools: list[set[str]] = []
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def ordinary_tool() -> str:
+        return 'ordinary'
+
+    @toolset.tool_plain(defer_loading=True)
+    def per_tool_deferred_tool() -> str:
+        return 'deferred by tool'
+
+    @toolset.tool_plain
+    def toolset_deferred_tool() -> str:
+        return 'deferred by toolset'
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_function_tools.append({tool.name for tool in info.function_tools})
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(
+        NoNativeToolSearchModel(model_fn),
+        toolsets=[toolset.defer_loading(['toolset_deferred_tool'])],
+        capabilities=[ToolSearch(tools=None)],
+    )
+    result = await agent.run('use the available tool')
+
+    assert result.output == 'done'
+    initial_tools = seen_function_tools[0]
+    assert {'ordinary_tool', 'search_tools'} <= initial_tools
+    assert 'per_tool_deferred_tool' not in initial_tools
+    assert 'toolset_deferred_tool' not in initial_tools
