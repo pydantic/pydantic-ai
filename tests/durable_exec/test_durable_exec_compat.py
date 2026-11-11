@@ -1239,7 +1239,11 @@ async def test_run_cancelled_crosses_call_tool_result_boundary(exc_type: type[Ru
 
 
 def test_the_json_codec_leaves_out_what_a_compaction_replaced() -> None:
-    """DBOS and Prefect cross their boundary through `JSON_CODEC`, which leaves out a record's `replaced` history."""
+    """A JSON-mode durable operation crosses its boundary through `JSON_CODEC`, which leaves out `replaced`.
+
+    DBOS and Prefect durability pass objects (`IDENTITY_CODEC`); DBOS's pickling of a run result is covered by
+    `test_a_pickled_result_leaves_out_what_a_compaction_replaced`.
+    """
     record = CompactionRecord(
         part=CompactionPart(content='summary'),
         handler='summarize',

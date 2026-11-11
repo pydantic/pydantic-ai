@@ -209,6 +209,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _has_compact_history(self) -> bool:
         return type(self).compact_history is not WrapperCapability.compact_history or self.wrapped._has_compact_history
 
+    def _handles_compact_history(self, ctx: RunContext[AgentDepsT]) -> bool:
+        if type(self).compact_history is not WrapperCapability.compact_history:
+            return True
+        return self.wrapped._handles_compact_history(ctx)
+
     @property
     def has_wrap_run_event_stream(self) -> bool:
         return (

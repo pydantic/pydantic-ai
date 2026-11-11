@@ -989,6 +989,25 @@ async def test_context_overflow_twice_raises_the_overflow():
     assert len(summarize.calls) == 1
 
 
+async def test_context_overflow_with_only_an_unloaded_deferred_hook_raises_the_overflow():
+    """A `compact_history` hook of a deferred capability that isn't loaded can't run, so no compaction is attempted."""
+
+    class DeferredSummarize(Summarize):
+        def __init__(self) -> None:
+            super().__init__()
+            self.id = 'summarizer'
+            self.description = 'Summarizes the conversation.'
+            self.defer_loading = True
+
+    calls: list[str] = []
+    events = RecordEvents()
+    deferred = DeferredSummarize()
+    with pytest.raises(ModelContextWindowExceededError):
+        await Agent(always_overflows(calls), capabilities=[events, deferred]).run('hi')
+    assert calls == ['primary']
+    assert (deferred.calls, events.events) == ([], [])
+
+
 async def test_context_overflow_without_a_compaction_raises_the_overflow():
     calls: list[str] = []
     asked: list[str] = []
