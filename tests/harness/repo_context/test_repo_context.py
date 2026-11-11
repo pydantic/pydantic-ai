@@ -1738,6 +1738,18 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
         assert 'repo rules' not in instructions
         assert [part.content for part in parts] == ['repo rules']
 
+    async def test_a_lower_copy_does_not_drop_an_operator_file(self, tmp_path: Path) -> None:
+        # Identical files are deduped broadest first, but only against files at the same level: a repository author
+        # copying the operator's file into an ancestor mustn't take it out of the instructions.
+        working_dir = self._repo(tmp_path)
+        _write(tmp_path / 'AGENTS.md', 'package rules')
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(working_dir)), authority='none', path_authority={'AGENTS.md': 'operator'}
+        )
+        instructions, parts, _ = await self._run(tmp_path, workspace)
+        assert 'package rules' in instructions
+        assert [part.content for part in parts] == ['package rules']
+
     async def test_an_ancestor_is_sent_again_only_when_it_changed(self, tmp_path: Path) -> None:
         working_dir = self._repo(tmp_path)
         workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(working_dir)), authority='none')
