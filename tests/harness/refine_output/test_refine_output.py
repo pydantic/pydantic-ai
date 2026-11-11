@@ -142,7 +142,7 @@ class TestRefineOutput:
     async def test_does_not_review_the_refusal_of_a_blocked_prompt(self, guard_first: bool, parallel: bool) -> None:
         reviewed: list[bool] = []
 
-        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
             reviewed.append(bool(reviews(messages)))
             return ModelResponse(parts=[TextPart('answer')])
 
