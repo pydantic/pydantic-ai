@@ -589,19 +589,19 @@ def test_model_http_error_headers_provider_openai():
     """Headers from an openai.APIStatusError land on ModelHTTPError.
 
     This is a unit test — not a VCR test — because the header propagation path
-    lives in our own _map_api_errors helper, not in recorded API behaviour.
+    lives in our own map_api_errors helper, not in recorded API behaviour.
     """
     openai = pytest.importorskip('openai', reason='openai extra not installed')
     import httpx
 
-    from pydantic_ai.models.openai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openai._errors import map_api_errors
 
     req = httpx.Request('POST', 'https://api.openai.com/v1/chat/completions')
     resp = httpx.Response(429, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, request=req)
     sdk_exc = openai.RateLimitError('Rate limited', response=resp, body=None)
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        with _map_api_errors('gpt-4o'):
+        with map_api_errors('gpt-4o'):
             raise sdk_exc
 
     exc = exc_info.value
@@ -622,7 +622,7 @@ def test_model_http_error_does_not_suggest_an_unusable_match(model_name: str):
     openai = pytest.importorskip('openai', reason='openai extra not installed')
     import httpx
 
-    from pydantic_ai.models.openai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openai._errors import map_api_errors
 
     req = httpx.Request('POST', 'https://example.com/v1/responses')
     resp = httpx.Response(404, request=req)
@@ -633,7 +633,7 @@ def test_model_http_error_does_not_suggest_an_unusable_match(model_name: str):
     )
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        with _map_api_errors(model_name):
+        with map_api_errors(model_name):
             raise sdk_exc
 
     assert exc_info.value.suggested_model_id is None

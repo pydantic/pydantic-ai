@@ -36,9 +36,9 @@ from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, R
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.step_persistence import FileStepStore, StepPersistence
 from pydantic_ai_harness.subagents import (
-    DelegationEndEvent,
+    DelegationFinishedEvent,
     DelegationReports,
-    DelegationStartEvent,
+    DelegationStartedEvent,
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
@@ -166,7 +166,9 @@ async def test_owned_child_streams_to_the_event_stream_handler_and_the_observer(
                 )
                 await agent.run('go', conversation_id='parent')
     assert handled
-    assert handled == [event for event in observed if not isinstance(event, (DelegationStartEvent, DelegationEndEvent))]
+    assert handled == [
+        event for event in observed if not isinstance(event, (DelegationStartedEvent, DelegationFinishedEvent))
+    ]
 
 
 async def test_child_stream_events_carry_the_child_model_and_window() -> None:
@@ -186,7 +188,7 @@ async def test_child_stream_events_carry_the_child_model_and_window() -> None:
                 )
                 await agent.run('go', conversation_id='parent')
     lifecycle = [
-        u for u in updates if u.event is None or isinstance(u.event, (DelegationStartEvent, DelegationEndEvent))
+        u for u in updates if u.event is None or isinstance(u.event, (DelegationStartedEvent, DelegationFinishedEvent))
     ]
     streamed = [u for u in updates if u not in lifecycle]
     assert streamed and {(u.model_name, u.context_window) for u in streamed} == {('child', 4096)}
