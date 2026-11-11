@@ -157,13 +157,13 @@ class AzureProvider(_OpenAISDKProvider):
             # single honest boundary to record. Users pass `retention=` to `prompt_cache_outlook`.
             # https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/prompt-caching
             base = openai_model_profile(model_name)
-            # Azure documents the native `computer` tool on gpt-5.4 (limited access), the models OpenAI serves it on,
-            # which are the ones with tool search. Not verified live here. A deployment named other than its model
+            # Azure documents the native `computer` tool on gpt-5.4 (limited access); the models OpenAI serves it on
+            # are assumed to take it here too. Not verified live here. A deployment named other than its model
             # sets `openai_supports_computer_tool` in its profile.
             # https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/computer-use
             base = merge_profile(
                 base,
-                OpenAIModelProfile(openai_supports_computer_tool=_is_computer_use_model(base)),
+                OpenAIModelProfile(openai_supports_computer_tool=_is_computer_use_model(model_name)),
             )
 
         # Azure Chat Completions API doesn't support document input, and Responses WebSockets aren't verified on Azure.

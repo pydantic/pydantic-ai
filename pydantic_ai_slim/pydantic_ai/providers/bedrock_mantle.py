@@ -80,7 +80,7 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
             supported_native_tools=frozenset(),
             # OpenAI's native `computer` tool works on the `/openai/v1` endpoint as on OpenAI's own API, for the
             # models that take it there.
-            openai_supports_computer_tool=interface == 'openai-responses' and _is_computer_use_model(base),
+            openai_supports_computer_tool=interface == 'openai-responses' and _is_computer_use_model(base_model_name),
         ),
     )
 
