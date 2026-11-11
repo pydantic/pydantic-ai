@@ -20,7 +20,8 @@ with try_import() as imports_successful:
 
     from pydantic_ai.messages import ModelMessage, ModelResponse
     from pydantic_ai.models._history_digest import history_hasher
-    from pydantic_ai.models.openai import NOT_GIVEN, OMIT, _with_history_digest  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openai import NOT_GIVEN, OMIT
+    from pydantic_ai.models.openai._history_digest import with_history_digest
 
     MockChatCompletion = chat.ChatCompletion | Exception
     MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
@@ -36,7 +37,7 @@ def with_history_digests(messages: Sequence[ModelMessage]) -> list[ModelMessage]
     history: list[ModelMessage] = []
     for message in messages:
         history.append(
-            _with_history_digest(message, history_hasher(history, None))
+            with_history_digest(message, history_hasher(history, None))
             if isinstance(message, ModelResponse)
             else message
         )

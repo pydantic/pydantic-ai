@@ -162,6 +162,10 @@ class AnthropicStreamedResponse(StreamedResponse):
         if event.message.diagnostics is not None:
             self.provider_details = self.provider_details or {}
             self.provider_details['cache_diagnostics'] = event.message.diagnostics.model_dump(mode='json')
+        # See `response_provider_details`. Only the opening message's usage reports the speed.
+        if event.message.usage.speed == 'fast':
+            self.provider_details = self.provider_details or {}
+            self.provider_details['speed'] = 'fast'
 
     def _map_content_block_start(self, event: BetaRawContentBlockStartEvent) -> Iterator[ModelResponseStreamEvent]:  # noqa: C901
         self._current_block = current_block = event.content_block
