@@ -103,7 +103,7 @@ Whatever `retry_on` says, a request is not retried when:
 - the provider sent an `x-should-retry: false` header, as OpenAI and Anthropic do for errors that retrying won't fix (see [`provider_retry_hint`][pydantic_ai.exceptions.ModelHTTPError.provider_retry_hint]). Their SDKs heed the header too, so turning the SDK's retries off doesn't lose it. A `ModelFallback` can still move on to another model.
 - the run's [usage limits](../agent.md#usage-limits) stopped it, as another attempt wouldn't change that.
 
-Once a model has been attempted `max_attempts` times (`3` by default, the first attempt included), the last error is raised as is, or the last rejected response accepted, so that a `ModelFallback` can take over. Two `RetryOnModelErrors` capabilities, say one with its own `retry_on` for rate limits, count the same attempts, each against its own `max_attempts`.
+Once a model has been attempted `max_attempts` times (`3` by default, the first attempt included), the last error is raised as is, or the last rejected response accepted, so that a `ModelFallback` can take over. The agent attempts a request at most 100 times across all its models, so beyond that a [`UserError`][pydantic_ai.exceptions.UserError] is raised instead. Two `RetryOnModelErrors` capabilities, say one with its own `retry_on` for rate limits, count the same attempts, each against its own `max_attempts`.
 
 ## Waiting between attempts
 

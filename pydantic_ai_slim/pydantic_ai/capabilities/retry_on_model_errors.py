@@ -154,7 +154,8 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
                 non-streamed requests: a streamed response has already reached the consumer by the time it
                 could be judged, so it's accepted as is, with a `UserWarning`.
             max_attempts: How many times a request is attempted on one model, the first attempt included. `1`
-                never retries.
+                never retries. The agent attempts a request at most 100 times across all its models, after which
+                it raises a `UserError` rather than the last error.
             initial_delay: Seconds to wait before the first retry when the error doesn't say how long. The wait
                 doubles for each retry after it, up to `max_delay`, and a random part of up to half of it is taken
                 off, so that runs failing at the same moment don't all retry at the same moment too.
