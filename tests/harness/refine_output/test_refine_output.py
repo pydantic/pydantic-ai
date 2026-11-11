@@ -18,7 +18,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness import DEFAULT_REFINE_OUTPUT_INSTRUCTIONS, RefineOutput, SummarizingCompaction
+from pydantic_ai_harness import DEFAULT_REFINE_OUTPUT_INSTRUCTIONS, InputGuardrail, RefineOutput, SummarizingCompaction
 from tests.harness._deferred_tools import BackgroundModel
 
 from ._drafting_agent import numbered_model, reviews
@@ -136,6 +136,26 @@ class TestRefineOutput:
 
         assert isinstance(result.output, PendingModelResponse)
         assert len(requests) == 1
+
+    @pytest.mark.parametrize('parallel', [False, True])
+    @pytest.mark.parametrize('guard_first', [True, False])
+    async def test_does_not_review_the_refusal_of_a_blocked_prompt(self, guard_first: bool, parallel: bool) -> None:
+        reviewed: list[bool] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
+            reviewed.append(bool(reviews(messages)))
+            return ModelResponse(parts=[TextPart('answer')])
+
+        capabilities: list[AbstractCapability[object]] = [
+            InputGuardrail(guard=lambda _: False, parallel=parallel),
+            RefineOutput(),
+        ]
+        agent = Agent(FunctionModel(model), capabilities=capabilities if guard_first else capabilities[::-1])
+
+        result = await agent.run('Explain the change')
+
+        assert result.output == 'Request blocked by input guardrail.'
+        assert True not in reviewed
 
     @pytest.mark.parametrize('instances', [1, 2])
     async def test_run_stream_ends_at_the_first_output_unreviewed(self, instances: int) -> None:

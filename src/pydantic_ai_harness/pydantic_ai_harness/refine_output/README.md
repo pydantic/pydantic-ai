@@ -47,10 +47,11 @@ RefineOutput(rounds=2, instructions='Check every figure against the source docum
 - The instruction is a [`SystemPromptPart`](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/#pydantic_ai.messages.SystemPromptPart) whose `metadata` holds `'origin': 'pydantic-ai-harness.refine_output.v1'` and the `round` number. It keeps the default conversation scope, so it stays in the message history. Each run starts with no rounds used.
 - Code that streams the run sees every answer as the model writes it: the first one, then each revised one. Only the last is the run's output.
 
-Three kinds of run end without a review:
+Four kinds of run end without a review:
 
 - A run that pauses for [deferred tools](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) and returns `DeferredToolRequests`.
 - A run that ends while the provider is still processing a model request, such as a batch or background response, and returns [`PendingModelResponse`](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits).
+- A run whose output did not come from a model request, such as the refusal of an [input guardrail](../guardrails/) that blocked the prompt. A review would send the model the prompt the guardrail kept from it.
 - `Agent.run_stream()`, which ends at the first output it streams. To stream a run that is reviewed, use `Agent.run()` with an `event_stream_handler`, or `Agent.iter()`.
 
 ## Durable execution
