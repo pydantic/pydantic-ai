@@ -946,6 +946,7 @@ def test_gateway_gpt_oss_inline_defs():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'default_framing_announcement': 'always',
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'may_tokenize_special_tokens_in_content': True,
@@ -2822,6 +2823,7 @@ def test_together_qwen():
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
+                    'default_framing_announcement': 'always',
                     'supports_forced_tool_choice': False,
                     'ignore_streamed_leading_whitespace': True,
                     'may_tokenize_special_tokens_in_content': True,
@@ -2839,6 +2841,7 @@ def test_together_qwen():
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
+                    'default_framing_announcement': 'always',
                     'supports_forced_tool_choice': False,
                     'ignore_streamed_leading_whitespace': True,
                     'may_tokenize_special_tokens_in_content': True,
@@ -2904,6 +2907,7 @@ def test_together_qwen():
                     'grok_supports_builtin_tools': True,
                     'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
                     'grok_default_effort_omitted': True,
+                    'needs_sealed_system_blocks': True,
                     'may_tokenize_special_tokens_in_content': False,
                 }
             ),
@@ -2950,6 +2954,7 @@ def test_openai_compatible_vendor_family(model_name: str, expected: dict[str, An
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
+                    'default_framing_announcement': 'always',
                     'supports_forced_tool_choice': False,
                     'ignore_streamed_leading_whitespace': True,
                     'may_tokenize_special_tokens_in_content': True,
