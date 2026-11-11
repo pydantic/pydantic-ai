@@ -3160,9 +3160,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> _OverflowRetry | None:
         """How to compact and resend this attempt if the model rejects it for exceeding its context window.
 
-        `None` when no capability has a `compact_history` hook to compact it with.
+        `None` when no capability has a `compact_history` hook that can run, like one of a deferred capability that
+        isn't loaded.
         """
-        if not ctx.deps.root_capability._has_compact_history:  # pyright: ignore[reportPrivateUsage]
+        if not ctx.deps.root_capability._handles_compact_history(run_context):  # pyright: ignore[reportPrivateUsage]
             return None
         return partial(self._retry_overflow, ctx, run_context, request_context, prepared, compaction)
 

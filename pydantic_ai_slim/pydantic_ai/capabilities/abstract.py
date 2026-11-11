@@ -440,6 +440,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def _has_compact_history(self) -> bool:
         return type(self).compact_history is not AbstractCapability.compact_history
 
+    def _handles_compact_history(self, ctx: RunContext[AgentDepsT]) -> bool:
+        """Whether a `compact_history` hook can run in this run: one is overridden and, if deferred, loaded.
+
+        The agent only retries a context overflow with compaction, and primes streamed requests for it, when one can.
+        """
+        return self._has_compact_history
+
     @property
     def has_wrap_run_event_stream(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""

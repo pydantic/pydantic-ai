@@ -276,6 +276,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def _has_compact_history(self) -> bool:
         return any(c._has_compact_history for c in self._dispatch)
 
+    def _handles_compact_history(self, ctx: RunContext[AgentDepsT]) -> bool:
+        return any(
+            capability._has_compact_history
+            and (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None
+            and capability._handles_compact_history(cap_ctx)
+            for capability in self._dispatch
+        )
+
     @property
     def _can_supply_model(self) -> bool:
         return any(c.defer_loading is not True and c._can_supply_model for c in self._dispatch)
