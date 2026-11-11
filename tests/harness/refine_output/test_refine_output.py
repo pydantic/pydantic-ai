@@ -116,7 +116,7 @@ class TestRefineOutput:
 
         @agent.tool_plain(requires_approval=True)
         def delete_file(path: str) -> str:
-            raise AssertionError('the call is never approved')
+            raise AssertionError('the call is never approved')  # pragma: no cover
 
         result = await agent.run('Delete notes.txt')
 
