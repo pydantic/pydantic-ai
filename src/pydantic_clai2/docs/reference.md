@@ -1553,7 +1553,7 @@ uses. The default appearance keeps CLAI's existing addition and deletion
 backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
 Code uses the terminal foreground and ANSI syntax colours on the terminal
 background. Successful file writes also show the proposed diff from their matching
-`FileChangeRequestEvent`: new files show additions, overwrites show before/after
+`FileChangeRequestedEvent`: new files show additions, overwrites show before/after
 changes. Without a matching request event, only the written path is shown. Failed
 or cancelled writes do not display a success diff. Large diffs retain the
 filesystem's truncation notice. Coder shell events show the command, attached
@@ -1660,7 +1660,11 @@ these names. The `/set` theme row also lets you reset immediately;
 `/config reset display.theme` removes the saved override for the next startup.
 
 For a bundled palette, Markdown and newly opened menus use Termflow's
-`to_render_style()`, and shell roles use its colours. Termflow changes the terminal
+`to_render_style()`, and shell roles use its colours. Where a role or code colour
+would be hard to read on the palette's background, CLAI darkens or lightens it to
+4.5:1 contrast (WCAG AA), or to the palette's own text contrast if that is lower,
+except where a 16-colour terminal paints the palette's own ANSI slots. Diff additions and deletions differ in lightness
+as well as hue, so readers who cannot tell red from green can still tell them apart. Termflow changes the terminal
 foreground, background, and 16 ANSI slots via OSC escape sequences. Supported
 terminals may also recolour existing ANSI-styled scrollback. CLAI resets terminal
 colours when you return to `default` or exit a selected palette, including failure

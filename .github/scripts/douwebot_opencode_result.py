@@ -18,7 +18,8 @@ _FENCE = re.compile(r'\A\s*```[\w+-]*[ \t]*\n(.*)\n[ \t]*```\s*\Z', re.DOTALL)
 
 def final_text(path: Path) -> str:
     """Return the final assistant text only after a normal completed stream."""
-    events = [_EVENT.validate_json(line) for line in path.read_text(encoding='utf-8').splitlines()]
+    # Only LF ends an event: `JSON.stringify` leaves U+2028 and U+2029 raw, and `splitlines` would split at them.
+    events = [_EVENT.validate_json(line) for line in path.read_text(encoding='utf-8').split('\n') if line]
     if not events or events[-1].get('type') != 'step_finish':
         raise ValueError('OpenCode review did not complete')
     finish = _EVENT.validate_python(events[-1].get('part'), strict=True)
