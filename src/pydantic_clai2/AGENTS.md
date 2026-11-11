@@ -391,7 +391,9 @@ streamed fences, shell command headers, and theme previews. Shell command header
 add `dim` and drop underlines over the lexed code (`command_syntax._SECONDARY`), so
 a tool call reads as secondary; keep fences unchanged. The default theme's diff lines use Claude Code's
 green and red; bundled palettes get diff lines from `theme.diff_renderer()`, tinted
-from the palette.
+from the palette until their lightness differs, so colour-blind readers can tell them apart.
+`theme.color()` and `theme.syntax_theme()` raise a palette colour to WCAG AA contrast
+(or the palette's own text contrast); `test_theme_preview.py` checks both for every palette.
 
 ## Source layout
 
