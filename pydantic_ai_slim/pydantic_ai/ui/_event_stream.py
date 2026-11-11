@@ -173,11 +173,11 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         default_factory=list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta]
     )
     """Deltas used to bring `_open_part` up to date only if a synthetic end event is needed."""
-    _canonical_system: tuple[str, str] | None = None
-    """The current response's `provider_name` and `canonical_system`, from the part events that carry it.
+    _canonical_systems: dict[str, str | None] = field(default_factory=dict[str, str | None])
+    """The `canonical_system` that applies to each provider's parts, from the last part event from that provider.
 
-    Kept until the next response, so the metadata a subclass emits for a part after its end event, such as a tool
-    call's, carries it too, as `dump_messages` writes it.
+    Kept after the part's end event, so the metadata a subclass emits for a part after it, such as a tool call's,
+    carries it too, as `dump_messages` writes it.
     """
 
     def new_message_id(self) -> str:
@@ -186,14 +186,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         return self.message_id
 
     def _record_canonical_system(self, event: PartStartEvent | PartEndEvent) -> None:
-        if event.canonical_system is not None and event.part.provider_name is not None:
-            self._canonical_system = (event.part.provider_name, event.canonical_system)
+        # An unstamped event is recorded too, so a later response without a stamp doesn't inherit an earlier one's.
+        if (provider_name := event.part.provider_name) is not None:
+            self._canonical_systems[provider_name] = event.canonical_system
 
     def _canonical_system_for(self, provider_name: str | None) -> str | None:
-        """The current response's `canonical_system` to emit beside a part from `provider_name`, if it applies."""
-        if self._canonical_system is not None and provider_name == self._canonical_system[0]:
-            return self._canonical_system[1]
-        return None
+        """The `canonical_system` to emit beside a part from `provider_name`, if the part's response has one."""
+        return self._canonical_systems.get(provider_name) if provider_name is not None else None
 
     def _record_part_delta(self, event: PartDeltaEvent) -> None:
         if event.index != self._open_part_index:
@@ -454,8 +453,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 yield e
 
         self._turn = to_turn
-        if to_turn == 'response':
-            self._canonical_system = None
 
         if to_turn == 'request':
             async for e in self.before_request():

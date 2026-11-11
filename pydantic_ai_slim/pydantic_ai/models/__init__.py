@@ -2801,6 +2801,7 @@ class CompletedStreamedResponse(StreamedResponse):
         super().__init__(model_request_parameters)
         self.response = response
         self.state = response.state
+        self.canonical_system = response.canonical_system
         self._replay_events = replay_events
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:

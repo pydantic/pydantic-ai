@@ -12602,6 +12602,39 @@ async def test_canonical_system_stream_round_trip_without_stamp():
     assert [canonical_system for _, canonical_system in _response_stamps(loaded)] == [None, None]
 
 
+async def test_canonical_system_stream_not_inherited_by_next_response():
+    """A response without a stamp doesn't stream the previous response's, with no tool call in between."""
+
+    def script(messages: list[ModelMessage]) -> list[ModelResponsePart]:
+        # The retry comes from a provider that doesn't stamp, under the same name.
+        model.stamp = None if len(messages) > 1 else 'stamp-system'
+        return [ThinkingPart(content='Thinking...', signature='sig', provider_name=PROVIDER_NAME), TextPart('Draft')]
+
+    model = StampedModel(script, canonical_system=None)
+    agent = Agent(model)
+
+    @agent.output_validator
+    def retry_once(ctx: RunContext, output: str) -> str:
+        if ctx.retry == 0:
+            raise ModelRetry('Try again.')
+        return output
+
+    adapter = VercelAIAdapter(
+        agent, SubmitMessage(id='chat-1', messages=[UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')])])
+    )
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in encoded
+    ]
+
+    assert [
+        chunk['providerMetadata']['pydantic_ai'].get('canonical_system')
+        for chunk in chunks
+        if chunk['type'] == 'reasoning-end'
+    ] == ['stamp-system', None]
+
+
 @pytest.mark.parametrize(
     'data',
     [

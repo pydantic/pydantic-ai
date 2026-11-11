@@ -7853,3 +7853,29 @@ async def test_part_events_carry_canonical_system():
             ('part_end', 3, None),
         ]
     )
+
+
+async def test_completed_streamed_response_replays_canonical_system():
+    """A response replayed as a stream, as durable execution and `BatchModel` do, keeps its `canonical_system`."""
+    response = ModelResponse(
+        parts=[TextPart(content='Ours.', provider_name='google'), TextPart(content='Theirs.', provider_name='other')],
+        provider_name='google',
+        canonical_system='google-cloud',
+    )
+    stream = CompletedStreamedResponse(
+        response, model_request_parameters=models.ModelRequestParameters(), replay_events=True
+    )
+    events = [
+        (event.event_kind, event.index, event.canonical_system)
+        async for event in stream
+        if isinstance(event, PartStartEvent | PartEndEvent)
+    ]
+
+    assert events == snapshot(
+        [
+            ('part_start', 0, 'google-cloud'),
+            ('part_end', 0, 'google-cloud'),
+            ('part_start', 1, None),
+            ('part_end', 1, None),
+        ]
+    )
