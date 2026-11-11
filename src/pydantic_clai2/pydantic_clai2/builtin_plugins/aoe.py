@@ -498,6 +498,7 @@ class AoePlugin(Plugin[AoeSettings]):
 
         The AoE session is what holds the conversation, so it is resumed even when the pane now runs in
         another directory than it was saved in, as after AoE renamed or moved its worktree.
+        Its history shows through the renderers loaded so far, not those of plugins registered after this one.
         """
         conversation = self.host.conversation
         if conversation_id is None or conversation.messages or conversation.title is not None:

@@ -317,10 +317,11 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
 def _const_to_typed_enum(schema: JsonSchema) -> None:
     """Rewrite a scalar `const` as a typed one-value `enum`, which Anthropic's `transform_schema()` keeps.
 
-    `transform_schema()` moves a `const` into the description, which would leave the value unconstrained, while
-    it keeps an `enum`. Pydantic emits a typed `const` for a single-value `Literal`, such as a discriminator field.
-    A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s, which
-    get the type of their value, as `transform_schema()` rejects a node without a `type`.
+    Before SDK 2.7.0, `transform_schema()` moves a `const` into the description, leaving the value unconstrained,
+    while it keeps an `enum`. Pydantic emits a typed `const` for a single-value `Literal`, such as a discriminator
+    field. A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s,
+    which get the type of their value, as older SDKs reject a node without a `type`. SDK 2.7.0 and later keep
+    the `enum` and drop its redundant `type`; retain this conversion for supported older SDKs.
     """
     const = schema.get('const')
     # `bool` before `int`, which it subclasses.

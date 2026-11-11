@@ -808,7 +808,7 @@ class TestSpeculationEdgeCases:
         launches = [e for e in seen if isinstance(e, SpeculativeCallLaunchedEvent)]
         assert [e.wrapped_tool_name for e in launches] == ['search']
         updates = [e for e in seen if isinstance(e, SpeculativeCodeUpdateEvent)]
-        assert updates[-1].closed_statements == 1
+        assert updates[-1].closed_statement_count == 1
         assert run_capability.speculation_stats.evicted == 1
 
     async def test_watcher_handles_dict_args_odd_indexes_and_caps_launches(self):
@@ -1250,11 +1250,11 @@ class TestSpeculationEvents:
         claims = [e for e in events if isinstance(e, SpeculativeCallClaimedEvent)]
         assert len(updates) > 1
         assert updates[-1].code.startswith('a = await search')
-        closed_counts = [e.closed_statements for e in updates]
+        closed_counts = [e.closed_statement_count for e in updates]
         assert closed_counts == sorted(closed_counts)
         assert [e.kind for e in launches] == ['code_mode.speculative_call_launched']
         launch = launches[0]
-        assert launch.sandbox_function == 'search'
+        assert launch.sandbox_function_name == 'search'
         assert launch.wrapped_tool_name == 'search'
         assert launch.arguments == {'query': 'alpha'}
         assert (launch.line_start, launch.line_end) == (1, 1)

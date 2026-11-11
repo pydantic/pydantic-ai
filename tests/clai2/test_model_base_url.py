@@ -255,6 +255,13 @@ async def test_a_pooled_account_falls_back_to_its_own_base_url(tmp_path: Path, e
     pooled = await resolver(store).resolve('openai@*:gpt-5')
     assert isinstance(pooled, FallbackModel)
     assert [host(model) for model in pooled.models] == ['env.example', 'gateway.example']
+    # A session resolves each pooled member on its own, so a member finds its plain model's endpoint.
+    store.save_model_settings('openai:gpt-5', {'base_url': 'https://shared.example/v1'})
+    models = resolver(store)
+    assert [host(await models.resolve(name)) for name in await models.expand('openai@*:gpt-5')] == [
+        'shared.example',
+        'gateway.example',
+    ]
 
 
 def test_base_url_is_a_model_setting_that_no_request_carries(tmp_path: Path) -> None:

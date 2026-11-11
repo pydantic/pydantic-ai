@@ -17,9 +17,13 @@ cannot be flooded by one large write. A change whose text is longer than
 """
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
+
+from pydantic import AliasChoices, Field
+from typing_extensions import deprecated
 
 from pydantic_ai import CapabilityEvent
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 FILE_SYSTEM_EVENTS = 'file_system'
 
@@ -30,14 +34,14 @@ MAX_DIFF_SOURCE_CHARS = 4 * MAX_EVENT_DIFF_CHARS
 """Longest text on either side of a change that is still diffed; past it the `diff` is the headers alone."""
 
 FileOperation = Literal['write', 'edit', 'create_directory']
-"""The change a `FileChangeRequestEvent` announces."""
+"""The change a `FileChangeRequestedEvent` announces."""
 
 SearchKind = Literal['find', 'grep']
 """Whether a `FilesSearchedEvent` matched names (`find_files`, `list_files`) or contents (`search_files`, `grep`)."""
 
 
 @dataclass(kw_only=True)
-class FileReadEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_read'):
+class FileReadEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS):
     """A file was read successfully, including an image, PDF or other binary file.
 
     `content_hash` is the hash of the whole file's bytes, whatever window was
@@ -50,7 +54,7 @@ class FileReadEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_re
 
 
 @dataclass(kw_only=True)
-class DirectoryListedEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='directory_listed'):
+class DirectoryListedEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS):
     """A directory was listed successfully."""
 
     path: str
@@ -59,7 +63,7 @@ class DirectoryListedEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='
 
 
 @dataclass(kw_only=True)
-class FileWrittenEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_written'):
+class FileWrittenEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS):
     """A text file was written or edited successfully."""
 
     path: str
@@ -68,7 +72,7 @@ class FileWrittenEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file
 
 
 @dataclass(kw_only=True)
-class FileEditedEvent(FileWrittenEvent, name='file_edited'):
+class FileEditedEvent(FileWrittenEvent):
     """An existing text file was changed in place by `edit_file`.
 
     A `FileWrittenEvent` with the change itself: `diff` is the unified diff
@@ -81,7 +85,7 @@ class FileEditedEvent(FileWrittenEvent, name='file_edited'):
 
 
 @dataclass(kw_only=True)
-class DirectoryCreatedEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='directory_created'):
+class DirectoryCreatedEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS):
     """A directory was created, along with any missing parents."""
 
     path: str
@@ -89,7 +93,7 @@ class DirectoryCreatedEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name=
 
 
 @dataclass(kw_only=True)
-class FilesSearchedEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='files_searched'):
+class FilesSearchedEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS):
     """A search under `path` finished.
 
     `match_count` is the number of matches the model received; `truncated`
@@ -99,13 +103,19 @@ class FilesSearchedEvent(CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='fi
     path: str
     root_dir: str
     pattern: str
-    search: SearchKind
+    search_kind: Annotated[SearchKind, Field(validation_alias=AliasChoices('search_kind', 'search'))]
     match_count: int
     truncated: bool
 
+    @property
+    @deprecated('`search` is deprecated, use `search_kind` instead.', category=HarnessDeprecationWarning)
+    def search(self) -> SearchKind:
+        """Deprecated alias for `search_kind`."""
+        return self.search_kind
+
 
 @dataclass(kw_only=True)
-class FileChangeRequestEvent(
+class FileChangeRequestedEvent(
     CapabilityEvent, namespace=FILE_SYSTEM_EVENTS, name='file_change_request', dispatch='immediate'
 ):
     """A file or directory is about to change; listeners may cancel it first.
