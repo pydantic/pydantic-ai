@@ -354,10 +354,10 @@ agent = Agent('test', capabilities=[DockerSandbox(desktop=True), ComputerUse(req
 ```
 
 Fields: `requires_approval=False` (`True` defers every call that does more than look, zoom or wait),
-`settle_seconds=0.5` (pause after acting before a zoom or the closing screenshot), `keep_screenshots=None` (send at
-least the newest N images, dropping older ones 25 at a time; history keeps all), `native=True` (adds a
-`ComputerTool` so Claude and GPT get their own computer tool, run by this one; `False` sends this tool to every model,
-for example so GPT can zoom).
+`settle_seconds=0.5` (pause after acting before a zoom or the closing screenshot), `native=True` (adds a `ComputerTool`
+so Claude and GPT get their own computer tool, run by this one; `False` sends this tool to every model, for example so
+GPT can zoom). Every request carries every earlier screenshot; nothing drops them, so long runs reach provider image
+limits (100 images on 200k-context Claude, 20 MB on Gemini).
 
 Reading a run: calls and results are `ComputerCallPart` (`actions`, `safety_checks`) and `ComputerReturnPart`
 (`result`, a `ComputerResult`; `screenshot`) from `pydantic_ai.computer_use`; match them with `isinstance`, not the

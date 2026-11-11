@@ -6,7 +6,6 @@ import struct
 import threading
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
-from itertools import cycle
 from typing import Any, cast
 
 import anyio
@@ -27,7 +26,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserError,
 )
-from pydantic_ai.capabilities import AbstractCapability, ModelFallback, PrefixTools, ProcessHistory, SelectModel
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback, PrefixTools, SelectModel
 from pydantic_ai.computer_use import (
     _SAFETY_CHECKS,  # pyright: ignore[reportPrivateUsage]
     COMPUTER_KIND,
@@ -45,7 +44,7 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import BinaryContent, BinaryImage
+from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import AbstractModel, Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -54,13 +53,12 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import AbstractNativeTool, ComputerTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     WorkspaceError,
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.compaction import ClampOversizedMessages
 from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerAction, ComputerUse
 from pydantic_ai_harness.computer_use._capability import (
     _CALL_SPACE,  # pyright: ignore[reportPrivateUsage]
@@ -69,7 +67,6 @@ from pydantic_ai_harness.computer_use._capability import (
     _recorded_space,  # pyright: ignore[reportPrivateUsage]
     _the_call,  # pyright: ignore[reportPrivateUsage]
 )
-from tests.function_model_prefix import HOOK_REWRITES_REQUEST
 from tests.harness._recording_durability import RecordingDurability
 
 from ...workspace_fakes import WorkspaceCapability
@@ -378,97 +375,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         )
         assert resumed.output == 'done'
         assert provider.actions == [Click(x=1, y=1)]
-
-    @pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
-    async def test_old_screenshots_are_dropped_in_batches_and_history_keeps_them_all(self) -> None:
-        requests: list[list[str]] = []
-
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
-            # What each tool return carries in this request: an image, or the note that replaced it.
-            requests.append(
-                [
-                    'image' if any(isinstance(item, BinaryContent) for item in part.content_items()) else 'note'
-                    for part in returns
-                ]
-            )
-            if not returns:
-                return ModelResponse(parts=[ToolCallPart('photo', {})])
-            if len(returns) < 29:
-                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
-            return ModelResponse(parts=[TextPart('done')])
-
-        agent = Agent(
-            FunctionModel(respond),
-            capabilities=[ScreenProvider().capability(), ComputerUse(keep_screenshots=2, settle_seconds=0)],
-        )
-
-        @agent.tool_plain
-        def photo() -> BinaryImage:
-            return SCREENSHOT
-
-        result = await agent.run('Take a photo, then look 28 times.')
-
-        # Up to 26 screenshots everything is sent, so each request extends the last one and stays cached.
-        assert requests[27] == ['image'] * 27
-        # At 27 the oldest 25 become notes at once; another tool's image is left alone.
-        assert requests[28] == ['image'] + ['note'] * 25 + ['image'] * 2
-        assert requests[29] == ['image'] + ['note'] * 25 + ['image'] * 3
-        computer_returns = [part for part in _returns(result.all_messages()) if part.tool_name == 'computer']
-        assert len(computer_returns) == 28
-        assert all(part.content_items()[1] == SCREENSHOT for part in computer_returns)
-
-    @pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
-    @pytest.mark.parametrize(
-        'after',
-        [
-            pytest.param(lambda: ClampOversizedMessages(max_part_chars=10**6), id='compaction'),
-            pytest.param(lambda: ProcessHistory[Any](_unchanged), id='history-processor'),
-        ],
-    )
-    async def test_capabilities_listed_after_it_neither_bring_screenshots_back_nor_drop_them_from_history(
-        self, after: Callable[[], AbstractCapability[Any]]
-    ) -> None:
-        model, sent = _images_sent(27)
-        agent = Agent(
-            model,
-            capabilities=[ScreenProvider().capability(), ComputerUse(keep_screenshots=2, settle_seconds=0), after()],
-        )
-        result = await agent.run('Look.')
-        assert sent[-1] == 2
-        assert all(part.content_items()[1] == SCREENSHOT for part in _returns(result.all_messages()))
-
-    @pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
-    @pytest.mark.parametrize(
-        'sizes,calls,last_requests',
-        [
-            # The oldest 25 go at once.
-            pytest.param([0], 101, [100, 76], id='100-screenshots'),
-            # Down to about a quarter of the cap at once, then the request grows again from there.
-            pytest.param([1_000_000], 17, [15, 4, 5], id='15-mb-of-screenshots'),
-            # The screenshot that crosses the line goes too, even when it is the first.
-            pytest.param([12_000_000, 4_000_000], 2, [1, 1], id='one-large-screenshot'),
-        ],
-    )
-    async def test_without_keep_screenshots_a_request_stays_within_provider_limits(
-        self, sizes: list[int], calls: int, last_requests: list[int]
-    ) -> None:
-        screens = cycle(FAKE_SCREENSHOT + b'\x00' * max(0, size - len(FAKE_SCREENSHOT)) for size in sizes)
-
-        class Screen(ScreenBackend):
-            async def screenshot(self) -> bytes:
-                return next(screens)
-
-        class Provider(ScreenProvider):
-            def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
-                return Screen(self, ref)
-
-        model, sent = _images_sent(calls)
-        agent = Agent(model, capabilities=[Provider().capability(), ComputerUse(settle_seconds=0)])
-        await agent.run('Look.', usage_limits=UsageLimits(request_limit=None))
-
-        # Every screenshot is sent until one more would pass the limit.
-        assert sent[-len(last_requests) :] == last_requests
 
     @pytest.mark.parametrize('native', [True, False])
     async def test_the_tool_is_sequential_of_the_computer_kind_and_declares_the_latest_screenshot_size(
@@ -849,10 +755,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         )
         with pytest.raises(UserError, match=message):
             await agent.run('Go.')
-
-    def test_keep_screenshots_is_checked(self) -> None:
-        with pytest.raises(UserError, match='`keep_screenshots` must be at least 1'):
-            ComputerUse(keep_screenshots=0)
 
     @pytest.mark.parametrize('seconds', [-1, 31])
     def test_settle_seconds_is_checked(self, seconds: float) -> None:
@@ -1363,33 +1265,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert tool_return.screenshot == SCREENSHOT
         assert provider.actions == [Click(x=1, y=1)]
 
-    @pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
-    async def test_images_that_are_not_screenshots_count_toward_the_provider_limit(self) -> None:
-        sent: list[int] = []
-
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            returns = _returns(messages)
-            sent.append(sum(isinstance(item, BinaryContent) for part in returns for item in part.content_items()))
-            if not returns:
-                return ModelResponse(parts=[ToolCallPart('photo', {})])
-            if len(returns) <= 100:
-                return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
-            return ModelResponse(parts=[TextPart('done')])
-
-        agent = Agent(
-            FunctionModel(respond), capabilities=[ScreenProvider().capability(), ComputerUse(settle_seconds=0)]
-        )
-
-        @agent.tool_plain
-        def photo() -> BinaryImage:
-            return SCREENSHOT
-
-        await agent.run('Take a photo, then look 100 times.', usage_limits=UsageLimits(request_limit=None))
-
-        # The photo and 99 screenshots are 100 images. With the 100th screenshot the oldest 25 go, leaving 75 and the
-        # photo.
-        assert sent[-2:] == [100, 76]
-
 
 class _AppLabel(AbstractCapability[Any]):
     async def after_model_request(
@@ -1433,24 +1308,6 @@ class _Turns:
                 tg.start_soon(first)
                 await self.holding.wait()
                 tg.start_soon(second)
-
-
-def _images_sent(calls: int) -> tuple[FunctionModel, list[int]]:
-    """A model that looks `calls` times, and how many images each of its requests carried."""
-    sent: list[int] = []
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        returns = _returns(messages)
-        sent.append(sum(isinstance(item, BinaryContent) for part in returns for item in part.content_items()))
-        if len(returns) < calls:
-            return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
-        return ModelResponse(parts=[TextPart('done')])
-
-    return FunctionModel(respond), sent
-
-
-def _unchanged(messages: list[ModelMessage]) -> list[ModelMessage]:
-    return messages
 
 
 def test_the_call_helpers_fall_back_when_the_messages_lack_what_they_look_for() -> None:
