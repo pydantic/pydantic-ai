@@ -3441,6 +3441,7 @@ def group_function_calls_by_segment(
 
 
 def flush_function_call_segment(grouped_parts: list[ModelResponsePart], segment: list[ModelResponsePart]) -> None:
+    """Append a segment's other parts, then its function calls, to `grouped_parts`, and empty the segment."""
     grouped_parts.extend(part for part in segment if not isinstance(part, ToolCallPart))
     grouped_parts.extend(part for part in segment if isinstance(part, ToolCallPart))
     segment.clear()
