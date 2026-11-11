@@ -86,8 +86,10 @@ machinery, unlike the run's workspace. `ToolOutputLimits` writes and reads spill
 durable units, activities on Temporal, so the workers that run them must reach the storage. An engine
 that registers its units before the run starts, such as Temporal, refuses `capabilities=` on a run
 inside a workflow, so set `CapabilityStorage` directly on the agent there. A Temporal activity sees
-the capabilities the agent was built with: a `CapabilityStorage` returned from a capability function
-is not among them, and the files go to the run's workspace. See the workspace guide's
+the capabilities the agent was built with: a `CapabilityStorage` returned from a
+[dynamic capability](https://pydantic.dev/docs/ai/capabilities/custom/#dynamically-building-a-capability) is not among them, so spills go
+to the run's workspace. When that workspace is missing or read-only, the spill warns and falls back
+to its `then` action. See the workspace guide's
 [Durable execution](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) section.
 
 ## Telemetry
