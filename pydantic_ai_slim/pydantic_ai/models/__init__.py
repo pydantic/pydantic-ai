@@ -437,6 +437,9 @@ class ModelRequestParameters:
     Used to answer "may this tool be revealed yet?": a tool whose `capability_id` is in this set is
     gated on that capability being loaded, while one whose owner is absent here is gated only on its
     own discovery.
+
+    The same capabilities as [`deferred_capabilities`][pydantic_ai.models.ModelRequestParameters.deferred_capabilities]
+    lists when the run has its catalog, which tool visibility doesn't depend on. Change both together.
     """
 
     deferred_capabilities: list[DeferredCapabilityEntry] = field(
@@ -450,6 +453,9 @@ class ModelRequestParameters:
     on what can be loaded, so the cached prompt doesn't either. A model that builds its own request from these
     parameters, as a [decision model](../../models/decision.md#on-demand-capabilities) does, reads which
     capabilities it can load from here.
+
+    Its ids are those in [`deferred_capability_ids`][pydantic_ai.models.ModelRequestParameters.deferred_capability_ids],
+    which tool visibility reads. Change both together.
     """
 
     output_mode: OutputMode = 'text'
