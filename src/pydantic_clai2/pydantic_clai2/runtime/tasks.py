@@ -40,8 +40,8 @@ from pydantic_ai.workspaces.workspace import workspace_layers
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.subagents import (
-    DelegationEndEvent,
-    DelegationStartEvent,
+    DelegationFinishedEvent,
+    DelegationStartedEvent,
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
@@ -132,7 +132,7 @@ def task_tree(records: Sequence[DelegationTask]) -> list[tuple[int, DelegationTa
 
 def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_model: bool = True) -> Text | None:
     """Compact lifecycle rows, with child output reserved for the inspector."""
-    if isinstance(event, DelegationStartEvent):
+    if isinstance(event, DelegationStartedEvent):
         name = _display_name(event.agent_name)
         prompt = ' '.join(terminal_text(event.task).split())
         # Styled like a tool-call header: muted marker, accent name, then dim details on one line.
@@ -143,7 +143,7 @@ def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_mod
         return row
     if isinstance(event, TaskQuestionEvent):
         return question_row(event)
-    if isinstance(event, DelegationEndEvent) and event.outcome != 'ok':
+    if isinstance(event, DelegationFinishedEvent) and event.outcome != 'ok':
         return Text(
             f'  └ {event.outcome} · {event.duration_ms / 1000:.1f}s · /tasks to inspect',
             style=theme.color(theme.WARNING),
@@ -250,7 +250,7 @@ class TaskRouter:
         # A child runs with its parent's plugins; a resumed task, with those of the session that resumed it.
         if record.parent_id is not None and (parent := self.started.get(record.parent_id)) is not None:
             self.started.setdefault(record.id, parent)
-        elif view is not None and isinstance(event, DelegationStartEvent):
+        elif view is not None and isinstance(event, DelegationStartedEvent):
             self.started[record.id] = view
         elif view is not None:
             self.started.setdefault(record.id, view)
@@ -266,7 +266,7 @@ class TaskRouter:
             self.partial[record.id] = event.part.content
         elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
             self.partial[record.id] = self.partial.get(record.id, '') + event.delta.content_delta
-        elif isinstance(event, (PartEndEvent, DelegationEndEvent)) or record.status == 'finished':
+        elif isinstance(event, (PartEndEvent, DelegationFinishedEvent)) or record.status == 'finished':
             self.partial.pop(record.id, None)
             self.partial_truncated.discard(record.id)
         if len(self.partial.get(record.id, '')) > 65536:
@@ -312,7 +312,7 @@ class Tasks:
         self.send_input = send_input
         self.prompt_task = prompt_task
         self.show_task_models = show_task_models
-        self._pending_rows: dict[str, DelegationStartEvent] = {}
+        self._pending_rows: dict[str, DelegationStartedEvent] = {}
         """Start rows held until their child names its model, by task ID."""
         self._row_models: dict[str, str | None] = {}
         """The model that released each running task's start row, so a resumed task never shows an earlier run's."""
@@ -381,23 +381,23 @@ class Tasks:
         if isinstance(event, TaskQuestionEvent) and event.task_id != record.id:
             # The copy in a parent task's stream: it shows once, as the asking task's own event.
             return
-        if isinstance(event, DelegationStartEvent) and self.show_task_models():
+        if isinstance(event, DelegationStartedEvent) and self.show_task_models():
             # Held until the child's own stream names its model; a child that ends or asks first gets its row without one.
             self._pending_rows[record.id] = event
             return
         held = self._pending_rows.get(record.id)
         if held is not None and (
-            update.model_name is not None or isinstance(event, (DelegationEndEvent, TaskQuestionEvent))
+            update.model_name is not None or isinstance(event, (DelegationFinishedEvent, TaskQuestionEvent))
         ):
             del self._pending_rows[record.id]
             self._row_models[record.id] = update.model_name
             await self._show_row(held)
-        if isinstance(event, (DelegationStartEvent, DelegationEndEvent, TaskQuestionEvent)):
+        if isinstance(event, (DelegationStartedEvent, DelegationFinishedEvent, TaskQuestionEvent)):
             await self._show_row(event)
-        if isinstance(event, DelegationEndEvent):
+        if isinstance(event, DelegationFinishedEvent):
             self._row_models.pop(record.id, None)
 
-    async def _show_row(self, event: DelegationStartEvent | DelegationEndEvent | TaskQuestionEvent) -> None:
+    async def _show_row(self, event: DelegationStartedEvent | DelegationFinishedEvent | TaskQuestionEvent) -> None:
         if self.sink is not None:
             await self.sink(event)
         elif (row := self.row(event)) is not None:
@@ -406,7 +406,7 @@ class Tasks:
     def row(self, event: AgentStreamEvent) -> Text | None:
         """Render a lifecycle row with the child's observed model, when available."""
         model_name = (
-            self._row_models.get(event.task_id) if isinstance(event, DelegationStartEvent) and event.task_id else None
+            self._row_models.get(event.task_id) if isinstance(event, DelegationStartedEvent) and event.task_id else None
         )
         return task_row(event, model_name=model_name, show_model=self.show_task_models())
 

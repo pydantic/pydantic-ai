@@ -485,7 +485,7 @@ from the project file, reads instruction files automatically: one per directory,
 it. Under your home the walk-up stops at `~`;
 elsewhere it stops at the repository root (see
 [Repository instructions](#repository-instructions)). A subdirectory's file is added the first time
-the agent reads or lists something in it. `/plugins disable repo_context` turns it off, for this and
+the agent reads, lists, writes or edits something in it. `/plugins disable repo_context` turns it off, for this and
 every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](../PLUGINS.md#the-built-in-plugins) for its settings.
 
@@ -1553,7 +1553,7 @@ uses. The default appearance keeps CLAI's existing addition and deletion
 backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
 Code uses the terminal foreground and ANSI syntax colours on the terminal
 background. Successful file writes also show the proposed diff from their matching
-`FileChangeRequestEvent`: new files show additions, overwrites show before/after
+`FileChangeRequestedEvent`: new files show additions, overwrites show before/after
 changes. Without a matching request event, only the written path is shown. Failed
 or cancelled writes do not display a success diff. Large diffs retain the
 filesystem's truncation notice. Coder shell events show the command, attached

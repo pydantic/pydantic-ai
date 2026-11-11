@@ -216,8 +216,8 @@ An *unexpected crash* -- any other exception the child raises, such as a provide
 
 | Event | Dispatch | When | Payload |
 |---|---|---|---|
-| `DelegationStartEvent` | stream | a delegation passed every check and the child run is about to start | `agent_name`, `task`, `truncated`, `model` (the menu key, or `None`), `inherits_tools` |
-| `DelegationEndEvent` | stream | the delegation settled into what the parent receives | `agent_name`, `outcome`, `output`, `truncated`, `usage`, `duration_ms` |
+| `DelegationStartedEvent` | stream | a delegation passed every check and the child run is about to start | `agent_name`, `task`, `truncated`, `model` (the menu key, or `None`), `inherits_tools` |
+| `DelegationFinishedEvent` | stream | the delegation settled into what the parent receives | `agent_name`, `outcome`, `output`, `truncated`, `usage`, `duration_ms` |
 
 Both are notifications. One delegation is one `delegate_task` call, so a start and its end share the `tool_call_id` core stamps on every event; that is how a subscriber pairs them when the model delegates in parallel. `duration_ms` is in milliseconds. `duration_seconds` is its deprecated name: it still reads, in seconds and with a warning, and a payload saved under it still loads.
 
@@ -230,12 +230,12 @@ Their `task` and `output` are cut at `MAX_EVENT_TEXT_CHARS` (4096) with a `trunc
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai_harness.subagents import DelegationEndEvent, SubAgent, SubAgents
+from pydantic_ai_harness.subagents import DelegationFinishedEvent, SubAgent, SubAgents
 
 
 class ReportDelegations(AbstractCapability):
-    @on_event(DelegationEndEvent)
-    async def on_delegation_end(self, ctx, event: DelegationEndEvent) -> None:
+    @on_event(DelegationFinishedEvent)
+    async def on_delegation_end(self, ctx, event: DelegationFinishedEvent) -> None:
         print(f'{event.agent_name}: {event.outcome} in {event.duration_ms / 1000:.1f}s')
 
 
@@ -320,9 +320,9 @@ With task control, every step of a task is a typed capability event in the `sub_
 | `TaskRetryEvent` | a worker is running a failed remote task again | |
 | `TaskCompletedEvent`, `TaskFailedEvent`, `TaskCancelledEvent` | the task settled | rewrite `output` of a completed task |
 
-Unlike `DelegationStartEvent` and `DelegationEndEvent`, these events are not cut at `MAX_EVENT_TEXT_CHARS`: each is the message itself, which a transport carries to the other side, so a prompt, question, answer, or output arrives whole. Nor is `AgentCreatedEvent`. A listener that persists or forwards them bounds them itself.
+Unlike `DelegationStartedEvent` and `DelegationFinishedEvent`, these events are not cut at `MAX_EVENT_TEXT_CHARS`: each is the message itself, which a transport carries to the other side, so a prompt, question, answer, or output arrives whole. Nor is `AgentCreatedEvent`. A listener that persists or forwards them bounds them itself.
 
-Events listeners can change are dispatched immediately, so their decisions take effect. A vetoed message is not sent, and the model is told why. With a bound `DelegationTasks`, `DelegationStartEvent` and `DelegationEndEvent` go to its observer only, as in [Managed delegation sessions](#managed-delegation-sessions); with the run's own owner, they go to the run as before.
+Events listeners can change are dispatched immediately, so their decisions take effect. A vetoed message is not sent, and the model is told why. With a bound `DelegationTasks`, `DelegationStartedEvent` and `DelegationFinishedEvent` go to its observer only, as in [Managed delegation sessions](#managed-delegation-sessions); with the run's own owner, they go to the run as before.
 
 ```python
 from pydantic_ai.capabilities import AbstractCapability, on_event
@@ -378,7 +378,7 @@ orchestrator = Agent(
 - **The worker runs the agent** with its own model, tools, and `deps`, which never cross the transport. It takes the agents it serves by name, without per-delegate run controls: those belong to the delegating side's `SubAgents`. It applies the delegating run's usage limits to the task's own usage, and continues the delegating run's trace. The usage it reports with the settled event is added to the delegating run's usage, unless `forward_usage=False`.
 - **A task nobody picks up fails.** The worker sends `TaskStartedEvent` when it starts a task. A remote task that no worker picks up within `TaskControl.accept_timeout` seconds (default `30`) fails, and a remote task that stops without its worker's report, for example because its delegating run ended, is force-cancelled on the worker.
 - `SubAgentWorker(retries=...)` runs a failed task again from its prompt, with a `TaskRetryEvent`. The worker keeps up to `max_conversations` task conversations (default `1000`) so they can be resumed. The conversation stays in that worker, so serve each remote agent name from one worker: a follow-up that reaches another worker fails, since it has no conversation to resume.
-- A remote agent runs on its worker's model, so `delegate_task` refuses a `model` for it, and its delegations emit no `DelegationStartEvent` or `DelegationEndEvent`.
+- A remote agent runs on its worker's model, so `delegate_task` refuses a `model` for it, and its delegations emit no `DelegationStartedEvent` or `DelegationFinishedEvent`.
 
 ### Agents the model creates
 
@@ -701,9 +701,9 @@ TaskControl(
 
 ::: pydantic_ai_harness.subagents.AgentOverride
 
-::: pydantic_ai_harness.subagents.DelegationStartEvent
+::: pydantic_ai_harness.subagents.DelegationStartedEvent
 
-::: pydantic_ai_harness.subagents.DelegationEndEvent
+::: pydantic_ai_harness.subagents.DelegationFinishedEvent
 
 ::: pydantic_ai_harness.subagents.TaskControl
 

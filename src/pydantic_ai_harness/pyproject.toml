@@ -43,7 +43,7 @@ classifiers = [
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
-dependencies = ["genai-prices>=0.0.71", "httpx>=0.28.1", "pydantic-ai-slim=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+dependencies = ["genai-prices>=0.0.71", "httpx2>=2.7", "pydantic-ai-slim=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 anthropic = ["pydantic-ai-slim[anthropic]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]

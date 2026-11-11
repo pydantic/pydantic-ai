@@ -22,7 +22,7 @@ from pydantic_ai_harness.planning import (
     PlanUpdatedEvent,
 )
 from pydantic_ai_harness.shell import CommandFinishedEvent
-from pydantic_ai_harness.subagents import DelegationEndEvent
+from pydantic_ai_harness.subagents import DelegationFinishedEvent
 
 _EVENTS = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
 _ITEM = PlanItem(id='step-1', content='ship')
@@ -92,7 +92,7 @@ def test_renamed_field(event: CapabilityEvent, old: str, new: str) -> None:
 
 
 def test_delegation_duration_seconds() -> None:
-    event = DelegationEndEvent(
+    event = DelegationFinishedEvent(
         agent_name='worker', outcome='ok', output='done', truncated=False, usage=None, duration_ms=1500
     )
     payload = _EVENTS.dump_python(event, mode='json')

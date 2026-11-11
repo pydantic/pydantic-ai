@@ -65,9 +65,9 @@ from pydantic_ai_harness.subagents._control import (
 )
 from pydantic_ai_harness.subagents._events import (
     AgentCreatedEvent,
-    DelegationEndEvent,
+    DelegationFinishedEvent,
     DelegationOutcome,
-    DelegationStartEvent,
+    DelegationStartedEvent,
     ParentMessage,
     TaskAnswerEvent,
     TaskAssignedEvent,
@@ -308,7 +308,7 @@ class _Ended:
 
 
 async def _send_to_owner(
-    owner: DelegationTasks, record: DelegationTask, event: DelegationStartEvent | DelegationEndEvent
+    owner: DelegationTasks, record: DelegationTask, event: DelegationStartedEvent | DelegationFinishedEvent
 ) -> None:
     """Send a managed delegation's start or end to the application's observer.
 
@@ -350,7 +350,7 @@ async def _emit_delegation(
     owner: DelegationTasks | None,
     record: DelegationTask | None,
     emits: bool,
-    event: DelegationStartEvent | DelegationEndEvent,
+    event: DelegationStartedEvent | DelegationFinishedEvent,
 ) -> None:
     """Send a delegation's start or end to its owner, or emit it from the delegating run."""
     if owner is not None and record is not None:
@@ -1284,7 +1284,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if emits:
             text, truncated = bounded_text(task)
             await emit(
-                DelegationStartEvent(
+                DelegationStartedEvent(
                     agent_name=agent_name, task=text, truncated=truncated, model=key, inherits_tools=inherit_tools
                 )
             )
@@ -1325,7 +1325,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if owner is not None:
                 with anyio.move_on_after(5, shield=True):
                     await emit(
-                        DelegationEndEvent(
+                        DelegationFinishedEvent(
                             agent_name=agent_name,
                             outcome=outcome,
                             output=str(exc),
@@ -1344,7 +1344,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if emits:
             text, truncated = bounded_text(ended.output)
             await emit(
-                DelegationEndEvent(
+                DelegationFinishedEvent(
                     agent_name=agent_name,
                     outcome=ended.outcome,
                     output=text,

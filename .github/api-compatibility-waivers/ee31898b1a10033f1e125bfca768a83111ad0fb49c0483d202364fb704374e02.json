@@ -1,5 +1,5 @@
 {
-  "against": "v2.66.0",
+  "against": "v2.67.0",
   "reason": "Renames `SpeculativeCallMissedEvent.sandbox_function` to `sandbox_function_name` (#11323); the old name still reads as a deprecated property and still loads as a key.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13068"
 }

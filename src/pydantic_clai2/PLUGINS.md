@@ -421,8 +421,9 @@ file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
 `~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
 CLAI2 starts empty, so the plugin resumes the conversation recorded there; `--resume`,
 `--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
-(`SessionStart.conversation_chosen`). A conversation saved in another
-directory, such as after AoE moved a worktree, is not resumed; use `/resume`. AoE's
+(`SessionStart.conversation_chosen`). It is resumed also when it was saved in another
+directory, such as after AoE renamed or moved a worktree, and continues in the pane's
+directory. When it cannot be resumed, CLAI2 says why and starts a new conversation. AoE's
 own resume, `--fork-from`, and smart rename apply to its built-in agents only.
 
 **Title.** Off by default, so the AoE session keeps the title you gave it. To title it after
@@ -1349,7 +1350,7 @@ workspace and its default filenames: one instruction file per directory,
 |---|---|---|
 | `walk_up` | `true` | also load instruction files from the directories above the workspace: up to the nearest `repo_context.walk_up_roots` entry containing it, inclusive (home by default), or up to the repository root (the nearest `.git`) when no entry contains it |
 | `inventory_tool` | `false` | give the agent `inventory_agent_context`, which maps the repo's `.claude`, `.agents`, `.codex`, and `.grok` assets |
-| `nested_traversal` | `true` | when the agent reads a file in, or lists, a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
+| `nested_traversal` | `true` | when the agent reads, lists, writes or edits in a directory, tell it about the instruction files of that directory and of every directory between it and the workspace |
 | `nested_inject` | `"contents"` | what nested traversal adds: `"contents"` (the file itself) or `"pointer"` (one line naming the file) |
 
 Under home, the walk-up reads every directory up to and including `~`, not just
@@ -2716,8 +2717,8 @@ the terminal; the shell has already printed them.
 
 `on_task_progress` receives a `TaskProgress` for everything a task the agent delegated does, and its
 descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the event
-from the task's own run (text, thinking, tool calls and results), its `DelegationStartEvent` or
-`DelegationEndEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
+from the task's own run (text, thinking, tool calls and results), its `DelegationStartedEvent` or
+`DelegationFinishedEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
 its parent, or `None` when only the task changed, such as when it started, finished, or began
 waiting for an answer. Its own run's events never reach the main run's hooks: they are the feed
 `/tasks` shows. Its `sub_agents` task events also go into the stream of the run that delegated it,
@@ -2837,7 +2838,7 @@ class WriteLog(Plugin):
 A capability class of your own can do the same with core's `@on_event(EventClass)`
 method decorator. Some events let you say no. If the event has a `cancel()`
 method, calling it stops the action before it happens (for example
-`FileChangeRequestEvent`).
+`FileChangeRequestedEvent`).
 
 ### Add a `/command`: `get_commands()`
 
@@ -3514,7 +3515,10 @@ when either changes. `await resume(conversation_id)` switches to a saved convers
 `/resume ID` does, returning the notice to show: it only restores history, never runs the
 model or replays a tool. Call it between turns, for example from `on_session_start`; it raises
 `RuntimeError` during a run, `LookupError` for an unknown ID, and `ValueError` for a
-conversation saved in another directory or when persistence is not configured. A conversation
+conversation saved in another directory or when persistence is not configured.
+`resume(conversation_id, allow_other_workspace=True)` continues a conversation saved in another
+directory in this one instead, as confirming it in the `/resume` browser does: tools then run
+in this directory, and the saved conversation keeps its original one. A conversation
 still running in another process is not taken over: the newest unarchived copy CLAI made to
 continue it that no other process runs is resumed, else a new copy, and the notice says which.
 When the conversation or its title changed, every loaded plugin, the caller included, then
@@ -4347,8 +4351,8 @@ for an in-memory host. The built-in `persistence` plugin binds
 for the same store and run. Removing the plugin removes step capture on subsequent
 turns; conversation-head saving is owned by `Session` and continues independently.
 
-Harness exports `SnapshotSaved` from `pydantic_ai_harness.step_persistence`.
-Subscribe with a `Hooks` capability's `hooks.on.event(SnapshotSaved)` to observe committed checkpoints.
+Harness exports `SnapshotSavedEvent` from `pydantic_ai_harness.step_persistence`.
+Subscribe with a `Hooks` capability's `hooks.on.event(SnapshotSavedEvent)` to observe committed checkpoints.
 It carries `persistence_run_id`, `conversation_id`, `step_index`, and `state`.
 This is a notification, not the durable source of truth or permission to replay a
 tool. A durable replay may notify again. An observer failure cannot roll back the
