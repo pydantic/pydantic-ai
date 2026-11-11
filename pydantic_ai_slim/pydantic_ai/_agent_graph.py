@@ -78,6 +78,7 @@ from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import (
+    _computer_labels,
     _content_filter,
     _display,
     _enqueue,
@@ -91,7 +92,6 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
-from ._computer_labels import add_grid_to_tool_description, record_grid_and_screenshot_limit
 from ._context_size import context_input_tokens
 from ._conversation_marks import stored_boundary
 from ._deferred_capabilities import (
@@ -2147,7 +2147,7 @@ async def _after_streamed_model_request(
     response: _messages.ModelResponse,
 ) -> _messages.ModelResponse:
     """Run `after_model_request` on a streamed response, which can no longer be re-attempted."""
-    record_grid_and_screenshot_limit(request_context.model, request_context.model_request_parameters, response)
+    _computer_labels.label_calls(request_context.model, request_context.model_request_parameters, response)
     try:
         with _after_model_request_load_window(run_context, response):
             return await root_capability.after_model_request(
@@ -2851,7 +2851,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             response = failed.log.attach(recovered)
         state.response = response
         capture_model_response_span_context(request_context, response)
-        record_grid_and_screenshot_limit(request_context.model, request_context.model_request_parameters, response)
+        _computer_labels.label_calls(request_context.model, request_context.model_request_parameters, response)
         try:
             with _after_model_request_load_window(run_context, response):
                 return await ctx.deps.root_capability.after_model_request(
@@ -3302,7 +3302,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state, model, model_settings, request_context.model_request_parameters
         )
         # Per attempt too, since whether positions are on a grid depends on the model serving it.
-        model_request_parameters = add_grid_to_tool_description(model, model_request_parameters)
+        model_request_parameters = _computer_labels.add_grid_hint(model, model_request_parameters)
         request_context.model_request_parameters = model_request_parameters
 
         run_context.model_settings = model_settings
