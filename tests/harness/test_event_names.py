@@ -36,9 +36,20 @@ from pydantic_ai_harness.planning import (
         (step_persistence, 'SnapshotSaved', 'SnapshotSavedEvent', 'step_persistence.snapshot_saved'),
         (subagents, 'DelegationStartEvent', 'DelegationStartedEvent', 'sub_agents.delegation_start'),
         (subagents, 'DelegationEndEvent', 'DelegationFinishedEvent', 'sub_agents.delegation_end'),
+        (subagents, 'SubAgentMessage', 'SubAgentMessageEvent', ''),
+        (subagents, 'ParentMessage', 'ParentMessageEvent', ''),
+        (subagents, 'ChildMessage', 'ChildMessageEvent', ''),
+        (subagents, 'TaskFollowUpEvent', 'TaskResumedEvent', 'sub_agents.task_follow_up'),
+        (subagents, 'TaskMessageEvent', 'TaskSteeredEvent', 'sub_agents.task_message'),
+        (subagents, 'TaskAnswerEvent', 'TaskAnsweredEvent', 'sub_agents.task_answer'),
+        (subagents, 'TaskCancelRequestEvent', 'TaskCancelRequestedEvent', 'sub_agents.task_cancel_request'),
+        (subagents, 'TaskForceCancelEvent', 'TaskForceCancelRequestedEvent', 'sub_agents.task_force_cancel'),
+        (subagents, 'TaskQuestionEvent', 'TaskQuestionAskedEvent', 'sub_agents.task_question'),
+        (subagents, 'TaskRetryEvent', 'TaskRetriedEvent', 'sub_agents.task_retry'),
     ],
 )
 def test_renamed_event_keeps_its_old_name_and_kind(module: ModuleType, old_name: str, new_name: str, kind: str) -> None:
+    """An abstract event has no kind, which is the empty string."""
     event_type = getattr(module, new_name)
     message = (
         f'`{module.__name__}.{old_name}` has been renamed to `{module.__name__}.{new_name}`. '
@@ -47,6 +58,8 @@ def test_renamed_event_keeps_its_old_name_and_kind(module: ModuleType, old_name:
     with pytest.warns(HarnessDeprecationWarning, match=re.escape(message)):
         assert getattr(module, old_name) is event_type
     assert event_type.kind == kind
+    assert new_name in module.__all__
+    assert old_name not in module.__all__
 
 
 def test_derived_kinds_are_unchanged() -> None:
@@ -61,19 +74,12 @@ def test_derived_kinds_are_unchanged() -> None:
         shell.CommandOutputEvent: 'shell.command_output',
         shell.CommandStartedEvent: 'shell.command_started',
         subagents.AgentCreatedEvent: 'sub_agents.agent_created',
-        subagents.TaskAnsweredEvent: 'sub_agents.task_answer',
         subagents.TaskAssignedEvent: 'sub_agents.task_assigned',
         subagents.TaskBackgroundedEvent: 'sub_agents.task_backgrounded',
-        subagents.TaskCancelRequestedEvent: 'sub_agents.task_cancel_request',
         subagents.TaskCancelledEvent: 'sub_agents.task_cancelled',
         subagents.TaskCompletedEvent: 'sub_agents.task_completed',
         subagents.TaskFailedEvent: 'sub_agents.task_failed',
-        subagents.TaskResumedEvent: 'sub_agents.task_follow_up',
-        subagents.TaskForceCancelRequestedEvent: 'sub_agents.task_force_cancel',
-        subagents.TaskSteeredEvent: 'sub_agents.task_message',
         subagents.TaskProgressEvent: 'sub_agents.task_progress',
-        subagents.TaskQuestionAskedEvent: 'sub_agents.task_question',
-        subagents.TaskRetriedEvent: 'sub_agents.task_retry',
         subagents.TaskStartedEvent: 'sub_agents.task_started',
     }
     assert {event_type: event_type.kind for event_type in kinds} == kinds
@@ -123,6 +129,36 @@ _PREVIOUS = PlanItem(id='step-1', content='draft')
             ),
             'search',
             'search_kind',
+        ),
+        (
+            subagents.AgentCreatedEvent(agent_name='poet', description='d', instructions='i', model=None),
+            'name',
+            'agent_name',
+        ),
+        (
+            subagents.DelegationStartedEvent(
+                agent_name='worker',
+                task='t',
+                truncated=False,
+                model=None,
+                parent_task_id='parent',
+                inherits_tools=False,
+            ),
+            'parent_id',
+            'parent_task_id',
+        ),
+        (
+            subagents.DelegationFinishedEvent(
+                agent_name='worker',
+                outcome='ok',
+                output='done',
+                truncated=False,
+                usage=None,
+                parent_task_id='parent',
+                duration_ms=1500,
+            ),
+            'parent_id',
+            'parent_task_id',
         ),
         *(
             (event_type(item=_ITEM, previous_item=_PREVIOUS), 'previous_state', 'previous_item')
