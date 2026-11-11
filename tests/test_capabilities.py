@@ -4939,3 +4939,103 @@ async def test_a_result_hook_can_reject_an_answer_given_during_the_run(error: Ex
         raise CallDeferred(kind='question')
 
     assert expected in (await agent.run('go')).output
+
+
+def _call_outer_then_echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('outer', {}, tool_call_id='outer')])
+    return ModelResponse(
+        parts=[
+            TextPart(' | '.join(str(part.content) for part in messages[-1].parts if isinstance(part, ToolReturnPart)))
+        ]
+    )
+
+
+def _answer_by_tool_name(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    answers = {'ask': 'my password is hunter2', 'look_up': 'hunter2 found'}
+    return requests.build_results(calls={call.tool_call_id: answers[call.tool_name] for call in requests.calls})
+
+
+async def test_an_answer_given_to_a_call_made_with_handle_call_passes_the_tools_result_hooks() -> None:
+    """As in the graph, a question the tool raised itself passes `after_tool_execute` when `handle_call` resolves it inline."""
+
+    class Redact(AbstractCapability[None]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            return result.replace('hunter2', '[redacted]') if call.tool_name == 'ask' else result
+
+    agent = Agent(
+        FunctionModel(_call_outer_then_echo),
+        deps_type=type(None),
+        capabilities=[Redact(), HandleDeferredToolCalls(_answer_by_tool_name)],
+    )
+
+    @agent.tool
+    async def outer(ctx: RunContext[None]) -> str:
+        assert ctx.tool_manager is not None
+        answer = await ctx.tool_manager.handle_call(ToolCallPart('ask', {}, tool_call_id='inner-ask'))
+        found = await ctx.tool_manager.handle_call(ToolCallPart('look_up', {}, tool_call_id='inner-look-up'))
+        return f'{answer}; {found}'
+
+    @agent.tool_plain
+    def ask() -> str:
+        raise CallDeferred(kind='question')
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise CallDeferred
+
+    result = await agent.run('go')
+
+    assert result.output == 'my password is [redacted]; hunter2 found'
+
+
+@pytest.mark.parametrize('error', [ModelRetry('Answer in English.'), ToolFailed('The answer was blocked.')])
+async def test_a_result_hook_rejecting_an_answer_raises_raw_from_handle_call_when_asked(error: Exception) -> None:
+    """With `wrap_validation_errors=False`, as sandboxed dispatch uses, the hook's error propagates as raised."""
+
+    class Block(AbstractCapability[None]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            if call.tool_name == 'ask':
+                raise error
+            return result
+
+    agent = Agent(
+        FunctionModel(_call_outer_then_echo),
+        deps_type=type(None),
+        capabilities=[Block(), HandleDeferredToolCalls(_answer_by_tool_name)],
+    )
+
+    @agent.tool
+    async def outer(ctx: RunContext[None]) -> str:
+        assert ctx.tool_manager is not None
+        try:
+            await ctx.tool_manager.handle_call(
+                ToolCallPart('ask', {}, tool_call_id='inner'), wrap_validation_errors=False
+            )
+        except (ModelRetry, ToolFailed) as raised:
+            return f'raw {type(raised).__name__}: {raised}'
+        return 'no error'  # pragma: no cover
+
+    @agent.tool_plain
+    def ask() -> str:
+        raise CallDeferred(kind='question')
+
+    result = await agent.run('go')
+
+    assert result.output == f'raw {type(error).__name__}: {error}'

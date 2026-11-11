@@ -1062,7 +1062,9 @@ class ToolManager(Generic[AgentDepsT]):
             validated, usage=self.ctx.usage, wrap_validation_errors=wrap_validation_errors
         )
 
-    async def after_tool_execute(self, validated: ValidatedToolCall[AgentDepsT], result: Any) -> Any:
+    async def after_tool_execute(
+        self, validated: ValidatedToolCall[AgentDepsT], result: Any, *, wrap_validation_errors: bool = True
+    ) -> Any:
         """Pass a result the tool didn't return itself through the `after_tool_execute` hooks, as if it had.
 
         Used for the answer to a question the tool deferred with `CallDeferred(kind='question')`, when a
@@ -1070,8 +1072,9 @@ class ToolManager(Generic[AgentDepsT]):
         blocking, scanning) see the answer as they would see one the tool waited for itself.
 
         Raises:
-            ToolRetryError: A hook raised `ModelRetry` or a `ValidationError`.
-            ToolFailedError: A hook raised `ToolFailed`.
+            ToolRetryError: A hook raised `ModelRetry` or a `ValidationError`. Only when `wrap_validation_errors=True`.
+            ToolFailedError: A hook raised `ToolFailed`. Only when `wrap_validation_errors=True`.
+            ModelRetry / ValidationError / ToolFailed: When `wrap_validation_errors=False`, as raised by the hook.
         """
         cap = self.root_capability
         # Deferred calls are only answered during a run by `handle_deferred_tool_calls` hooks on this capability.
@@ -1084,12 +1087,16 @@ class ToolManager(Generic[AgentDepsT]):
                 validated.ctx, call=call, tool_def=validated.tool.tool_def, args=validated.validated_args, result=result
             )
         except (ValidationError, ModelRetry) as e:
+            if not wrap_validation_errors:
+                raise
             name = call.tool_name
             max_retries = validated.tool.max_retries
             attempt = self._check_max_retries(name, max_retries, e)
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, call, e, attempt=attempt, max_retries=max_retries) from e
         except ToolFailed as e:
+            if not wrap_validation_errors:
+                raise
             raise self._wrap_error_as_failed(call.tool_name, call, e) from e
 
     # --- Output tool methods (output hooks, no tool hooks) ---
@@ -1488,6 +1495,7 @@ class ToolManager(Generic[AgentDepsT]):
             return await self._resolve_single_deferred(
                 call,
                 exc,
+                executed=validated,
                 wrap_validation_errors=wrap_validation_errors,
                 on_deferred_requests=on_deferred_requests,
                 on_inline_deferred=on_inline_deferred,
@@ -1516,11 +1524,15 @@ class ToolManager(Generic[AgentDepsT]):
         call: ToolCallPart,
         exc: CallDeferred | ApprovalRequired,
         *,
+        executed: ValidatedToolCall[AgentDepsT] | None = None,
         wrap_validation_errors: bool = True,
         on_deferred_requests: InlineDeferredRequestsHandler | None = None,
         on_inline_deferred: InlineDeferredResultHandler | None = None,
     ) -> ToolDenied | ToolReturn[Any] | Any:
         """Resolve a single deferred tool call inline using the capability handler.
+
+        `executed` is the validated call whose execution raised `exc`, if any: the answer to a question
+        the tool raised itself passes the tool's `after_tool_execute` hooks, as the graph path's does.
 
         Dispatches the handler's result for `call` on the same set of
         [`DeferredToolResult`][pydantic_ai.tools.DeferredToolResult] variants as the
@@ -1617,4 +1629,27 @@ class ToolManager(Generic[AgentDepsT]):
         # Must be a ToolReturn (the only remaining DeferredToolResult variant). Return
         # the handler's original value verbatim so handle_call's contract — "what the
         # tool would have returned" — is preserved for plain-vs-wrapped inputs.
-        return deferred_results.calls[call.tool_call_id]
+        return await self._answer_question(
+            executed, exc, deferred_results.calls[call.tool_call_id], wrap_validation_errors=wrap_validation_errors
+        )
+
+    async def _answer_question(
+        self,
+        executed: ValidatedToolCall[AgentDepsT] | None,
+        exc: CallDeferred | ApprovalRequired,
+        answer: Any,
+        *,
+        wrap_validation_errors: bool,
+    ) -> Any:
+        """Pass the answer to a question the tool raised while executing through its `after_tool_execute` hooks.
+
+        Other results, and a question an `args_validator` raised before the tool ran, are returned as given.
+        """
+        if (
+            executed is None
+            or executed.deferral is not None
+            or not isinstance(exc, CallDeferred)
+            or exc.kind != 'question'
+        ):
+            return answer
+        return await self.after_tool_execute(executed, answer, wrap_validation_errors=wrap_validation_errors)
