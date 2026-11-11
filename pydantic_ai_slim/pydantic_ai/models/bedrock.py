@@ -824,6 +824,8 @@ class BedrockConverseModel(Model[BaseClient]):
 
     # The Converse API has no audio content block.
     _unsupported_file_inputs = frozenset({'audio'})
+    # For Claude, whose 400 for a schema that's too complex it raises as `ModelSchemaTooComplexError`.
+    _classifies_schema_too_complex = True
 
     unsupported_settings = frozenset(
         {

@@ -878,8 +878,10 @@ class ModelSchemaTooComplexError(ModelRequestRejectedError):
     For example Anthropic's 400 saying that the schema is too complex or that the compiled grammar is too large,
     which can arrive only after minutes of compiling, for strict tool schemas and a Native Output schema that are
     within the documented limits. Its [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint] says how to simplify
-    them. When the agent chose Native Output for the request itself, because the output type didn't pick a mode, the
-    run sends the request again in Tool Output instead of raising this; see
+    them. When the model chose Native Output for the request itself, because the output type didn't pick a mode, the
+    run sends the request again in Tool Output instead of raising this, on the agent's model or one
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] moved the request to, but not on a model inside a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], which handles the error itself; see
     [Schema complexity limits](../models/anthropic.md#schema-complexity-limits). A subclass of
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
 

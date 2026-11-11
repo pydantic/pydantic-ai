@@ -867,6 +867,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     Elsewhere `prepare_messages` drops the parts, so the adapter sends the current effort as the request-level
     setting.
     """
+    _classifies_schema_too_complex: ClassVar[bool] = False
+    """Whether this adapter raises `ModelSchemaTooComplexError` when the provider can't compile a request's strict schemas.
+
+    Only for such a model does a run attempt a request again in Tool Output when the provider rejects the Native Output
+    schema the model inferred, and open a stream that sends one before handing it over, to see the rejection.
+    """
     _renders_retry_feedback: ClassVar[bool] = False
     """Whether this model renders a `RetryFeedbackPart` itself, so `prepare_messages` passes it through untranslated.
 

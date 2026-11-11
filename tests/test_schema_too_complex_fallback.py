@@ -33,6 +33,12 @@ class Survey(BaseModel):
     answer: int
 
 
+class CompilingModel(FunctionModel):
+    """A `FunctionModel` that, like `AnthropicModel`, raises `ModelSchemaTooComplexError` for a schema that's too complex."""
+
+    _classifies_schema_too_complex = True
+
+
 def too_complex(model_name: str = 'compiler') -> ModelAPIError:
     return ModelHTTPError.for_category(ModelSchemaTooComplexError, status_code=400, model_name=model_name)
 
@@ -62,7 +68,7 @@ def schema_model(
     profile = ModelProfile(
         supports_json_schema_output=True, default_structured_output_mode=infers, supports_tools=supports_tools
     )
-    return FunctionModel(respond, model_name=model_name, profile=profile)
+    return CompilingModel(respond, model_name=model_name, profile=profile)
 
 
 @FALLS_BACK_TO_TOOL_OUTPUT
@@ -126,6 +132,22 @@ async def test_rejection_is_raised_when_tool_output_isnt_supported():
     assert modes == ['native']
 
 
+async def test_rejection_is_raised_by_a_model_that_doesnt_classify_it():
+    """Only a model that raises `ModelSchemaTooComplexError` itself has its rejection acted on."""
+    modes: list[OutputMode] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        modes.append(info.model_request_parameters.output_mode)
+        raise too_complex()
+
+    profile = ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native')
+    agent = Agent(FunctionModel(respond, model_name='compiler', profile=profile), output_type=Survey)
+
+    with pytest.raises(ModelSchemaTooComplexError):
+        await agent.run('Answer the survey.')
+    assert modes == ['native']
+
+
 @FALLS_BACK_TO_TOOL_OUTPUT
 async def test_same_model_is_attempted_in_tool_output_before_model_fallback():
     """`ModelFallback` falls back on any `ModelAPIError` by default, but the run switches modes before it's asked."""
@@ -182,7 +204,7 @@ def survey_model(modes: list[OutputMode], reject: list[bool]) -> FunctionModel:
         return ModelResponse(parts=[ToolCallPart('final_result', {'answer': 1})])
 
     profile = ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native')
-    return FunctionModel(respond, model_name='compiler', profile=profile)
+    return CompilingModel(respond, model_name='compiler', profile=profile)
 
 
 @FALLS_BACK_TO_TOOL_OUTPUT
@@ -227,7 +249,7 @@ def streaming_schema_model(modes: list[OutputMode]) -> FunctionModel:
         yield {0: DeltaToolCall(name=output_tool.name, json_args='{"answer": 1}')}
 
     profile = ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native')
-    return FunctionModel(stream_function=stream, model_name='compiler', profile=profile)
+    return CompilingModel(stream_function=stream, model_name='compiler', profile=profile)
 
 
 @FALLS_BACK_TO_TOOL_OUTPUT
@@ -251,3 +273,25 @@ async def test_streamed_explicit_native_output_raises():
         async with agent.run_stream('Answer the survey.') as result:
             await result.get_output()  # pragma: no cover  # opening the stream raises
     assert modes == ['native']
+
+
+@pytest.mark.parametrize('model_class', [CompilingModel, FunctionModel])
+async def test_stream_is_only_opened_early_for_a_model_that_classifies_the_rejection(model_class: type[FunctionModel]):
+    """Only a stream whose rejection could switch the run to Tool Output is opened before it's handed over."""
+    opened: list[OutputMode] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        opened.append(info.model_request_parameters.output_mode)
+        yield '{"answer": 1}'
+
+    profile = ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native')
+    agent = Agent(model_class(stream_function=stream, model_name='compiler', profile=profile), output_type=Survey)
+
+    async with agent.iter('Answer the survey.') as run:
+        async for node in run:  # pragma: no branch
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx):
+                    pass
+                break
+    # Opened early, it was opened before the consumer could iterate it; lazily, it never was.
+    assert opened == (['native'] if model_class is CompilingModel else [])

@@ -1650,11 +1650,15 @@ def _inferred_output_params(params: models.ModelRequestParameters) -> models.Mod
     return params if params.output_mode == 'auto' else None
 
 
-def _sends_inferred_native_output(
+def _can_switch_to_tool_output(
     request_context: ModelRequestContext, inferred_params: models.ModelRequestParameters | None
 ) -> bool:
-    """Whether the attempt sends Native Output that the model inferred, now or on the run's first request to it."""
-    if inferred_params is None:
+    """Whether a rejection of the attempt's schema as too complex can be acted on by switching to Tool Output.
+
+    That's when the attempt sends Native Output that the model inferred, now or on the run's first request to it, to
+    a model that raises `ModelSchemaTooComplexError` for such a rejection (see `_switch_to_tool_output`).
+    """
+    if inferred_params is None or not _unwrap_model(request_context.model)._classifies_schema_too_complex:  # pyright: ignore[reportPrivateUsage]
         return False
     params = request_context.model_request_parameters
     if params.output_mode == 'auto':
@@ -1680,7 +1684,7 @@ def _switch_to_tool_output(
     if (
         inferred_params is None
         or not isinstance(error, exceptions.ModelSchemaTooComplexError)
-        or not _sends_inferred_native_output(request_context, inferred_params)
+        or not _can_switch_to_tool_output(request_context, inferred_params)
     ):
         return False
     model = request_context.model
@@ -3586,7 +3590,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """Whether a hook, or a switch to Tool Output (see `_switch_to_tool_output`), can act on a failure to open."""
         return ctx.deps.root_capability._handles_model_request_error(  # pyright: ignore[reportPrivateUsage]
             run_context, request_context
-        ) or _sends_inferred_native_output(request_context, self._inferred_output_params)
+        ) or _can_switch_to_tool_output(request_context, self._inferred_output_params)
 
     async def _start_next_attempt(
         self,

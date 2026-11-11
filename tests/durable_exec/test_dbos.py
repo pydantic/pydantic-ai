@@ -6814,6 +6814,12 @@ class _Survey(BaseModel):
     answer: int
 
 
+class _CompilingModel(FunctionModel):
+    """A `FunctionModel` that, like `AnthropicModel`, raises `ModelSchemaTooComplexError` for a schema that's too complex."""
+
+    _classifies_schema_too_complex = True
+
+
 @pytest.mark.moves_cache_prefix(
     reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
 )
@@ -6836,7 +6842,7 @@ async def test_dbos_too_complex_inferred_native_output_is_attempted_in_tool_outp
     def look_up() -> str:
         return 'found'
 
-    model = FunctionModel(
+    model = _CompilingModel(
         respond,
         model_name='compiler',
         profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),

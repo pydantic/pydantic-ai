@@ -471,8 +471,14 @@ def _schema_too_complex_fn(messages: list[ModelMessage], info: AgentInfo) -> Mod
     return ModelResponse(parts=[ToolCallPart('final_result', {'label': 'survey', 'answer': 'answered'})])
 
 
+class _CompilingModel(FunctionModel):
+    """A `FunctionModel` that, like `AnthropicModel`, raises `ModelSchemaTooComplexError` for a schema that's too complex."""
+
+    _classifies_schema_too_complex = True
+
+
 schema_too_complex_durable_agent = Agent(
-    FunctionModel(
+    _CompilingModel(
         _schema_too_complex_fn,
         model_name='compiler',
         profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),
