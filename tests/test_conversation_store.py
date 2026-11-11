@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any
 
 import pytest
 from pydantic import TypeAdapter
@@ -1056,14 +1055,14 @@ async def test_capture_run_conversation_keeps_the_first_run_and_leaves_an_inner_
     assert inner.conversation.conversation_id == 'inner'
 
 
-class _FailsBeforeTheRun(AbstractCapability[Any]):
-    async def before_run(self, ctx: RunContext[Any]) -> None:
+class _FailsBeforeTheRun(AbstractCapability[None]):
+    async def before_run(self, ctx: RunContext[None]) -> None:
         raise RuntimeError('the hook failed')
 
 
 async def test_a_resumed_run_that_fails_before_adding_a_message_leaves_the_calls_waiting() -> None:
     store = InMemoryConversationStore()
-    agent = Agent(TestModel())
+    agent = Agent(TestModel(), deps_type=type(None))
 
     @agent.tool_plain(requires_approval=True)
     def delete_file() -> str:
