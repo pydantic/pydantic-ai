@@ -761,7 +761,8 @@ class XaiModel(Model[AsyncClient]):
     async def _upload_file_to_xai(self, data: bytes, filename: str) -> str:
         """Upload a file to xAI files API and return the file ID.
 
-        Bytes this model instance already uploaded reuse the earlier file ID instead of uploading again.
+        Bytes this model instance already uploaded reuse the earlier file ID instead of uploading again,
+        so the file keeps the name it was first uploaded with.
 
         Args:
             data: The file content as bytes

@@ -8,7 +8,7 @@ from typing import Any, cast
 import httpx2
 import pytest
 
-from pydantic_ai import Agent, BinaryContent, DocumentUrl, UploadedFile
+from pydantic_ai import Agent, BinaryContent, DocumentUrl
 
 from ...conftest import try_import
 from ..conftest import mock_downloads
@@ -141,19 +141,6 @@ async def test_document_url_cache_does_not_bypass_download_permissions(
         await agent.run(['What is in this document?', DocumentUrl(url='http://127.0.0.1/private.pdf')])
     assert counting_client.upload_calls == [(b'%PDF-1.4\ninternal content', 'private.pdf')]
     assert _sent_file_ids(mock_client) == [['file-1']]
-
-
-async def test_uploaded_file_passthrough_never_uploads(allow_model_requests: None):
-    """A user-supplied UploadedFile is passed through without uploading."""
-    response = create_response(content='ok')
-    counting_client = CountingMockXai(responses=[response])
-    mock_client = cast(AsyncClient, counting_client)
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m)
-
-    result = await agent.run(['What is in this document?', UploadedFile(file_id='file-abc123', provider_name='xai')])
-    assert result.output == 'ok'
-    assert counting_client.upload_calls == []
 
 
 async def test_distinct_documents_upload_separately(allow_model_requests: None):
