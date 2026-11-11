@@ -435,8 +435,23 @@ first pre-agent step, before any workspace script runs:
   instead: `detection` runs on any agent output and would still spend a detection pass.
 
 A blocked recheck concludes the run as `failure`. For **CI Review**, `flag_failed_review`
-then labels the PR `ci-review-failed`. Keep `ZAI_API_KEY` in the `provider_health` job and
-these host steps. The agent container gets no Z.AI credential beyond the engine's own.
+then labels the PR `ci-review-failed`. Keep `ZAI_API_KEY` in the `provider_health` job, these
+host steps, and the `record` step of the `provider_health_record` job below. gh-aw allows no
+secret in the agent job's post-steps. The agent container gets no Z.AI credential beyond the
+engine's own.
+
+The monitor reads a run's terminal result from a record a host job writes, not from the
+agent's own output. After the agent job, including a failed one, `shared/provider-health.md`
+runs the `provider_health_record` job. It checks out the default-branch controller, reads the
+engine's terminal `session.result` from this run's `agent` artifact, and adds `run-result.json`
+to the `provider-health` artifact. gh-aw's parser wrote that `agent-session.jsonl` on the agent
+host from the engine's verified recording. The record keeps the failure kind the runner
+reported. It marks a provider-scope kind confirmed only when the job's own Z.ai check observes
+the same condition: the credential rejected with HTTP 401 or 403, or the plan's quota exhausted.
+gh-aw runs the job only after threat detection passes cleanly, and detection skips the model
+when the agent left no output or patch. A failed record does not fail the run. Without a valid
+record (the run predates the job, detection did not pass, or the record failed), the monitor
+reads the `agent` artifact, which never confirms a provider failure.
 
 The monitor serializes only incident work. Its `triage` job runs for each allowlisted
 completion without a concurrency group and stops before it reads incidents. The `monitor`
@@ -467,7 +482,9 @@ provider, workflow, or task incident.
 
 A provider incident blocks every Z.AI workflow. Open one only on provider-wide evidence:
 exhausted or unverifiable quota, rejected credentials, or a 429 whose Z.AI code is a
-documented account or plan limit (runner kind `plan_limit`). Keep these outcomes local to their run:
+documented account or plan limit (runner kind `plan_limit`). A rejected credential or plan
+limit from the agent run needs the host record's confirmation; unconfirmed, it opens a
+workflow or task incident like other typed failures. Keep these outcomes local to their run:
 
 - Any other 429 that outlasts the runner's retry window (runner kind `rate_limit`), such as
   `1302` request-rate limits and `1305` overload. A healthy quota check cannot show spare
@@ -549,7 +566,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | Check | Rejects | Why it matters |
 |---|---|---|
 | `dangling-needs` | any `if:`, `outputs:`, `env:`, `with:` or `run:` referencing `needs.<job>` where `<job>` isn't a dependency of that job (outside `if:`, only inside `${{ }}` — elsewhere the text is literal) | The expression evaluates to empty rather than failing. In `if:` that skips the job or step — and **a job skipped by `if:` reports success**, so the required check stays green while the agent never runs. In `outputs:`/`env:`/`with:`/`run:` nothing skips at all: the step runs with an empty value, so a wrong action call or shell variable goes through looking healthy. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
-| `provider-health-*` | a Z.AI source missing the shared gate, generic failure-as-issue or failed-job reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
+| `provider-health-*` | a Z.AI source missing the shared gate, generic failure-as-issue or failed-job reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, a workflow without the host job that records the agent job's terminal result, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
 | `provider-engine-config` | a shared threat-detection engine other than `false`, or a workflow-local engine override, whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
 | `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |
@@ -562,6 +579,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | `awf-binary-version` | an installer pin differing from the bundled version or generated schema URL | The compiler installs AWF directly. Its binary must match the configuration schema. |
 | `ai-credits-accounting` | an AWF provider overlay with unverified prices or per-million values in per-token fields | GLM accounting uses the verified Z.ai API-equivalent rates. Provider overlays use USD per token; default pricing uses USD per million. AWF retains its fixed 10,000-credit cap independently of configurable budgets. |
 | `daily-aic-guardrail` | a lock that compiles gh-aw's daily AI-credits guardrail step, matched by the script it runs (`check_daily_aic_workflow_guardrail.cjs`) | On every activation the guardrail lists the artifacts of each run from the past 24h to total their AI credits: about 700 REST calls per CI Review activation in [run 39522281523](https://github.com/pydantic/pydantic-ai/actions/runs/39522281523). That spend exhausted the repo's `GITHUB_TOKEN` rate limit. AI credits do not measure the Z.AI Coding Plan quota; provider health gates that quota. Disable the guardrail with `max-daily-ai-credits: -1` in each source's own frontmatter. gh-aw removes the guardrail only for that value. A `-1` in an import such as `shared/engine-zai.md` only drops `GH_AW_MAX_DAILY_AI_CREDITS`: the scan step compiles but skips, and the conclusion job's `if: always()` cache restore, write, save and `aic-usage-cache` upload still run whenever the conclusion job runs. |
+| `engine-sys-path-order` | a compiled engine wrapper (`AGENT_MODULE`) with a `sys.path.insert(0, ...)` statement, or a lock with no engine wrapper | The wrapper comes from the engine revision `shared/engine-zai.md` imports. #10347 imported one from before #12818, so every lock put the checkout ahead of installed packages on `sys.path` (#12815). |
 | `logfire-import` / `logfire-compiled` / `logfire-network` | a Z.AI source missing `shared/otel-logfire.md`, a lock missing the compiled OTLP settings, or a compiled firewall missing any of the six Logfire ingest hosts | Three Z.AI workflows reached `main` without trace export (#19). The import and compiled settings enable export; the firewall must allow the ingest hosts or it silently blocks traces. |
 | `lock-not-regenerated` | a changed `*.md` (or `shared/*.md` import) without its recompiled lock | Enforces the rule above. Checks that source and lock changed *together*, not that the lock was actually recompiled — `gh aw compile` is still on you. |
 
