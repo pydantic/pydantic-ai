@@ -143,11 +143,10 @@ class OpenAIProvider(_OpenAISDKProvider):
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
-                # The native `computer` tool is accepted by the models with tool search, not GPT-5.4 nano. Set here
-                # rather than in `openai_model_profile` because it is unverified on the OpenAI-compatible endpoints
-                # that share it; there the `computer` tool is a function tool.
+                # Set here rather than in `openai_model_profile` because the native `computer` tool is unverified on
+                # the OpenAI-compatible endpoints that share it; there the `computer` tool is a function tool.
                 # https://developers.openai.com/api/docs/guides/tools-computer-use
-                openai_supports_computer_tool=_is_computer_use_model(profile),
+                openai_supports_computer_tool=_is_computer_use_model(model_name),
                 # Set here rather than in `openai_model_profile` because OpenAI-compatible Chat Completions APIs
                 # don't all honor it: OpenRouter and xAI silently ignore it, and OpenRouter rejects it for Claude.
                 # A server reached through a custom `base_url` that doesn't honor it opts out in the model's profile.
