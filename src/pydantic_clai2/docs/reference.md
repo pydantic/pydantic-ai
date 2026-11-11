@@ -902,8 +902,12 @@ an awaitable string.
 uv run clai2
 ```
 
-In CLAI, run `/login github-copilot`, then open `/model add` and choose
-`github-copilot`. The provider menu also starts login when no credentials exist.
+In CLAI, run `/login github-copilot`. Login adds every model your account's catalog
+lists to `/model` (`github-copilot@PROFILE:ID` for a profile) and, when you have not
+chosen a model, selects a recent strong one, such as Claude Opus 5.5 or Gemini 4 Argon.
+A model you chose stays selected. To switch, open `/model add` and choose `github-copilot`;
+the provider menu also starts login when no credentials exist. If listing the models
+fails, the login stays saved and CLAI reports why.
 You do not need to register an OAuth application or configure a client ID.
 CLAI supplies the same [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
 and requests `read:user` access to your GitHub profile. This identifies the existing
@@ -919,8 +923,8 @@ own CLAI session. CLAI does not launch a browser, so a text browser cannot block
 login or take over your SSH terminal. Ctrl-C stops polling; GitHub controls the
 code's expiry. No localhost callback or pasted token is needed.
 
-GitHub authorization alone does not establish Copilot access. The model menu
-queries your account's catalog and lists only picker-enabled models with
+GitHub authorization alone does not establish Copilot access. Login and the model
+menu query your account's catalog and keep only picker-enabled models with
 `/chat/completions` support. The shared model menu includes details and `Ctrl+S`
 settings. Your subscription and organization policy still control inference access.
 You can also select a known ID with `/model github-copilot:claude-haiku-4.5`.
