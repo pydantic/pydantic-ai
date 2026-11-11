@@ -114,8 +114,8 @@ async def test_the_first_operation_mounts_and_later_ones_do_not() -> None:
 
     assert len(root.calls) == 1
     argv, stdin = root.calls[0]
-    assert argv[:2] == ['python3', '-c']
-    assert argv[2] == (Path(mounts_package.__file__).parent / '_helper.py').read_text(encoding='utf-8')
+    assert argv[:3] == ['python3', '-I', '-c']
+    assert argv[3] == (Path(mounts_package.__file__).parent / '_helper.py').read_text(encoding='utf-8')
     assert stdin.endswith(b'\n') and stdin.count(b'\n') == 1
     assert root.requests() == snapshot(
         [

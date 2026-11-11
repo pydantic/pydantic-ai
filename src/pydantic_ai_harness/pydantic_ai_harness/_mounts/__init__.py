@@ -339,7 +339,9 @@ class _Mounted(WrapperWorkspace):
         # The helper's own deadline starts only once it runs, so a sandbox that never starts it is timed out here.
         result: CommandResult | None = None
         with anyio.CancelScope(shield=True), anyio.move_on_after(_CALL_SECONDS):
-            result = await self._run_as_root(['python3', '-c', _HELPER], f'{json.dumps(request)}\n'.encode())
+            # `-I`: root's Python reads no `PYTHON*` variable, user site-packages or working directory, any of which
+            # the agent's user could point at a `sitecustomize.py` of its own. The helper needs only the standard library.
+            result = await self._run_as_root(['python3', '-I', '-c', _HELPER], f'{json.dumps(request)}\n'.encode())
         if result is None:
             raise MountError(f'The sandbox did not run the mount helper within {_CALL_SECONDS} seconds. Try again.')
         # Blanked out in both spellings, so an error message doesn't quote a key as the helper or rclone wrote it.

@@ -1,4 +1,4 @@
-"""Mounts S3 buckets with rclone inside a sandbox. Runs there as root, as `python3 -c <this file>`.
+"""Mounts S3 buckets with rclone inside a sandbox. Runs there as root, as `python3 -I -c <this file>`.
 
 Standard library only, since it runs on the sandbox's Python. The request, keys included, is one JSON line on stdin,
 so keys never reach a command line, a file or a log: they go from here to the rclone daemon over a socket only root
@@ -84,6 +84,10 @@ class MountFailed(Exception):
     def __init__(self, code: FailureCode, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+class OutOfTime(Exception):
+    """The helper's deadline passed. Not a `MountFailed`, which the checks for a running daemon take to mean "not yet"."""
 
 
 class _UnixConnection(http.client.HTTPConnection):
@@ -413,7 +417,7 @@ def place(wanted: dict[str, Any], owner: os.stat_result) -> str | None:
     marked, moved = prepare(path, owner)
     try:
         mount(wanted, owner)
-    except MountFailed:
+    except (MountFailed, OutOfTime):
         if kernel_mounts().get(path) == f'pai-{fingerprint}':
             # Mounted but not answering. The marker is behind the mount, where removing it would delete a bucket object,
             # so it goes once the mount is off, as `unmount` does.
@@ -435,7 +439,7 @@ def ensure(request: dict[str, Any]) -> dict[str, Any]:
 
 
 def out_of_time(signum: int, frame: object) -> None:
-    raise MountFailed('timeout', f'Mounting took longer than {DEADLINE_SECONDS} seconds. Try again.')
+    raise OutOfTime(f'Mounting took longer than {DEADLINE_SECONDS} seconds. Try again.')
 
 
 def main() -> None:
@@ -447,6 +451,8 @@ def main() -> None:
         result = locked(request)
     except MountFailed as error:
         result = {'error': error.code, 'message': str(error)}
+    except OutOfTime as error:
+        result = {'error': 'timeout', 'message': str(error)}
     print(json.dumps(result))
 
 

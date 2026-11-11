@@ -199,7 +199,7 @@ In Docker, `--cap-add SYS_ADMIN` and `apparmor:unconfined` give every command in
 
 The helper runs as root and makes the mount folder inside the working directory, which the agent's user owns. It checks the folder isn't a link and doesn't follow links that user puts in it, but a command running at the same moment as a mount can swap the folder for a link after that check. The helper then works in the folder the link points to: it can mount there, move files found there into `.pydantic-ai-recovered/`, or delete a file there named `.pydantic-ai-mount`. That matters only when commands run as a user that can't already become root, as in a Docker image with a non-root `USER`: there, treat the agent as able to reach root.
 
-The helper looks for `rclone`, `fusermount3` and `apt-get` only in folders root owns (`/usr/local/sbin`, `/usr/local/bin`, `/usr/sbin`, `/usr/bin`, `/sbin` and `/bin`), not on the image's `PATH`, which could list a folder the agent's user can write to.
+The helper looks for `rclone`, `fusermount3` and `apt-get` only in folders root owns (`/usr/local/sbin`, `/usr/local/bin`, `/usr/sbin`, `/usr/bin`, `/sbin` and `/bin`), not on the image's `PATH`, which could list a folder the agent's user can write to. For the same reason it runs as `python3 -I`, so root's Python ignores `PYTHONPATH` and the other `PYTHON*` variables, user site-packages and the current folder, any of which could load code that user wrote.
 
 ## Telemetry
 
