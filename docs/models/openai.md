@@ -144,6 +144,10 @@ editing, geometry, and normalized settings.
 GPT Image models require a verified organization on a paid usage tier: on an unverified organization every request fails
 with a rate-limit error before anything generates. Complex prompts can take up to two minutes to process.
 
+## Image input {#image-input}
+
+`OpenAIProvider` lists JPEG, PNG, GIF and WebP as the images OpenAI models read. OpenAI's API rejects others, such as HEIC, AVIF, BMP and TIFF. An image of another type that a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance). The list applies to `OpenAIProvider` only. If you point `OpenAIProvider(base_url=...)` at another server that reads more formats, use [`OpenAICompatibleProvider`](compatible-apis.md#other-endpoints) for it, or pass `profile=OpenAIModelProfile(supported_image_media_types=frozenset({...}))` to the model.
+
 ## Structured output schemas
 
 For ordinary, non-fine-tuned models used with [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] or
@@ -730,6 +734,8 @@ Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI o
 ### Audio input {#audio-input}
 
 On Chat Completions, only OpenAI's audio models take audio input, such as `gpt-audio` and `gpt-4o-audio-preview`: the OpenAI models with `audio` in their name. With another OpenAI model, audio in the prompt raises an error, and audio a tool returns is replaced by a note saying the model can't read it. The Responses API takes no audio input. The rule applies to `OpenAIProvider`. OpenAI-compatible providers, including Azure, report audio input for every model, since their model names don't say which models take it. If you point `OpenAIProvider(base_url=...)` at another server that serves an audio model, such as vLLM with Voxtral, use [`OpenAICompatibleProvider`](compatible-apis.md#other-endpoints) for it, or pass `profile=OpenAIModelProfile(supports_audio_file_input=True)` to the model.
+
+Chat Completions takes WAV and MP3 audio only (`audio/wav`, `audio/mpeg`, and the `audio/x-wav` and `audio/mp3` spellings). Audio of another format in the prompt raises a `UserError` naming its media type, before an `AudioUrl` is downloaded, and audio of another format that a tool returns is replaced by a note.
 
 ## Decisions API {#decisions-api}
 

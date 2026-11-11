@@ -212,6 +212,8 @@ When a Google error carries no `retry-after-ms` or `Retry-After` header, [`Model
 
 `GoogleModel` supports multi-modal input, including documents, images, audio, and video.
 
+Gemini reads JPEG, PNG, GIF, WebP, HEIC, HEIF, AVIF and BMP images. On Google Cloud it also reads TIFF, which the Gemini API rejects. Gemini 2.5 models don't read Word or Excel documents; Gemini 3 models do. A file of another type that a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance).
+
 YouTube video URLs can be passed directly to Google models:
 
 ```py {title="youtube_input.py" test="skip" lint="skip"}

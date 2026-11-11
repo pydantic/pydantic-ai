@@ -220,6 +220,10 @@ The `XSearch` capability accepts:
 
 As an alternative to the capability, you can pass the lower-level [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] directly via `capabilities=[NativeTool(XSearchTool(...))]` — see the [X Search Tool documentation](../native-tools.md#x-search-tool) — or enable raw output globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](../agent.md#model-run-settings).
 
+## Image input {#image-input}
+
+Grok reads JPEG, PNG, WebP and ICO images. xAI rejects GIF, on its own API and through OpenRouter's `x-ai/` models, so a GIF a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance).
+
 ## File attachments
 
 When you include a document in a user prompt, xAI automatically makes its `attachment_search` tool available on [supported agentic models](https://docs.x.ai/developers/files). If the model uses the tool, Pydantic AI exposes its lifecycle alongside the model's response. xAI limits each file to [48 MB](https://docs.x.ai/developers/files#limitations). See [document input](../input.md#document-input) for supported input forms.
