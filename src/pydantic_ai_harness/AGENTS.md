@@ -87,8 +87,8 @@ changed course, and what it cost.
 Emitting nothing is a valid answer when core's own spans already cover the work.
 It is an answer to state in the docs, not a step to skip.
 
-The house pattern (`open_span`, `record_decision` and `set_content_attribute` from
-`pydantic_ai._telemetry`, what to record, content, naming) is in
+The house pattern (`open_span`, `record_decision`, `current_span` and `set_content_attribute`
+from `pydantic_ai._telemetry`, what to record, content, naming) is in
 `src/pydantic_ai_harness/agent_docs/capability-authoring.md` "Telemetry".
 
 ## Framing tags

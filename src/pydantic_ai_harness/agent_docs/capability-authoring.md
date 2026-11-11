@@ -292,16 +292,19 @@ adds no spans because core's `Instrumentation` already covers the run, and
 would grow the trace without recording a decision. Write the reason down. An
 undocumented silence is indistinguishable from an oversight.
 
-The house pattern uses three functions from `pydantic_ai._telemetry`. Each takes the run's `ctx`
+The house pattern uses four functions from `pydantic_ai._telemetry`. Each takes the run's `ctx`
 first and traces on `ctx.tracer`, so an uninstrumented run pays nothing:
 
 ```python
-from pydantic_ai._telemetry import open_span, record_decision, set_content_attribute
+from pydantic_ai._telemetry import current_span, open_span, record_decision, set_content_attribute
 
 # Work that takes time and can fail (a hypothetical `notes` capability).
 with open_span(ctx, 'notes search', attributes={'notes.backend': backend}, content={'notes.query': query}) as span:
-    matches = await store.search(query)
-    span.set_attribute('notes.matches', len(matches))
+    match = await store.search(query)
+    span.set_attribute('notes.matched', match is not None)
+    if match is not None:
+        # Content found partway through the span.
+        set_content_attribute(ctx, span, 'notes.match_path', match.path)
 
 # A decision that changed the run's course (from `Guardrails`).
 record_decision(
@@ -311,29 +314,33 @@ record_decision(
     content={'guardrail.message': message},
 )
 
-# Content found partway through a span.
-set_content_attribute(ctx, span, 'file.path', resolved_path)
+# An attribute on the span already open around a tool hook (`execute_tool`).
+current_span(ctx).set_attribute('notes.truncated', True)
 ```
 
 Where the tracer comes from:
 
 - Pass the `ctx` of the hook or tool the code runs in.
 - Code that runs during a run but has no `RunContext`, such as a backend, store or session that runs
-  can share, passes `None`. The functions then use the calling run's tracer and content policy, read
-  at call time. Never store a tracer on such an object: a run sharing it would trace to another run's
-  tracer (`pydantic_ai/workspaces/_telemetry.py` is the example).
+  can share, passes `current_run_telemetry()`: the calling run's tracer and content policy, read at
+  call time. Never store a tracer on such an object: a run sharing it would trace to another run's
+  tracer (`pydantic_ai/workspaces/_telemetry.py` is the example). Inside a hook, pass `ctx` instead:
+  the value is only published once `wrap_run` starts.
 - A standalone helper that users call outside any run takes `tracer: Tracer | None = None` and falls
   back to `NoOpTracer()`, so it emits the same span shape as the in-run path (`compaction`'s
   `compact_messages`).
-- A span opened in `for_run` goes to the right tracer, but it isn't part of the run's trace: the
-  `invoke_agent` span opens after `for_run` returns. Record from a hook inside the run instead, such
-  as `before_run`.
+- A span opened in `for_run` goes to the right tracer, but it isn't a child of the run's `invoke_agent`
+  span, which opens after `for_run` returns. Record from a hook inside the run instead, such as
+  `before_run`. `Skills` still records its scan from `for_run`; moving it is a follow-up.
 
 What to record, and where:
 
-- Prefer an attribute on a span that is already open. While a tool hook (`before_tool_execute`,
-  `after_tool_execute`, `wrap_tool_execute`) runs, `opentelemetry.trace.get_current_span()` is that
-  call's `execute_tool` span. Pass it to `set_content_attribute` for content.
+- Prefer an attribute on a span that is already open, through `current_span(ctx)`. In a tool hook
+  (`before_tool_execute`, `after_tool_execute`, `wrap_tool_execute`) that is the call's `execute_tool`
+  span; in `before_model_request` it is the request's `chat` span. This holds because `Instrumentation`
+  is outermost; a capability that is also outermost and listed before an explicit `Instrumentation`
+  sees the enclosing span instead. Don't call `opentelemetry.trace.get_current_span()` directly: in an
+  uninstrumented run it returns whatever span the application has open, such as its request span.
 - Give a decision its own `record_decision` when there's no span to put it on, when one span can see
   several decisions (guards in a chain), or when operators should find it by name across capabilities
   (`guardrail blocked input`, `spend budget exhausted`). It is currently a zero-duration span and may
@@ -353,19 +360,21 @@ Content:
 - `open_span` records an uncaught error by its type only, unless the run captures content, because an
   exception message can quote content. Pass `not_errors=` for an exception that is an expected answer,
   such as a `FileNotFoundError` from an existence check.
-- `content=` and `attributes=` are built even when nothing is recorded. Build an expensive value, such
-  as a serialized message, under `if span.is_recording()` instead.
+- `content=` and `attributes=` are built even when nothing is recorded, so pass cheap values. Build an
+  expensive one, such as a serialized message, under `if span.is_recording()` instead.
 
 Names:
 
-- Keep span names static and low-cardinality, starting with the capability's telemetry name and
-  saying what happened (`guardrail blocked input`, `loop detected`). The variable part is an
-  attribute: one `compact_messages` span with `compaction.strategy`, not one span name per strategy.
-  Some existing names (`memory.write`, `repair_tool_arguments`) use another spelling; they stay, since
-  dashboards filter on them.
-- Prefix attributes with the capability's telemetry name, which is chosen once and need not match its
-  package (`guardrail.action` for `guardrails`, `artifact_scan.threats` for `artifact_scanning`).
-  Spans that core owns use `pydantic_ai.*`. Reuse an OpenTelemetry semantic-convention attribute where
+- Keep span names low-cardinality, starting with the capability's telemetry name and saying what
+  happened (`guardrail blocked input`, `spend budget exhausted`). The variable part is an attribute:
+  one span with `compaction.strategy`, not one span name per strategy. The one variable part allowed
+  is a trailing tool name on a span that mirrors core's `execute_tool {tool_name}`, with the name also
+  in `gen_ai.tool.name`. Some existing names (`memory.write`, `repair_tool_arguments`, `loop detected`,
+  `compact_messages`) don't follow this; they stay, since dashboards filter on them.
+- Prefix attributes with the telemetry name of whoever sets them, which is chosen once and need not
+  match the package (`guardrail.action` for `guardrails`, `artifact_scan.threats` for
+  `artifact_scanning`). A capability adding an attribute to core's `execute_tool` span still uses its
+  own prefix; `pydantic_ai.*` is for attributes core sets. Reuse an OpenTelemetry semantic-convention attribute where
   one fits (`gen_ai.conversation.compacted`, `process.exit.code`) instead of coining a new name.
 
 Document the spans and their attributes in both the capability README and the docs page, and cover

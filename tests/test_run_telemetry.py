@@ -9,10 +9,12 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._telemetry import open_span, record_decision, set_content_attribute
-from pydantic_ai.capabilities import AbstractCapability, Instrumentation
+from pydantic_ai._telemetry import current_span, open_span, record_decision, set_content_attribute
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation, ValidatedToolArgs
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 
 from .conftest import try_import
 
@@ -87,3 +89,41 @@ async def test_content_is_left_out_without_include_content():
     assert example_spans(exporter) == snapshot(
         [{'name': 'example prepare', 'example.kind': 'setup'}, {'name': 'example decided', 'example.kind': 'setup'}]
     )
+
+
+@dataclass
+class MarkToolCall(AbstractCapability[Any]):
+    async def before_tool_execute(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        current_span(ctx).set_attribute('example.marked', True)
+        return args
+
+
+def agent_with_tool(*capabilities: AbstractCapability[Any]) -> Agent[None, str]:
+    agent = Agent(TestModel(call_tools=['noop']), capabilities=[MarkToolCall(), *capabilities])
+
+    @agent.tool_plain
+    def noop() -> str:
+        return 'ok'
+
+    return agent
+
+
+async def test_current_span_in_a_tool_hook_is_the_calls_execute_tool_span():
+    instrumentation, exporter = instrumented(include_content=False)
+    await agent_with_tool(instrumentation).run('go')
+
+    assert [span.name for span in exporter.get_finished_spans() if (span.attributes or {}).get('example.marked')] == [
+        'execute_tool noop'
+    ]
+
+
+async def test_current_span_leaves_the_applications_span_alone_in_an_uninstrumented_run():
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    with provider.get_tracer('app').start_as_current_span('app request'):
+        await agent_with_tool().run('go')
+
+    assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [('app request', {})]
