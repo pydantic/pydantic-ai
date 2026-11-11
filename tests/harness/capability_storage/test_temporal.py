@@ -1,7 +1,8 @@
-"""`CapabilityStorage` under `TemporalDurability`: the spill and its read-back run in activities and find the storage."""
+"""Spills under `TemporalDurability`: the spill and its read-back run in activities, with and without a storage."""
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -9,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.capabilities import AgentCapability, LocalWorkspace
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
@@ -63,40 +64,65 @@ class SpillWorkflow(PydanticAIWorkflow):
         return [str(p.content) for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
 
 
-async def test_spills_go_to_storage_inside_a_workflow(tmp_path: Path) -> None:
-    work = tmp_path / 'work'
-    storage = tmp_path / 'storage'
-    work.mkdir()
-    storage.mkdir()
+@pytest.fixture(scope='module')
+async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
+    async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
+        yield env
+
+
+async def _run(env: WorkflowEnvironment, *capabilities: AgentCapability[None]) -> list[str]:
+    all_capabilities: list[AgentCapability[None]] = [
+        *capabilities,
+        ToolOutputLimits(bands=[Band(over=100, action=Spill())]),
+        TemporalDurability(),
+    ]
     agent = Agent(
         FunctionModel(_model),
         name='capability_storage',
+        deps_type=type(None),
         tools=[_big_tool],
-        capabilities=[
-            LocalWorkspace(work),
-            FileSystem(),
-            CapabilityStorage(LocalWorkspaceBackend(storage)),
-            ToolOutputLimits(bands=[Band(over=100, action=Spill())]),
-            TemporalDurability(),
-        ],
+        capabilities=all_capabilities,
     )
     SpillWorkflow.agent = agent
     SpillWorkflow.__pydantic_ai_agents__ = [agent]
     runner = SandboxedWorkflowRunner(
         restrictions=SandboxRestrictions.default.with_passthrough_modules(__name__, 'annotated_types', 'coverage')
     )
-    async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
-        client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
-        async with Worker(client, task_queue='capability-storage', workflows=[SpillWorkflow], workflow_runner=runner):
-            spilled, read = await client.execute_workflow(
-                SpillWorkflow.run,
-                id=uuid4().hex,
-                task_queue='capability-storage',
-                execution_timeout=timedelta(seconds=60),
-            )
+    client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
+    async with Worker(client, task_queue='capability-storage', workflows=[SpillWorkflow], workflow_runner=runner):
+        return await client.execute_workflow(
+            SpillWorkflow.run,
+            id=uuid4().hex,
+            task_queue='capability-storage',
+            execution_timeout=timedelta(seconds=60),
+        )
 
-    [spill] = (storage / '.pydantic-ai-harness' / 'tool-output').glob('*/*')
-    assert spill.read_text(encoding='utf-8') == PAYLOAD
+
+def _spill(root: Path) -> str:
+    [spill] = (root / '.pydantic-ai-harness' / 'tool-output').glob('*/*')
+    return spill.read_text(encoding='utf-8')
+
+
+async def test_spills_go_to_storage_inside_a_workflow(temporal_env: WorkflowEnvironment, tmp_path: Path) -> None:
+    work = tmp_path / 'work'
+    storage = tmp_path / 'storage'
+    work.mkdir()
+    storage.mkdir()
+
+    spilled, read = await _run(
+        temporal_env, LocalWorkspace(work), FileSystem(), CapabilityStorage(LocalWorkspaceBackend(storage))
+    )
+
+    assert _spill(storage) == PAYLOAD
     assert f'{READ_TOOL_NAME}(handle=' in spilled
     assert read.endswith('line 0\nline 1')
     assert list(work.iterdir()) == []
+
+
+async def test_spills_go_to_the_run_workspace_without_a_storage(
+    temporal_env: WorkflowEnvironment, tmp_path: Path
+) -> None:
+    _, read = await _run(temporal_env, LocalWorkspace(tmp_path))
+
+    assert _spill(tmp_path) == PAYLOAD
+    assert read.endswith('line 0\nline 1')

@@ -152,23 +152,6 @@ async def test_stored_spills_are_read_with_read_tool_result_beside_file_tools(tm
     assert result.output.endswith('line 0\nline 1')
 
 
-async def test_storage_is_found_inside_a_durable_unit(tmp_path: Path):
-    pytest.importorskip('temporalio')
-    from pydantic_ai.durable_exec.temporal import TemporalRunContext
-
-    limits = _limits()
-    agent = _agent(CapabilityStorage(LocalWorkspaceBackend(tmp_path)), limits)
-    # As `DurableRunContext.restore` builds it worker-side: `capabilities` does not cross the boundary.
-    ctx = TemporalRunContext[None](deps=None, tool_name='big_tool')
-    ctx.root_capability = agent.root_capability
-
-    handle = await limits._write_spill(ctx, 'big_tool', 'run/call.0', PAYLOAD, False, 'truncate')  # pyright: ignore[reportPrivateUsage]
-
-    assert handle is not None
-    assert Path(handle).read_text(encoding='utf-8') == PAYLOAD
-    assert handle.startswith(f'{tmp_path.resolve()}/')
-
-
 async def test_an_explicit_store_workspace_takes_precedence(tmp_path: Path):
     storage = tmp_path / 'storage'
     spills = tmp_path / 'spills'
