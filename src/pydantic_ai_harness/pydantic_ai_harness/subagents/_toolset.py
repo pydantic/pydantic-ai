@@ -1014,7 +1014,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         return {name: sub_agent for name, (_, sub_agent) in self._created.get(ctx.run_id or '', {}).items()}
 
     def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
-        return TaskTelemetry(ctx=ctx, model_named=frozenset(self._created_agents(ctx)))
+        # Decided by name, not by this run's created agents: a task outlives the run that created its agent.
+        configured = {*self._agents, *self._remote, *([SELF_AGENT_NAME] if self._include_self else [])}
+        return TaskTelemetry(ctx=ctx, configured_names=frozenset(configured))
 
     def _owner(self) -> DelegationTasks:
         owner = DelegationTasks.current()
@@ -1224,8 +1226,6 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # again would register every tool twice.
         is_self = self._is_self(agent_name)
         inherit_tools = self._inherit_tools and not is_self
-        # Built now: the run that created an agent drops its roster when it returns, and a background
-        # task can settle after that, when a created agent's name would no longer read as model-chosen.
         telemetry = self._telemetry(ctx)
         # Announced before the child coroutine exists, so an emit that does not return
         # (a cancellation landing on the await) leaves no never-awaited coroutine behind.

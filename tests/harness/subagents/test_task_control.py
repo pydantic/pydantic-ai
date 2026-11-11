@@ -1940,6 +1940,56 @@ class TestTaskControlTelemetry:
             ),
         ]
 
+    async def test_a_created_agents_name_stays_content_in_a_later_run_of_the_conversation(self) -> None:
+        """A later run can steer a task whose agent an earlier run created, and dropped when it returned."""
+        gate = Gate()
+
+        async def streamed(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            await gate.opened.wait()
+            yield 'A poem.'
+
+        @dataclass
+        class Policy(AbstractCapability[Any]):
+            @on_event(TaskMessageEvent)
+            async def message(self, ctx: RunContext[Any], event: TaskMessageEvent) -> None:
+                event.veto()
+
+        owner = DelegationTasks()
+
+        def steer(messages: list[ModelMessage]) -> ModelResponse:
+            (record,) = owner.records.values()
+            return call('message_task', task_id=record.id, message='Shorter.')
+
+        settings, exporter = traced(False)
+        parent = Agent(
+            scripted(
+                call('create_agent', name='poet', description='Poems.', instructions='Write.'),
+                call('delegate_task', agent_name='poet', task='One.', background=True),
+                text('Bye.'),
+                steer,
+                text('Steered.'),
+            ),
+            capabilities=[
+                SubAgents(
+                    models={'slow': FunctionModel(stream_function=streamed)},
+                    task_control=TaskControl(),
+                    dynamic_agents=DynamicAgents(models=['slow']),
+                ),
+                Policy(),
+            ],
+        )
+        parent.instrument = settings
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+                with owner.bind():
+                    first = await parent.run('Go.', conversation_id='session')
+                    await parent.run('Steer it.', message_history=first.all_messages(), conversation_id='session')
+                gate.opened.set()
+                await owner.wait_children(None)
+
+        assert ('sub_agents vetoed', {'sub_agents.event': 'sub_agents.task_message'}) in decisions(exporter)
+        assert not [attributes for _, attributes in decisions(exporter) if 'sub_agents.agent_name' in attributes]
+
     async def test_a_remote_task_nobody_picks_up_is_a_span(self) -> None:
         parent, _ = remote_parent(
             InMemoryTransport(),

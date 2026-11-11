@@ -86,8 +86,9 @@ class TaskTelemetry:
 
     ctx: RunContext[Any]
     """The delegating run, whose tracer and content setting the decisions are recorded with."""
-    model_named: frozenset[str] = frozenset()
-    """Agent names the model chose, by creating those agents, which are recorded only as content."""
+    configured_names: frozenset[str] = frozenset()
+    """Agent names the application configured. Any other name was chosen by the model, by creating that agent,
+    so it is recorded only as content."""
 
     def decision(
         self,
@@ -141,7 +142,7 @@ class TaskTelemetry:
         if task_id is not None:
             plain['sub_agents.task_id'] = task_id
         if agent_name is not None:
-            (quoted if agent_name in self.model_named else plain)['sub_agents.agent_name'] = agent_name
+            (plain if agent_name in self.configured_names else quoted)['sub_agents.agent_name'] = agent_name
         return plain, quoted
 
     def vetoed(self, event: ParentMessage | AgentCreatedEvent) -> None:
