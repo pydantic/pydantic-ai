@@ -1966,6 +1966,8 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
             activity_name = ActivityDefinition.must_from_callable(activity_fn).name  # pyright: ignore[reportUnknownMemberType]
             assert activity_name is not None
             activities_by_name[activity_name] = activity_fn
+        # Temporal runs it as a local activity, which doesn't heartbeat.
+        del activities_by_name[f'{prefix}__external_event_ask']
         assert activities_by_name.keys() == args_by_activity_name.keys()
 
         for name, activity_fn in activities_by_name.items():
