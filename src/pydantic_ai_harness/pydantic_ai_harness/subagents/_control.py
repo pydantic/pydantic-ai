@@ -16,15 +16,15 @@ from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 from uuid import uuid4
 
 import anyio
 import anyio.abc
 from opentelemetry import propagate
-from opentelemetry.trace import Tracer
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai._telemetry import current_span, record_decision, set_content_attribute
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import RunCancelled
@@ -34,6 +34,7 @@ from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.subagents._events import (
     AgentCreatedEvent,
+    DelegationOutcome,
     ParentMessage,
     TaskAnswerEvent,
     TaskBackgroundedEvent,
@@ -75,21 +76,19 @@ RUN_OWNER: ContextVar[tuple[str, DelegationTasks] | None] = ContextVar(
 
 @dataclass(frozen=True, kw_only=True)
 class TaskTelemetry:
-    """Records task control's own decisions as zero-duration spans on the delegating run's tracer.
+    """Records what `SubAgents` decided, and how each delegation ended, on the delegating run's tracer.
 
-    Core's spans show the tool calls; these show what a listener or a limit decided about them. Text
-    that can quote a prompt, such as a veto reason, a question, or an answer, is attached only when the
-    run's instrumentation includes content.
+    Core's spans show the tool calls; these show what a listener or a limit decided about them, as
+    zero-duration spans, and how a delegation ended, on its tool call's span. Text that can quote a
+    prompt, such as a veto reason, a question, an answer, or an agent name the model chose, is attached
+    only when the run's instrumentation includes content.
     """
 
-    tracer: Tracer
-    include_content: bool
-    model_named: frozenset[str] = frozenset()
-    """Agent names the model chose, by creating those agents, which are recorded only as content."""
-
-    @classmethod
-    def of(cls, ctx: RunContext[AgentDepsT], *, model_named: frozenset[str] = frozenset()) -> TaskTelemetry:
-        return cls(tracer=ctx.tracer, include_content=ctx.trace_include_content, model_named=model_named)
+    ctx: RunContext[Any]
+    """The delegating run, whose tracer and content setting the decisions are recorded with."""
+    configured_names: frozenset[str] = frozenset()
+    """Agent names the application configured. Any other name was chosen by the model, by creating that agent,
+    so it is recorded only as content."""
 
     def decision(
         self,
@@ -101,18 +100,50 @@ class TaskTelemetry:
         content: Mapping[str, str] | None = None,
     ) -> None:
         """Record the span `sub_agents {name}`, with `sub_agents.`-prefixed attributes."""
-        span = self.tracer.start_span(f'sub_agents {name}')
-        if span.is_recording():
-            if agent_name is not None and (self.include_content or agent_name not in self.model_named):
-                span.set_attribute('sub_agents.agent_name', agent_name)
-            if task_id is not None:
-                span.set_attribute('sub_agents.task_id', task_id)
-            for key, value in (attributes or {}).items():
-                span.set_attribute(f'sub_agents.{key}', value)
-            if self.include_content:
-                for key, value in (content or {}).items():
-                    span.set_attribute(f'sub_agents.{key}', value)
-        span.end()
+        plain, quoted = self._attributes(agent_name, task_id, attributes, content)
+        record_decision(self.ctx, f'sub_agents {name}', attributes=plain, content=quoted)
+
+    def delegation_ended(
+        self,
+        *,
+        agent_name: str,
+        outcome: DelegationOutcome | Literal['max_calls'],
+        model: str | None,
+        record: DelegationTask | None = None,
+    ) -> None:
+        """Record how a delegation ended, on its tool call's `execute_tool` span.
+
+        A task in the background settles after its tool call returned the receipt, so its outcome is
+        the decision `sub_agents task settled` instead, with the same attributes and its task ID.
+        """
+        attributes = {'outcome': outcome} if model is None else {'outcome': outcome, 'model': model}
+        if record is not None and record.background:
+            self.decision('task settled', agent_name=agent_name, task_id=record.id, attributes=attributes)
+            return
+        span = current_span(self.ctx)
+        # The SDK warns about, and drops, an attribute set on a span that has already ended.
+        if not span.is_recording():
+            return
+        plain, quoted = self._attributes(agent_name, None, attributes, None)
+        span.set_attributes(plain)
+        for key, value in quoted.items():
+            set_content_attribute(self.ctx, span, key, value)
+
+    def _attributes(
+        self,
+        agent_name: str | None,
+        task_id: str | None,
+        attributes: Mapping[str, str | float] | None,
+        content: Mapping[str, str] | None,
+    ) -> tuple[dict[str, str | float], dict[str, str]]:
+        """`sub_agents.`-prefixed plain attributes, and content, which includes an agent name the model chose."""
+        plain: dict[str, str | float] = {f'sub_agents.{key}': value for key, value in (attributes or {}).items()}
+        quoted = {f'sub_agents.{key}': value for key, value in (content or {}).items()}
+        if task_id is not None:
+            plain['sub_agents.task_id'] = task_id
+        if agent_name is not None:
+            (plain if agent_name in self.configured_names else quoted)['sub_agents.agent_name'] = agent_name
+        return plain, quoted
 
     def vetoed(self, event: ParentMessage | AgentCreatedEvent) -> None:
         """Record that a listener vetoed `event`."""

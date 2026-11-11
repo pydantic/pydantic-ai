@@ -83,7 +83,7 @@ from pydantic_ai_harness.subagents._events import (
     TaskStartedEvent,
     bounded_text,
 )
-from pydantic_ai_harness.subagents._models import ModelOption, validate_restriction
+from pydantic_ai_harness.subagents._models import ModelOption, model_label, validate_restriction
 from pydantic_ai_harness.subagents._tasks import (
     NOT_BACKGROUNDABLE,
     RESUME_DIRECTORY_MISMATCH,
@@ -601,6 +601,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         counts[agent_name] = counts.get(agent_name, 0) + 1
         if counts[agent_name] <= sub_agent.max_calls:
             return None
+        self._telemetry(ctx).delegation_ended(agent_name=agent_name, outcome='max_calls', model=None)
         return self._steer(
             sub_agent.on_failure,
             f'Delegate budget for {agent_name!r} is exhausted for this run '
@@ -1013,7 +1014,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         return {name: sub_agent for name, (_, sub_agent) in self._created.get(ctx.run_id or '', {}).items()}
 
     def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
-        return TaskTelemetry.of(ctx, model_named=frozenset(self._created_agents(ctx)))
+        # Decided by name, not by this run's created agents: a task outlives the run that created its agent.
+        configured = {*self._agents, *self._remote, *([SELF_AGENT_NAME] if self._include_self else [])}
+        return TaskTelemetry(ctx=ctx, configured_names=frozenset(configured))
 
     def _owner(self) -> DelegationTasks:
         owner = DelegationTasks.current()
@@ -1223,6 +1226,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # again would register every tool twice.
         is_self = self._is_self(agent_name)
         inherit_tools = self._inherit_tools and not is_self
+        telemetry = self._telemetry(ctx)
         # Announced before the child coroutine exists, so an emit that does not return
         # (a cancellation landing on the await) leaves no never-awaited coroutine behind.
         owner = DelegationTasks.current() if record is not None else None
@@ -1270,6 +1274,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             outcome: DelegationOutcome = (
                 'cancelled' if isinstance(exc, (asyncio.CancelledError, RunCancelled)) else 'error'
             )
+            model = _served_model_label(serving_model, run_model, sub_agent)
+            telemetry.delegation_ended(agent_name=agent_name, outcome=outcome, model=model, record=record)
             if owner is not None:
                 with anyio.move_on_after(5, shield=True):
                     await emit(
@@ -1287,6 +1293,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             _depth.reset(token)
             if child_usage is not None and self._forward_usage:
                 ctx.usage.incr(child_usage)
+        model = _served_model_label(serving_model, run_model, sub_agent)
+        telemetry.delegation_ended(agent_name=agent_name, outcome=ended.outcome, model=model, record=record)
         if record is not None:
             record.outcome = ended.outcome
         if emits:
@@ -1483,6 +1491,17 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if on_failure is not None:
             return on_failure
         return default
+
+
+def _served_model_label(
+    serving_model: ServingModelRecorder, run_model: Model | KnownModelName | str | None, sub_agent: SubAgent[Any]
+) -> str | None:
+    """The model that served the delegation's last request, else the one it was configured to run on.
+
+    `None` when there's no model to name: no request was answered, and the sub-agent has no model of its own.
+    """
+    model = serving_model.model or run_model or sub_agent.agent.model
+    return None if model is None else model_label(model)
 
 
 def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: UsageLimits) -> UsageLimits:

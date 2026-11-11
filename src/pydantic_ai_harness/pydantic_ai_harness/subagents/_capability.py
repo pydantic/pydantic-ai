@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import anyio
 
 from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
+from pydantic_ai._telemetry import open_span
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.agent import Agent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler, durable_operation
@@ -633,9 +634,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         owner = entry[1]
         # The run's own owner, so its top-level tasks are this run's.
         if running := sum(record.parent_id is None and record.status == 'running' for record in owner.records.values()):
-            with ctx.tracer.start_as_current_span(
-                'sub_agents wait for tasks', attributes={'sub_agents.running_tasks': running}
-            ):
+            with open_span(ctx, 'sub_agents wait for tasks', attributes={'sub_agents.running_tasks': running}):
                 await owner.wait_children(None)
         owner.queue_reports(conversation_id=ctx.conversation_id or ctx.run_id or '', parent_id=None)
         return output
