@@ -375,7 +375,9 @@ Gotchas:
   `requires_approval`; give the agent a deferred tool handler such as `HandleDeferredToolCalls`, or a
   flagged call ends the run with an error.
 - Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
-  pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one.
+  pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one. Under `ModelFallback`,
+  each model that answers is told its own coordinates; one that can't take images, or would see the latest screenshot
+  scaled down, ends the run with a `UserError` before its request.
 - A screen larger than the model takes (profile `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`) is sent scaled
   down if the display can scale screenshots; otherwise the run stops with an error. 1280x800 fits every model.
 - Under durable execution each `computer` call is one unit that runs at most once; a lost one tells the model to take

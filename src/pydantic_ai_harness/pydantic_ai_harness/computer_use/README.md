@@ -123,7 +123,11 @@ no telemetry spans; core already traces the tool call.
 - [Instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-binary-content) records every screenshot. Pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
 - [`Advisor(forward_history=True)`](../advisor/) forwards every screenshot; Anthropic refuses one past 600 images.
-- In a [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), Gemini 3 gets its grid only if every model in it does.
+- With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/), a model that answers instead is told
+  its own coordinates, pixels or a grid, and screenshots are sized to fit it too. One that can't take images, or would
+  see the latest screenshot scaled down, ends the run with an error before its request. In a
+  [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), Gemini 3 gets its grid only if every
+  model in it does.
 
 ## API reference
 

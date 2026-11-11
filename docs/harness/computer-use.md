@@ -121,7 +121,10 @@ no telemetry spans; core already traces the tool call.
 - [Instrumentation](../logfire.md#excluding-binary-content) records every screenshot. Pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
 - [`Advisor(forward_history=True)`](advisor.md) forwards every screenshot; Anthropic refuses one past 600 images.
-- In a [`FallbackModel`](../models/overview.md#fallback-model), Gemini 3 gets its grid only if every model in it does.
+- With [`ModelFallback`](../capabilities/model-fallback.md), a model that answers instead is told its own coordinates,
+  pixels or a grid, and screenshots are sized to fit it too. One that can't take images, or would see the latest
+  screenshot scaled down, ends the run with an error before its request. In a
+  [`FallbackModel`](../models/overview.md#fallback-model), Gemini 3 gets its grid only if every model in it does.
 
 ## Giving a workspace a screen
 

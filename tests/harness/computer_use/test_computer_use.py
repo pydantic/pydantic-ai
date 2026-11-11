@@ -27,7 +27,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserError,
 )
-from pydantic_ai.capabilities import AbstractCapability, PrefixTools, ProcessHistory, SelectModel
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback, PrefixTools, ProcessHistory, SelectModel
 from pydantic_ai.computer_use import (
     _SAFETY_CHECKS,  # pyright: ignore[reportPrivateUsage]
     COMPUTER_KIND,
@@ -44,6 +44,7 @@ from pydantic_ai.computer_use import (
     Scroll,
     TypeText,
 )
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import BinaryContent, BinaryImage
 from pydantic_ai.models import AbstractModel, Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.models.fallback import FallbackModel
@@ -110,6 +111,39 @@ def _scripted(
 
 def _returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
     return [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+
+
+_GRID = ModelProfile(computer_use_coordinate_grid=1000)
+_SMALL = ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000)
+"""Takes screenshots up to 1000 pixels a side: the fake 1280x800 screen is sent at 1000x625."""
+
+
+def _unavailable(name: str, profile: ModelProfile, *, answers: int = 0) -> FunctionModel:
+    """A model that answers `answers` requests by looking at the screen, then is unavailable, so a fallback answers."""
+    requests = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        if requests > answers:
+            raise ModelHTTPError(503, name)
+        return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
+
+    return FunctionModel(respond, model_name=name, profile=profile)
+
+
+def _answering(name: str, profile: ModelProfile, seen: list[AgentInfo], *calls: list[dict[str, Any]]) -> FunctionModel:
+    """A model that makes `calls`, one per response of its own, then answers `done`; `seen` gets what each of its
+    requests carried."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info)
+        mine = sum(isinstance(message, ModelResponse) and message.model_name == name for message in messages)
+        if mine < len(calls):
+            return ModelResponse(parts=[ToolCallPart('computer', {'actions': calls[mine]})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    return FunctionModel(respond, model_name=name, profile=profile)
 
 
 class TestComputerUse:
@@ -448,7 +482,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert 'List should have at most 20 items' in capped[0].model_response_str()
 
     @pytest.mark.parametrize('native', [True, False])
-    async def test_the_tool_is_sequential_of_the_computer_kind_and_declares_the_live_display_size(
+    async def test_the_tool_is_sequential_of_the_computer_kind_and_declares_the_latest_screenshot_size(
         self, native: bool
     ) -> None:
         seen: list[ToolDefinition] = []
@@ -480,9 +514,10 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert (tool.name, tool.sequential, tool.tool_kind) == ('computer', True, COMPUTER_KIND.id)
         # The call's display work is its own durable unit with its own policy, so no engine wraps the whole tool.
         assert tool.metadata == {'temporal': False, 'prefect': False, 'render_workflows': False, 'aws_lambda': False}
-        # A model with a native computer tool sends it in this tool's place, declaring the display as it is now, not
-        # the last screenshot's size. With `native=False`, every model gets the function tool.
-        assert natives == ([ComputerTool(display_size=(1280, 800), optional=True)] if native else [])
+        # A model with a native computer tool sends it in this tool's place, declaring the latest screenshot's size,
+        # which its positions are scaled from, even after the display changed size. With `native=False`, every model
+        # gets the function tool.
+        assert natives == ([ComputerTool(display_size=(1920, 1080), optional=True)] if native else [])
 
     async def test_each_call_emits_what_it_did(self, durability: list[AbstractCapability[Any]]) -> None:
         model = _scripted([{'type': 'screenshot'}], [{'type': 'click', 'x': 1, 'y': 1}])
@@ -554,6 +589,102 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         agent = Agent(None, capabilities=[SelectModel(select), ScreenProvider().capability(), ComputerUse()])
         with pytest.raises(UserError, match="needs a model that accepts images, and 'text-only' does not"):
             await agent.run('Go.')
+
+    async def test_a_fallback_model_is_told_its_own_coordinates_and_its_calls_run_in_them(self) -> None:
+        provider = ScreenProvider()
+        seen: list[AgentInfo] = []
+        fallback = _answering('grid', _GRID, seen, [{'type': 'click', 'x': 500, 'y': 500}])
+        agent = Agent(
+            _unavailable('pixels', ModelProfile()),
+            capabilities=[provider.capability(), ComputerUse(settle_seconds=0), ModelFallback(fallback)],
+        )
+        await agent.run('Click the middle.')
+        assert 'Coordinates are on a grid from 0 to 999' in (seen[0].instructions or '')
+        assert provider.actions == [Click(x=640, y=400)]
+
+    async def test_after_a_fallback_the_native_tool_declares_the_screenshot_the_model_sees(self) -> None:
+        provider = ScreenProvider()
+        seen: list[AgentInfo] = []
+        # The primary looks, taking a 1000x625 screenshot of the 1280x800 screen, then is unavailable.
+        primary = _unavailable('small', _SMALL, answers=1)
+        fallback = _answering(
+            'large', ModelProfile(), seen, [{'type': 'screenshot'}], [{'type': 'click', 'x': 999, 'y': 624}]
+        )
+        agent = Agent(
+            primary, capabilities=[provider.capability(), ComputerUse(settle_seconds=0), ModelFallback(fallback)]
+        )
+        await agent.run('Click the bottom right.')
+        assert seen[0].model_request_parameters.native_tools == [ComputerTool(display_size=(1000, 625), optional=True)]
+        assert provider.actions == [Click(x=1279, y=799)]
+
+    @pytest.mark.parametrize(
+        'primary, size',
+        [
+            pytest.param(ModelProfile(), (1000, 625), id='as-the-fallback-takes-them'),
+            # The primary takes smaller screenshots than the fallback, and each step starts at it.
+            pytest.param(ModelProfile(computer_use_screenshot_max_side=900), (900, 562), id='also-as-the-primary-does'),
+        ],
+    )
+    async def test_with_a_sticky_fallback_each_screenshot_fits_the_model_that_answers(
+        self, primary: ModelProfile, size: tuple[int, int]
+    ) -> None:
+        seen: list[AgentInfo] = []
+        fallback = _answering('small', _SMALL, seen, [{'type': 'screenshot'}], [{'type': 'screenshot'}])
+        agent = Agent(
+            _unavailable('large', primary),
+            capabilities=[
+                ScreenProvider().capability(),
+                ComputerUse(settle_seconds=0),
+                ModelFallback(fallback, sticky=True),
+            ],
+        )
+        result = await agent.run('Look twice.')
+        assert [part.result for part in _returns(result.all_messages()) if isinstance(part, ComputerReturnPart)] == [
+            {'performed': 1, 'screenshot_size': size},
+            {'performed': 1, 'screenshot_size': size},
+        ]
+
+    @pytest.mark.parametrize(
+        'looks, profiles, message',
+        [
+            pytest.param(
+                1,
+                [ModelProfile(supports_image_input=False)],
+                "needs a model that accepts images, and 'fallback-1' does not",
+                id='blind',
+            ),
+            pytest.param(
+                1,
+                [_SMALL],
+                r"The latest screenshot is 1280x800, larger than 'fallback-1' can see",
+                id='smaller-screenshots',
+            ),
+            pytest.param(
+                0,
+                [_SMALL, ModelProfile(computer_use_screenshot_max_side=800)],
+                r"The latest screenshot is 1000x625, larger than 'fallback-2' can see",
+                id='a-later-fallback-takes-smaller-screenshots',
+            ),
+        ],
+    )
+    async def test_a_fallback_model_that_cannot_see_the_screen_is_refused_before_its_request(
+        self, looks: int, profiles: list[ModelProfile], message: str
+    ) -> None:
+        seen: list[AgentInfo] = []
+        # The primary looks `looks` times, then is unavailable; every fallback but the last looks once, then is too.
+        fallbacks = [_unavailable(f'fallback-{i}', profile, answers=1) for i, profile in enumerate(profiles[:-1], 1)]
+        last = _answering(f'fallback-{len(profiles)}', profiles[-1], seen, [{'type': 'screenshot'}])
+        agent = Agent(
+            _unavailable('primary', ModelProfile(), answers=looks),
+            capabilities=[
+                ScreenProvider().capability(),
+                ComputerUse(settle_seconds=0),
+                ModelFallback(*fallbacks, last),
+            ],
+        )
+        with pytest.raises(UserError, match=message):
+            await agent.run('Look.')
+        assert seen == []
 
     @pytest.mark.parametrize(
         'actions, gone',

@@ -184,7 +184,7 @@ class _Plan:
     changed: list[ComputerToolAction] | None
     """The actions to run, when they differ from the ones the model asked for."""
     limit: _Limit
-    """The largest screenshot the model takes."""
+    """The largest screenshot the models the next request may start at take."""
     model_name: str
     acts: bool
     """Whether any action changes the screen."""
@@ -237,6 +237,21 @@ def _screenshot_limit(model: AbstractModel) -> _Limit:
     if not sides and not pixels:
         return None
     return min(sides, default=None), min(pixels, default=None)
+
+
+def _tighter(first: _Limit, second: _Limit) -> _Limit:
+    """The largest screenshot both limits allow."""
+    if first is None or second is None:
+        return first or second
+    sides = [side for side in (first[0], second[0]) if side]
+    pixels = [count for count in (first[1], second[1]) if count]
+    return min(sides, default=None), min(pixels, default=None)
+
+
+def _instructions(model: AbstractModel) -> str:
+    """The instructions for `model`, which say whether it points in pixels or on its grid."""
+    grid = _grid(model)
+    return _INSTRUCTIONS.format(coordinates=_PIXELS if grid is None else _GRID.format(last=grid - 1))
 
 
 def _fit(size: tuple[int, int], limit: _Limit) -> tuple[int, int]:
@@ -626,17 +641,20 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if record is not None:
             grid, seen = record['coordinate_grid'], record['screenshot_size']
             seen_limit = record['screenshot_limit'] if 'screenshot_limit' in record else _screenshot_limit(ctx.model)
+            # The next request starts at the step's model, or with a sticky `ModelFallback` at the model that made the
+            # call, so the screenshot fits both. Another model is refused before its request if it can't see it.
+            limit = _tighter(seen_limit, _screenshot_limit(ctx.model))
         else:
             # Without a record, such as in a history a UI rebuilt, the model pointed on the latest screenshot it saw.
             grid = _grid(ctx.model)
             seen = _last_screenshot_size(ctx.messages[: made[0]]) if made else None
-            seen_limit = _screenshot_limit(ctx.model)
+            seen_limit = limit = _screenshot_limit(ctx.model)
         plan = _Plan(
             grid=grid,
             seen=seen,
             seen_limit=seen_limit,
             changed=actions if made and _changed(made[2], actions) else None,
-            limit=_screenshot_limit(ctx.model),
+            limit=limit,
             model_name=ctx.model.model_name,
             acts=acts,
         )
@@ -762,9 +780,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         def instructions(ctx: RunContext[AgentDepsT]) -> str:
-            grid = _grid(ctx.model)
-            coordinates = _PIXELS if grid is None else _GRID.format(last=grid - 1)
-            return _INSTRUCTIONS.format(coordinates=coordinates)
+            # For the step's model; `prepare_model_request` restates them for another model that answers instead.
+            return _instructions(ctx.model)
 
         return instructions
 
@@ -776,13 +793,19 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         return [self._native_computer] if self.native else []
 
     async def _native_computer(self, ctx: RunContext[AgentDepsT]) -> ComputerTool | None:
-        """The provider's native computer tool, declaring the size of the screenshots the model sees."""
+        """The provider's native computer tool, declaring the size of the screenshot the model points on.
+
+        That's the latest screenshot, which the model's positions are scaled from, or before the first one the size
+        the model will get it at. Resolved again for each model a step is attempted at, as `ctx.model`.
+        """
+        # Read every step, also with a screenshot, so a durable run reads the display at the same steps on replay.
         size = await self._screen_size(ctx)
         if isinstance(size, _NotRun):
             if size.kind == 'tool':
                 return None  # the call itself will report the display's error
             raise size.error()
-        return ComputerTool(display_size=_fit(size, _screenshot_limit(ctx.model)), optional=True)
+        seen = _last_screenshot_size(ctx.messages)
+        return ComputerTool(display_size=seen or _fit(size, _screenshot_limit(ctx.model)), optional=True)
 
     @durable_operation('display_size', policy=_SIZE_POLICY)
     async def _screen_size(self, ctx: RunContext[AgentDepsT]) -> tuple[int, int] | _NotRun:
@@ -819,13 +842,15 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise ApprovalRequired
         return args
 
-    async def before_model_request(
+    async def prepare_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Refuse a model that can't see screenshots, including one in a fallback chain, which may answer every call.
+        """Prepare each attempt for the model about to answer it, which `ModelFallback` can change within a step.
 
+        Refuse a model that can't see screenshots, including one in a `FallbackModel`, which may answer every call.
         Also refuse one that would see the latest screenshot scaled down, such as after a switch to a model that takes
         smaller ones: it would point on a smaller image than the size the screenshot's positions are mapped from.
+        Otherwise, restate the instructions for a model that points in other coordinates than the step's.
         """
         model = request_context.model
         blind = [answering for answering in _models(model) if not answering.profile.get('supports_image_input', True)]
@@ -840,6 +865,13 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 f'The latest screenshot is {size[0]}x{size[1]}, larger than {model.model_name!r} can see. Start the '
                 f'display at {fitted[0]}x{fitted[1]} or smaller to use this model on it.'
             )
+        params = request_context.model_request_parameters
+        step, attempt = _instructions(ctx.model), _instructions(model)
+        if attempt != step and params.instruction_parts:
+            parts = [
+                replace(part, content=attempt) if part.content == step else part for part in params.instruction_parts
+            ]
+            request_context.model_request_parameters = replace(params, instruction_parts=parts)
         return request_context
 
     async def after_model_request(
