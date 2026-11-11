@@ -374,7 +374,7 @@ _SCREEN_JSON = {
 @pytest.mark.parametrize(
     'content,metadata,image_url,note',
     [
-        # As after `keep_screenshots` dropped the screenshot from this request: the output still needs an image.
+        # As after a capability dropped the screenshot from this request: the output still needs an image.
         pytest.param(['Ran 1 action.', _DROPPED], {'performed': 1}, None, f'Ran 1 action. {_DROPPED}', id='dropped'),
         # The last image is the screen; one before it, such as a zoom, goes beside the note, as the output can't
         # carry it.
