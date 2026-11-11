@@ -76,7 +76,6 @@ Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 | Setting | Default | What it does |
 |---|---|---|
 | `requires_approval` | `False` | Ask before any call that does more than look, zoom or wait. Needs a [deferred tool handler](../deferred-tools.md#human-in-the-loop-tool-approval). |
-| `keep_screenshots` | `None` | Send at least the newest N images (screenshots and zooms), to cap the cost of long runs. Older ones are dropped 25 at a time so prompt caching keeps working. Don't use it on Claude Fable 5.1 or the Claude 5.5 models: they lose their earlier reasoning. |
 | `settle_seconds` | `0.5` | Wait this long after acting before the screenshot, so pages can load. |
 | `native` | `True` | Use the model's own computer use tool where it has one, by adding a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] that this tool runs. `False` gives every model this tool and all its actions; on GPT that adds zoom, triple-click, holding keys, pressing or releasing a mouse button, and reading the pointer position. |
 
@@ -133,6 +132,9 @@ no telemetry spans; core already traces the tool call.
 
 - Screenshots are the main cost: about 1,300 input tokens each at 1280x800, resent with every request. Prompt caching
   cuts the resends to about a tenth.
+- Every request carries every earlier screenshot, so a long run reaches the provider's limits: Claude refuses a
+  request with more than 100 images on its 200k-context models, and Gemini one over 20 MB. `ComputerUse` doesn't drop
+  old screenshots, and [`ClearToolResults`](compaction.md) leaves `computer` results alone.
 - Each call is one model request, so long tasks can hit the default [`request_limit`](../agent.md#usage-limits) of 50.
   Pass higher [`UsageLimits`][pydantic_ai.usage.UsageLimits].
 - Under [durable execution](../durable_execution/overview.md), each call's work on the screen is one durable step, so a finished call isn't
