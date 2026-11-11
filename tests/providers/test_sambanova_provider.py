@@ -1,4 +1,4 @@
-import httpx
+import httpx2
 import pytest
 
 from pydantic_ai.exceptions import UserError
@@ -95,7 +95,7 @@ def test_sambanova_provider_with_openai_client():
 
 
 def test_sambanova_provider_with_http_client():
-    http_client = httpx.AsyncClient()
+    http_client = httpx2.AsyncClient()
     provider = SambaNovaProvider(api_key='foo', http_client=http_client)
     assert provider.client.api_key == 'foo'
     # The line `self._client = AsyncOpenAI(..., http_client=http_client)` is executed,
@@ -113,3 +113,20 @@ def test_sambanova_provider_env_base_url(env: TestEnv):
     env.set('SAMBANOVA_BASE_URL', 'https://env.endpoint.com/v1')
     provider = SambaNovaProvider()
     assert provider.base_url == 'https://env.endpoint.com/v1'
+
+
+def test_mixed_case_model_name_profile_flags():
+    """Mixed-case model IDs — the canonical SambaNova spelling — must yield the
+    same profile flags as their lowercase equivalents so thinking and streaming
+    settings are not silently dropped."""
+    provider = SambaNovaProvider(api_key='key')
+
+    deepseek = provider.model_profile('DeepSeek-R1-0528')
+    assert deepseek is not None
+    assert deepseek.get('supports_thinking') is True
+    assert deepseek.get('thinking_always_enabled') is True
+    assert deepseek.get('ignore_streamed_leading_whitespace') is True
+
+    qwen = provider.model_profile('Qwen3-32B')
+    assert qwen is not None
+    assert qwen.get('ignore_streamed_leading_whitespace') is True

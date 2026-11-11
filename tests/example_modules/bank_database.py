@@ -81,6 +81,12 @@ class DatabaseConnNoop:
         else:
             raise ValueError('Customer not found')
 
+    async def refund_status(self, *, id: int) -> str:
+        if id == 123:
+            return 'refunded on 2026-05-01'
+        else:
+            raise ValueError('Customer not found')
+
 
 # to keep tests running quickly we use a no-op database connection for tests
 DatabaseConn = DatabaseConnNoop

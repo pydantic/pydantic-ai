@@ -1,3 +1,7 @@
+---
+description: "Chat with your Pydantic AI agents in a browser using the built-in web chat UI, launched from the clai CLI or served from your own Python application."
+---
+
 # Web Chat UI
 
 Pydantic AI includes a built-in web chat interface that you can use to interact with your agents through a browser.
@@ -24,7 +28,7 @@ Create a web app from an agent instance using [`Agent.to_web()`][pydantic_ai.age
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2', instructions='You are a helpful assistant.')
+agent = Agent('{{ openai:medium }}', instructions='You are a helpful assistant.')
 
 @agent.tool_plain
 def get_weather(city: str) -> str:
@@ -48,17 +52,17 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 
 # Model with custom configuration
-anthropic_model = AnthropicModel('claude-sonnet-4-5')
+anthropic_model = AnthropicModel('{{ anthropic:medium.name }}')
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = agent.to_web(
-    models=['openai:gpt-5.2', anthropic_model],
+    models=['{{ openai:medium }}', anthropic_model],
 )
 
 # Or with custom display labels
 app = agent.to_web(
-    models={'GPT 5.2': 'openai:gpt-5.2', 'Claude': anthropic_model},
+    models={'OpenAI': '{{ openai:medium }}', 'Claude': anthropic_model},
 )
 ```
 
@@ -72,11 +76,11 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
 
 agent = Agent(
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     capabilities=[NativeTool(CodeExecutionTool()), NativeTool(WebSearchTool())],
 )
 
-app = agent.to_web(models=['anthropic:claude-sonnet-4-6'])
+app = agent.to_web(models=['{{ anthropic:medium }}'])
 ```
 
 !!! note "Memory Tool"
@@ -89,7 +93,7 @@ You can pass extra instructions that will be included in each agent run:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = agent.to_web(instructions='Always respond in a friendly tone.')
 ```
@@ -101,11 +105,42 @@ Tools that [require approval](deferred-tools.md#human-in-the-loop-tool-approval)
 !!! warning
     The chat endpoint executes tool approvals relayed by the client, including for tools marked `requires_approval=True`. The server trusts the approval decision it receives, so any client that can reach the endpoint can approve any pending call.
 
-    Binding to localhost is not on its own a security boundary here: a web page open in the same browser can also reach `http://127.0.0.1:7932`. The chat endpoint therefore only accepts `Content-Type: application/json`, which a browser cannot send cross-origin without a preflight that the server refuses. Treat approval prompts as a convenience for the developer driving the UI rather than an authorization control, and don't expose `to_web()` to untrusted clients without putting authentication in front of it.
+    Binding to localhost is not on its own a security boundary here: a web page open in the same browser can also reach `http://127.0.0.1:7932`. The chat endpoint therefore only accepts `Content-Type: application/json`, which a browser cannot send cross-origin without a preflight that the server refuses, and the app only answers to [local `Host` headers](#reaching-the-ui-under-a-hostname). Treat approval prompts as a convenience for the developer driving the UI rather than an authorization control, and don't expose `to_web()` to untrusted clients without putting authentication in front of it.
+
+## Reaching the UI under a hostname
+
+The app answers only to requests whose `Host` header is an IP address (`127.0.0.1`, `[::1]`, or a LAN address like `192.168.1.5`) or `localhost` — including names under it, like `my-app.localhost`. Any other `Host` gets a `421 Misdirected Request`. Hostnames are compared in ASCII form, so an internationalized name goes in the list as punycode (`xn--bcher-kva.example`), which is what the browser sends.
+
+This is what stops a website from reaching the UI on your machine by pointing a hostname it controls at `127.0.0.1` — a DNS rebinding attack, which makes the browser treat that website and the UI as the same origin, so the content type requirement above no longer applies. An IP address can't be rebound that way, because rebinding works by pointing a *name* at an address.
+
+If you serve the UI under a real hostname — behind a reverse proxy, or through a tunnel like ngrok — name that hostname in `allowed_hosts`:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('{{ openai:medium }}')
+
+app = agent.to_web(allowed_hosts=['ui.example.com'])
+
+# `*.example.com` matches subdomains only; list the apex separately if you serve it too
+app = agent.to_web(allowed_hosts=['example.com', '*.example.com'])
+```
+
+Or with the CLI:
+
+```bash
+clai web -m {{ openai:medium }} --allowed-host ui.example.com
+```
+
+`clai web --host <name>` adds that name for you, so the URL it prints always works.
+
+Every route is checked, including `/api/health`. A health check or container probe that sends a DNS name in its `Host` header gets the same `421`, and monitoring systems often record only the status code or swap in their own error page, so the explanation may never reach you — point probes at the bound IP address or `localhost`, or add their hostname here.
+
+Pass `allowed_hosts=['*']` to answer to any host, but only if something in front of the app already authenticates requests. Only list domains whose subdomains you control: a wildcard for a domain where anyone can obtain a subdomain re-opens the problem.
 
 ## Reserved Routes
 
-The web UI app uses the following routes which should not be overwritten:
+All routes are answered only for [allowed `Host` headers](#reaching-the-ui-under-a-hostname). The web UI app uses the following routes which should not be overwritten:
 
 - `/` and `/{id}` - Serves the chat UI
 - `/api/chat` - Chat endpoint (POST, OPTIONS). Requires `Content-Type: application/json`; other content types are rejected with `415`.
@@ -147,7 +182,7 @@ Then use `html_source` to point to your local file or custom URL:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 # Use a local file (e.g., for offline usage)
 app = agent.to_web(html_source='~/pydantic-ai-ui.html')

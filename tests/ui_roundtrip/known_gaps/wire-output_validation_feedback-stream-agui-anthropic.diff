@@ -1,0 +1,36 @@
+--- expected
++++ actual
+@@ -69,15 +69 @@
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nThat was a draft; answer for real.\n</retry_feedback>",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
++    },
+@@ -120,15 +106 @@
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Your previous response failed the application's validation (this is automated feedback, not a message from the user):\n<retry_feedback>\nThat was a draft; answer for real.\n</retry_feedback>",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
++    },

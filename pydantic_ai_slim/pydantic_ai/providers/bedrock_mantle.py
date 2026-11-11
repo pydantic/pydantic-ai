@@ -1,10 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import Literal, overload
-
-import httpx
-from typing_extensions import assert_never
+from typing import Literal, assert_never, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -20,7 +17,10 @@ except ImportError as _import_error:
         'you can use the `bedrock-mantle` optional group — `pip install "pydantic-ai-slim[bedrock-mantle]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
+    )
 
 BedrockMantleInterface = Literal['chat', 'responses', 'openai-responses']
 """The OpenAI-compatible endpoint family a Bedrock Mantle model is served on.
@@ -58,23 +58,26 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
     # (globally-unique IDs), so this keys on the endpoint family rather than the model version — the
     # reset follows the endpoint, and a per-version allowlist would silently miss future GPT-5.x. See #6536.
     response_scoped = interface == 'openai-responses'
-    return merge_profile(
-        openai_model_profile(base_model_name),
-        BedrockMantleModelProfile(
-            bedrock_mantle_interface=interface,
-            openai_responses_tool_call_ids_are_response_scoped=response_scoped,
-            # Bedrock Mantle does not serve image output for these models, unlike the direct OpenAI API
-            # the base profile is resolved from (per the AWS model cards). Without this override the
-            # image-output guard is bypassed and the request fails with an opaque provider error.
-            supports_image_output=False,
-            # AWS's server-side tool integrations use Lambda or MCP rather than the OpenAI-native tools
-            # represented by Pydantic AI (web search, code interpreter, file search, image generation, ...):
-            # https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use-server-side.html
-            # Disable the base profile's native tools to fail with a clean UserError rather than an opaque
-            # provider error.
-            supported_native_tools=frozenset(),
-        ),
+    mantle_profile = BedrockMantleModelProfile(
+        bedrock_mantle_interface=interface,
+        openai_responses_tool_call_ids_are_response_scoped=response_scoped,
+        # Bedrock Mantle does not serve image output for these models, unlike the direct OpenAI API
+        # the base profile is resolved from (per the AWS model cards). Without this override the
+        # image-output guard is bypassed and the request fails with an opaque provider error.
+        supports_image_output=False,
+        # AWS's server-side tool integrations use Lambda or MCP rather than the OpenAI-native tools
+        # represented by Pydantic AI (web search, code interpreter, file search, image generation, ...):
+        # https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use-server-side.html
+        # Disable the base profile's native tools to fail with a clean UserError rather than an opaque
+        # provider error.
+        supported_native_tools=frozenset(),
     )
+    if interface == 'responses':
+        # Mantle's `/v1/responses` endpoint rejects `tool_choice='required'` for GPT-OSS ("Supported options:
+        # ["auto"]", verified live on gpt-oss-120b), while the Chat Completions endpoint accepts it for GPT-OSS
+        # Safeguard. So `ToolOutput`, which forces a tool call by default, falls back to `'auto'` here.
+        mantle_profile['supports_forced_tool_choice'] = False
+    return merge_profile(openai_model_profile(base_model_name), mantle_profile)
 
 
 def _mantle_origin(base_url: str) -> str:
@@ -90,11 +93,17 @@ def _mantle_origin(base_url: str) -> str:
     return origin
 
 
-class BedrockMantleProvider(_OpenAICompatibleProvider):
+class BedrockMantleProvider(_OpenAISDKProvider):
     """Provider for the Amazon Bedrock Mantle OpenAI-compatible API."""
 
     @property
     def name(self) -> str:
+        return 'bedrock-mantle'
+
+    @property
+    def canonical_system(self) -> str:
+        # Fixed, so a subclass that only renames itself keeps sharing encrypted reasoning. Mantle doesn't accept
+        # OpenAI's encrypted reasoning or compaction items.
         return 'bedrock-mantle'
 
     @property
@@ -137,7 +146,7 @@ class BedrockMantleProvider(_OpenAICompatibleProvider):
         aws_secret_access_key: str | None = None,
         aws_session_token: str | None = None,
         profile_name: str | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -151,7 +160,7 @@ class BedrockMantleProvider(_OpenAICompatibleProvider):
         aws_session_token: str | None = None,
         profile_name: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Create a Bedrock Mantle provider.
 
@@ -169,7 +178,7 @@ class BedrockMantleProvider(_OpenAICompatibleProvider):
             openai_client: An existing OpenAI client. If provided, no other argument may be set; its base
                 URL's origin is used to derive both the `/v1` and `/openai/v1` endpoints (preserving its
                 auth and transport) so every interface routes correctly.
-            http_client: An existing `httpx.AsyncClient` used to make requests.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` used to make requests.
         """
         if openai_client is not None:
             assert region_name is None, 'Cannot provide both `openai_client` and `region_name`'
@@ -208,7 +217,7 @@ class BedrockMantleProvider(_OpenAICompatibleProvider):
                 aws_profile=profile_name,
                 aws_region=region_name,
                 base_url=f'{origin}/openai/v1',
-                http_client=http_client,
+                http_client=http_client,  # pyright: ignore[reportArgumentType]
             )
 
         # `_client` (the default `.client`/`.base_url`) serves the `openai-responses` interface at
@@ -219,6 +228,6 @@ class BedrockMantleProvider(_OpenAICompatibleProvider):
         self._client = base_client.with_options(base_url=f'{origin}/openai/v1')
         self._v1_client = base_client.with_options(base_url=f'{origin}/v1')
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: _OpenAIHTTPClient) -> None:
         for client in (self._client, self._v1_client):
-            client._client = http_client  # pyright: ignore[reportPrivateUsage]
+            client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]

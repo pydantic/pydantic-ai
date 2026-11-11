@@ -23,7 +23,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
@@ -56,17 +55,33 @@ def test_together_pass_openai_client() -> None:
 def test_together_provider_model_profile(mocker: MockerFixture):
     provider = TogetherProvider(api_key='api-key')
 
-    ns = 'pydantic_ai.providers.together'
-    deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
-    meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
-    qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
-    mistral_model_profile_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
-    google_model_profile_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
+    family_profiles = 'pydantic_ai.profiles._family._VENDOR_FAMILY_PROFILES'
+    deepseek_model_profile_mock = mocker.MagicMock(wraps=deepseek_model_profile)
+    meta_model_profile_mock = mocker.MagicMock(wraps=meta_model_profile)
+    qwen_model_profile_mock = mocker.MagicMock(wraps=qwen_model_profile)
+    mistral_model_profile_mock = mocker.MagicMock(wraps=mistral_model_profile)
+    google_model_profile_mock = mocker.MagicMock(wraps=google_model_profile)
+    mocker.patch.dict(
+        family_profiles,
+        {
+            'deepseek-ai': deepseek_model_profile_mock,
+            'meta-llama': meta_model_profile_mock,
+            'qwen': qwen_model_profile_mock,
+            'mistralai': mistral_model_profile_mock,
+            'google': google_model_profile_mock,
+        },
+    )
 
     deepseek_profile = provider.model_profile('deepseek-ai/DeepSeek-R1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
     assert deepseek_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert deepseek_profile.get('supports_forced_tool_choice', True) is True
+
+    deepseek_v4_profile = provider.model_profile('deepseek-ai/DeepSeek-V4-Flash-0731')
+    deepseek_model_profile_mock.assert_called_with('deepseek-v4-flash-0731')
+    assert deepseek_v4_profile is not None
+    assert deepseek_v4_profile.get('supports_forced_tool_choice', True) is False
 
     meta_profile = provider.model_profile('meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8')
     meta_model_profile_mock.assert_called_with('llama-4-maverick-17b-128e-instruct-fp8')

@@ -1,0 +1,57 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/qwen.qwen3-32b-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - a8904f05-7c31-405c-b4c6-706392d39484
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "455"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Return values equal to ["ok"].
+        system: []
+        inferenceConfig: {}
+        outputConfig:
+          textFormat:
+            type: json_schema
+            structure:
+              jsonSchema:
+                name: Result
+                schema: "{\"properties\":{\"values\":{\"items\":{\"type\":\"string\"},\"type\":\"array\",\"description\":\"contains={'type': 'string'}\"}},\"required\":[\"values\"],\"type\":\"object\",\"additionalProperties\":false}"
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "243"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 512
+        output:
+          message:
+            content:
+            - text: "{\"values\": [\"ok\"]}"
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 19
+          outputTokens: 8
+          serverToolUsage: {}
+          totalTokens: 27
+  recorded_at: 2026-10-20T14:41:07.428432+00:00

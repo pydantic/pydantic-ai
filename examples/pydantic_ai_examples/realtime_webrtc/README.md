@@ -5,7 +5,7 @@ latency) while a **Pydantic AI sideband** on the server runs the agent's tools, 
 keeps the API key off the client.
 
 This is the recommended topology for browser voice agents (see the
-[realtime guide](https://ai.pydantic.dev/realtime/lifecycle/#browser-webrtc)). The server never sits in the
+[realtime guide](https://pydantic.dev/docs/ai/realtime/deployment/#browser-webrtc-server-sideband)). The server never sits in the
 audio path — it is the control plane:
 
 ```
@@ -31,7 +31,7 @@ server-side tool.
 
 Overrides: `WEBRTC_REALTIME_MODEL` (default `gpt-realtime`), `WEBRTC_REALTIME_VOICE` (default `marin`).
 
-The app is instrumented with [Logfire](https://ai.pydantic.dev/logfire/): set `LOGFIRE_TOKEN` (e.g. in
+The app is instrumented with [Logfire](https://pydantic.dev/docs/ai/integrations/logfire/): set `LOGFIRE_TOKEN` (e.g. in
 the same `.env`) to see the realtime session, model turns, and tool calls as traces.
 
 ## How it works

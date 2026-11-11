@@ -3,8 +3,6 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
@@ -12,8 +10,13 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    _gpt_oss_schema_profile,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -23,10 +26,13 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
-class FireworksProvider(_OpenAICompatibleProvider):
+class FireworksProvider(_OpenAISDKProvider):
     """Provider for Fireworks AI API."""
 
     @property
@@ -43,12 +49,14 @@ class FireworksProvider(_OpenAICompatibleProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
+        model_name = model_name.lower()
         prefix_to_profile = {
             'llama': meta_model_profile,
             'qwen': qwen_model_profile,
             'deepseek': deepseek_model_profile,
             'mistral': mistral_model_profile,
             'gemma': google_model_profile,
+            'gpt-oss': _gpt_oss_schema_profile,
         }
 
         prefix = 'accounts/fireworks/models/'
@@ -61,9 +69,21 @@ class FireworksProvider(_OpenAICompatibleProvider):
                     profile = profile_func(model_name)
                     break
 
+        # Fireworks spells GLM-5.3 `glm-5p3`, and also serves it through routers, e.g. `accounts/fireworks/routers/glm-5p3-fast`.
+        model_name = model_name.removeprefix('accounts/fireworks/routers/')
+        if model_name.startswith('glm-5p3'):
+            profile = _glm_5_3_schema_profile(model_name.replace('glm-5p3', 'glm-5.3', 1))
+
         # As the Fireworks API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
-        # unless json_schema_transformer is set explicitly
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        # unless json_schema_transformer is set explicitly.
+        # Native output support wins on top: Fireworks enforces `response_format` JSON schemas on the
+        # platform, so `NativeOutput` works for families whose own profiles don't claim support.
+        # `supports_json_object_output` stays with the family profile, so `PromptedOutput` requests are unchanged.
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            ModelProfile(supports_json_schema_output=True),
+        )
 
     @overload
     def __init__(self) -> None: ...
@@ -72,7 +92,7 @@ class FireworksProvider(_OpenAICompatibleProvider):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -82,7 +102,7 @@ class FireworksProvider(_OpenAICompatibleProvider):
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         api_key = api_key or os.getenv('FIREWORKS_API_KEY')
         if not api_key and openai_client is None:

@@ -20,7 +20,6 @@ from pydantic_graph import GraphBuilder, StepContext
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
-pytestmark = pytest.mark.anyio
 
 logfire_installed = importlib.util.find_spec('logfire') is not None
 

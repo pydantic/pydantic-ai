@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Literal, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from pydantic.alias_generators import to_camel
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.ui._adapter import validation_error_response
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 AgentDepsT = TypeVar('AgentDepsT')
@@ -110,6 +111,11 @@ def create_api_app(
     sdk_version: Literal[5, 6, 7] = BUNDLED_UI_SDK_VERSION,
 ) -> Starlette:
     """Create API app for the web chat UI.
+
+    This sub-app carries no `Host` validation of its own: `create_web_app()` applies
+    `HostValidationMiddleware` to the outer app it mounts this into. Serving it directly, or
+    re-mounting `create_web_app(...).router` (which drops application middleware), exposes the chat
+    endpoint to any `Host` — mount the app `create_web_app()` returns instead.
 
     Args:
         agent: Agent instance.
@@ -211,10 +217,13 @@ def create_api_app(
                 status_code=415,
             )
 
-        adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
-            request, agent=agent, sdk_version=sdk_version
-        )
-        extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
+        try:
+            adapter = await VercelAIAdapter[AgentDepsT, OutputDataT].from_request(
+                request, agent=agent, sdk_version=sdk_version
+            )
+            extra_data = ChatRequestExtra.model_validate(adapter.run_input.__pydantic_extra__)
+        except ValidationError as e:
+            return validation_error_response(e)
 
         if error := validate_request_options(extra_data, model_ids, allowed_tool_ids):
             return JSONResponse({'error': error}, status_code=400)

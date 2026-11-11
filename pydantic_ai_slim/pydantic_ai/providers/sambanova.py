@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import os
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    _gpt_oss_schema_profile,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 try:
@@ -21,12 +24,15 @@ except ImportError as _import_error:
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 else:
-    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
+    )
 
 __all__ = ['SambaNovaProvider']
 
 
-class SambaNovaProvider(_OpenAICompatibleProvider):
+class SambaNovaProvider(_OpenAISDKProvider):
     """Provider for SambaNova AI models.
 
     SambaNova uses an OpenAI-compatible API.
@@ -61,6 +67,7 @@ class SambaNovaProvider(_OpenAICompatibleProvider):
             'llama-': meta_model_profile,
             'qwen': qwen_model_profile,
             'mistral': mistral_model_profile,
+            'gpt-oss': _gpt_oss_schema_profile,
         }
 
         profile = None
@@ -68,11 +75,15 @@ class SambaNovaProvider(_OpenAICompatibleProvider):
 
         for prefix, profile_func in prefix_to_profile.items():
             if model_name_lower.startswith(prefix):
-                profile = profile_func(model_name)
+                profile = profile_func(model_name_lower)
                 break
 
         # Wrap into OpenAIModelProfile since SambaNova is OpenAI-compatible
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            special_token_route_profile('sambanova', model_name),
+        )
 
     def __init__(
         self,
@@ -80,7 +91,7 @@ class SambaNovaProvider(_OpenAICompatibleProvider):
         api_key: str | None = None,
         base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Initialize SambaNova provider.
 
@@ -88,7 +99,7 @@ class SambaNovaProvider(_OpenAICompatibleProvider):
             api_key: SambaNova API key. If not provided, reads from SAMBANOVA_API_KEY env var.
             base_url: Custom API base URL. Defaults to https://api.sambanova.ai/v1
             openai_client: Optional pre-configured OpenAI client
-            http_client: Optional custom httpx.AsyncClient for making HTTP requests
+            http_client: Optional custom `httpx2.AsyncClient` or legacy `httpx.AsyncClient` for making HTTP requests.
 
         Raises:
             UserError: If API key is not provided and SAMBANOVA_API_KEY env var is not set

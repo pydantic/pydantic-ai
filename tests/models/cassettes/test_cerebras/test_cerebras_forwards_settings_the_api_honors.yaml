@@ -1,0 +1,187 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '516'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      frequency_penalty: 0.5
+      messages:
+      - content: What is the weather in Paris?
+        role: user
+      model: gemma-4-31b
+      parallel_tool_calls: false
+      presence_penalty: 0.25
+      service_tier: flex
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the current weather in a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '770'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-989168f2-44c9-4448-b315-971bb4f09792
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Paris"}'
+              name: get_weather
+            id: 8db3b6644
+            type: function
+      created: 1787283131
+      id: chatcmpl-989168f2-44c9-4448-b315-971bb4f09792
+      model: gemma-4-31b
+      object: chat.completion
+      system_fingerprint: fp_99ee035ebfe796652902
+      time_info:
+        completion_time: 0.019896992
+        created: 1787283131.1730194
+        prompt_time: 0.001281393
+        queue_time: 0.002429379
+        total_time: 0.027352333068847656
+      usage:
+        completion_tokens: 15
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 70
+        prompt_tokens_details:
+          cached_tokens: 0
+          image_tokens: 0
+        total_tokens: 85
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '438'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in Paris?
+        role: user
+      model: gemma-4-31b
+      service_tier: priority
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Get the current weather in a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '768'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-82e83802-25bf-43d3-8a48-27a683fb5e2a
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        message:
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city": "Paris"}'
+              name: get_weather
+            id: b350c6eaa
+            type: function
+      created: 1787283131
+      id: chatcmpl-82e83802-25bf-43d3-8a48-27a683fb5e2a
+      model: gemma-4-31b
+      object: chat.completion
+      system_fingerprint: fp_99ee035ebfe796652902
+      time_info:
+        completion_time: 0.024278668
+        created: 1787283131.5832717
+        prompt_time: 0.002597658
+        queue_time: 0.00269266
+        total_time: 0.03139638900756836
+      usage:
+        completion_tokens: 15
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 70
+        prompt_tokens_details:
+          cached_tokens: 0
+          image_tokens: 0
+        total_tokens: 85
+    status:
+      code: 200
+      message: OK
+version: 1

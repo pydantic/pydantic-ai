@@ -1,3 +1,7 @@
+---
+description: "Use scoring libraries such as Ragas and DeepEval inside Pydantic Evals by wrapping their metrics as evaluators, without a hard dependency on any framework."
+---
+
 # Third-Party Integrations
 
 Pydantic Evals does not take a hard dependency on any particular metrics framework. When a team
@@ -132,7 +136,7 @@ class DeepEvalGEval(Evaluator):
         }
 ```
 
-The same wrapper shape works for DeepEval's `FaithfulnessMetric`, `AnswerRelevancyMetric`,
+The same wrapper works for DeepEval's `FaithfulnessMetric`, `AnswerRelevancyMetric`,
 `HallucinationMetric`, and others — swap the metric class and populate the relevant
 `LLMTestCase` fields (for example `retrieval_context` for faithfulness).
 

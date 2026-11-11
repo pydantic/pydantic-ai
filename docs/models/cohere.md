@@ -1,3 +1,7 @@
+---
+description: "Use Cohere models with Pydantic AI: install the cohere optional group, set your API key, configure the provider and SDK retries, and pass Cohere model settings."
+---
+
 # Cohere
 
 ## Install
@@ -12,7 +16,7 @@ pip/uv-add "pydantic-ai-slim[cohere]"
 
 To use [Cohere](https://cohere.com/) through their API, go to [dashboard.cohere.com/api-keys](https://dashboard.cohere.com/api-keys) and follow your nose until you find the place to generate an API key.
 
-`CohereModelName` contains a list of the most popular Cohere models.
+`CohereModelName` lists the latest Cohere models for autocomplete. Any other model id the API accepts works too.
 
 ## Environment variable
 
@@ -73,6 +77,34 @@ model = CohereModel(
 agent = Agent(model)
 ...
 ```
+
+## Streaming
+
+Use [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream] to receive text as it is generated:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('cohere:command-r7b-12-2024')
+
+
+async def main():
+    async with agent.run_stream('What is 7 plus 5?') as result:
+        async for text in result.stream_text(delta=True):
+            print(text, end='', flush=True)
+            #> The answer is
+            #> 12.
+```
+
+To run this example, import `asyncio` and call `asyncio.run(main())`.
+
+Cohere streaming also supports tool calls and thinking output on models that support reasoning.
+Leaving the context closes the Cohere SDK stream, including when you stop consuming it early.
+See [streaming responses](../output.md#streaming-text) for other ways to consume the stream.
+
+## SDK retries {#sdk-retries}
+
+The Cohere client retries server errors, rate limits and status 408 and 409 twice by default, above whatever transport you pass here. It takes its retry count per request rather than per client, so set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change it, for example to `0` to keep the retry policy in your transport alone. See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
 
 ## Model settings
 

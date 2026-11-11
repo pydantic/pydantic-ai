@@ -11,9 +11,10 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-agent = Agent('openai:gpt-5-mini')
+agent = Agent('openai:gpt-5-mini', capabilities=[Caching()])
 
 
 async def run_agent(request: Request) -> Response:
