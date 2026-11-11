@@ -411,7 +411,11 @@ def _completed_workflow_result(
     return _workflow_result(completed_output, printed)
 
 
-def _record_failure(span: Span, kind: str, limit: SandboxLimit | None = None) -> None:
+WorkflowErrorKind = Literal['type_check', 'syntax', 'runtime', 'resource_limit', 'crashed', 'panic']
+"""What ended a failed `run_workflow` script, as recorded in `dynamic_workflow.error_kind`."""
+
+
+def _record_failure(span: Span, kind: WorkflowErrorKind, limit: SandboxLimit | None = None) -> None:
     """Record what ended the script: `resource_limit` and the limit when a sandbox limit stopped it, else `kind`."""
     span.set_attribute('dynamic_workflow.error_kind', kind if limit is None else 'resource_limit')
     if limit is not None:

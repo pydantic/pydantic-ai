@@ -231,7 +231,7 @@ def _mentions_sandbox_limit(error: MontyRuntimeError) -> str | None:
 _SESSION_RESETTING_LIMITS: tuple[SandboxLimit, ...] = ('max_duration_secs', 'max_memory')
 
 
-async def _discard_session(run_state: MontyRunState) -> bool:
+async def discard_session(run_state: MontyRunState) -> bool:
     """Reset the session, and say whether that discarded state code had run in, not only type-check stubs."""
     had_run_code = run_state.has_executed_feed
     await run_state.reset()
@@ -1399,7 +1399,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 return ModelRetry(f'Syntax error in code:\n{capture.prepend_to(error.display())}')
             case MontyTypingError():
                 # Typing errors can only come from the fresh-feed check above.
-                session_reset = await _discard_session(run_state)
+                session_reset = await discard_session(run_state)
                 execution.failure = RunCodeFailure('type_check', session_reset=session_reset)
                 return ModelRetry(f'Type error in code:\n{capture.prepend_to(error.display())}')
             case MontyRuntimeError():
@@ -1420,7 +1420,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # request timeout) and the REPL state died with it; the pool replaces the
                 # worker transparently. Reset so the retry starts from a fresh,
                 # type-checked session.
-                session_reset = await _discard_session(run_state)
+                session_reset = await discard_session(run_state)
                 _raise_usage_limit_exceeded(execution)
                 limit = _worker_limit(error)
                 if limit is not None:
@@ -1432,7 +1432,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             case Exception():
                 # The session may have been invalidated by a host-side binding or protocol failure.
                 # Make the reset visible so the model can rebuild state on its next attempt.
-                session_reset = await _discard_session(run_state)
+                session_reset = await discard_session(run_state)
                 _raise_usage_limit_exceeded(execution)
                 execution.failure = RunCodeFailure('host', session_reset=session_reset)
                 error_text = (
@@ -1447,7 +1447,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # interruptions re-raise unchanged after dropping the suspended session.
                 # A panic aborts the VM mid-execution, so the REPL's accumulated state cannot
                 # be trusted; drop it so the retry starts from a fresh, type-checked session.
-                session_reset = await _discard_session(run_state)
+                session_reset = await discard_session(run_state)
                 if not is_sandbox_panic(error):
                     return None
                 _raise_usage_limit_exceeded(execution)
