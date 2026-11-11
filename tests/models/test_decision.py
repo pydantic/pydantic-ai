@@ -3145,6 +3145,21 @@ async def test_a_capability_loaded_from_code_is_not_offered_again(allow_model_re
     )
 
 
+async def test_a_capability_keyed_like_the_catalog_keeps_its_instructions(allow_model_requests: None):
+    """Without on-demand capabilities there is no catalog, so a capability with the catalog's id keeps its framing.
+
+    Not a VCR test: what's checked is the framing the decision model builds, which doesn't depend on the backend.
+    """
+    model = RoutingDecisionModel({'Triage': 0.9, 'look_up_order': 0.1})
+    capability = Capability[object](id='deferred_capabilities', instructions=lambda: 'Escalate angry customers.')
+    agent = Agent(model, output_type=Triage, tools=[look_up_order], capabilities=[capability])
+    await agent.run('Where is my order?')
+
+    assert route_question(model).instructions == snapshot(
+        {'question': 'Which of these does this call for?', 'background': 'Escalate angry customers.'}
+    )
+
+
 async def test_a_capability_added_between_runs_is_a_route_and_the_catalog_change_stays_out(
     allow_model_requests: None,
 ):

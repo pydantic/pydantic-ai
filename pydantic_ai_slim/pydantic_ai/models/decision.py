@@ -610,7 +610,9 @@ class DecisionModel(Model[InterfaceClient]):
         their own, so a catalog that changed since the conversation began, such as one with a capability added
         between runs, would otherwise reach the state as a system message repeating every description.
         """
-        return super().prepare_messages(_without_catalog_changes(messages), model_request_parameters)
+        if model_request_parameters is not None and _loads_capabilities(model_request_parameters):
+            messages = _without_catalog_changes(messages)
+        return super().prepare_messages(messages, model_request_parameters)
 
     @abstractmethod
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
@@ -809,7 +811,11 @@ class DecisionModel(Model[InterfaceClient]):
     ) -> str | None:
         """The agent's instructions as one text, which the questions carry, or `None` without any."""
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
-        return '\n\n'.join(part.content for part in instruction_parts if not _catalog(part)) or None
+        loads_capabilities = _loads_capabilities(model_request_parameters)
+        return (
+            '\n\n'.join(part.content for part in instruction_parts if not (loads_capabilities and _catalog(part)))
+            or None
+        )
 
     def _unasked_route(
         self, route: ToolDefinition, label: str, probability: float, instructions: str | None, limits: _Limits
@@ -1667,6 +1673,15 @@ def _capability_id(tool: ToolDefinition) -> str | None:
         return None
     capability_id = _properties(tool.parameters_json_schema).get('id', {}).get('const')
     return capability_id if isinstance(capability_id, str) else None
+
+
+def _loads_capabilities(model_request_parameters: ModelRequestParameters) -> bool:
+    """Whether the request offers a capability loader, the only thing that makes a part keyed like the catalog one.
+
+    A capability can have the id `deferred_capabilities` too, and its instructions are only told apart from the
+    catalog by the loader that comes with the catalog.
+    """
+    return any(tool.tool_kind == 'capability-load' for tool in model_request_parameters.function_tools)
 
 
 def _catalog(part: InstructionPart) -> bool:

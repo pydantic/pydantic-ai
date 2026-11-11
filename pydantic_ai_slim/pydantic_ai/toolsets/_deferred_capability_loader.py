@@ -64,6 +64,9 @@ it can load from here rather than from the `id` argument, which stays a plain st
 same for every run whatever capabilities it can load. Unlike the catalog in the instructions, which keeps listing a
 capability once it's loaded so the cached prompt doesn't change, it leaves out the capabilities already active,
 however they were loaded.
+
+The mapping is filled in place when the step's instructions are rendered, after its tools are prepared, so it is
+empty to anything that reads it earlier in the step, such as a `prepare_tools` hook, and a copy made then stays empty.
 """
 
 _load_capability_args_ta = TypeAdapter(LoadCapabilityArgs)
