@@ -15,6 +15,7 @@ from termflow.tui.textinput import TextInput, TextInputResult
 from pydantic_clai2.plugins.menus import ChoicePreview, CloseMenu, FieldRow, FieldSource
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.slash_search import slash_search
 from pydantic_clai2.ui.menus.text_editor import TextEditor, edit_text
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.rendering import markdown_style
@@ -23,7 +24,7 @@ CUSTOM = 'Type a value...'
 KEEP = 'Keep current'
 SAVE_AND_CLOSE = 'Save & close'
 SAVE_AND_CLOSE_DETAILS = 'Leave this menu. Each change was saved as you made it.'
-_LIST_HINT = 'type to filter - Enter edit - R reset - Esc close'
+_LIST_HINT = 'Space toggle - Enter edit - R reset - Esc close'
 _PREVIEW_LIST_WIDTH = 30
 
 
@@ -82,6 +83,7 @@ class FieldMenu:
         self._searchable = searchable
         self._source = source
         self.rows = list(source.rows())
+        self.messages: list[str] = []
 
     def items(self) -> list[MenuItem]:
         """One row per field with its current value, then Save & close."""
@@ -119,22 +121,36 @@ class FieldMenu:
         return '\n'.join(lines)
 
     def build(self, initial: int = 0) -> Menu:
-        """The field list. Searchable lists use uppercase `R` so typing still filters."""
+        """The field list: Space toggles booleans; `/` starts a search in searchable lists."""
         self.rows = list(self._source.rows())
         builder = (
             MenuBuilder(self._source.title)
             .style(markdown_style())
             .items(self.items())
-            .searchable(self._searchable)
             .initial_index(min(initial, len(self.rows) - 1))
             .preview(self.details)
-            .on_key('R' if self._searchable else 'r', self._reset_key)
-            .footer_hint(_LIST_HINT if self._searchable else 'Enter edit - r reset - Esc back')
-            .key_source(menu_key)
         )
-        if not self._searchable:
+        if self._searchable:
+            return slash_search(
+                builder, footer=_LIST_HINT, key_source=menu_key, hotkeys={' ': self.toggle, 'R': self._reset_key}
+            )
+        return (
             builder.list_width(46)
-        return builder.build()
+            .on_key(' ', self.toggle)
+            .on_key('r', self._reset_key)
+            .footer_hint('Space toggle - Enter edit - r reset - Esc back')
+            .key_source(menu_key)
+            .build()
+        )
+
+    def toggle(self, menu: Menu, item: MenuItem) -> None:
+        """Space toggles a boolean through its source and redraws without reopening the list."""
+        row = self.row_for(item.value)
+        if row is not None and row.choices == ('true', 'false'):
+            current = self._source.current(row)
+            self.messages.append(self.apply(row, 'false' if current == 'true' else 'true'))
+            self.rows = list(self._source.rows())
+            menu.replace_items(self.items())
 
     def reset_marker(self, menu: object, item: MenuItem) -> MenuResult:
         """R: hand the row back to the loop tagged for reset."""
@@ -317,7 +333,10 @@ def _next_step(
     menu: FieldMenu, runners: Runners, cursor: int, messages: list[str]
 ) -> tuple[FieldRow | None, int] | None:
     """Show the list and act on the pick in one step, so sources that touch the keyring stay off the event loop."""
-    return _selected(menu, runners.run_list(menu.build(cursor)), messages)
+    result = runners.run_list(menu.build(cursor))
+    messages.extend(menu.messages)
+    menu.messages.clear()
+    return _selected(menu, result, messages)
 
 
 def _selected(menu: FieldMenu, result: MenuResult, messages: list[str]) -> tuple[FieldRow | None, int] | None:

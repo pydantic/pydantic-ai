@@ -1,5 +1,6 @@
 """The `/set` menu, driven headless with scripted key presses."""
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -95,6 +96,68 @@ def test_flow_edits_resets_and_reports(tmp_path: Path) -> None:
     assert context.store.overrides() == {'display.thinking': False}
     assert applied == ['display.thinking', 'run.request_limit', 'run.request_limit', 'model', 'model']
     assert script.opened.count('choice') == 5
+
+
+@pytest.mark.parametrize('searchable', [True, False])
+def test_space_toggles_scrolled_setting_and_save_close_persists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], searchable: bool
+) -> None:
+    context, applied = make_context(tmp_path)
+    fields = FieldMenu(SettingsSource(context), searchable=searchable)
+    index = next(i for i, row in enumerate(fields.rows) if row.key == 'run.code_mode')
+
+    def keys() -> Iterator[str]:
+        yield from ['down'] * index
+        for expected in (False, True, False):
+            assert context.settings.code_mode is expected
+            assert running.highlighted is not None and running.highlighted.value == 'run.code_mode'
+            frame = capsys.readouterr().out.split('\x1b[H')[-1]
+            assert '> run.code_mode' in frame
+            assert '  model ' not in frame, 'the scrolled viewport must not jump to the top'
+            assert f'current  {str(expected).lower()}' in frame
+            yield ' '
+        assert context.settings.code_mode is True
+        yield 'end'
+        yield ' '
+        yield 'enter'
+
+    pressed = keys()
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    running = fields.build()
+    monkeypatch.setattr(running, '_size', lambda: (100, 10))
+    result = running.run()
+    assert result.item is not None and is_save_and_close(result.item)
+    assert context.store.load().code_mode is True
+    assert applied == ['run.code_mode'] * 3
+    assert fields.messages == ['Saved run.code_mode. Applied.'] * 3
+    assert 'true' in next(item.label for item in fields.items() if item.value == 'run.code_mode')
+
+
+def test_space_search_text_and_filtered_toggle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    context, applied = make_context(tmp_path)
+    fields = FieldMenu(SettingsSource(context))
+    # The trailing Space belongs to the query. Enter ends search; Space then toggles the match.
+    pressed = iter(['/', *'run.code_mode', 'R', 'backspace', ' ', 'enter', ' ', 'escape', 'end', 'enter'])
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    assert run_flow(fields) == ['Saved run.code_mode. Applied.']
+    assert applied == ['run.code_mode']
+    assert context.store.load().code_mode is True
+
+
+@pytest.mark.parametrize('searchable', [True, False])
+def test_space_on_nonboolean_keeps_enter_editing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, searchable: bool
+) -> None:
+    context, applied = make_context(tmp_path)
+    fields = FieldMenu(SettingsSource(context), searchable=searchable)
+    pressed = iter(['down', ' ', 'enter', 'end', 'enter'])
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    script = Script(lists=[], choices=[], texts=[typed('42')])
+    runners = field_menu.Runners(run_text=script.run_text)
+    assert run_flow(fields, runners) == ['Saved run.request_limit. Applied.']
+    assert context.store.load().request_limit == 42
+    assert applied == ['run.request_limit']
+    assert script.opened == ['text']
 
 
 def test_flow_stops_on_cancel(tmp_path: Path) -> None:

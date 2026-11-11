@@ -171,4 +171,4 @@ class SettingsMenu:
     Read as this menu opens, so a row an action adds meanwhile opens its menu once this one opens again.
     """
     searchable: bool = True
-    """Whether typing filters the terminal list. A short menu may prefer single-key shortcuts instead."""
+    """Whether `/` starts a search in the terminal list. While searching, printable keys edit the query instead of acting as hotkeys."""
