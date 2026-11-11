@@ -133,7 +133,7 @@ Some models only take screenshots up to a size, set by
 
 - Claude Opus 4.7, Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side.
 - Earlier Claude models: 1568 pixels and about 1.15 megapixels.
-- GPT: 2560x1440. It clicks less accurately on a larger screen.
+- GPT: 2560x1440, or 1920x1200 for GPT-5.5. It clicks less accurately on a larger screen.
 
 A 1280x800 screen fits every model. On a larger screen, `ComputerUse` sends a scaled-down screenshot and scales the
 model's positions back up, if the display can scale screenshots
