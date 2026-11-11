@@ -2,8 +2,8 @@
 
 Capabilities that constrain, screen, budget, or steer a run: repair malformed tool arguments,
 guard prompts/tool calls/outputs, scan tool results for prompt injection, cap spend, ask the user
-a question mid-run, re-inject reminders, interrupt repeated-action loops, and review the trajectory with a
-judge model. All are
+a question mid-run, re-inject reminders, interrupt repeated-action loops, review the trajectory with a
+judge model, and have the agent revise its answer before the run ends. All are
 `AbstractCapability`s passed in `Agent(capabilities=[...])`. Only `RepairToolArguments` (`[repair-tool-arguments]`) and
 `PromptInjectionDefender` need an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 `DeferredToolRequests`, `HandleDeferredToolCalls`), use the core mechanism documented in the
@@ -31,6 +31,7 @@ judge model. All are
 | Counter instruction fade in long runs, cache-safe | `SystemReminders` |
 | Have a second model review the run and steer it when it drifts | `TrajectoryJudge` |
 | Interrupt an agent that keeps repeating the same tool call, result, or response | `DetectLoops` |
+| Have the agent review and revise its answer before the run ends | `RefineOutput` |
 
 ## RepairToolArguments
 
@@ -434,7 +435,7 @@ Gotchas:
 - Without a handler a held call ends the run as `DeferredToolRequests` output, like `requires_approval=True`.
 - `mode` may be a function of the run context, read on every call. `PermissionDecision(remember=True)`
   skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
-  `remembered` set; inside durable execution nothing is remembered.
+  `remembered` set; inside durable execution it is kept in the message history instead.
 - Delegates are only checked when `Permissions` reaches them: pass it in `SubAgents(shared_capabilities=[...])`.
 - `ask_commands` patterns are a convenience, not a sandbox: use a sandbox workspace when the agent must not
   reach something.
@@ -752,6 +753,40 @@ except LoopDetectedError as error:
 - Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
   `.tool_names`; `.fingerprints` only with `trace_include_content`); no arguments or results.
 
+## RefineOutput
+
+When a run would end with an output, adds a system prompt telling the model to review its last answer
+and give the complete answer again, revised. The last answer is the run's output. `rounds=1` sets how
+many times per run; `instructions` replaces `DEFAULT_REFINE_OUTPUT_INSTRUCTIONS`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from pydantic_ai_harness import RefineOutput
+
+
+def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('draft' if len(messages) == 1 else 'revised')])
+
+
+agent = Agent(FunctionModel(answer), capabilities=[RefineOutput()])
+print(agent.run_sync('Explain the change').output)
+#> revised
+```
+
+- Each round costs at least one more model request and counts toward `UsageLimits`. Output validators
+  and output functions run on every answer, so keep them free of side effects.
+- The instruction is a `SystemPromptPart` (conversation scope, so it stays in the history); find it by
+  `metadata['origin'] == 'pydantic-ai-harness.refine_output.v1'`, never by text. Each run starts with no
+  rounds used. The count is per-run state, so compaction that drops the instruction does not restart it.
+- Not reviewed: a run that returns `DeferredToolRequests` or `PendingModelResponse`, an output no model
+  request produced (an `InputGuardrail` refusal; detected as a response with no `model_name`), and `run_stream()`, which ends at the first output it
+  streams. Stream a refined run with `run(event_stream_handler=...)` or `iter()`; the stream carries
+  every answer, the first one included.
+- Several on one agent each count their own rounds and add their instructions to a round. Emits no spans.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
@@ -764,4 +799,5 @@ except LoopDetectedError as error:
 - https://pydantic.dev/docs/ai/harness/system-reminders/
 - https://pydantic.dev/docs/ai/harness/trajectory-judge/
 - https://pydantic.dev/docs/ai/harness/detect-loops/
+- https://pydantic.dev/docs/ai/harness/refine-output/
 - https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/ (core tool approval and deferred tools)

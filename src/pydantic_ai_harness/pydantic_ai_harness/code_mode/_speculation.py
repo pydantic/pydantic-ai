@@ -596,11 +596,11 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         if not final and newlines == watch.scanned_newlines:
             # No line boundary since the last scan: nothing can have closed. Report the grown
             # code for live rendering and skip the parse work.
-            await part_ctx.emit(SpeculativeCodeUpdateEvent(code=code, closed_statements=watch.closed_count))
+            await part_ctx.emit(SpeculativeCodeUpdateEvent(code=code, closed_statement_count=watch.closed_count))
             return
         watch.scanned_newlines = newlines
         watch.closed_count = self._count_closed(code, final=final)
-        await part_ctx.emit(SpeculativeCodeUpdateEvent(code=code, closed_statements=watch.closed_count))
+        await part_ctx.emit(SpeculativeCodeUpdateEvent(code=code, closed_statement_count=watch.closed_count))
         # Launch from the raw text, not the closed statements: a call is ready once its closing
         # paren has streamed, even while its enclosing statement (an `if` arm, a `with` body) is
         # still being generated. Rescans recount every occurrence in the grown prefix, so
@@ -707,7 +707,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         await ctx.emit(
             SpeculativeCallLaunchedEvent(
                 launch_id=launch_id,
-                sandbox_function=sandbox_name,
+                sandbox_function_name=sandbox_name,
                 wrapped_tool_name=original_name,
                 arguments=extracted.kwargs,
                 line_start=extracted.line_start,
@@ -864,7 +864,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         self._watch_for(ctx, execution).misses += 1
         await ctx.emit(
             SpeculativeCallMissedEvent(
-                sandbox_function=sandbox_name,
+                sandbox_function_name=sandbox_name,
                 wrapped_tool_name=call_part.tool_name,
                 nested_tool_call_id=call_part.tool_call_id,
             )
