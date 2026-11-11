@@ -606,7 +606,8 @@ answers them in a second run and nobody ever does. `message` and `question_messa
 the two texts.
 `SubAgents` delegations and `DynamicWorkflow` child runs carry the parent run's
 `DenyUnanswered` into the child, so a delegate's question or approval request is denied
-inside the child too and the delegation finishes. `find_deny_unanswered(ctx)` returns the
+inside the child too and the delegation finishes. This per-capability forwarding is interim:
+a general hook for passing capabilities on to child runs is being designed in #13135. `find_deny_unanswered(ctx)` returns the
 run's instance, unwrapping `WrapperCapability` chains. A delegation a durable engine runs as a tool
 activity (a named sub-agent under `TemporalDurability`) gets no forwarded instance: give
 that child its own `DenyUnanswered`.

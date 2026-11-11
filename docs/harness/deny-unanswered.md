@@ -46,6 +46,8 @@ deny = DenyUnanswered(
 
 `SubAgents` delegations and `DynamicWorkflow` child runs carry the parent run's `DenyUnanswered` into the child's capabilities when it is present, so a delegate that asks a question or requests approval is denied inside the child run too, and the delegation finishes instead of returning a pending child. The handler runs innermost, after every handler that may ask the user, so a present human still wins.
 
+This forwarding is specific to `DenyUnanswered` for now: a general way for capabilities to pass themselves on to child runs is being designed in [#13135](https://github.com/pydantic/pydantic-ai/issues/13135) and will replace it.
+
 A delegation that a durable engine runs as a tool activity, such as a named sub-agent under `TemporalDurability`, does not receive the parent run's capabilities, so nothing is forwarded there and the child keeps its own behavior. Give such a child its own `DenyUnanswered` when it should deny too.
 
 ## Telemetry

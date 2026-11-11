@@ -1366,6 +1366,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """
         capabilities: list[AgentCapability[AgentDepsT]] = [
             *self._shared_capabilities,
+            # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
             *([deny] if (deny := find_deny_unanswered(ctx)) else []),
         ]
         if owner is not None and record is not None:
