@@ -347,6 +347,14 @@ def test_unsafe_versions_are_never_returned(monkeypatch: pytest.MonkeyPatch, cac
     assert _version_check.cached_updates(_version_check.read_cache()) == []
 
 
+def test_installed_harness_gets_its_own_notice(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
+    """The installed harness is compared on its own version, not Pydantic AI's."""
+    write_cache(cache_file, checked_at=_NOW, latest={'pydantic-ai-harness': '0.8.0'})
+    monkeypatch.setattr(_version_check, 'harness_version', lambda: '0.7.0')
+
+    assert _version_check.cached_updates(_version_check.read_cache()) == [('pydantic-ai-harness', '0.8.0')]
+
+
 def test_harness_notice_requires_an_installed_harness(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
     write_cache(
         cache_file,
