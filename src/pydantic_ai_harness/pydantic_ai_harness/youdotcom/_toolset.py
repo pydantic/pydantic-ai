@@ -33,6 +33,8 @@ except ImportError as _import_error:
 
 YOU_MAX_NUM_RESULTS = 20
 """Largest `max_results` requested per `web_search` call."""
+YOU_DEFAULT_MAX_RESULTS = 10
+"""Number of results `web_search` returns per query unless configured."""
 
 DEFAULT_SEARCH_TIMEOUT_MS = 60_000
 """Default per-request timeout for the search and contents endpoints, in milliseconds.
@@ -302,7 +304,7 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
         self,
         *,
         client: YouClient | None,
-        max_results: int | None = None,
+        max_results: int = YOU_DEFAULT_MAX_RESULTS,
         extraction_mode: ExtractionModeName,
         max_text_chars: int,
         include_domains: list[str] | None = None,
@@ -320,12 +322,10 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
         self._client = client if client is not None else default_client(timeout_ms)
         self._operations = operations
         if num_results is not None:
-            if max_results is not None:
+            if max_results != YOU_DEFAULT_MAX_RESULTS:
                 raise TypeError('Pass `max_results` only: `num_results` is its deprecated name.')
             warn_argument_renamed('YouSearchToolset', 'num_results', 'max_results')
             max_results = num_results
-        if max_results is None:
-            raise TypeError("YouSearchToolset() missing required keyword argument: 'max_results'")
         self._max_results = max_results
         self._extraction_mode: ExtractionModeName = extraction_mode
         self._max_text_chars = max_text_chars

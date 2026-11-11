@@ -42,6 +42,8 @@ except ImportError as _import_error:  # pragma: no cover
 
 EXA_MAX_NUM_RESULTS = 100
 """Largest `num_results` the Exa search API accepts."""
+EXA_DEFAULT_MAX_RESULTS = 5
+"""Number of results `web_search` returns per query unless configured."""
 
 EXA_MAX_PAGE_TEXT_CHARS = 10_000
 """Largest per-page text budget the Exa contents API accepts."""
@@ -293,7 +295,7 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         self,
         *,
         client: ExaClient | None,
-        max_results: int | None = None,
+        max_results: int = EXA_DEFAULT_MAX_RESULTS,
         max_text_chars: int,
         include_deep_search: bool,
         include_domains: Sequence[str] = (),
@@ -308,12 +310,10 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         self._client = client if client is not None else default_client()
         self._operations = operations
         if num_results is not None:
-            if max_results is not None:
+            if max_results != EXA_DEFAULT_MAX_RESULTS:
                 raise TypeError('Pass `max_results` only: `num_results` is its deprecated name.')
             warn_argument_renamed('ExaSearchToolset', 'num_results', 'max_results')
             max_results = num_results
-        if max_results is None:
-            raise TypeError("ExaSearchToolset() missing required keyword argument: 'max_results'")
         self._max_results = max_results
         self._max_text_chars = max_text_chars
         self._include_domains = list(include_domains) if include_domains else None

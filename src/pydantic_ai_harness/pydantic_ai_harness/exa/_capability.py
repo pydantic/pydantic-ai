@@ -16,6 +16,7 @@ from pydantic_ai_harness._durable import RetryRequest, retry_as_result
 from pydantic_ai_harness._warn import warn_argument_renamed
 from pydantic_ai_harness._web_search import native_web_search
 from pydantic_ai_harness.exa._toolset import (
+    EXA_DEFAULT_MAX_RESULTS,
     EXA_MAX_NUM_RESULTS,
     EXA_MAX_PAGE_TEXT_CHARS,
     ExaClient,
@@ -38,8 +39,6 @@ _DEEP_INSTRUCTIONS_SUFFIX = (
     ' For questions that need synthesis across many sources, escalate to `deep_search`: it runs '
     'a full research pass in a single call, so save it for the questions that deserve that depth.'
 )
-
-_DEFAULT_MAX_RESULTS = 5
 
 
 @dataclass
@@ -68,7 +67,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     request again.
     """
 
-    max_results: int = _DEFAULT_MAX_RESULTS
+    max_results: int = EXA_DEFAULT_MAX_RESULTS
     """Number of results `web_search` returns per query (1 to 100, the Exa API range)."""
 
     max_text_chars: int = 10_000
@@ -153,7 +152,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         """Validate configuration against the Exa API's documented bounds."""
         if self.num_results is not None:
-            if self.max_results != _DEFAULT_MAX_RESULTS:
+            if self.max_results != EXA_DEFAULT_MAX_RESULTS:
                 raise TypeError('Pass `max_results` only: `num_results` is its deprecated name.')
             warn_argument_renamed('ExaSearch', 'num_results', 'max_results', stacklevel=4)
             self.max_results, self.num_results = self.num_results, None
@@ -243,7 +242,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     def from_spec(
         cls,
         *,
-        max_results: int = _DEFAULT_MAX_RESULTS,
+        max_results: int = EXA_DEFAULT_MAX_RESULTS,
         max_text_chars: int = 10_000,
         text_summary: bool | str = False,
         include_deep_search: bool = False,

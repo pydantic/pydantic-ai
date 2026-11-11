@@ -674,8 +674,6 @@ class TestYouSearchCapability:
             YouSearchToolset[None](
                 client=client, max_results=4, num_results=2, extraction_mode='highlights', max_text_chars=10_000
             )
-        with pytest.raises(TypeError, match="missing required keyword argument: 'max_results'"):
-            YouSearchToolset[None](client=client, extraction_mode='highlights', max_text_chars=10_000)
 
     def test_max_text_chars_floor(self) -> None:
         with pytest.raises(ValueError, match='max_text_chars must be at least 1'):
