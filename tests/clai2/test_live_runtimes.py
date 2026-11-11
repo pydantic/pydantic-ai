@@ -284,6 +284,22 @@ async def test_unsafe_socket_folder_does_not_stop_chat(tmp_path: Path, monkeypat
         await fleet.live.close(home.id)
 
 
+async def test_no_unix_sockets_serves_silently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Without Unix sockets, sessions run unpublished and nothing warns about it."""
+    fleet = Fleet(tmp_path)
+    monkeypatch.setattr(os, 'name', 'nt')
+    async with fleet.live.serving():
+        assert fleet.live.registry.socket_path is None
+    monkeypatch.undo()
+    assert caplog.records == []
+    assert capsys.readouterr() == ('', '')
+
+
 @pytest.mark.parametrize('cancel', [False, True])
 async def test_question_status_follows_answer_and_turn_end(tmp_path: Path, cancel: bool) -> None:
     """The runtime tracks real ask_user events through the public waiting-status contract."""

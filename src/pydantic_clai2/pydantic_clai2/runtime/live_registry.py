@@ -402,9 +402,13 @@ class LiveRegistry:
 
     @asynccontextmanager
     async def serving(self, subscribe: Callable[[Callable[[], None]], Callable[[], None]]) -> AsyncGenerator[None]:
-        """Serve current sessions and track transitions until the context ends; publish discovery metadata once."""
+        """Serve current sessions and track transitions until the context ends; publish discovery metadata once.
+
+        Without Unix sockets there is no discovery, and the block runs unpublished.
+        """
         if os.name != 'posix':
-            raise OSError('Live session discovery requires Unix sockets')
+            yield
+            return
         path, abandoned = await to_thread.run_sync(_socket_path, self.directory, self.pid)
         if abandoned is not None:
             try:
