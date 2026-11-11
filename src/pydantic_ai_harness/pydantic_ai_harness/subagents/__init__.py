@@ -56,6 +56,8 @@ from pydantic_ai_harness.subagents._tasks import (
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
+    SavedTaskProblem,
+    SavedTasks,
 )
 from pydantic_ai_harness.subagents._toolset import (
     SELF_AGENT_NAME,
@@ -100,6 +102,8 @@ __all__ = [
     'ParentMessageEvent',
     'Recipient',
     'RemoteSubAgent',
+    'SavedTaskProblem',
+    'SavedTasks',
     'SubAgent',
     'SubAgentMessageEvent',
     'SubAgentToolset',
