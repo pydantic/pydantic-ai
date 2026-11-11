@@ -869,7 +869,9 @@ class OpenAIServer:
         item_id = self._new_item('item_fc')
         from ._truth import ToolCallTruth
 
-        self.truth.tool_calls[call_id] = ToolCallTruth(call_id=call_id, response=active.truth.key, name=name)
+        self.truth.tool_calls[call_id] = ToolCallTruth(
+            call_id=call_id, response=active.truth.key, name=name, seq=self.truth.tick()
+        )
         active.truth.tool_calls.append(call_id)
         item = {
             'id': item_id,

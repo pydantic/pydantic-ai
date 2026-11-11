@@ -1739,6 +1739,22 @@ def test_eleven_realtime_reply_to_an_interjection_abandons_the_calls_before_it()
     run_clean(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', dialect='elevenlabs')), scenario)
 
 
+def test_eleven_realtime_response_with_nothing_new_from_the_user_abandons_no_call() -> None:
+    """A response Eleven Realtime starts with nothing new from the user since a finished response's calls keeps them owed."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        call_id = sim.call_tool()
+        sim.finish()
+        sim.create_response()
+        assert sim.truth.tool_calls[call_id].abandoned_by is None
+        sim.finish()
+        sim.finish_tool()
+        sim.finish()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', dialect='elevenlabs')), scenario)
+
+
 def test_live_abandoned_call_still_running_doesnt_hold_the_exchange_open() -> None:
     """A tool call whose backend gave up still runs, but its result gets no reply: the exchange ends with the reply.
 
