@@ -1938,7 +1938,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _request_betas(self, model_settings: AnthropicModelSettings) -> set[str]:
         """The betas a request sends regardless of its messages: the client's, `anthropic_betas` and `anthropic-beta`.
 
-        They're read as `_get_betas_and_extra_headers` reads them, so the `max_tokens` cap sees the same betas.
+        `_get_betas_and_extra_headers` starts from them, so the `max_tokens` cap sees the betas the request sends.
         """
         betas = self._client_default_betas()
         betas.update(str(beta) for beta in model_settings.get('anthropic_betas') or ())
@@ -1955,13 +1955,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
-        Starts from the betas in the client's `default_headers`, then merges a custom `anthropic-beta` header from
-        `extra_headers`, auto-attaches the Files API beta when messages contain an Anthropic `UploadedFile`, and
-        ensures `User-Agent` is set.
+        Starts from `_request_betas`: the client's `default_headers` betas, `anthropic_betas` and a custom
+        `anthropic-beta` header from `extra_headers`. Then it auto-attaches the Files API beta when messages contain an
+        Anthropic `UploadedFile`, and ensures `User-Agent` is set.
         """
         extra_headers = _with_default_user_agent(model_settings.get('extra_headers', {}))
+        # Its betas are already in `_request_betas`; the header is removed so it doesn't replace the one built from them.
+        self._pop_beta_headers(extra_headers)
 
-        betas = self._client_default_betas()
+        betas = self._request_betas(model_settings)
 
         if model_settings.get('anthropic_context_management'):
             betas.add('compact-2026-01-12')
@@ -1978,11 +1980,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if model_settings.get('anthropic_speed') == 'fast' and self._client_supports_fast_speed(anthropic_profile):
             betas.add('fast-mode-2026-02-01')
-
-        if betas_from_setting := model_settings.get('anthropic_betas'):
-            betas.update(str(b) for b in betas_from_setting)
-
-        betas.update(self._pop_beta_headers(extra_headers))
 
         betas.update(self._message_betas(model_settings, anthropic_profile, messages, model_request_parameters))
         return betas, extra_headers
