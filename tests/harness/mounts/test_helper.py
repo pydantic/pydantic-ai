@@ -13,25 +13,29 @@ import os
 import re
 import subprocess
 import sys
+import urllib.request
 import zipfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import TypeAdapter
+from typing_extensions import TypedDict
 
 from pydantic_ai_harness._mounts import _helper as helper
+
+from ._requests import Wanted
 
 SECRET = 'the-secret-key'
 START_DAEMON = helper.start_daemon
 """The real one, which the `sandbox` fixture replaces."""
 
 
-def returns(value: object) -> Callable[..., Any]:
+def returns(value: object) -> Callable[..., object]:
     """A stand-in for any function, returning `value`."""
 
-    def fake(*args: Any, **kwargs: Any) -> Any:
+    def fake(*args: object, **kwargs: object) -> object:
         return value
 
     return fake
@@ -40,10 +44,31 @@ def returns(value: object) -> Callable[..., Any]:
 def exits(code: int, stdout: str = '', stderr: str = '') -> Callable[..., subprocess.CompletedProcess[str]]:
     """A stand-in for `subprocess.run` whose processes exit with `code`."""
 
-    def run(argv: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def run(argv: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(list(argv), code, stdout, stderr)
 
     return run
+
+
+class MountOptions(TypedDict):
+    DeviceName: str
+
+
+class MountBody(TypedDict):
+    """The fields of a `mount/mount` call the fake daemon acts on; the others are only recorded."""
+
+    fs: str
+    mountPoint: str
+    mountOpt: MountOptions
+
+
+MOUNT_BODY = TypeAdapter(MountBody)
+
+
+def mount_point(body: Mapping[str, object]) -> str:
+    path = body['mountPoint']
+    assert isinstance(path, str)
+    return path
 
 
 class Sandbox:
@@ -56,7 +81,7 @@ class Sandbox:
         self.daemon: dict[str, str] = {}
         """Mount point to the rclone file system the daemon serves there."""
         self.dead: set[str] = set()
-        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.calls: list[tuple[str, Mapping[str, object]]] = []
         self.processes: list[list[str]] = []
         self.fail: dict[str, str] = {}
         """rclone command to the error it fails with."""
@@ -64,7 +89,7 @@ class Sandbox:
         """Uploads `vfs/stats` reports as queued, each call taking one off."""
         self.mount_answers = True
 
-    def rc(self, command: str, body: dict[str, Any] | None = None, timeout: float = 60) -> dict[str, Any]:
+    def rc(self, command: str, body: Mapping[str, object] | None = None, timeout: float = 60) -> dict[str, object]:
         body = body or {}
         self.calls.append((command, body))
         if command in self.fail:
@@ -72,20 +97,22 @@ class Sandbox:
         if command == 'mount/listmounts':
             return {'mountPoints': [{'MountPoint': path, 'Fs': fs} for path, fs in self.daemon.items()]}
         if command == 'mount/mount':
-            path = body['mountPoint']
-            self.daemon[path] = body['fs']
+            made = MOUNT_BODY.validate_python(body)
+            path = made['mountPoint']
+            self.daemon[path] = made['fs']
             self.dead.discard(path)
             if self.mount_answers:
-                self.kernel[path] = body['mountOpt']['DeviceName']
+                self.kernel[path] = made['mountOpt']['DeviceName']
         elif command == 'mount/unmount':
-            self.daemon.pop(body['mountPoint'])
-            self.kernel.pop(body['mountPoint'], None)
+            path = mount_point(body)
+            self.daemon.pop(path)
+            self.kernel.pop(path, None)
         elif command == 'vfs/stats':
             queued, self.queued = self.queued, max(self.queued - 1, 0)
             return {'diskCache': {'uploadsQueued': queued, 'uploadsInProgress': 0}}
         return {}
 
-    def run(self, argv: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def run(self, argv: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         self.processes.append(list(argv))
         if argv[0] == 'fusermount3':
             self.kernel.pop(argv[-1], None)
@@ -126,7 +153,7 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     return sandbox
 
 
-def wanted(sandbox: Sandbox, name: str = 'data', fingerprint: str = 'aaaa', **changes: Any) -> dict[str, Any]:
+def wanted(sandbox: Sandbox, name: str = 'data', fingerprint: str = 'aaaa', expires_at: float = 2_000.0) -> Wanted:
     return {
         'path': str(sandbox.root / 'workspace' / name),
         'fingerprint': fingerprint,
@@ -134,11 +161,11 @@ def wanted(sandbox: Sandbox, name: str = 'data', fingerprint: str = 'aaaa', **ch
         'root': 'bucket/prefix',
         'read_only': False,
         'keys': {'access_key_id': 'the-key-id', 'secret_access_key': SECRET, 'session_token': ''},
-        'expires_at': 2_000.0,
-    } | changes
+        'expires_at': expires_at,
+    }
 
 
-def ensure(sandbox: Sandbox, *mounts: dict[str, Any]) -> dict[str, Any]:
+def ensure(sandbox: Sandbox, *mounts: Wanted) -> dict[str, object]:
     return helper.ensure({'working_dir': str(sandbox.root / 'workspace'), 'mounts': list(mounts)})
 
 
@@ -260,7 +287,9 @@ def test_a_mount_whose_keys_expired_gets_fresh_ones_before_it_is_probed(
     sandbox.dead.add(mount['path'])
     rc = sandbox.rc
 
-    def fresh_keys_revive(command: str, body: dict[str, Any] | None = None, timeout: float = 60) -> dict[str, Any]:
+    def fresh_keys_revive(
+        command: str, body: dict[str, object] | None = None, timeout: float = 60
+    ) -> dict[str, object]:
         if command == 'backend/command':
             sandbox.dead.discard(mount['path'])
         return rc(command, body, timeout)
@@ -470,7 +499,7 @@ def test_no_key_reaches_a_command_line(sandbox: Sandbox, monkeypatch: pytest.Mon
     monkeypatch.setattr(helper, 'start_daemon', START_DAEMON)
     answers = iter([OSError('no daemon yet')])
 
-    def rc(command: str, body: dict[str, Any] | None = None, timeout: float = 60) -> dict[str, Any]:
+    def rc(command: str, body: dict[str, object] | None = None, timeout: float = 60) -> dict[str, object]:
         if command == 'rc/noop' and (error := next(answers, None)):
             raise error
         return sandbox.rc(command, body, timeout)
@@ -490,12 +519,12 @@ def test_the_daemon_ignores_rclone_settings_in_the_environment(tmp_path: Path, m
     started: list[dict[str, str]] = []
     answers = iter([OSError('no daemon yet')])
 
-    def rc(command: str, body: dict[str, Any] | None = None, timeout: float = 60) -> dict[str, Any]:
+    def rc(command: str, body: dict[str, object] | None = None, timeout: float = 60) -> dict[str, object]:
         if (error := next(answers, None)) is not None:
             raise error
         return {}
 
-    def popen(argv: Sequence[str], *, env: dict[str, str], **kwargs: Any) -> None:
+    def popen(argv: Sequence[str], *, env: dict[str, str], **kwargs: object) -> None:
         started.append(env)
 
     monkeypatch.setattr(helper, 'STATE', str(tmp_path))
@@ -519,7 +548,7 @@ def test_the_daemon_already_running_is_used(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_a_daemon_that_never_answers_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def rc(command: str, body: dict[str, Any] | None = None, timeout: float = 60) -> dict[str, Any]:
+    def rc(command: str, body: dict[str, object] | None = None, timeout: float = 60) -> dict[str, object]:
         raise helper.MountFailed('rclone', 'no')
 
     monkeypatch.setattr(helper, 'STATE', str(tmp_path))
@@ -540,7 +569,7 @@ def test_a_daemon_that_never_answers_is_reported(tmp_path: Path, monkeypatch: py
 
 
 def test_served_is_empty_without_a_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
-    def rc(command: str, body: dict[str, Any] | None = None, timeout: float = 60) -> dict[str, Any]:
+    def rc(command: str, body: dict[str, object] | None = None, timeout: float = 60) -> dict[str, object]:
         raise OSError('no socket')
 
     monkeypatch.setattr(helper, 'rc', rc)
@@ -567,15 +596,15 @@ class FakeResponse:
     ],
 )
 def test_rc_reports_only_rclones_own_message(
-    monkeypatch: pytest.MonkeyPatch, status: int, body: bytes, expected: dict[str, Any] | str
+    monkeypatch: pytest.MonkeyPatch, status: int, body: bytes, expected: dict[str, object] | str
 ) -> None:
-    requests: list[tuple[Any, ...]] = []
+    requests: list[tuple[object, ...]] = []
 
     class Connection:
         def __init__(self, host: str, timeout: float) -> None:
             pass
 
-        def request(self, *args: Any) -> None:
+        def request(self, *args: object) -> None:
             requests.append(args)
 
         def getresponse(self) -> FakeResponse:
@@ -614,7 +643,7 @@ def test_an_rclone_on_path_is_used_from_the_version_floor_up(
 
 @pytest.mark.parametrize('error', [OSError('missing'), subprocess.TimeoutExpired('rclone', 10)])
 def test_an_rclone_that_does_not_run_is_too_old(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
-    def run(argv: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def run(argv: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         raise error
 
     monkeypatch.setattr(helper.subprocess, 'run', run)
@@ -658,9 +687,9 @@ def test_install_uses_the_pinned_build_once_downloaded(pinned: Path, monkeypatch
 def test_install_downloads_and_checks_the_pinned_build(pinned: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     zipped = archive(b'the binary')
     monkeypatch.setitem(helper.RCLONE_SHA256, 'x86_64', hashlib.sha256(zipped).hexdigest())
-    requests: list[Any] = []
+    requests: list[urllib.request.Request] = []
 
-    def urlopen(request: Any, timeout: float) -> io.BytesIO:
+    def urlopen(request: urllib.request.Request, timeout: float) -> io.BytesIO:
         requests.append(request)
         return io.BytesIO(zipped)
 
@@ -683,7 +712,7 @@ def test_a_download_that_does_not_match_its_checksum_is_refused(pinned: Path, mo
 
 
 def test_a_failed_download_is_reported(pinned: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def urlopen(request: Any, timeout: float) -> io.BytesIO:
+    def urlopen(request: object, timeout: float) -> io.BytesIO:
         raise OSError('network unreachable')
 
     monkeypatch.setattr(helper.urllib.request, 'urlopen', urlopen)
@@ -716,7 +745,7 @@ def test_fuse_is_installed_with_apt_when_missing(
         present = {'fusermount3': found or (installed and bool(ran)), 'apt-get': apt}
         return name if present.get(name) else None
 
-    def run(argv: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def run(argv: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         ran.append(list(argv))
         return subprocess.CompletedProcess(list(argv), 0)
 
@@ -758,7 +787,7 @@ def test_the_kernel_table_is_read_with_its_escapes(tmp_path: Path, monkeypatch: 
 def test_a_mount_is_alive_when_a_lookup_in_it_answers(
     monkeypatch: pytest.MonkeyPatch, outcome: subprocess.CompletedProcess[str] | Exception, expected: bool
 ) -> None:
-    def run(argv: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def run(argv: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if isinstance(outcome, Exception):
             raise outcome
         return outcome

@@ -6,12 +6,12 @@ there, like the real one runs it in the container. Removing a container kills th
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
-from typing import Any
 
 import pytest
+
+from ..mounts._requests import Request, parse_request
 
 # `flaky-image` fails only its first pull, `unstartable-image` creates a container
 # that fails to start, `--fake-hang` makes the first `run` hang before it creates anything so a create can be
@@ -176,10 +176,10 @@ class FakeDocker:
     def tmp_files(self, name: str) -> list[Path]:
         return list((self.bin_dir / 'containers' / f'{name}.tmp').glob('*'))
 
-    def root_requests(self) -> list[dict[str, Any]]:
+    def root_requests(self) -> list[Request]:
         """The stdin lines of the helper's runs as root, parsed."""
         path = self.bin_dir / 'root-stdin'
-        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        return [parse_request(line) for line in path.read_text().splitlines()] if path.exists() else []
 
     def root_env(self) -> str:
         """The environment the last root `exec` got."""

@@ -16,12 +16,12 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 import anyio
 import pytest
 from hypothesis import HealthCheck, given, settings, strategies as st
 from inline_snapshot import snapshot
+from typing_extensions import TypedDict
 
 import pydantic_ai_harness._mounts as mounts_package
 from pydantic_ai import RunContext
@@ -32,6 +32,8 @@ from pydantic_ai.workspaces import CommandResult, Workspace, WrapperWorkspace
 from pydantic_ai_harness import MountError, S3Mount
 from pydantic_ai_harness._mounts import mounted
 from tests.workspace_fakes import FakeWorkspace
+
+from ._requests import Request, parse_request
 
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=UTC)
 CTX = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
@@ -69,8 +71,8 @@ class FakeRoot:
         stdout = self.replies.pop(0) if self.replies else '{"recovered": []}\n'
         return CommandResult(exit_code=0, stdout=stdout, stderr='')
 
-    def requests(self) -> list[dict[str, Any]]:
-        return [json.loads(stdin) for _, stdin in self.calls]
+    def requests(self) -> list[Request]:
+        return [parse_request(stdin) for _, stdin in self.calls]
 
 
 def s3(
@@ -79,7 +81,9 @@ def s3(
     *,
     key: str = SECRETS[0],
     expires_in: timedelta = timedelta(hours=1),
-    **kwargs: Any,
+    endpoint: str | None = None,
+    region: str | None = None,
+    read_only: bool = False,
 ) -> S3Mount:
     return S3Mount(
         path=path,
@@ -88,7 +92,9 @@ def s3(
         secret_access_key=SECRETS[1],
         session_token=SECRETS[2],
         expires_at=NOW + expires_in,
-        **kwargs,
+        endpoint=endpoint,
+        region=region,
+        read_only=read_only,
     )
 
 
@@ -521,6 +527,14 @@ def test_the_repr_leaves_out_the_keys() -> None:
     )
 
 
+class FieldChanges(TypedDict, total=False):
+    """The `S3Mount` fields a case sets to something invalid; the rest keep valid values."""
+
+    path: str
+    url: str
+    expires_at: datetime
+
+
 @pytest.mark.parametrize(
     ('changes', 'message'),
     [
@@ -544,16 +558,15 @@ def test_the_repr_leaves_out_the_keys() -> None:
         ({'expires_at': NOW}, "The keys for mount 'data' have already expired. Pass keys that expire later."),
     ],
 )
-def test_invalid_mounts_are_refused(changes: dict[str, Any], message: str) -> None:
-    fields: dict[str, Any] = {
-        'path': 'data',
-        'url': 's3://bucket/',
-        'access_key_id': 'id',
-        'secret_access_key': 'key',
-        'expires_at': NOW + timedelta(hours=1),
-    } | changes
+def test_invalid_mounts_are_refused(changes: FieldChanges, message: str) -> None:
     with pytest.raises(UserError, match=re.escape(message)):
-        S3Mount(**fields)
+        S3Mount(
+            path=changes.get('path', 'data'),
+            url=changes.get('url', 's3://bucket/'),
+            access_key_id='id',
+            secret_access_key='key',
+            expires_at=changes.get('expires_at', NOW + timedelta(hours=1)),
+        )
 
 
 @given(st.text(alphabet='ab./-_\x00 ', max_size=12))
