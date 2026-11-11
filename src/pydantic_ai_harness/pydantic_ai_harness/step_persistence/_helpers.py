@@ -45,12 +45,12 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
     see `SnapshotState`) rather than gating what gets persisted.
     """
     open_calls: set[str] = set()
-    for msg in messages:
-        if isinstance(msg, ModelResponse):
-            if not _open_response_calls(msg, open_calls):
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            if not _open_response_calls(message, open_calls):
                 return False
             continue
-        for tool_call_id in _answered_call_ids(msg):
+        for tool_call_id in _answered_call_ids(message):
             if tool_call_id not in open_calls:
                 return False
             open_calls.discard(tool_call_id)
@@ -58,7 +58,7 @@ def is_provider_valid(messages: list[ModelMessage]) -> bool:
 
 
 def _open_response_calls(response: ModelResponse, open_calls: set[str]) -> bool:
-    """Open *response*'s tool calls in *open_calls*, or report that two of them can't be told apart.
+    """Open `response`'s tool calls in `open_calls`, or report that two of them can't be told apart.
 
     Repeating an ID within one response makes the two calls indistinguishable, and reusing one that is
     still open leaves the earlier call unanswerable: the later result answers this call instead. Either

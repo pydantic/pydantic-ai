@@ -191,7 +191,7 @@ For streaming, you'll also need to implement the [`StreamedResponse`][pydantic_a
 
 A subclass with dataclass equality, including one that inherits it, compares its `settings` and `profile` along with its dataclass fields. A subclass that hashes by identity, such as a direct non-dataclass subclass of `Model` or a direct `@dataclass(eq=False)` subclass, compares by identity. Its `repr` shows its `model_name`, any dataclass fields, and its `settings` and `profile` when set. Define `__eq__` or `__repr__` on the subclass to replace either.
 
-The best place to start is to review the source code for existing implementations, e.g. [`OpenAIChatModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).
+The best place to start is to review the source code for existing implementations, e.g. [`OpenAIChatModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai/_chat_model.py).
 
 For details on when we'll accept contributions adding new models to Pydantic AI, see the [contributing guidelines](../contributing.md#new-model-rules).
 
@@ -302,9 +302,9 @@ A provider's own signal decides between categories that share a status code: a 4
 provider says the quota is exhausted (the Gemini API names the exceeded quotas in its `RESOURCE_EXHAUSTED` error, so
 its daily quota is a `ModelQuotaExceededError`), and a 503 is only unavailable unless the provider says it's
 overloaded. A 400 is a `ModelRequestRejectedError`, or one of its subclasses when the provider says why: a
-`ModelContextWindowExceededError`, a `ModelNotFoundError` (OpenAI's Responses API sends `model_not_found` as a 400), or
-a `ModelAuthenticationError` (the Gemini API sends `API_KEY_INVALID` as a 400). Exhausted credits or disabled billing
-are a `ModelQuotaExceededError` instead, even when the provider sends them as a 400, as Anthropic and the Gemini API do.
+`ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAuthenticationError` (the Gemini API sends
+`API_KEY_INVALID` as a 400). Exhausted credits or disabled billing are a `ModelQuotaExceededError` instead, even when
+the provider sends them as a 400, as Anthropic and the Gemini API do.
 
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message

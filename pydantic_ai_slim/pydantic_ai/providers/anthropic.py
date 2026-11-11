@@ -64,7 +64,9 @@ the way it does a plain system entry. Verified live per model, including `claude
 
 _MID_CONVERSATION_EFFORT_MODEL_PREFIXES = (
     'claude-fable-5-1',
+    'claude-fable-5-2',
     'claude-mythos-5-1',
+    'claude-mythos-5-2',
     'claude-opus-5',
     'claude-sonnet-5-5',
     'claude-haiku-5-5',
@@ -72,7 +74,7 @@ _MID_CONVERSATION_EFFORT_MODEL_PREFIXES = (
 """Models that accept an effort-only `{'role': 'system'}` entry with a per-message `output_config`.
 
 The list Anthropic publishes for the `mid-conversation-output-config-2026-07-01` beta on the Claude API and
-Google Cloud: Claude Fable 5.1, Mythos 5.1, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5. `claude-fable-5`
+Google Cloud: Claude Fable 5.1 and 5.2, Mythos 5.1 and 5.2, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5. `claude-fable-5`
 (5.0) rejects it with `requires a model that supports per-turn effort`. Amazon Bedrock serves fewer, which
 `AnthropicModel.profile` narrows per client. https://platform.claude.com/docs/en/build-with-claude/effort
 """
@@ -315,10 +317,11 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
 def _const_to_typed_enum(schema: JsonSchema) -> None:
     """Rewrite a scalar `const` as a typed one-value `enum`, which Anthropic's `transform_schema()` keeps.
 
-    `transform_schema()` moves a `const` into the description, which would leave the value unconstrained, while
-    it keeps an `enum`. Pydantic emits a typed `const` for a single-value `Literal`, such as a discriminator field.
-    A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s, which
-    get the type of their value, as `transform_schema()` rejects a node without a `type`.
+    Before SDK 2.7.0, `transform_schema()` moves a `const` into the description, leaving the value unconstrained,
+    while it keeps an `enum`. Pydantic emits a typed `const` for a single-value `Literal`, such as a discriminator
+    field. A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s,
+    which get the type of their value, as older SDKs reject a node without a `type`. SDK 2.7.0 and later keep
+    the `enum` and drop its redundant `type`; retain this conversion for supported older SDKs.
     """
     const = schema.get('const')
     # `bool` before `int`, which it subclasses.
