@@ -915,6 +915,34 @@ def test_reopened_worktree_is_removed_only_once_pushed(
     assert git(repo, 'branch', '--list', 'clai-task')
 
 
+def test_saved_keep_choice_unmarks_a_reopened_worktree(
+    repo: Path, origin: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The launch notice and the `/update` handover agree with the exit that keeps the checkout."""
+    monkeypatch.delenv('CLAI_RELAUNCH_WORKTREE', raising=False)
+    workspace = repo / '.worktrees/task'
+
+    def commit() -> None:
+        git(workspace, 'commit', '--allow-empty', '-m', 'Work')
+
+    monkeypatch.chdir(repo)
+    assert len(run_cli(monkeypatch, '-w', 'task', repo=repo, session=commit, answer='never')) == 1
+    git(workspace, 'push', 'origin', 'clai-task')
+    monkeypatch.chdir(repo)
+    entered: list[Worktree] = []
+    enter = cli._enter_worktree  # pyright: ignore[reportPrivateUsage]
+
+    def spy(*, name: str, headless: bool, store: SettingsStore) -> Worktree:
+        entered.append(enter(name=name, headless=headless, store=store))
+        return entered[-1]
+
+    monkeypatch.setattr(cli, '_enter_worktree', spy)
+    assert run_cli(monkeypatch, '-w', 'task', repo=repo, relaunch=True) == []
+    assert entered[0].notice.endswith('Kept unless removal is confirmed on exit.')
+    assert 'CLAI_RELAUNCH_WORKTREE' not in os.environ
+    assert workspace.exists()
+
+
 def test_relaunch_from_a_kept_checkout_hands_nothing_over(
     repo: Path, checkout: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

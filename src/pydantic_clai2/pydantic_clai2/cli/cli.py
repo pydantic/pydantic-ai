@@ -128,7 +128,7 @@ def run(*, splash: Splash | None = None) -> None:
             raise SystemExit(asyncio.run(_update(settings.update_channel)))
         agent = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
-            worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web)
+            worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web, store=store)
         project = load_project_settings(Path.cwd(), store=store)
         _continue_session(args, store)
         model = args.model or os.getenv('CLAI_MODEL')
@@ -323,9 +323,12 @@ def _settings_for(
     return settings_for
 
 
-def _enter_worktree(*, name: str, headless: bool) -> 'Worktree':
-    """Open the `--worktree` checkout and change into it, marking it for exit cleanup when that will run."""
-    from pydantic_clai2.runtime.worktrees import open_worktree
+def _enter_worktree(*, name: str, headless: bool, store: SettingsStore) -> 'Worktree':
+    """Open the `--worktree` checkout and change into it, marking it for exit cleanup when that will run.
+
+    A checkout a saved choice keeps, or whose choice cannot be read, is not marked for removal once pushed.
+    """
+    from pydantic_clai2.runtime.worktrees import kept_checkout, open_worktree
 
     worktree = open_worktree(name=name)
     if headless:
@@ -334,7 +337,11 @@ def _enter_worktree(*, name: str, headless: bool) -> 'Worktree':
     else:
         # Exit cleanup needs a terminal; piped input keeps even an unchanged checkout.
         terminal = sys.stdin.isatty()
-        worktree = replace(worktree, remove_if_unchanged=worktree.created and terminal, remove_if_pushed=terminal)
+        worktree = replace(
+            worktree,
+            remove_if_unchanged=worktree.created and terminal,
+            remove_if_pushed=terminal and kept_checkout(worktree.path, store=store) is False,
+        )
     os.chdir(worktree.path)
     return worktree
 

@@ -269,7 +269,7 @@ def offer_worktree_cleanup(
         return
     if unchanged and not removable:
         return
-    kept = _kept_checkout(worktree.path, store=store)
+    kept = kept_checkout(worktree.path, store=store)
     if kept:
         print(f'Worktree kept at {root}.')
     elif removable and kept is False:
@@ -328,7 +328,7 @@ def _checkout_identity(path: Path) -> str:
     return f'{identity.st_dev}:{identity.st_ino}:{identity.st_mtime_ns}'
 
 
-def _kept_checkout(path: Path, *, store: SettingsStore | None) -> bool | None:
+def kept_checkout(path: Path, *, store: SettingsStore | None) -> bool | None:
     """Whether a saved choice keeps the checkout, or `None` when it cannot be read.
 
     An unreadable preference removes nothing without asking, and still lets the user choose whether to
