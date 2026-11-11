@@ -227,14 +227,11 @@ class TestPermissions:
 
     async def test_request_input_leaves_other_approvals_pending(self, tmp_path: Path) -> None:
         """`permission_ask` answers an empty result rather than `None`, so `RequestInput` does not wait on its token."""
-
-        def other() -> str:
-            return 'ran'
-
         person = _Person()
         agent = _agent(tmp_path, _calls(('other', {})), 'read-only', person)
+        other = Tool(lambda: 'never runs', name='other', requires_approval=True)
 
-        result = await agent.run('go', toolsets=[FunctionToolset([Tool(other, requires_approval=True)])])
+        result = await agent.run('go', toolsets=[FunctionToolset([other])])
 
         assert isinstance(result.output, DeferredToolRequests)
         assert [call.tool_name for call in result.output.approvals] == ['other']
