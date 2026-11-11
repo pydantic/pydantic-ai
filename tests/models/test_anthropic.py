@@ -14706,8 +14706,12 @@ async def test_anthropic_standalone_lazy_advertisement_synthesizes_reveal(allow_
     )
 
 
-async def test_anthropic_rejects_all_deferred_tools_before_request(allow_model_requests: None):
-    """The adapter explains Anthropic's all-deferred `tools` constraint before making an API call."""
+@pytest.mark.parametrize('count_tokens', [False, True])
+async def test_anthropic_rejects_all_deferred_tools_before_request(allow_model_requests: None, count_tokens: bool):
+    """The adapter explains Anthropic's all-deferred `tools` constraint before making an API call.
+
+    `count_tokens` raises it too: the endpoint rejects the same `tools` list.
+    """
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='unused', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
     )
@@ -14722,8 +14726,12 @@ async def test_anthropic_rejects_all_deferred_tools_before_request(allow_model_r
         ],
         tool_visibility={'only_tool': 'deferred'},
     )
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Hi')])]
     with pytest.raises(UserError, match=r'Make at least one tool visible.*tool-search surface or capability catalog'):
-        await model.request([ModelRequest(parts=[UserPromptPart(content='Hi')])], None, params)
+        if count_tokens:
+            await model.count_tokens(messages, None, params)
+        else:
+            await model.request(messages, None, params)
     assert get_mock_chat_completion_kwargs(mock_client) == []
 
 

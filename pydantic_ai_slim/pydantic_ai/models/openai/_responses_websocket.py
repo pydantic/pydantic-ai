@@ -26,8 +26,14 @@ from openai.types.websocket_connection_options import WebSocketConnectionOptions
 from pydantic_core import from_json, to_json
 from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketException
 
-from .._utils import is_str_dict
-from ..exceptions import ModelAPIError, ModelConnectionError, ModelHTTPError, ModelTimeoutError, UnexpectedModelBehavior
+from ..._utils import is_str_dict
+from ...exceptions import (
+    ModelAPIError,
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelTimeoutError,
+    UnexpectedModelBehavior,
+)
 
 
 class ConnectionOptions(WebSocketConnectionOptions):
@@ -77,7 +83,7 @@ class ResponsesWebSocketLane:
     """The consumer's wait for this lane's next event, which closing the response interrupts."""
 
 
-def _is_terminal(event: ResponsesServerEvent) -> bool:
+def is_terminal(event: ResponsesServerEvent) -> bool:
     # The SDK's lane router also treats an `error` event as the end of its request.
     return isinstance(event, (ResponseCompletedEvent, ResponseFailedEvent, ResponseIncompleteEvent, ResponseWsError))
 
@@ -132,30 +138,7 @@ class ResponsesWebSocket:
         except APIError:
             raise
         except InvalidStatus as exc:
-            status_code = exc.response.status_code
-            if status_code < 400:
-                raise ModelAPIError(
-                    model_name=model_name, message=f'WebSocket handshake failed with status {status_code}'
-                ) from exc
-            text = bytes(exc.response.body).decode(errors='replace')
-            # Read like the SDK reads an HTTP error response, so the rejection gets the category it gets over HTTP.
-            try:
-                parsed: object = from_json(text)
-            except ValueError:
-                parsed = None
-            error: object = parsed.get('error', parsed) if is_str_dict(parsed) else None
-            fields = (
-                {key: value for key, value in error.items() if isinstance(value, str)} if is_str_dict(error) else {}
-            )
-            raise status_error(
-                status_code=status_code,
-                code=fields.get('code'),
-                error_type=fields.get('type'),
-                message=fields.get('message', text),
-                body=error if error is not None else text,
-                # `dict(exc.response.headers)` raises `MultipleValuesError` on a repeated header.
-                headers={name: ', '.join(exc.response.headers.get_all(name)) for name in exc.response.headers},
-            ) from exc
+            raise cls._handshake_rejection_error(exc, model_name, status_error) from exc
         except TimeoutError as exc:
             raise ModelTimeoutError(
                 model_name=model_name, message='WebSocket connection timed out.', phase='connect'
@@ -166,6 +149,29 @@ class ResponsesWebSocket:
             ) from exc
 
         return cls(connection, model_name, cls.effective_headers(client, headers), named_lane_limit, status_error)
+
+    @staticmethod
+    def _handshake_rejection_error(exc: InvalidStatus, model_name: str, status_error: StatusError) -> ModelAPIError:
+        status_code = exc.response.status_code
+        if status_code < 400:
+            return ModelAPIError(model_name=model_name, message=f'WebSocket handshake failed with status {status_code}')
+        text = bytes(exc.response.body).decode(errors='replace')
+        # Read like the SDK reads an HTTP error response, so the rejection gets the category it gets over HTTP.
+        try:
+            parsed: object = from_json(text)
+        except ValueError:
+            parsed = None
+        error: object = parsed.get('error', parsed) if is_str_dict(parsed) else None
+        fields = {key: value for key, value in error.items() if isinstance(value, str)} if is_str_dict(error) else {}
+        return status_error(
+            status_code=status_code,
+            code=fields.get('code'),
+            error_type=fields.get('type'),
+            message=fields.get('message', text),
+            body=error if error is not None else text,
+            # `dict(exc.response.headers)` raises `MultipleValuesError` on a repeated header.
+            headers={name: ', '.join(exc.response.headers.get_all(name)) for name in exc.response.headers},
+        )
 
     @staticmethod
     def effective_headers(client: AsyncOpenAI, extra_headers: Mapping[str, str]) -> dict[str, str]:
@@ -218,7 +224,7 @@ class ResponsesWebSocket:
             lane.receiving.cancel()
             lane.latest_response_id = None
             finished = (
-                self.failure is not None or self.connection_closed or any(_is_terminal(event) for event in lane.events)
+                self.failure is not None or self.connection_closed or any(is_terminal(event) for event in lane.events)
             )
         lane.events.clear()
         if finished:
@@ -276,7 +282,7 @@ class ResponsesWebSocket:
                 message = f'{error.code}: {error.message}' if error.code else error.message
                 await self.fail(f'Responses WebSocket connection failed: {message}')
             elif lane is not None and lane.abandoned:
-                if _is_terminal(event):
+                if is_terminal(event):
                     lane.abandoned = False
                     lane.active = False
             elif lane is not None:
@@ -389,7 +395,7 @@ class ResponsesWebSocketStream:
         if isinstance(event, (ResponseSteerAcceptedEvent, ResponseSteerPendingEvent, ResponseSteerFailedEvent)):
             raise UnexpectedModelBehavior(f'Unexpected Responses WebSocket event: {event.type!r}')
 
-        if _is_terminal(event):
+        if is_terminal(event):
             self.completed = True
             # With store=false the provider only promises the latest completed response in this lane's
             # connection-local cache. A failed or incomplete response cannot be the parent of another response.

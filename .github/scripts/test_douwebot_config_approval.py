@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 import yaml
-from douwebot_opencode_run import MODEL
+from douwebot_opencode_run import DEEPINFRA, OPENCODE_GO
 from publish_douwebot_review import REVIEW_ENGINES, Finding, ReviewEngine, ReviewResult, publication
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
@@ -281,11 +281,19 @@ def test_workflow_only_publishes_the_successful_review() -> None:
     publish_step = next(step for step in publish['steps'] if step.get('id') == 'publish')
     assert "needs.douwebot-opencode.result == 'success'" in publish_step['if']
     assert 'needs.douwebot-opencode.outputs.result' in publish_step['env']['REVIEW_RESULT']
-    assert publish_step['env']['REVIEW_ENGINE'] == "${{ needs.review.outputs.fallback == 'true' && 'opencode' || 'claude' }}"
+    assert (
+        publish_step['env']['REVIEW_ENGINE']
+        == "${{ needs.review.outputs.fallback != 'true' && 'claude' || needs.douwebot-opencode.outputs.engine }}"
+    )
+    assert fallback['outputs']['engine'] == '${{ steps.opencode.outputs.engine }}'
+    opencode = next(step for step in fallback['steps'] if step.get('id') == 'opencode')
+    assert opencode['run'].endswith('python3 .github/scripts/douwebot_opencode_run.py\n')
     claude = next(step for step in review['steps'] if step.get('id') == 'review')
     assert '--model claude-opus-5-5[1m]' in claude['with']['claude_args']
     assert 'claude-opus-5-5' in REVIEW_ENGINES['claude']
-    assert MODEL in REVIEW_ENGINES['opencode']
+    for provider in (OPENCODE_GO, DEEPINFRA):
+        assert opencode['env'][provider.key_variable] == f'${{{{ secrets.{provider.key_variable} }}}}'
+        assert REVIEW_ENGINES[provider.review_engine] == f'Reviewer: OpenCode ({provider.model})'
 
 
 REVIEWED_HEAD = 'a' * 40
@@ -333,6 +341,14 @@ def _douwebot_review(
             False,
             '',
             id='clean-opencode',
+        ),
+        pytest.param(
+            _douwebot_review(
+                14, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion=''), engine='opencode-deepinfra'
+            ),
+            False,
+            '',
+            id='clean-opencode-deepinfra',
         ),
         pytest.param(
             _douwebot_review(12, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion='Reviewer: Claude Code (claude-opus-5-5)')),
