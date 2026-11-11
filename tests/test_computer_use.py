@@ -350,7 +350,33 @@ async def test_a_model_not_known_to_point_on_a_grid_is_left_alone(grids: list[in
     messages = (await agent.run('Click.')).all_messages()
     assert descriptions == ['Act on the screen.'] * 2
     [call] = _computer_calls(messages)
-    assert call.coordinate_grid is None
+    assert call.provider_details is None
+
+
+def _limited(max_side: int | None, max_pixels: int | None) -> ModelProfile:
+    profile = ModelProfile()
+    if max_side:
+        profile['computer_use_screenshot_max_side'] = max_side
+    if max_pixels:
+        profile['computer_use_screenshot_max_pixels'] = max_pixels
+    return profile
+
+
+@pytest.mark.parametrize(
+    'limits, side, pixels',
+    [
+        pytest.param([(1568, 1_150_000)], 1568, 1_150_000, id='one-model'),
+        pytest.param([(2576, 3_600_000), (1568, None), (None, None)], 1568, 3_600_000, id='smallest-in-a-fallback'),
+    ],
+)
+async def test_a_computer_call_records_the_screenshots_its_model_takes(
+    limits: list[tuple[int | None, int | None]], side: int, pixels: int
+) -> None:
+    respond, _ = _click_then_stop([])
+    models = [FunctionModel(respond, profile=_limited(max_side, max_pixels)) for max_side, max_pixels in limits]
+    agent = _grid_agent(models[0] if len(models) == 1 else FallbackModel(*models))
+    [call] = _computer_calls((await agent.run('Click.')).all_messages())
+    assert (call.screenshot_max_side, call.screenshot_max_pixels, call.coordinate_grid) == (side, pixels, None)
 
 
 async def test_a_grid_model_with_a_tool_without_a_description_gets_the_grid_alone() -> None:
@@ -364,9 +390,12 @@ async def test_a_grid_model_with_a_tool_without_a_description_gets_the_grid_alon
     assert descriptions == [GRID_SENTENCE] * 2
 
 
-@pytest.mark.parametrize('grid', [True, 1, '1000', None])
-def test_a_computer_call_reads_only_a_real_grid(grid: object) -> None:
+@pytest.mark.parametrize('value', [True, 0, '1000', None])
+def test_a_computer_call_reads_only_real_labels(value: object) -> None:
+    keys = ('coordinate_grid', 'screenshot_max_side', 'screenshot_max_pixels')
+    call = ComputerCallPart('computer', {'actions': []}, provider_details=dict.fromkeys(keys, value))
+    assert (call.coordinate_grid, call.screenshot_max_side, call.screenshot_max_pixels) == (None, None, None)
+    # A grid of one point says nothing about where.
     assert (
-        ComputerCallPart('computer', {'actions': []}, provider_details={'coordinate_grid': grid}).coordinate_grid
-        is None
+        ComputerCallPart('computer', {'actions': []}, provider_details={'coordinate_grid': 1}).coordinate_grid is None
     )
