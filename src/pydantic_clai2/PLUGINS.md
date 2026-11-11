@@ -3845,6 +3845,8 @@ browser's callback won the race, closes the prompt. A slash command or
 screen first, inside `async with host.full_screen()`. Without the live editor it
 is a plain terminal prompt. Where CLAI has no terminal and the web UI runs, it is
 a dialog in the page, titled with the prompt; what you printed is not shown there.
+Esc cancels that dialog too, so keep any other terminal-only key hint out of the
+prompt.
 
 Do not draw a prompt yourself from a `run_worker` operation. By default
 `run_worker` takes the live panel, and the transcript with your URL, off the
