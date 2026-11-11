@@ -20,8 +20,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import ClassVar, Literal, TypeAlias
 
+from pydantic import model_validator
+from typing_extensions import deprecated
+
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 SUB_AGENTS_EVENTS = 'sub_agents'
 
@@ -89,8 +94,29 @@ class DelegationFinishedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name
     set, or `forward_usage` off); `None` when it accrues into the parent's usage."""
     task_id: str | None = None
     parent_id: str | None = None
-    duration_seconds: float
-    """Wall-clock seconds from just after the start event was emitted until the delegation settled."""
+    duration_ms: float
+    """Wall-clock milliseconds from just after the start event was emitted until the delegation settled."""
+
+    @model_validator(mode='before')
+    @classmethod
+    def _load_duration_seconds(cls, data: object) -> object:
+        """Load a payload saved with the former `duration_seconds` field."""
+        if (
+            is_str_dict(data)
+            and 'duration_ms' not in data
+            and isinstance(seconds := data.get('duration_seconds'), float | int)
+        ):
+            return {**data, 'duration_ms': seconds * 1000}
+        return data
+
+    @property
+    @deprecated(
+        '`duration_seconds` is deprecated, use `duration_ms` instead, which is in milliseconds.',
+        category=HarnessDeprecationWarning,
+    )
+    def duration_seconds(self) -> float:
+        """Deprecated: `duration_ms` in seconds."""
+        return self.duration_ms / 1000
 
 
 @dataclass(kw_only=True)
