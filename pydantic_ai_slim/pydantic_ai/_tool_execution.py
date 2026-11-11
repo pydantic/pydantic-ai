@@ -216,7 +216,7 @@ def _deferred_tool_requests(
         calls=calls,
         approvals=deferred_calls['unapproved'],
         metadata=deferred_metadata,
-        kinds={call.tool_call_id: 'question' for call in questions},
+        _kinds={call.tool_call_id: 'question' for call in questions},
     )
 
 
@@ -229,7 +229,7 @@ def _with_deferred_tool_requests(
     pending.calls.extend(new.calls)
     pending.approvals.extend(new.approvals)
     pending.metadata.update(new.metadata)
-    pending.kinds.update(new.kinds)
+    pending._kinds.update(new._kinds)  # pyright: ignore[reportPrivateUsage]
     return pending
 
 

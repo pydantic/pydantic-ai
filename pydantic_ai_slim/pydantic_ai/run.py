@@ -1186,7 +1186,7 @@ class AgentRunResult(Generic[OutputDataT]):
                     calls=list(output.calls),
                     approvals=list(output.approvals),
                     metadata=dict(output.metadata),
-                    kinds=dict(output.kinds),
+                    _kinds=dict(output._kinds),  # pyright: ignore[reportPrivateUsage]
                 )
                 if isinstance(output, DeferredToolRequests)
                 else None

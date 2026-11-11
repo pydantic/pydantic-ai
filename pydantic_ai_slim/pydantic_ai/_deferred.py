@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import Discriminator, StrictBool, Tag
+from pydantic import Discriminator, Field, StrictBool, Tag
 
 from . import _utils
 from .exceptions import ModelRetry, ToolFailed, UserError
@@ -54,18 +54,19 @@ class DeferredToolRequests:
     """Tool calls that require human-in-the-loop approval."""
     metadata: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     """Metadata for deferred tool calls, keyed by `tool_call_id`."""
-    # Out of the repr, which existing output and snapshots show unchanged; `kind()` reads it.
-    kinds: dict[str, DeferredToolKind] = field(default_factory=dict[str, DeferredToolKind], repr=False)
-    """The kind of each call whose kind its list doesn't already say, keyed by `tool_call_id`: a call in `calls` that is a `'question'`.
-
-    Read a call's kind with [`kind()`][pydantic_ai.tools.DeferredToolRequests.kind], which covers
-    every call: one in `approvals` is an `'approval'`, and one in `calls` not listed here is `'external'`.
-    """
+    # Internal, not part of the public API: read a call's kind with `kind()`. The calls in `calls` that are
+    # questions, keyed by `tool_call_id`. Serialized as `_kinds` only when there are any, so a
+    # `DeferredToolRequests` stored, journaled or recorded in telemetry keeps its questions, and one
+    # without questions serializes as it did before; left out of the repr.
+    _kinds: Annotated[dict[str, DeferredToolKind], Field(exclude_if=lambda kinds: not kinds)] = field(
+        default_factory=dict[str, DeferredToolKind], repr=False
+    )
 
     def kind(self, tool_call_id: str) -> DeferredToolKind:
         """What the pending call with this ID waits for: an approval, an answer to a question, or an external result.
 
-        A call in `approvals` is an `'approval'`, and one in `calls` is `'external'` unless `kinds` says otherwise.
+        A call in `approvals` is an `'approval'`, and one in `calls` is a `'question'` when the tool deferred
+        it with `CallDeferred(kind='question')`, and otherwise `'external'`.
 
         Raises:
             ValueError: No pending call has this ID.
@@ -74,7 +75,7 @@ class DeferredToolRequests:
             return 'approval'
         if not any(call.tool_call_id == tool_call_id for call in self.calls):
             raise ValueError(f'No pending deferred tool call has ID {tool_call_id!r}')
-        return self.kinds.get(tool_call_id, 'external')
+        return self._kinds.get(tool_call_id, 'external')
 
     def build_results(
         self,
@@ -134,7 +135,7 @@ class DeferredToolRequests:
             calls=[c for c in self.calls if c.tool_call_id not in call_result_ids],
             approvals=[c for c in self.approvals if c.tool_call_id not in approval_result_ids],
             metadata={k: v for k, v in self.metadata.items() if k not in resolved_ids},
-            kinds={k: v for k, v in self.kinds.items() if k not in resolved_ids},
+            _kinds={k: v for k, v in self._kinds.items() if k not in resolved_ids},
         )
         return remaining if remaining.calls or remaining.approvals else None
 
