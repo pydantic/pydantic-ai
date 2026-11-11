@@ -4,16 +4,24 @@ import json
 from typing import Any
 
 import httpx2
+import pytest
 
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
-from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider
+from tests.conftest import try_import
 
-PROVIDERS = ('openai', 'anthropic', 'google')
+with try_import() as google_installed:
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
+
+PROVIDERS = (
+    'openai',
+    'anthropic',
+    pytest.param('google', marks=pytest.mark.skipif(not google_installed(), reason='google-genai not installed')),
+)
 
 
 def capturing_model(provider: str, bodies: list[dict[str, Any]]) -> Model:
