@@ -1,5 +1,5 @@
 {
-  "against": "v2.66.0",
+  "against": "v2.67.0",
   "reason": "`DelegationStartEvent` was renamed to `DelegationStartedEvent` (`<Subject><PastParticiple>Event` convention, #11322); the old name remains importable from `pydantic_ai_harness.subagents` through a module `__getattr__` that emits a `HarnessDeprecationWarning`.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13065"
 }
