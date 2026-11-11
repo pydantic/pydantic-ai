@@ -93,6 +93,12 @@ def test_ui_check_owns_the_clai2_live_session_socket() -> None:
     assert select([_file(path)]) == {'ui': [path]}
 
 
+def test_telemetry_check_owns_the_version_check() -> None:
+    """The version check sends what Pydantic AI reports about its install to Pydantic, by default."""
+    path = 'pydantic_ai_slim/pydantic_ai/_version_check.py'
+    assert select([_file(path)]) == {'telemetry': [path]}
+
+
 @pytest.mark.parametrize(
     ('path', 'check'),
     [

@@ -145,9 +145,11 @@ Stock CLAI 2's default-on `observability` plugin differs: it exports whenever it
 
 A setting that suppresses one content field does not establish that the same content is absent from every event, exception, or integration. Integrations that call their own models or telemetry services are additional export channels. Local conversation, credential, and tool-output spill stores also need their documented access protections.
 
+The version check is the one request Pydantic AI makes to Pydantic by default. It runs only where the first-run or `clai` banner is displayed and sends no content: its `User-Agent` names the installed Pydantic AI, Pydantic AI Harness and `genai-prices` versions, the Python version, OS and architecture, and a coding agent only by a name from the library's own table, never the free text of `AI_AGENT`. The first banner announces it without sending it. Versions in the response are printed to the terminal only if they are plain dotted numbers. `PYDANTIC_AI_NO_VERSION_CHECK` or `DO_NOT_TRACK` turns it off.
+
 Configuration also carries secrets. Request settings such as extra headers and bodies, native-tool credentials, and identifiers derived from a URL can hold credentials, because a URL can carry one in its user info, path or query. Keep them out of traces, frontend events, and durable activity names. A credential must reach only the service it was issued for.
 
-Canonical guidance: [Logfire](docs/logfire.md), [instrumentation](docs/capabilities/instrumentation.md), [CLAI 2 telemetry](src/pydantic_clai2/docs/reference.md#telemetry-and-references), [CLAI 2 storage and authentication](src/pydantic_clai2/README.md), and [tool output limits](docs/harness/tool-output-limits.md).
+Canonical guidance: [Logfire](docs/logfire.md), [instrumentation](docs/capabilities/instrumentation.md), [network requests](docs/network-requests.md), [CLAI 2 telemetry](src/pydantic_clai2/docs/reference.md#telemetry-and-references), [CLAI 2 storage and authentication](src/pydantic_clai2/README.md), and [tool output limits](docs/harness/tool-output-limits.md).
 
 ### Availability and resource lifetime
 
