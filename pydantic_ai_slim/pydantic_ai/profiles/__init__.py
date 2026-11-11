@@ -154,8 +154,10 @@ class ModelProfile(TypedDict, total=False):
     computer_use_coordinate_grid: int
     """The size of the grid the model points on instead of pixels. Default: unset, meaning pixels.
 
-    With `1000`, a computer-use capability, such as Pydantic AI Harness's `ComputerUse`, asks the model for
-    coordinates from 0 to 999 across the screenshot and scales them to pixels. Gemini 3 profiles set it.
+    With `1000`, the agent tells the model in the `computer` tool's description that positions are from 0 to 999
+    across the screenshot, and records that grid on its calls as
+    [`ComputerCallPart.coordinate_grid`][pydantic_ai.computer_use.ComputerCallPart.coordinate_grid], for the
+    capability running the tool to scale them to pixels. Gemini 3 profiles set it: Gemini points on that grid.
     """
 
     computer_use_screenshot_max_side: int
