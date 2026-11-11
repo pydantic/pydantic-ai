@@ -5,8 +5,8 @@ blocks until the step body returns. An agent run is async. The bridge connects t
 threads and a queue:
 
 - the handler thread runs `run_durable`, which drains a queue of step requests and calls
-  `context.step(...)` for each one, so every step is created on the handler's thread in one
-  continuous sequence;
+  `context.step(...)` for each one (or creates a callback and waits for it), so every durable
+  operation is created on the handler's thread in one continuous sequence;
 - a background thread runs a persistent event loop that hosts the agent run and the actual
   model and tool calls.
 
@@ -41,7 +41,7 @@ from pydantic_ai.durable_exec import record_durable_unit, replay_scope
 from pydantic_ai.exceptions import UserError
 
 if TYPE_CHECKING:
-    from aws_durable_execution_sdk_python.config import StepConfig
+    from aws_durable_execution_sdk_python.config import CallbackConfig, StepConfig
 
 T = TypeVar('T')
 
@@ -85,6 +85,15 @@ class AgentLoopGone(BaseException):
     """
 
 
+class DurableCallback(Protocol):
+    """The part of the SDK's `Callback` this package uses."""
+
+    callback_id: str
+
+    # Structural declaration, never executed.
+    def result(self) -> Any: ...  # pragma: no cover
+
+
 class DurableStepContext(Protocol):
     """The part of `DurableContext` this package uses.
 
@@ -98,6 +107,13 @@ class DurableStepContext(Protocol):
         name: str | None = None,
         config: StepConfig | None = None,
     ) -> Any: ...
+
+    # Structural declaration, never executed.
+    def create_callback(  # pragma: no cover
+        self,
+        name: str | None = None,
+        config: CallbackConfig | None = None,
+    ) -> DurableCallback: ...
 
 
 ContextT = TypeVar('ContextT', bound=DurableStepContext)
@@ -220,7 +236,7 @@ async def _wait_within_budget(awaitable: Awaitable[object], loop: asyncio.Abstra
 _agent_loop = _AgentLoop()
 
 _in_step_body: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    'pydantic_ai_harness_aws_lambda_in_step_body', default=False
+    'pydantic_ai_harness.aws_lambda.in_step_body', default=False
 )
 """Set in the context a step's operation runs under, so a nested step can be detected.
 
@@ -240,9 +256,29 @@ class _StepRequest:
 
 
 @dataclass
+class _CallbackRequest:
+    name: str
+    callback_config: CallbackConfig
+    ask: Callable[[str], Awaitable[str | None]]
+    ask_config: StepConfig | None
+    loop: asyncio.AbstractEventLoop
+    reply: Callable[[bool, Any], None]
+    context: contextvars.Context
+
+
+@dataclass
 class _Finished(Generic[T]):
     result: T | None
     error: BaseException | None
+
+
+def _record(item: _StepRequest | _CallbackRequest, *, executed: bool) -> None:
+    """Report a completed step in the requesting task's context, so it counts for the spans it ran under.
+
+    A callback wait runs no work of its own, so it says nothing about what was replayed.
+    """
+    if not isinstance(item, _CallbackRequest):
+        item.context.run(record_durable_unit, executed=executed)
 
 
 class StepBridge:
@@ -250,7 +286,7 @@ class StepBridge:
 
     def __init__(self, context: DurableStepContext) -> None:
         self._context = context
-        self._queue: Queue[_StepRequest | _Finished[Any]] = Queue()
+        self._queue: Queue[_StepRequest | _CallbackRequest | _Finished[Any]] = Queue()
         # Serialises step requests so their queue order -- and so the order Lambda assigns
         # checkpoint identity in -- is first-come, rather than depending on how the event loop
         # interleaves concurrent callers (two MCP servers being listed in parallel, say).
@@ -274,9 +310,47 @@ class StepBridge:
 
         loop = asyncio.get_running_loop()
         body = functools.partial(_run_step_body, loop, name, operation)
+        return await self._submit(
+            lambda reply: _StepRequest(
+                name=name, body=body, config=config, reply=reply, context=contextvars.copy_context()
+            )
+        )
 
+    async def wait_for_callback(
+        self,
+        name: str,
+        *,
+        callback_config: CallbackConfig,
+        ask: Callable[[str], Awaitable[str | None]],
+        ask_config: StepConfig | None,
+    ) -> str | None:
+        """Create a Lambda callback, pass its ID to `ask` in a step, and return the answer `ask` gives or else the callback's result.
+
+        Runs on the agent loop. Apart from the answer `ask` may give, this is what `DurableContext.wait_for_callback` does, without the child context it wraps the
+        operations in: that way `Callback.result()` raises the SDK's `CallbackError` itself for a
+        timed-out or failed callback on every supported SDK version, rather than a version-specific
+        wrapper around it. An unanswered callback raises `SuspendExecution`, which ends the invocation
+        like a step retry does. `wait_for_external_event` has already rejected a wait from inside a step,
+        which could never start while the handler thread services that step.
+        """
+        loop = asyncio.get_running_loop()
+        return await self._submit(
+            lambda reply: _CallbackRequest(
+                name=name,
+                callback_config=callback_config,
+                ask=ask,
+                ask_config=ask_config,
+                loop=loop,
+                reply=reply,
+                context=contextvars.copy_context(),
+            )
+        )
+
+    async def _submit(self, request: Callable[[Callable[[bool, Any], None]], _StepRequest | _CallbackRequest]) -> Any:
+        """Queue a request for the handler thread and wait for its reply."""
+        loop = asyncio.get_running_loop()
         async with self._order:
-            future: asyncio.Future[T] = loop.create_future()
+            future: asyncio.Future[Any] = loop.create_future()
 
             def reply(succeeded: bool, value: Any) -> None:
                 try:
@@ -289,9 +363,7 @@ class StepBridge:
                     # supplies the actionable AgentLoopGone error when no callback can be delivered.
                     pass
 
-            self._queue.put(
-                _StepRequest(name=name, body=body, config=config, reply=reply, context=contextvars.copy_context())
-            )
+            self._queue.put(request(reply))
             return await future
 
     def finish(self, result: Any = None, error: BaseException | None = None) -> None:
@@ -313,31 +385,51 @@ class StepBridge:
                 return item.result
             executed = False
 
-            def body(step_context: Any, item: _StepRequest = item) -> Any:
+            def body(step_context: Any, item: Any = item) -> Any:
                 nonlocal executed
                 executed = True
                 return item.body(step_context)
 
             try:
-                value = item.context.run(self._context.step, body, name=item.name, config=item.config)
+                value = self._run(item, body)
             except Exception as exc:
                 # An ordinary step failure, already past the SDK's retry policy. Hand it to the agent
                 # so the run can surface or handle it.
-                item.context.run(record_durable_unit, executed=executed)
+                _record(item, executed=executed)
                 item.reply(False, exc)
             except BaseException as exc:
                 # SDK control flow (suspension, interruption). Resolve the waiting step so the agent
                 # task is not left on a future, then let it out of the handler untouched. A body that
                 # ran before the suspension (a failed attempt awaiting its retry) was real work.
                 if executed:
-                    item.context.run(record_durable_unit, executed=True)
+                    _record(item, executed=True)
                 item.reply(False, exc)
                 raise
             else:
                 # In the requesting task's context, so it counts for the spans that step ran under, and
                 # before the reply, so they see it when they end.
-                item.context.run(record_durable_unit, executed=executed)
+                _record(item, executed=executed)
                 item.reply(True, value)
+
+    def _run(self, item: _StepRequest | _CallbackRequest, body: Callable[[Any], Any]) -> Any:
+        if isinstance(item, _CallbackRequest):
+            return item.context.run(self._wait_for_callback, item)
+        return item.context.run(self._context.step, body, name=item.name, config=item.config)
+
+    def _wait_for_callback(self, request: _CallbackRequest) -> str | None:
+        callback = self._context.create_callback(name=request.name, config=request.callback_config)
+        ask_name = f'{request.name}.ask'
+        ask = functools.partial(request.ask, callback.callback_id)
+        answer = self._context.step(
+            functools.partial(_run_step_body, request.loop, ask_name, ask),
+            name=ask_name,
+            config=request.ask_config,
+        )
+        if answer is not None:
+            # `ask` answered, and its step recorded the answer, so nothing waits on the callback. It stays
+            # open until its timeout, and resolving it has no effect on the run.
+            return answer
+        return callback.result()
 
 
 def _run_step_body(
@@ -429,7 +521,7 @@ def _set_exception_if_pending(future: asyncio.Future[T], error: BaseException) -
 
 
 _active_bridge: contextvars.ContextVar[StepBridge | None] = contextvars.ContextVar(
-    'pydantic_ai_harness_aws_lambda_bridge', default=None
+    'pydantic_ai_harness.aws_lambda.active_bridge', default=None
 )
 _active_run = threading.Lock()
 

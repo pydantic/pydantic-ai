@@ -209,7 +209,7 @@ window, and only observes:
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import ReportContextUsage, SummarizingCompaction
-from pydantic_ai_harness.compaction import ContextUsageEvent
+from pydantic_ai_harness.compaction import ContextUsageMeasuredEvent
 
 agent = Agent(
     'anthropic:claude-sonnet-5',
@@ -219,7 +219,7 @@ agent = Agent(
     ],
 )
 
-@agent.on_event(ContextUsageEvent)
+@agent.on_event(ContextUsageMeasuredEvent)
 async def show(ctx, event):
     print(f'{event.fraction:.0%}')
 ```
@@ -227,7 +227,7 @@ async def show(ctx, event):
 Each reading carries `used_tokens`, `window_tokens`, and `resolved` -- `False` when the window is the
 fallback rather than the model's real one, so a gauge can show that the percentage is a guess.
 Migration: `on_usage` remains supported but is deprecated. Move its callback body to a
-`ContextUsageEvent` subscription.
+`ContextUsageMeasuredEvent` subscription.
 
 Order matters: register the monitor *after* a compaction capability to observe the corrected current
 history after same-cycle compaction, or before it to see what triggered the compaction.
