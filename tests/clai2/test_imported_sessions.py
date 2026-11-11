@@ -20,6 +20,7 @@ from termflow.tui.completion import CompleteEvent, Document
 from termflow.tui.keys import Key
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import (
     BinaryContent,
     CompactionPart,
@@ -633,7 +634,8 @@ async def test_claude_code_import_keeps_the_history_compaction_replaced(tmp_path
     assert result.all_messages()[:3] == messages[:3]
 
 
-async def test_stock_sessions_send_only_what_follows_an_imported_summary() -> None:
+@pytest.mark.parametrize('plugins', [0, 1])
+async def test_stock_sessions_send_only_what_follows_an_imported_summary(plugins: int) -> None:
     at = timestamp(AT)
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Start')]),
@@ -653,9 +655,9 @@ async def test_stock_sessions_send_only_what_follows_an_imported_summary() -> No
         )
         yield 'ok'
 
-    # Never rebound, as it has no plugins and keeps its own model.
+    # Rebound with the session's plugins, or, without any, never rebound, as it keeps its own model.
     agent = StockAgent(FunctionModel(stream_function=respond), deps_type=type(None), output_type=str, capabilities=[])
-    session = Session(agent, deps=None, message_history=history)
+    session = Session(agent, deps=None, plugins=[Hooks[None]()] * plugins, message_history=history)
     await session.prompt('More')
     assert sent == ['Theirs', 'Next', 'More']
     assert session.messages[:4] == history
