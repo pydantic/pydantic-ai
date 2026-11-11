@@ -170,7 +170,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             max_tokens: Maximum output tokens for each consultation.
             caching: Prompt-cache TTL for the native advisor's transcript.
             forward_history: Whether local consultations receive the executor's message history.
-            id: The capability id.
+            id: The capability id. Left at `'advisor'`, a subclass's own class-level `id` is kept.
             defer_loading: Whether to make this an on-demand capability, whose tools the model loads by `id`.
             description: The capability description.
             mode: Deprecated: use `native` and `local`. Combined with a non-default `native` or
@@ -179,6 +179,9 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         if local is None:
             # `None` and `True` build the same tool; stating `True` makes them merge the same way too.
             local = True
+        if id == 'advisor':
+            # A subclass that sets its own class-level `id` kept it before `id` was a parameter.
+            id = type(self).id
         # TODO(harness 1.0, #12997): remove this deprecated `mode` mapping.
         if mode is not None:
             self._check_mode(mode)

@@ -944,6 +944,34 @@ class TestAdvisorNativeOrLocal:
 
         assert await advisor.for_run(ctx) is advisor
 
+    async def test_a_subclass_keeps_its_own_id(self) -> None:
+        """A subclass's class-level `id` survives construction, as it did before `id` was a parameter."""
+
+        class ResearchAdvisor(Advisor[object]):
+            id = 'research_advisor'
+
+        class ReviewAdvisor(Advisor[object]):
+            id = 'review_advisor'
+
+        def executor(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('done')])
+
+        research = ResearchAdvisor('test', native=False)
+        toolset = research.get_toolset()
+        assert toolset is not None
+        assert (research.id, toolset.id) == ('research_advisor', 'research_advisor')
+        assert ResearchAdvisor('test', id='custom').id == 'custom'
+        assert ResearchAdvisor.from_spec('test').id == 'research_advisor'
+
+        agent = Agent(
+            FunctionModel(executor),
+            capabilities=[
+                PrefixTools(research, prefix='research'),
+                PrefixTools(ReviewAdvisor('test', native=False), prefix='review'),
+            ],
+        )
+        assert (await agent.run('Plan the deployment.')).output == 'done'
+
     def test_rejects_unsupported_native_and_local_combinations(self) -> None:
         with pytest.raises(UserError, match=r'both `native` and `local` cannot be False'):
             Advisor('test', native=False, local=False)
