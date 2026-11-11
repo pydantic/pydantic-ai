@@ -28,7 +28,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelect
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
 from pydantic_ai_harness._models import is_request_response_model
-from pydantic_ai_harness._typeguards import is_mapping
+from pydantic_ai_harness._typeguards import is_mapping, is_object_list
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
 from pydantic_ai_harness.filesystem import READ_FILE_KIND
@@ -349,8 +349,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return original
         bands = self._per_tool.get(call.tool_name, self._bands)
         new_value: object | None
-        value: object = return_value  # so the list check below doesn't narrow `return_value` itself
-        items: list[object] = list(value) if isinstance(value, list) else [value]  # pyright: ignore[reportUnknownArgumentType]
+        items: list[object] = return_value if is_object_list(return_value) else [return_value]
         if any(is_multi_modal_content(item) for item in items):
             # Files reach the model as files, so only the items beside them are reduced.
             new_value, value_handle, value_bytes = await self._reduce_items_beside_files(ctx, call, bands, items)

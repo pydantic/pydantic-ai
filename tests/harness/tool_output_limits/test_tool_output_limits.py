@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, FunctionToolset
@@ -831,11 +832,16 @@ class TestFilesInReturnValue:
 
     async def test_text_beside_a_file_is_reduced_and_the_file_kept(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
-        out = await _run(cap, ['A' * 300, _IMAGE, 'B' * 300])
-        assert isinstance(out, list)
-        text, image = out  # pyright: ignore[reportUnknownVariableType]
-        assert isinstance(text, str) and 'truncated' in text
-        assert image is _IMAGE
+        assert await _run(cap, ['A' * 300, _IMAGE, 'B' * 300]) == [
+            snapshot("""\
+AA
+
+[truncated: 595 chars omitted from the middle; showing first 2 + last 4 of 601 chars]
+
+BBBB\
+"""),
+            _IMAGE,
+        ]
 
     async def test_text_beside_a_file_spills_to_the_value_handle(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
@@ -849,19 +855,30 @@ class TestFilesInReturnValue:
 
     async def test_structured_item_beside_a_file_is_reduced_and_the_file_kept(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
-        out = await _run(cap, [{'rows': list(range(1_000))}, _IMAGE, b'raw bytes'])
-        assert isinstance(out, list)
-        text, image = out  # pyright: ignore[reportUnknownVariableType]
-        # The JSON of the rows and the bytes, measured together and truncated to fit.
-        assert isinstance(text, str) and 'omitted from the middle' in text and 'of 3,912 chars' in text
-        assert image is _IMAGE
+        # The JSON of the rows and the bytes are measured together and truncated to fit.
+        assert await _run(cap, [{'rows': list(range(1_000))}, _IMAGE, b'raw bytes']) == [
+            snapshot("""\
+
+
+[truncated: 3,910 chars omitted from the middle; showing first 0 + last 2 of 3,912 chars]
+
+s"\
+"""),
+            _IMAGE,
+        ]
 
     async def test_content_beside_a_file_is_still_reduced(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
         out = await _run(cap, ToolReturn(return_value=['image', _IMAGE], content='C' * 5_000))
         assert isinstance(out, ToolReturn)
         assert out.return_value == ['image', _IMAGE]
-        assert isinstance(out.content, str) and 'truncated' in out.content
+        assert out.content == snapshot("""\
+
+
+[truncated: 4,998 chars omitted from the middle; showing first 0 + last 2 of 5,000 chars]
+
+CC\
+""")
 
 
 class TestContentReduction:
