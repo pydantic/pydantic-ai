@@ -3156,17 +3156,22 @@ turn with its own `turn_start` and `turn_end` hooks. Opt-in
 through the same native enqueue path described below. F4 shows the saved delivery
 mode; `m` changes it, including when no input is queued. Current tool work finishes
 before the next feasible model request receives that input. It never answers
-questions or grants approval. Saved edits, input behind queued entries, commands,
-shell lines, and input no active run accepts retain after-turn routing. Changing
+questions or grants approval. With saved edits or older queued entries, Send opens
+a delivery choice: `s` Steer/promote only the eligible draft at the next checkpoint,
+explicitly bypassing older entries, or `q` Keep queue position for after-turn delivery
+(a separate turn once work ends). Esc/Ctrl-C cancels the choice without moving the
+draft/edit. If steering fails, the choice and draft remain; there is no silent fallback.
+Commands and shell lines keep their explicit routing and are never steered. Changing
 the mode does not promote existing entries. Accepted checkpoint input joins the
 active run and transcript, not the editable after-turn queue. Plugin `send_input`
 and browser submissions keep their existing queue behavior. See
 [Prompt area](docs/reference.md#prompt-area).
 
 A held queue edit shows **Editing - not queued; won't send until saved** and is
-excluded from pending counts and the live-session queue. Save/requeue restores
-its stable ID and reserved ordering slot. Cancel editing restores the unchanged
-entry, or removes it if cleared; explicit Steer/send is a different action.
+excluded from pending counts and the live-session queue. Save/requeue in after-turn
+mode, or Keep queue position in the delivery choice, restores its stable ID and
+reserved ordering slot. Cancel editing restores the unchanged entry, or removes
+it if cleared; explicit Steer/send is a different action.
 
 Alt+Enter (Option+Return with Mac labels) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run

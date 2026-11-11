@@ -96,8 +96,10 @@ stay unchanged unless you remap them. Mac hints use Return and Option.
 
 F4 then `m` switches new busy prompts between **after turn** (the default) and
 **next checkpoint**, after current tool work and before the next feasible model
-request. Commands and saved queue edits retain after-turn routing. Held edits say
-**Editing - not queued**, do not count as pending, and cannot run until saved.
+request. With older queued entries or a saved edit, choose **Steer/promote** at the
+next checkpoint or **Keep queue position** for after-turn delivery. Nothing silently
+falls back; commands keep their own routing. Held edits say **Editing - not queued**,
+do not count as pending, and cannot run until you choose delivery.
 See [Prompt area](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#prompt-area)
 for queue ordering, Save/requeue, and Cancel editing.
 

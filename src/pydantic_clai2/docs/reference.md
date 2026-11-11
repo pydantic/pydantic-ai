@@ -1201,9 +1201,11 @@ the number waiting, excluding the entry held for editing. Press F4 for visible
 Up/Down chooses an entry; `e` edits, `d` removes, `s` steers, and Esc closes without
 interrupting. Edit shows **Editing - not queued; won't send until saved**.
 The held entry cannot run and keeps its reserved ordering slot. The send key
-**Save/requeue** returns it to that slot; **Cancel editing** restores the original
-entry unchanged, unless you cleared it to remove it. The steer key explicitly
-sends the edit to the active run, or sends/queues it when no run accepts it.
+**Save/requeue** returns it to that slot in after-turn mode. In next-checkpoint
+mode, the send key opens **Choose delivery**, described below. **Cancel editing**
+restores the original entry unchanged, unless you cleared it to remove it.
+The steer key explicitly sends eligible text to the active run. If no run accepts
+it, after-turn mode sends/queues it as usual; next-checkpoint mode asks instead.
 Saving or cancelling restores your earlier composer, including cursor and undo history. An entry
 that has already run cannot be removed or steered accidentally in its place.
 Up also recalls queued messages (see Up/down above). Control bytes in completion-derived
@@ -1223,11 +1225,24 @@ request already sent. Accepted prompts show a **Next checkpoint (sent to active
 run)** preview and join the transcript; they are no longer editable queue entries.
 This never answers a question or approves a tool.
 
-Commands and shell lines keep their explicit routing. Saved queue edits, new
-input behind older queued entries, and input the active run cannot accept stay
-**after turn**, preserving order. Changing delivery does not promote existing
-entries. F4 opens delivery controls even with an empty queue. `/input` and `/set`
-also edit/reset the preference; reset restores `after-turn`. Bare settings menus such as
+With older queued entries or a saved edit, **next-checkpoint** mode asks before
+changing delivery order. The draft stays intact and the held edit stays non-runnable:
+
+- `s` **Steer/promote** sends only the eligible draft text at the next checkpoint.
+  Earlier queued entries keep their after-turn timing; this explicitly bypasses them.
+- `q` **Keep queue position** chooses after-turn delivery, or a separate turn if
+  work has already ended. A saved edit retains its stable ID and reserved slot.
+- Esc or Ctrl-C cancels the delivery choice, preserving the draft/edit. Cancelling
+  the edit itself is a separate Esc action after closing this choice.
+
+If steering is unavailable, the draft and choice remain; nothing silently changes
+to after-turn delivery. Pasted text and same-batch typeahead cannot select a delivery
+action. Commands and shell lines retain their explicit routing and are never steered.
+Delivery actions never answer questions or approve tools.
+
+Changing delivery mode does not promote existing entries. F4 opens delivery controls
+even with an empty queue. `/input` and `/set` also edit/reset the preference; reset
+restores `after-turn`. Bare settings menus such as
 `/set` are the exception: they open during the turn (see "Settings and commands"). An unsubmitted draft stays
 in the editor as turns finish. Queued messages are not saved as conversation turns
 until execution starts, and are discarded on exit or `/reload`.

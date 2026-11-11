@@ -572,8 +572,11 @@ async def test_delivery_mode_is_persistent_and_reachable_without_queued_messages
         assert store.load().busy_delivery == 'after-turn'
 
 
+@pytest.mark.parametrize('older_entries', [False, True])
 @pytest.mark.parametrize('mode', ['after-turn', 'next-checkpoint'])
-async def test_busy_delivery_waits_for_tools_and_reaches_next_feasible_model_request(mode: BusyDelivery) -> None:
+async def test_busy_delivery_waits_for_tools_and_reaches_next_feasible_model_request(
+    mode: BusyDelivery, older_entries: bool
+) -> None:
     started, release, completed = anyio.Event(), anyio.Event(), anyio.Event()
     other_started, other_release, other_completed = anyio.Event(), anyio.Event(), anyio.Event()
     seen: list[list[ModelMessage]] = []
@@ -616,12 +619,20 @@ async def test_busy_delivery_waits_for_tools_and_reaches_next_feasible_model_req
             tasks.start_soon(live.interrupts.run, run())
             await started.wait()
             await other_started.wait()
+            if older_entries:
+                live.submit('older')
             live.feed('paste', 'new direction')
             live.feed('enter')
             assert not completed.is_set() and len(seen) == 1
             assert live.interrupts.active
-            assert live.queued_messages == (() if mode == 'next-checkpoint' else ('new direction',))
+            older = ('older',) if older_entries else ()
+            assert live.queued_messages == (older if mode == 'next-checkpoint' else (*older, 'new direction'))
             if mode == 'next-checkpoint':
+                if older_entries:
+                    assert live.buffer.text == 'new direction'
+                    assert 's Steer/promote: next checkpoint' in '\n'.join(live.frame())
+                    await anyio.lowlevel.checkpoint()
+                    live.feed('s')
                 assert 'Next checkpoint (sent to active run): new direction' in live.notice
             release.set()
             await completed.wait()
@@ -638,12 +649,15 @@ async def test_busy_delivery_waits_for_tools_and_reaches_next_feasible_model_req
             if isinstance(part, UserPromptPart)
         ]
         assert ('new direction' in prompts) is (mode == 'next-checkpoint')
+        assert 'older' not in prompts
         assert any(
             isinstance(part, ToolReturnPart) and part.content == 'tool completed'
             for message in seen[1]
             if isinstance(message, ModelRequest)
             for part in message.parts
         )
+        if older_entries:
+            assert await live.read() == 'older'
         if mode == 'after-turn':
             assert await live.read() == 'new direction'
         assert live.queued_messages == ()
@@ -697,11 +711,21 @@ async def test_checkpoint_mode_never_leapfrogs_queue_or_steers_a_saved_edit() ->
             live.submit('/help')
             live.feed('paste', 'behind command')
             live.feed('enter')
+            assert steered == [] and live.queued_messages == ('/help',)
+            assert live.buffer.text == 'behind command'
+            assert 's Steer/promote: next checkpoint' in '\n'.join(live.frame())
+            assert 'q Keep queue position: after turn' in '\n'.join(live.frame())
+            await anyio.lowlevel.checkpoint()
+            live.feed('q')
             entry = live.queued_prompts()[1]
             live.edit_queue_entry(entry)
             live.buffer.replace('saved edit')
             live.feed('enter')
-            assert steered == []
+            assert steered == [] and live.queued_messages == ('/help',)
+            assert live.buffer.text == 'saved edit'
+            assert 'q Keep queue position: after turn' in '\n'.join(live.frame())
+            await anyio.lowlevel.checkpoint()
+            live.feed('q')
             assert live.queued_prompts()[1].id == entry.id
             assert live.queued_messages == ('/help', 'saved edit')
             release.set()
@@ -709,7 +733,8 @@ async def test_checkpoint_mode_never_leapfrogs_queue_or_steers_a_saved_edit() ->
         assert await live.read() == 'saved edit'
 
 
-async def test_checkpoint_fallback_queues_when_run_no_longer_accepts_input() -> None:
+@pytest.mark.parametrize('submit', ['enter', 'alt-enter'])
+async def test_unavailable_checkpoint_requires_explicit_queue_choice(submit: str) -> None:
     async with editor() as (live, _, _):
         live.busy_delivery = lambda: 'next-checkpoint'
 
@@ -719,14 +744,25 @@ async def test_checkpoint_fallback_queues_when_run_no_longer_accepts_input() -> 
         live.steer = unavailable
         async with running(live):
             live.feed('paste', 'during teardown')
-            live.feed('enter')
+            live.feed(submit)
+            assert live.queued_messages == () and live.buffer.text == 'during teardown'
+            live.console.size = (40, 12)
+            assert 'Delivery: next checkpoint requested' in '\n'.join(live.frame())
+            assert 'Cannot steer; nothing was sent.' in '\n'.join(live.frame())
+            await anyio.lowlevel.checkpoint()
+            live.feed('s')
+            assert live.queued_messages == () and live.buffer.text == 'during teardown'
+            assert 'nothing was sent' in live.notice
+            live.feed('q')
             assert live.queued_messages == ('during teardown',)
             assert 'Follow-up (after turn): during teardown' in '\n'.join(live.frame())
+            assert 'nothing was sent' not in '\n'.join(live.frame())
             live.feed('escape')
         assert live.queued_messages == () and live.buffer.text == 'during teardown'
 
 
-async def test_checkpoint_delivery_and_remembered_answer_never_approve_waiting_tool() -> None:
+@pytest.mark.parametrize('older_entries', [False, True])
+async def test_checkpoint_delivery_and_remembered_answer_never_approve_waiting_tool(older_entries: bool) -> None:
     with no_leaked_tasks():
         async with editor() as (live, _, _):
             live.busy_delivery = lambda: 'next-checkpoint'
@@ -748,12 +784,187 @@ async def test_checkpoint_delivery_and_remembered_answer_never_approve_waiting_t
                 async with anyio.create_task_group() as tasks:
                     tasks.start_soon(ask)
                     await anyio.wait_all_tasks_blocked()
+                    if older_entries:
+                        live.submit('/help')
                     live.feed('paste', 'Approve')
                     live.feed('enter')
+                    if older_entries:
+                        assert steered == [] and not responses
+                        await anyio.lowlevel.checkpoint()
+                        live.feed('s')
                     assert steered == ['Approve'] and not responses
-                    assert not live.questions.focused and live.queued_messages == ()
+                    assert not live.questions.focused
+                    assert live.queued_messages == (('/help',) if older_entries else ())
                     live.feed('f2')
                     await anyio.lowlevel.checkpoint()
                     live.feed('ctrl-c')
                 assert not decision(responses[0]).approved
                 live.feed('escape')
+
+
+@pytest.mark.parametrize('editing', [False, True])
+@pytest.mark.parametrize('choice', ['s', 'q', 'escape', 'ctrl-c'])
+async def test_mixed_checkpoint_delivery_needs_explicit_choice_without_losing_state(editing: bool, choice: str) -> None:
+    async with editor() as (live, _, _):
+        live.busy_delivery = lambda: 'next-checkpoint'
+        steered: list[str] = []
+
+        def steer(text: str) -> bool:
+            steered.append(text)
+            return True
+
+        live.steer = steer
+        live.submit('first')
+        live.submit('second')
+        live.submit('third')
+        first, second, third = live.queued_prompts()
+        image = BinaryContent(data=b'earlier image', media_type='image/png')
+        marker = live.images.attach([image])
+        live.buffer.insert('earlier ' + marker)
+        live.buffer.cursor = 3
+        earlier = live.buffer
+        if editing:
+            live.edit_queue_entry(second)
+        live.buffer.replace('direction')
+        draft = live.buffer
+        async with running(live):
+            live.feed('enter')
+            assert steered == []
+            assert live.buffer is draft and draft.text == 'direction'
+            live.console.size = (40, 12)
+            assert live.queued_prompts() == ([first, third] if editing else [first, second, third])
+            assert 's Steer/promote: next checkpoint' in '\n'.join(live.frame())
+            assert 'q Keep queue position: after turn' in '\n'.join(live.frame())
+            live.console.size = (80, 24)
+            live.images.retain(live.drafts)
+            if editing:
+                assert live.images.resolve(earlier.text)[1] == [image]
+            await anyio.lowlevel.checkpoint()
+            live.feed(choice)
+            assert steered == (['direction'] if choice == 's' else [])
+            if choice in ('escape', 'ctrl-c'):
+                assert live.buffer is draft and draft.text == 'direction'
+                assert 'Delivery: next checkpoint requested' not in '\n'.join(live.frame())
+                if editing:
+                    live.feed('escape')  # Cancel the edit separately, restoring its original entry.
+                    assert live.buffer is earlier and live.buffer.cursor == 3
+                else:
+                    assert live.queued_prompts() == [first, second, third]
+            elif choice == 's':
+                assert live.queued_prompts() == ([first, third] if editing else [first, second, third])
+                if editing:
+                    assert live.buffer is earlier and live.buffer.cursor == 3
+                    assert live.images.resolve(live.buffer.text)[1] == [image]
+                else:
+                    assert live.buffer.text == ''
+                assert live.history.get_strings().count('direction') == 1
+            else:
+                assert steered == []
+                assert live.queued_messages == (
+                    ('first', 'direction', 'third') if editing else ('first', 'second', 'third', 'direction')
+                )
+                if editing:
+                    assert live.queued_prompts()[1].id == second.id
+                    assert live.buffer is earlier and live.buffer.cursor == 3
+                assert 'Follow-up (after turn): direction' in Text.from_ansi('\n'.join(live.frame())).plain
+            live.feed('escape')  # Stop the test's active work; no queued item runs on its own.
+        assert live.queued_messages == ()
+
+
+async def test_delivery_choice_cannot_consume_paste_or_same_batch_typeahead() -> None:
+    async with editor() as (live, _, _):
+        live.busy_delivery = lambda: 'next-checkpoint'
+        steered: list[str] = []
+
+        def steer(text: str) -> bool:
+            steered.append(text)
+            return True
+
+        live.steer = steer
+        live.submit('older')
+        async with running(live):
+            live.feed('paste', 'draft')
+            live.feed('enter')
+            live.feed('s')  # Same decoder batch as Send: typeahead, not an action.
+            live.feed('enter')
+            assert live.buffer.text == 'drafts' and steered == []
+            await anyio.lowlevel.checkpoint()
+            live.feed('paste', 'q\ns\n')
+            assert live.buffer.text == 'draftsq\ns\n' and steered == []
+            live.feed('escape')
+            assert live.buffer.text == 'draftsq\ns\n'
+            assert live.queued_messages == ('older',)
+            live.feed('escape')
+
+
+async def test_held_edit_delivery_choice_survives_finish_and_restores_reserved_id() -> None:
+    with no_leaked_tasks():
+        async with editor() as (live, _, _):
+            live.busy_delivery = lambda: 'next-checkpoint'
+            live.submit('older')
+            live.submit('edit me')
+            _, held = live.queued_prompts()
+            live.buffer.insert('earlier draft')
+            earlier = live.buffer
+            live.edit_queue_entry(held)
+            live.buffer.replace('edited')
+            live.feed('enter')  # A held edit still requires the delivery choice even if work just ended.
+            assert live.queued_messages == ('older',)
+            assert await live.read() == 'older'
+            received: list[str] = []
+
+            async def read_next() -> None:
+                received.append(await live.read())
+
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(read_next)
+                await anyio.wait_all_tasks_blocked()
+                assert received == [] and live.queued_prompts() == []
+                assert 'q Keep queue position: separate turn' in '\n'.join(live.frame())
+                live.feed('s')  # No active run: must not silently enqueue or lose the edit.
+                assert received == [] and live.buffer.text == 'edited'
+                assert 'Cannot steer; nothing was sent.' in '\n'.join(live.frame())
+                live.feed('q')
+                assert live.queued_prompts()[0].id == held.id
+                assert live.buffer is earlier and live.buffer.text == 'earlier draft'
+                assert 'nothing was sent' not in '\n'.join(live.frame())
+            assert received == ['edited'] and live.queued_messages == ()
+
+
+async def test_delivery_choice_rechecks_eligibility_after_draft_changes() -> None:
+    async with editor() as (live, _, _):
+        live.busy_delivery = lambda: 'next-checkpoint'
+        steered: list[str] = []
+
+        def steer(text: str) -> bool:
+            steered.append(text)
+            return True
+
+        live.steer = steer
+        live.submit('older')
+        async with running(live):
+            live.feed('paste', 'eligible')
+            live.feed('enter')
+            await anyio.lowlevel.checkpoint()
+            live.buffer.replace('/help')
+            assert 'Steer unavailable: commands/shell/blank' in '\n'.join(live.frame())
+            live.feed('s')
+            assert steered == [] and live.buffer.text == '/help'
+            live.feed('q')
+            assert live.queued_messages == ('older', '/help')
+            live.feed('escape')
+
+
+async def test_mixed_checkpoint_choice_remains_explicit_between_turns() -> None:
+    async with editor() as (live, _, _):
+        live.busy_delivery = lambda: 'next-checkpoint'
+        live.submit('older')
+        live.buffer.insert('new direction')
+        live.feed('enter')
+        assert live.queued_messages == ('older',) and live.buffer.text == 'new direction'
+        assert 'q Keep queue position: separate turn' in '\n'.join(live.frame())
+        await anyio.lowlevel.checkpoint()
+        live.feed('q')
+        assert live.queued_messages == ('older', 'new direction')
+        assert await live.read() == 'older'
+        assert await live.read() == 'new direction'

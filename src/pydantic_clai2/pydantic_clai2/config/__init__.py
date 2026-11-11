@@ -68,7 +68,8 @@ class Settings(BaseModel):
         default='after-turn',
         description=(
             'Busy composer prompts: after-turn queues a separate turn; next-checkpoint uses native steering '
-            'after current tool work, before the next feasible model request. Commands and saved edits stay queued.'
+            'after current tool work, before the next feasible model request. Mixed queues and saved edits ask '
+            'whether to steer or keep queue position. Commands retain their own routing.'
         ),
     )
     question_submit: QuestionSubmit = Field(

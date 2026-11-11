@@ -91,7 +91,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/rendering/history.py` | `/resume` and `--resume` replay: the last turns of restored history as synthetic stream events through a non-smoothing `StreamRenderer` |
 | `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
 | `ui/rendering/status.py` | the footer `Status` fields, `StatusSegment`, and the `StatusLine` row painter |
-| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue (told to `queue_changed`; a recalled prompt leaves the runnable queue while edited; an editor interrupt moves pending prompts into the draft), Alt+Enter steering, timed double-Esc gesture, and menu handoff |
+| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue (told to `queue_changed`; a recalled prompt leaves the runnable queue while edited; an editor interrupt moves pending prompts into the draft), explicit mixed-queue checkpoint/queue-position choices, Alt+Enter steering, timed double-Esc gesture, and menu handoff |
 | `ui/prompt/prompt_queue.py` | `QueuedPrompt`, one queued prompt with the ID the browser edits it by; `PromptInbox`, the queue of a session no editor reads for; `input_kind` and `can_steer`, the one rule for which input steers |
 | `ui/prompt/terminal.py` | `Terminal`, the terminal driver: console, `LivePrompt`, line prompt, transcript, input history, and pasted images, attached to the one live session shown (`attach`, `show`); `drive` runs the session CLAI started with until the session shown ends; `session_console` for sessions opened beside it |
 | `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
@@ -109,7 +109,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `config/__init__.py` | `Settings`, `PluginSettings` |
 | `config/builtins.py` | `DEFAULT_PLUGINS` and `STOCK_PLUGINS`, the shipped plugin declarations |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
-| `config/input_bindings.py` | decoded composer bindings, alias/collision validation, keyboard labels, and question-routing preference types |
+| `config/input_bindings.py` | decoded composer bindings, alias/collision validation, keyboard labels, and question-routing/busy-delivery preference types |
 | `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/`, including saved models, removal of their overrides, the contents `/plugins enable` approved for each project file (`approved_files`, `file_sha256`), the project-file values `/project approve` approved per project root (`approved_project_settings`), checkout-specific cleanup suppression (`kept_worktrees`), and an isolated read of removal commands on exit; `state_dir()`, `$XDG_STATE_HOME/pydantic-clai2/`, for state that is not a preference (`aoe`, `workspaces`) |
 | `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |
 | `config/plugin_requirements.py` | pure rules for requirement tags: parse stored rows, drop unsupported settings, merge tags on save, the notice |
