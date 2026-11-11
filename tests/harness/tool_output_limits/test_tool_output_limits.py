@@ -84,8 +84,6 @@ def _make_ctx(
     retry: int = 0,
     model: Any = None,
     usage_limits: UsageLimits | None = None,
-    messages: list[Any] | None = None,
-    run_step: int = 0,
 ) -> Any:
     """Build a minimal RunContext-like object for testing the hook directly."""
 
@@ -103,20 +101,14 @@ def _make_ctx(
         model: Any = dataclasses.field(default_factory=_FakeModel)
         deps: None = None
         conversation_id: str | None = None
-        messages: list[Any] = dataclasses.field(default_factory=list[Any])
+        # The hook reads the step the run is on, so a fake context needs one; nothing here may read
+        # the history, which the integration tests cover by compacting it away mid-run.
         run_step: int = 0
 
         def tool_name_for_kind(self, kind: object) -> str | None:
             return None
 
-    ctx = _FakeCtx(
-        usage=RunUsage(),
-        run_id=run_id,
-        retry=retry,
-        usage_limits=usage_limits,
-        messages=[] if messages is None else messages,
-        run_step=run_step,
-    )
+    ctx = _FakeCtx(usage=RunUsage(), run_id=run_id, retry=retry, usage_limits=usage_limits)
     if model is not None:
         ctx.model = model
     return ctx
@@ -1147,35 +1139,6 @@ class TestInternals:
         key = _handle_key(limits, _make_ctx(), ToolCallPart(tool_name='t', args='{}', tool_call_id='c'), '.content')
         assert key.endswith('.content')
 
-    def test_handle_key_keeps_a_reused_call_id_apart(self):
-        """A `tool_call_id` is only unique within a response, so a later call reusing one gets its own key."""
-        limits: ToolOutputLimits[object] = ToolOutputLimits()
-        first = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
-        second = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
-        last = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_1')
-        # The first call keeps the documented handle; only the repeated id is parked a level down.
-        assert _handle_key(limits, _make_ctx(run_step=1), first) == 'run-1/call_0.0'
-        assert _handle_key(limits, _make_ctx(run_step=2), second) == 'run-1/2/call_0.0'
-        assert _handle_key(limits, _make_ctx(run_step=2), last) == 'run-1/call_1.0'
-
-    def test_handle_key_does_not_read_the_history(self):
-        """A capability may rewrite `ctx.messages` mid-run, so the key must not be derived from it."""
-        limits: ToolOutputLimits[object] = ToolOutputLimits()
-        call = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
-        first = _handle_key(limits, _make_ctx(messages=[ModelResponse(parts=[call])], run_step=1), call)
-        # A compaction replaced every earlier message between the two responses.
-        after_compaction = _handle_key(
-            limits, _make_ctx(messages=[ModelResponse(parts=[TextPart('summary')])], run_step=2), call
-        )
-        assert (first, after_compaction) == ('run-1/call_0.0', 'run-1/2/call_0.0')
-
-    def test_handle_key_keeps_a_retry_on_the_documented_handle(self):
-        """A retry of the same call keeps `run_id/tool_call_id.retry`, so only reused ids move."""
-        limits: ToolOutputLimits[object] = ToolOutputLimits()
-        call = ToolCallPart(tool_name='t', args='{}', tool_call_id='call_0')
-        assert _handle_key(limits, _make_ctx(run_step=1), call) == 'run-1/call_0.0'
-        assert _handle_key(limits, _make_ctx(run_step=2, retry=1), call) == 'run-1/call_0.1'
-
     def test_with_handles_non_mapping(self):
         meta = _with_handles('not-a-mapping', 'h/1.0', 42)
         assert meta == {'original_metadata': 'not-a-mapping', 'overflow_handle': 'h/1.0', 'overflow_bytes': 42}
@@ -1428,6 +1391,12 @@ class TestAgentIntegration:
         handles = [p.metadata['overflow_handle'] for p in returns if p.metadata is not None]
         assert len(handles) == 2
         assert len(set(handles)) == 2
+        # The first call keeps the documented `run_id/tool_call_id.retry` handle and only the repeated
+        # id is parked one level down, so the shape is what says which of the two moved.
+        assert handles[0].count('/') == 1
+        assert handles[0].endswith('/call_0.0')
+        assert handles[1].count('/') == 2
+        assert handles[1].endswith('/call_0.0')
         assert await store.read(handles[0]) == b'first payload\n' * 100
         assert await store.read(handles[1]) == b'second payload\n' * 100
 
