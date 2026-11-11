@@ -45,7 +45,7 @@ with try_import() as imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
 
-MODEL_NAME = 'gemini-decision-launch-id'
+MODEL_NAME = 'gemini-decision-1'
 DECISIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/decisions'
 
 Handler = Callable[[httpx2.Request], httpx2.Response]
@@ -163,7 +163,7 @@ async def test_output_type(allow_model_requests: None):
     assert endpoint.bodies == snapshot(
         [
             {
-                'model': 'gemini-decision-launch-id',
+                'model': 'gemini-decision-1',
                 'input': 'The blender arrived with a cracked jar. I want my money back today.',
                 'questions': {
                     'q0': {
@@ -305,7 +305,7 @@ async def test_question_mapping(allow_model_requests: None):
     assert endpoint.bodies == snapshot(
         [
             {
-                'model': 'gemini-decision-launch-id',
+                'model': 'gemini-decision-1',
                 'input': '{"ticket": "Refund please"}',
                 'questions': {
                     'q0': {'type': 'noul', 'criteria': {'false_description': 'They want a replacement.'}},

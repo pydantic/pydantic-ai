@@ -601,7 +601,7 @@ The Gemini API's decisions endpoint runs a Gemini decision model as a [decision 
 ```python {gateway_toggle="skip"}
 from pydantic_ai import Agent
 
-agent = Agent('google-decisions:gemini-decision-launch-id', output_type=bool, instructions='Is this request harmful?')
+agent = Agent('google-decisions:gemini-decision-1', output_type=bool, instructions='Is this request harmful?')
 result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
 print(result.output)
 #> True
@@ -614,7 +614,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.google_decisions import GoogleDecisionsModel
 from pydantic_ai.providers.google import GoogleProvider
 
-model = GoogleDecisionsModel('gemini-decision-launch-id', provider=GoogleProvider(api_key='your-api-key'))
+model = GoogleDecisionsModel('gemini-decision-1', provider=GoogleProvider(api_key='your-api-key'))
 agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
 ...
 ```

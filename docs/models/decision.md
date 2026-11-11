@@ -15,7 +15,7 @@ Pydantic AI supports four decision model backends out of the box:
 - TypeSafe's Jev, through [`TypeSafeModel`](typesafe.md), as `typesafe:jev-latest`.
 - Any other decision model behind the same `/v1/systemone` API as Jev, such as [Contrastive Language Models](https://huggingface.co/Contrastive-LM/CLM-v0.1-8B) (CLM), [Laya](https://huggingface.co/convaiinnovations/laya), or the models [Ollama](system-one.md#ollama) runs locally, through [`SystemOneModel`](system-one.md), as `system-one:<model>`.
 - OpenAI's `gpt-6-luna` on its Decisions API, with image input support, through [`OpenAIDecisionsModel`](openai.md#decisions-api), as `openai-decisions:gpt-6-luna`.
-- Google's Gemini decision model on the Gemini API, with image input support, through [`GoogleDecisionsModel`](google.md#decisions-api), as `google-decisions:gemini-decision-launch-id`.
+- Google's Gemini decision model on the Gemini API, with image input support, through [`GoogleDecisionsModel`](google.md#decisions-api), as `google-decisions:gemini-decision-1`.
 
 The examples on this page use Jev, and run on any other decision model by changing the model name. This page covers what `DecisionModel` does for any backend; each backend's page covers its setup, its own limits and what it answers badly. To use another backend, [implement `decide`](#implementing-a-decision-model).
 

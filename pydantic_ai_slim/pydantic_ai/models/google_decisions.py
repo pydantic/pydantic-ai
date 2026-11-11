@@ -50,8 +50,8 @@ __all__ = (
     'GoogleDecisionsModelSettings',
 )
 
-GoogleDecisionsModelName = str
-"""The ID of the Gemini decision model to ask."""
+GoogleDecisionsModelName = str | Literal['gemini-decision-1']
+"""The ID of the Gemini decision model to ask, such as `gemini-decision-1`."""
 
 
 class GoogleDecisionsModelSettings(DecisionModelSettings, total=False):
@@ -82,7 +82,7 @@ class GoogleDecisionsModel(DecisionModel[Client]):
         irreversible: bool = Field(description='Would running this destroy data or leak secrets?')
 
 
-    agent = Agent('google-decisions:gemini-decision-launch-id', output_type=Handling)
+    agent = Agent('google-decisions:gemini-decision-1', output_type=Handling)
     ...
     ```
 
@@ -120,7 +120,7 @@ class GoogleDecisionsModel(DecisionModel[Client]):
         """Initialize a Google Decisions model.
 
         Args:
-            model_name: The name of the Gemini decision model to use.
+            model_name: The name of the Gemini decision model to use, such as `gemini-decision-1`.
             provider: The provider to use for the API's URL and key: a
                 [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider], as for
                 [`GoogleModel`][pydantic_ai.models.google.GoogleModel], or `'google'` (the default), which creates one.

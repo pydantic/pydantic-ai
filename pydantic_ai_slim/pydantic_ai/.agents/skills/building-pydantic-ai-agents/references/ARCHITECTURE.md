@@ -173,7 +173,7 @@ Need deterministic, fast tests?
 | Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
 | TypeSafe (Jev, structured output only) | `typesafe:` | `typesafe:jev-latest` |
 | OpenAI Decisions API (text and image input; structured output only) | `openai-decisions:` | `openai-decisions:gpt-6-luna` |
-| Gemini API decisions endpoint (text and image input; structured output only) | `google-decisions:` | `google-decisions:gemini-decision-launch-id` |
+| Gemini API decisions endpoint (text and image input; structured output only) | `google-decisions:` | `google-decisions:gemini-decision-1` |
 | Decision models on the `/v1/systemone` API (CLM, Laya; structured output only; needs `SYSTEM_ONE_BASE_URL`) | `system-one:` | `system-one:clm-latest` |
 | AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
 | AWS Bedrock Mantle | `bedrock-mantle:` | `bedrock-mantle:openai.gpt-oss-120b` |
