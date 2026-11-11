@@ -83,6 +83,7 @@ from pydantic_ai.capabilities import (
     NativeTool,
     PrepareTools,
     ProcessEventStream,
+    RequestInput,
     ResolveModelId,
     SelectModel,
     SetToolMetadata,
@@ -1978,6 +1979,60 @@ async def test_durability_wrap_run_disables_threads(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == 'Echo: test'
+
+
+# --- Durability wrap_run refuses external-event waits ---
+
+
+def _approval_needed_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('delete', {'path': 'a.txt'}, tool_call_id='call-1')])
+
+
+def _ask_in_process(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
+_request_input_agent = Agent(
+    FunctionModel(_approval_needed_fn),
+    name='request_input_test',
+    deps_type=type(None),
+    capabilities=[
+        TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
+        RequestInput[None](_ask_in_process),
+    ],
+)
+
+
+@_request_input_agent.tool_plain(name='delete', requires_approval=True)
+def _delete_needs_approval(path: str) -> str:
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
+@workflow.defn
+class RequestInputDurableWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _request_input_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_durability_wrap_run_refuses_external_event_waits(client: Client):
+    """A workflow can't record a wait for an external event yet, so the engine fails the workflow clearly instead of waiting in process."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RequestInputDurableWorkflow],
+        plugins=[AgentPlugin(_request_input_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                RequestInputDurableWorkflow.run,
+                args=['clean up'],
+                id=RequestInputDurableWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    assert 'does not support waiting for external events yet' in str(exc_info.value.cause)
 
 
 # --- Durability validation ---

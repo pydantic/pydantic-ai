@@ -583,12 +583,23 @@ print(agent.run_sync('Set up storage').output)
 - An answer that does not fit (unknown header/label, several picks on single-select, missing
   answer) raises `ValueError` and fails the run; call `check_response(request, response)` (from
   `pydantic_ai_harness.ask_user`) first.
-- The run waits inside the tool call. `timeout=<seconds>` cancels a slow answerer; the model gets
-  `TIMED_OUT` and `AskUserAnsweredEvent` fires with `timed_out=True`. A thread cannot be cancelled:
-  wrap blocking work in `anyio.to_thread.run_sync(..., abandon_on_cancel=True)`, and read terminal
-  input with an async prompt library, not `input()` in a thread.
-- By default, parallel `ask_user_question` calls reach the answerer concurrently; serialize in the
-  answerer if the UI shows one request at a time. Custom text has no length cap, so bound client input.
+- Each question is a deferred call marked `kind='question'` (`requests.kind(id) == 'question'`); `AskUser`
+  answers its own in `handle_deferred_tool_calls`, after the step's other tool calls finish, one question
+  at a time, through core `wait_for_external_event` like `RequestInput`: in process by default, journaled
+  and suspended on AWS Lambda durable functions; on Temporal/DBOS/Prefect the engine refuses it with `UserError`
+  (an unrecorded wait could diverge from the journal on replay). Works under `run_stream()` too: the
+  tool body defers, so streaming doesn't stop on the call.
+- Three required positional parameters receive `(ctx, request, token)` (`TokenAnswerer[DepsT]`): return the
+  response, or hand `token` on and return `None`; the answer then arrives when the token is resolved
+  with the JSON of an `AskUserResponse` (`resolve_external_event` in process, the engine's API durably).
+  In a durable run the answerer runs in a durable unit, so it must return quickly.
+- `timeout=<seconds>` bounds the wait (and, in process, cancels a slow async answerer); the model gets
+  `TIMED_OUT` and `AskUserAnsweredEvent` fires with `timed_out=True`, as it does when the token is failed.
+  A thread cannot be cancelled: wrap blocking work in `anyio.to_thread.run_sync(..., abandon_on_cancel=True)`,
+  and read terminal input with an async prompt library, not `input()` in a thread.
+- Custom text has no length cap, so bound client input.
+- With `RequestInput` on the same agent, `AskUser` answers its questions first; with `answerer=None`,
+  `RequestInput`'s `ask` gets the question and answers it with `ask_user_result` in `calls`.
 - `answerer=None` defers every call: the run ends with `DeferredToolRequests` (add it to
   `output_type`). Rebuild each request with `AskUserRequest.from_tool_call(call)`, then resume with
   `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.
