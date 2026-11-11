@@ -2438,6 +2438,26 @@ class TestIterToolPairs:
         assert [p.call_position for p in pairs] == [(2, 0), (4, 0)]
         assert [p.return_position for p in pairs] == [(3, 0), (5, 0)]
 
+    def test_a_legacy_retry_prompt_consumes_its_call(self):
+        """A named `RetryPromptPart` settles its call, so a reused id doesn't pair with the stale one.
+
+        `_is_tool_reply` already treats it as answering the call -- a caller-built history can hold one
+        -- so leaving the call queued here would pair the next turn's return with it instead.
+        """
+        # TODO(v3): remove along with `RetryPromptPart`
+        msgs: list[ModelMessage] = [
+            _read_call('c1', 'a.py'),
+            ModelRequest(parts=[legacy_retry_prompt_part('bad args', tool_name='read_file', tool_call_id='c1')]),
+            _read_call('c1', 'a.py'),
+            _read_return('c1', 'second a'),
+            _read_call('c1', 'b.py'),
+            _read_return('c1', 'b body'),
+        ]
+        pairs = iter_tool_pairs(msgs)
+        assert [_file_key(p.call_part) for p in pairs] == ['a.py', 'b.py']
+        assert [p.call_position for p in pairs] == [(2, 0), (4, 0)]
+        assert [p.return_position for p in pairs] == [(3, 0), (5, 0)]
+
 
 # ---------------------------------------------------------------------------
 # ClearToolResults

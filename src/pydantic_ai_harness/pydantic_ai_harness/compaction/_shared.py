@@ -1052,6 +1052,7 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
     The retried return is never cleared before the model sees the correction, doesn't count toward
     `ClearToolResults.keep_pairs`, and doesn't supersede an earlier successful read. Leaving the call
     queued instead would mis-pair a later turn's return -- one reusing the id -- with the stale call.
+    A legacy `RetryPromptPart` that names a tool settles its call the same way, for the same reason.
     """
     open_calls: dict[str, deque[tuple[tuple[int, int], ToolCallPart]]] = {}
     pairs: list[_ToolPair] = []
@@ -1080,15 +1081,18 @@ def _settle_returns(
     open_calls: dict[str, deque[tuple[tuple[int, int], ToolCallPart]]],
     pairs: list[_ToolPair],
 ) -> None:
-    """Answer the oldest open call of each return in *request*, pairing it unless that return was retried."""
+    """Answer the oldest open call of each reply in *request*, pairing it unless it was a retry."""
     for part_index, part in enumerate(request.parts):
-        if not isinstance(part, ToolReturnPart):
+        if not _is_tool_reply(part):
             continue
         pending = open_calls.get(part.tool_call_id)
         if not pending:
             continue
         call_position, call = pending.popleft()
-        if part.outcome == 'retried':
+        # A legacy `RetryPromptPart` settles its call the way a retried return does: it re-issues the
+        # call rather than answering it, so the call is consumed instead of waiting for a later turn
+        # that reuses the id to pair with it.
+        if isinstance(part, RetryPromptPart) or part.outcome == 'retried':  # pyright: ignore[reportDeprecated]
             continue
         pairs.append(
             _ToolPair(
