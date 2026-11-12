@@ -1077,11 +1077,11 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
     """
     open_calls: dict[str, deque[tuple[tuple[int, int], ToolCallPart]]] = {}
     pairs: list[_ToolPair] = []
-    for message_index, msg in enumerate(messages):
-        if isinstance(msg, ModelResponse):
-            _queue_calls(msg, message_index, open_calls)
-        elif isinstance(msg, ModelRequest):  # pragma: no branch
-            _settle_returns(msg, message_index, open_calls, pairs)
+    for message_index, message in enumerate(messages):
+        if isinstance(message, ModelResponse):
+            _queue_calls(message, message_index, open_calls)
+        elif isinstance(message, ModelRequest):  # pragma: no branch
+            _settle_returns(message, message_index, open_calls, pairs)
     return pairs
 
 
@@ -1194,23 +1194,23 @@ def rebuild_with_cleared(
     `load_capability` call keeps its input: core reads which capability is loaded from it.
     """
     return [
-        _clear_returns(msg, message_index, clear_return_positions, placeholder)
-        if isinstance(msg, ModelRequest)
-        else _clear_inputs(msg, message_index, clear_input_positions)
-        for message_index, msg in enumerate(messages)
+        _clear_returns(message, message_index, clear_return_positions, placeholder)
+        if isinstance(message, ModelRequest)
+        else _clear_inputs(message, message_index, clear_input_positions)
+        for message_index, message in enumerate(messages)
     ]
 
 
 def _clear_returns(
-    msg: ModelRequest,
+    message: ModelRequest,
     message_index: int,
     clear_positions: set[tuple[int, int]],
     placeholder: str,
 ) -> ModelRequest:
-    """*msg* with the returns at the selected positions blanked, or *msg* itself when none changes."""
+    """*message* with the returns at the selected positions blanked, or *message* itself when none changes."""
     request_parts: list[ModelRequestPart] = []
     changed = False
-    for part_index, part in enumerate(msg.parts):
+    for part_index, part in enumerate(message.parts):
         cleared = (
             cleared_return(part, placeholder)
             if isinstance(part, ToolReturnPart)
@@ -1223,18 +1223,18 @@ def _clear_returns(
             changed = True
         else:
             request_parts.append(part)
-    return replace(msg, parts=request_parts) if changed else msg
+    return replace(message, parts=request_parts) if changed else message
 
 
 def _clear_inputs(
-    msg: ModelResponse,
+    message: ModelResponse,
     message_index: int,
     clear_positions: set[tuple[int, int]],
 ) -> ModelResponse:
-    """*msg* with the call arguments at the selected positions blanked, or *msg* itself when none changes."""
+    """*message* with the call arguments at the selected positions blanked, or *message* itself when none changes."""
     response_parts: list[ModelResponsePart] = []
     changed = False
-    for part_index, part in enumerate(msg.parts):
+    for part_index, part in enumerate(message.parts):
         if (
             isinstance(part, ToolCallPart)
             and not isinstance(part, LoadCapabilityCallPart)
@@ -1247,4 +1247,4 @@ def _clear_inputs(
             changed = True
         else:
             response_parts.append(part)
-    return replace(msg, parts=response_parts) if changed else msg
+    return replace(message, parts=response_parts) if changed else message
