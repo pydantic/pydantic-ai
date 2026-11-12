@@ -867,7 +867,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import CodeMode
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[CodeMode(os_policy={'datetime': 'system', 'timezone': 'Europe/Paris'})],
 )
 ```
