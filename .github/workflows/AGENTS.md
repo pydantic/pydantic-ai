@@ -321,28 +321,37 @@ OpenCode threat detection. `run_with_fallback` in `.github/scripts/douwebot_open
 this chain:
 
 1. `opencode-go/deepseek-v4.1-flash` with `OPENCODE_API_KEY`.
-2. `zai-coding-plan/glm-5.3-flash` with `ZAI_API_KEY`, the primary Z.AI Coding Plan account.
-3. `zai-coding-plan/glm-5.3-flash` with `ZAI_BACKUP_API_KEY`, the backup account.
+2. `zai-coding-plan/glm-5.3-flash` on the first Z.AI Coding Plan account: `ZAI_API_KEY`, the primary, or
+   `ZAI_BACKUP_API_KEY`, the backup.
+3. `zai-coding-plan/glm-5.3-flash` on the other account.
+
+The workflow's run number plus the run's place in its job matrix picks the first account: the primary when the sum is
+even, the backup when it is odd. Run numbers count up within a workflow, so consecutive runs alternate accounts. Each
+`PR Review Checks` review passes its check's place in the `detect` matrix, so the checks of one run alternate too.
+Every other caller is a single job and passes 0. On the 12 `PR Review Checks` runs that started together at 06:28Z on
+2026-11-12, such as [run 43168376242](https://github.com/pydantic/pydantic-ai/actions/runs/43168376242), this splits
+the 33 reviews 16 and 17. Without `ZAI_BACKUP_API_KEY`, the chain is Go, then the primary.
 
 A run moves to the next provider only when all of these hold:
 
 - OpenCode exited non-zero, and its event stream has no `step_finish` event.
 - The stream's last `error` event has a type the refusing provider hands over: `provider.go-limit` or
-  `provider.quota` from Go, and `provider.quota` from the primary Coding Plan. OpenCode 2.2.5 does not retry these
-  types; see `toSessionError` in
+  `provider.quota` from Go, and `provider.quota` or `provider.rate-limit` from the first Coding Plan account. OpenCode
+  2.2.5 writes `provider.rate-limit` only after its own retries within the run, and does not retry the other types;
+  see `toSessionError` in
   [`to-session-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts).
 - The next account's key is set. The chain leaves out a Z.AI account without a key.
 
 OpenCode 2.2.5 types any HTTP 402, and a Z.AI HTTP 429 whose message names a plan, quota or balance limit,
 `provider.quota`. Those 429s include the 5-hour, weekly and monthly windows (`1308`, `1310`, `1316` to `1321`), an
 expired plan (`1309`), a plan without the model (`1311`) and an empty balance (`1113`), so each hands the run to the
-backup account. OpenCode types every other 429 `provider.rate-limit` and retries it within the run, such as `1302`
+other account. OpenCode types every other 429 `provider.rate-limit` and retries it within the run, such as `1302`
 request-rate limits and `1305` overload; see `classify` in
 [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts). A rate
-limit that outlasts those retries fails the job; the backup account does not serve it.
+limit that outlasts those retries hands the run to the other account too.
 
 Every other failure fails the job, including a rejected key, a provider outage, a time-budget stop, a timeout and an
-invalid answer. Without `ZAI_BACKUP_API_KEY`, a run the primary Coding Plan refuses fails the job. A fallback run gets
+invalid answer. A run the other account also refuses fails the job. A fallback run gets
 only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only, so each Z.AI run
 sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
 `compaction` and `summary` agents to its model. Its environment holds only that account's key. The job log names the
@@ -357,7 +366,8 @@ CI OpenCode run through `run_with_fallback`.
 
 The Coding Plan runs draw on the same accounts as the gh-aw agent workflows, and the primary also serves Pydanty; see
 [Shared Z.AI account limits](#shared-zai-account-limits). `PR Review Checks` starts several reviews per pull request
-in parallel, so one Go limit can move all of them onto the Coding Plan at once.
+in parallel, so one Go limit can move all of them onto the Coding Plan at once. The alternating first account splits
+them across both accounts.
 
 # A copy of the repository picks the `CI` Linux runner
 
@@ -476,8 +486,8 @@ The validator's regressions live in `.github/scripts/test_weekly_ce_audit.py`; u
 
 Treat Pydanty, these workflows and the [OpenCode fallback](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan)
 as consumers of the primary Z.AI account. The GitHub `ZAI_API_KEY` and Pydanty's production credential use that account.
-`ZAI_BACKUP_API_KEY` holds a second Coding Plan account, the backup account. These workflows and the OpenCode
-fallback use it only when the primary account cannot serve a run. Pydanty never uses it.
+`ZAI_BACKUP_API_KEY` holds a second Coding Plan account, the backup account. These workflows use it only when the
+primary account cannot serve a run. The OpenCode fallback splits its runs across both accounts. Pydanty never uses it.
 Correlate overlapping workflow and Pydanty requests when investigating rate-limit failures.
 Include delegates and SDK retries in the request timeline.
 
