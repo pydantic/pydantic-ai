@@ -192,7 +192,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     An entry of any kind counts, so a linked worktree's `.git` file marks its root like a `.git` directory.
     """
 
-    nested_exclude: Sequence[str] = ('node_modules', '.venv', 'venv', 'site-packages')
+    nested_exclude: Sequence[str] = field(default=('node_modules', '.venv', 'venv', 'site-packages'), kw_only=True)
     """For Strategy 3: `fnmatch` patterns for directory names whose instruction files are never surfaced.
 
     A directory is skipped when any component of its path below the working directory matches, so everything
