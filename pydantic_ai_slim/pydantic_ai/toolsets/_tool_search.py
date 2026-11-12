@@ -48,6 +48,7 @@ from typing import Annotated, Any, assert_never
 from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
+from .._deferred_capabilities import CAPABILITY_LOAD_KIND
 from .._run_context import AgentDepsT, RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE, TOOL_SEARCH_KIND  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import ModelRetry, UserError
@@ -82,6 +83,9 @@ _SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
 _TOOL_SEARCH_BUILTIN_ID = ToolSearchTool.kind
 
 _LEGACY_DISCOVERED_TOOLS_METADATA_KEY = 'discovered_tools'
+
+# The framework's own discovery tools; `ToolSearch(tools=...)` never defers them.
+_FRAMEWORK_TOOL_KINDS = frozenset({TOOL_SEARCH_KIND.id, CAPABILITY_LOAD_KIND.id})
 
 
 class _LegacyDiscoveryMetadata(TypedDict):
@@ -318,8 +322,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     parameter_description: str | None = None
     """Custom description for the `queries` parameter shown to the model."""
 
-    tools: ToolSelector[AgentDepsT] | None = None
-    """Selector determining which regular tools to defer."""
+    tools: ToolSelector[AgentDepsT] | None = field(default=None, kw_only=True)
+    """Which tools to defer in addition to those marked `defer_loading`; see
+    [`ToolSearch.tools`][pydantic_ai.capabilities.ToolSearch.tools]."""
 
     enable_fallback: bool = True
     """When False, the local `search_tools` function tool is not emitted — used when the
@@ -359,7 +364,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             elif (
                 self.tools is not None
                 and tool.tool_def.kind != 'output'
-                and tool.tool_def.tool_kind is None
+                and tool.tool_def.tool_kind not in _FRAMEWORK_TOOL_KINDS
                 and await matches_tool_selector(self.tools, ctx, tool.tool_def)
             ):
                 deferred[name] = replace(tool, tool_def=replace(tool.tool_def, defer_loading=True))

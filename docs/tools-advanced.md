@@ -907,7 +907,25 @@ Reach for it when:
 
 Skip it when you have a small, hot toolset where every tool is used most turns — deferring everything would just add a discovery round-trip for no benefit. As a rule of thumb, keep your handful of most-used tools eagerly loaded; defer the long tail.
 
-To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all.
+To opt in, choose which tools are searchable in one place with [`ToolSearch(tools=...)`][pydantic_ai.capabilities.ToolSearch.tools], which takes `'all'`, a list of tool names, a metadata dict, or a callable (see [`ToolSelector`][pydantic_ai.tools.ToolSelector]):
+
+```python {title="tool_search_select.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ToolSearch
+
+# Every tool is searchable.
+agent = Agent('{{ anthropic:medium }}', capabilities=[ToolSearch(tools='all')])
+
+# Only these tools are searchable; the rest stay visible.
+agent = Agent('{{ anthropic:medium }}', capabilities=[ToolSearch(tools=['crm_lookup', 'crm_update'])])
+
+# Tools whose metadata contains `{'searchable': True}` are searchable.
+agent = Agent('{{ anthropic:medium }}', capabilities=[ToolSearch(tools={'searchable': True})])
+```
+
+Output tools and the framework's own `search_tools` and `load_capability` tools are never made searchable. A bare `ToolSearch()` defers nothing: it only configures how search runs.
+
+You can also set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all. These add up: a tool is deferred if any of them selects it.
 
 Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability:
 
@@ -955,8 +973,6 @@ agent = Agent('{{ anthropic:medium }}', toolsets=[mcp.defer_loading()])
 ```
 
 ### Configuring `ToolSearch`
-
-Use [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] to choose which tools are deferred before search runs: `tools='all'` selects every eligible regular tool, a name list like `tools=['get_weather', 'lookup']` selects tools by name, and metadata dictionaries or synchronous/asynchronous callables are also accepted. Selection is additive with per-tool `defer_loading=True` and toolset `.defer_loading()` settings, and output and framework tools — including `search_tools` and `load_capability` — are never deferred. `tools=None` is the default and adds no deferral.
 
 Pass an explicit [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability to control the strategy or provide a custom search function:
 

@@ -37,7 +37,8 @@ if TYPE_CHECKING:
 class ToolSearch(AbstractCapability[AgentDepsT]):
     """Capability that provides tool discovery for large toolsets.
 
-    Tools marked with `defer_loading=True` are hidden from the model until discovered.
+    Deferred tools are hidden from the model until discovered. A tool is deferred when it's marked
+    `defer_loading=True`, or when [`tools`][pydantic_ai.capabilities.ToolSearch.tools] selects it.
     Auto-injected into every agent — zero overhead when no deferred tools exist.
 
     When the model supports native tool search (Anthropic BM25/regex, OpenAI Responses),
@@ -68,6 +69,13 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
 
     # Default: native search on supporting providers, local keyword matching elsewhere.
     agent = Agent('anthropic:claude-sonnet-4-6', tools=[weather_tool], capabilities=[ToolSearch()])
+
+    # Or choose which tools are searchable in one place, without `defer_loading` on each tool.
+    agent = Agent(
+        'anthropic:claude-sonnet-4-6',
+        tools=[get_weather],
+        capabilities=[ToolSearch(tools='all')],
+    )
 
     # Force a specific Anthropic native strategy; errors on providers that can't honor it.
     agent = Agent(
@@ -136,14 +144,16 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     parameter_description: str | None = None
     """Custom description for the `queries` parameter when search runs on our side."""
 
-    tools: ToolSelector[AgentDepsT] | None = None
-    """Select regular tools to defer using any existing selector form.
-
-    `None` adds no deferral and preserves per-tool and toolset deferral. Output and
-    framework tools are not selected for deferral.
-    """
-
     _: KW_ONLY
+
+    tools: ToolSelector[AgentDepsT] | None = None
+    """Which tools to defer (make searchable): `'all'`, a list of tool names, a metadata dict, or a callable.
+
+    See [`ToolSelector`][pydantic_ai.tools.ToolSelector]. Selected tools are deferred in addition to
+    tools already marked `defer_loading`. Output tools and the framework's `search_tools` and
+    `load_capability` tools are never deferred. `None` (the default) defers nothing beyond what's
+    marked `defer_loading`, so a bare `ToolSearch()` only configures how search runs.
+    """
 
     id: str | None = 'tool_search'
     """One-off: an agent has a single tool-discovery configuration, so the id is fixed by default.
