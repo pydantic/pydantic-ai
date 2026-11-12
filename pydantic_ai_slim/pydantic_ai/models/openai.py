@@ -3048,7 +3048,7 @@ def _call_as_sent(part: ToolCallPart) -> ToolCallPart:
     """`part` as the server holds it: a base call, without what the agent graph adds after `request()`.
 
     The digest is taken in `request()`, and the graph then promotes the call to its kind's typed subclass and labels a
-    `computer` call with the coordinates and screenshot size of the model that made it. None of that is sent, so
+    `computer` call with the grid of the model that made it. None of that is sent, so
     leaving it in would make a response compared later never match.
     """
     args = part.args if part.args is None or isinstance(part.args, str) else {**part.args}
