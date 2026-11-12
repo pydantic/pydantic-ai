@@ -94,19 +94,16 @@ from ..models import (
     parse_model_id,
 )
 from ..models._speech import assistant_speech_text
-from ..models.openai import (
-    OpenAIResponsesModel,
-    _map_api_errors as map_openai_api_errors,  # pyright: ignore[reportPrivateUsage]
-    _map_reasoning_item as map_reasoning_item,  # pyright: ignore[reportPrivateUsage]
-    _map_usage as map_openai_usage,  # pyright: ignore[reportPrivateUsage]
-    _map_web_search_tool_call as map_web_search_tool_call,  # pyright: ignore[reportPrivateUsage]
-    _map_web_search_tool_param as map_web_search_tool_param,  # pyright: ignore[reportPrivateUsage]
-    _resolve_openai_thinking_effort,  # pyright: ignore[reportPrivateUsage]
-    _uploaded_file_to_response_content,  # pyright: ignore[reportPrivateUsage]
-)
+from ..models.openai import OpenAIResponsesModel
+from ..models.openai._errors import map_api_errors as map_openai_api_errors
+from ..models.openai._native_tools import map_web_search_tool_call, map_web_search_tool_param
+from ..models.openai._reasoning import map_reasoning_item, resolve_openai_thinking_effort
+from ..models.openai._response_fields import map_usage as map_openai_usage
+from ..models.openai._responses_model import uploaded_file_to_response_content
 from ..native_tools import AbstractNativeTool, WebSearchTool
 from ..profiles.openai import OpenAIModelProfile, openai_model_profile
 from ..providers import Provider, infer_provider
+from ..providers.azure import AzureProvider
 from ..providers.gateway import normalize_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -2215,7 +2212,7 @@ async def _tool_result_media(
         # An opaque Files-API id reports `application/octet-stream` and goes as `input_file`, as it does on
         # `OpenAIResponsesModel`: the backend reads what the id actually holds.
         _utils.validate_uploaded_file_provider(item, system=provider_name, model_type_name='OpenAILiveModel')
-        return _uploaded_file_to_response_content(item)
+        return uploaded_file_to_response_content(item)
     else:
         return await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns')  # pyright: ignore[reportPrivateUsage]
     raise UserError(
@@ -2343,7 +2340,7 @@ def _backend_reasoning_effort(
     profile = cast(OpenAIModelProfile, openai_model_profile(backend_model))
     if not (profile.get('supports_thinking', False) or profile.get('thinking_always_enabled', False)):
         return None
-    return _resolve_openai_thinking_effort(thinking, profile, supports_max=False)
+    return resolve_openai_thinking_effort(thinking, profile, supports_max=False)
 
 
 def _resolve_openai_model(model_id: str) -> Model | None:
@@ -2410,7 +2407,8 @@ class OpenAILiveModel(RealtimeModel):
         self._backend_model = backend_model or None
         if isinstance(provider, str):
             provider = cast('Provider[AsyncOpenAI]', infer_provider(provider))
-        if provider.name == 'azure':
+        # By type, so a renamed `AzureProvider` is caught, and by name, for another provider pointed at Azure.
+        if isinstance(provider, AzureProvider) or provider.name == 'azure':
             raise UserError(
                 'Azure OpenAI does not serve GPT-Live. Use `AzureRealtimeModel` (or the `azure:` prefix) '
                 'for Azure OpenAI realtime models.'
@@ -2437,8 +2435,8 @@ class OpenAILiveModel(RealtimeModel):
 
         The backend runs the agent's instructions and calls its tools, so it is the agent doing its work,
         and an agent built on an OpenAI model has already said which model that should be. It has to be
-        an OpenAI model at this model's base URL, so both go to OpenAI directly or both through the same
-        gateway route; anything else can't serve as this session's backend.
+        a model of this model's provider at its base URL, so both go to OpenAI directly or both through the
+        same gateway route; anything else can't serve as this session's backend.
 
         Read from the current run context: a session opened with
         [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] is an agent run, so its run context is
@@ -2450,7 +2448,13 @@ class OpenAILiveModel(RealtimeModel):
         agent_model = run_context.agent.model if run_context is not None and run_context.agent is not None else None
         if isinstance(agent_model, str):
             agent_model = _resolve_openai_model(agent_model)
-        if isinstance(agent_model, Model) and agent_model.system == 'openai' and agent_model.base_url == self.base_url:
+        # The provider as well as the URL: an `OpenAIProvider` subclass with its own name is taken to be another
+        # service, as its `canonical_system` says, so its models aren't reused at the same URL either.
+        if (
+            isinstance(agent_model, Model)
+            and agent_model.system == self.system
+            and agent_model.base_url == self.base_url
+        ):
             return agent_model.model_name
         return None
 

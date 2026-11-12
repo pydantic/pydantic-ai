@@ -218,6 +218,17 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 )
             retention[counter] = budget
 
+        self._check_duplicate_ceilings()
+        # A spec delivers `on_unpriced` as plain data, and anything but `'raise'` would behave as `'zero'`.
+        if self.on_unpriced not in _UNPRICED_POLICIES:
+            raise UserError(
+                f'SpendLimits.on_unpriced must be one of {sorted(_UNPRICED_POLICIES)}; got {self.on_unpriced!r}.'
+            )
+        # Resolved once, and last, so a configuration that was going to be refused is
+        # refused before a deprecated store is reported.
+        self._store = as_batch_store(self.store)
+
+    def _check_duplicate_ceilings(self) -> None:
         # One counter can carry a USD and a token ceiling, but two ceilings of the same kind
         # on one counter would behave as the smaller one, not as two independent limits.
         seen: set[tuple[str, str, str, int]] = set()
@@ -233,14 +244,6 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                         'Give them different `name`s.'
                     )
                 seen.add(slot)
-        # A spec delivers `on_unpriced` as plain data, and anything but `'raise'` would behave as `'zero'`.
-        if self.on_unpriced not in _UNPRICED_POLICIES:
-            raise UserError(
-                f'SpendLimits.on_unpriced must be one of {sorted(_UNPRICED_POLICIES)}; got {self.on_unpriced!r}.'
-            )
-        # Resolved once, and last, so a configuration that was going to be refused is
-        # refused before a deprecated store is reported.
-        self._store = as_batch_store(self.store)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -255,9 +258,9 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         """Offer `get_spend` when `expose_tools` is set."""
         if not self.expose_tools:
             return None
-        from pydantic_ai_harness.spend._toolset import build_toolset
+        from pydantic_ai_harness.spend._toolset import make_toolset
 
-        return build_toolset(self)
+        return make_toolset(self)
 
     async def before_model_request(
         self,
@@ -405,47 +408,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         """
         usd, priced, price_error = self._price_of(response, failed_attempt=failed_attempt)
         keyed = await self._keyed(ctx)
-        applied_usd, applied_tokens = Decimal(0), 0
-        accrued: Mapping[str, Spent] | None = None
-        for boundary, boundary_token in (*boundaries, (response, token)):
-            boundary_usd = usd if boundary is response else self._price_of(boundary)[0]
-            with money_precision():
-                usd_growth = max(Decimal(0), boundary_usd - applied_usd)
-            tokens_growth = max(0, boundary.usage.total_tokens - applied_tokens)
-            # Never the first write, even with nothing to add: see above.
-            if accrued is not None and not (usd_growth or tokens_growth):
-                continue
-            first = accrued is None
-            entries: dict[str, SpendEntry] = {}
-            for budget, key in keyed:
-                # Budgets sharing a name, window, and scope share a counter, which is
-                # how one window carries both a USD and a token ceiling. Adding the
-                # response once per budget would double-count it and halve them both.
-                if key not in entries:
-                    entries[key] = SpendEntry(
-                        key=key,
-                        usd=usd_growth,
-                        tokens=tokens_growth,
-                        requests=1 if first else 0,
-                        unpriced=0 if priced or not first else 1,
-                        ttl=budget.ttl,
-                        token=boundary_token(),
-                    )
-            # Every window in one call, so a failure cannot leave the response counted
-            # against the day and not the month. Nothing to apply is not a call: see `_read`.
-            accrued = await self._accrue(list(entries.values()))
-            missing = sorted({key for _, key in keyed} - accrued.keys())
-            if missing:
-                raise UserError(
-                    f'The spend accrual returned no total for key(s) {missing}. Under durable execution this can '
-                    'mean a `Budget.scope` callable returned a different value on replay; scope and price callables '
-                    'must be deterministic. Otherwise, the `BatchSpendStore` must return a total for every submitted '
-                    'key.'
-                )
-            with money_precision():
-                applied_usd += usd_growth
-            applied_tokens += tokens_growth
-        assert accrued is not None
+        accrued = await self._accrue_boundaries(keyed, response, token, boundaries, usd=usd, priced=priced)
         statuses = [_status(budget, key, accrued[key]) for budget, key in keyed]
 
         error: Exception | None = None
@@ -503,6 +466,63 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         if not priced and error is None:
             error = self._handle_unpriced(response, usd)
         return error
+
+    async def _accrue_boundaries(
+        self,
+        keyed: Sequence[tuple[Budget[AgentDepsT], str]],
+        response: ModelResponse,
+        token: Callable[[], str],
+        boundaries: Sequence[tuple[ModelResponse, Callable[[], str]]],
+        *,
+        usd: Decimal,
+        priced: bool,
+    ) -> Mapping[str, Spent]:
+        """Accrue each boundary's growth and then `response`'s, returning the totals after the last accrual.
+
+        `_accrue_response` describes how the growth is computed and when a boundary is skipped.
+        """
+        applied_usd, applied_tokens = Decimal(0), 0
+        accrued: Mapping[str, Spent] | None = None
+        for boundary, boundary_token in (*boundaries, (response, token)):
+            boundary_usd = usd if boundary is response else self._price_of(boundary)[0]
+            with money_precision():
+                usd_growth = max(Decimal(0), boundary_usd - applied_usd)
+            tokens_growth = max(0, boundary.usage.total_tokens - applied_tokens)
+            # Never the first write, even with nothing to add: see `_accrue_response`.
+            if accrued is not None and not (usd_growth or tokens_growth):
+                continue
+            first = accrued is None
+            entries: dict[str, SpendEntry] = {}
+            for budget, key in keyed:
+                # Budgets sharing a name, window, and scope share a counter, which is
+                # how one window carries both a USD and a token ceiling. Adding the
+                # response once per budget would double-count it and halve them both.
+                if key not in entries:
+                    entries[key] = SpendEntry(
+                        key=key,
+                        usd=usd_growth,
+                        tokens=tokens_growth,
+                        requests=1 if first else 0,
+                        unpriced=0 if priced or not first else 1,
+                        ttl=budget.ttl,
+                        token=boundary_token(),
+                    )
+            # Every window in one call, so a failure cannot leave the response counted
+            # against the day and not the month. Nothing to apply is not a call: see `_read`.
+            accrued = await self._accrue(list(entries.values()))
+            missing = sorted({key for _, key in keyed} - accrued.keys())
+            if missing:
+                raise UserError(
+                    f'The spend accrual returned no total for key(s) {missing}. Under durable execution this can '
+                    'mean a `Budget.scope` callable returned a different value on replay; scope and price callables '
+                    'must be deterministic. Otherwise, the `BatchSpendStore` must return a total for every submitted '
+                    'key.'
+                )
+            with money_precision():
+                applied_usd += usd_growth
+            applied_tokens += tokens_growth
+        assert accrued is not None
+        return accrued
 
     def _handle_unpriced(self, response: ModelResponse, usd: Decimal) -> Exception | None:
         """Apply `on_unpriced` to a response whose full price is unknown, returning the error to raise, if any."""
@@ -790,22 +810,27 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                     # closes. Corrections belong in the store, not here.
                     return Decimal(0), False, f'returned a negative amount ({supplied})'
                 return supplied, True, None
-        known_cost = response.usage.cost
-        if known_cost is not None and not (known_cost.is_finite() and known_cost >= 0):
-            known_cost = None
-        if response.usage.unmeasured_requests:
-            return known_cost or Decimal(0), False, None
-        if failed_attempt and known_cost is not None:
-            return known_cost, True, None
-        if response.model_name:
-            try:
-                return response.cost().total_price, True, None
-            except (LookupError, ValueError):
-                # LookupError: the registry has no entry. ValueError: it rejects the
-                # usage shape. Either way this is a pricing failure, and letting it
-                # escape would skip `on_unpriced` and drop the accrual with it.
-                pass
-        return Decimal(0), False, None
+        return _default_price(response, failed_attempt=failed_attempt)
+
+
+def _default_price(response: ModelResponse, *, failed_attempt: bool) -> tuple[Decimal, bool, str | None]:
+    """`SpendLimits._price_of` for a response `price` gives no amount for: its own cost, or the registry's."""
+    known_cost = response.usage.cost
+    if known_cost is not None and not (known_cost.is_finite() and known_cost >= 0):
+        known_cost = None
+    if response.usage.unmeasured_requests:
+        return known_cost or Decimal(0), False, None
+    if failed_attempt and known_cost is not None:
+        return known_cost, True, None
+    if response.model_name:
+        try:
+            return response.cost().total_price, True, None
+        except (LookupError, ValueError):
+            # LookupError: the registry has no entry. ValueError: it rejects the
+            # usage shape. Either way this is a pricing failure, and letting it
+            # escape would skip `on_unpriced` and drop the accrual with it.
+            pass
+    return Decimal(0), False, None
 
 
 def _billed_attempts(

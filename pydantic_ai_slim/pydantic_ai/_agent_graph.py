@@ -2697,6 +2697,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _root_capability=ctx.deps.root_capability,
             _metadata_getter=lambda: ctx.state.metadata,
             _event_stream_buffer_getter=lambda: ctx.state.event_stream_buffer,
+            _max_tokens_getter=lambda: ctx.state.last_max_tokens,
         )
 
     async def _make_request(
@@ -3164,6 +3165,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 messages,
                 loaded_parts,
                 recording_targets,
+                history=ctx.state.message_history,
                 keep_without_parts={
                     capability_id
                     for capability_id, capability in ctx.deps.capabilities.items()
@@ -3312,8 +3314,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         messages = request_context.messages
         model_settings = request_context.model_settings
         # Per attempt, since the default output mode a request keeps is that of the model serving it.
-        model_request_parameters = _keep_default_output_mode(
-            ctx.state, model, model_settings, request_context.model_request_parameters
+        model_request_parameters = models._with_framing_announcement(  # pyright: ignore[reportPrivateUsage]
+            _keep_default_output_mode(ctx.state, model, model_settings, request_context.model_request_parameters),
+            model_settings,
         )
         request_context.model_request_parameters = model_request_parameters
 
@@ -3905,7 +3908,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
                 # Don't retry if the token limit was exceeded, possibly during thinking.
                 if self.model_response.finish_reason == 'length':
-                    raise exceptions.UnexpectedModelBehavior(
+                    raise exceptions.OutputTokenLimitExceeded(
                         f'Model token limit ({ctx.state.last_max_tokens or "provider default"}) exceeded before any response was generated. Increase the `max_tokens` model setting, or simplify the prompt to result in a shorter response that will fit within the limit.'
                     )
 
@@ -4040,6 +4043,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 )
                 raise ToolRetryError(m)
             except ToolRetryError as e:
+                _raise_if_cut_off_output(
+                    self.model_response, e, output_schema=output_schema, max_tokens=ctx.state.last_max_tokens
+                )
                 ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
@@ -4375,6 +4381,30 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
     ctx.deps.model = model
     ctx.deps.model_id = model_id
     ctx.deps.model_selected_for_step = ctx.state.run_step
+
+
+def _raise_if_cut_off_output(
+    response: _messages.ModelResponse,
+    error: ToolRetryError,
+    *,
+    output_schema: _output.OutputSchema[Any],
+    max_tokens: int | None,
+) -> None:
+    """Raise instead of retrying when the token limit cut off structured text output into incomplete JSON.
+
+    Re-prompting the model with the same limit would only run into it again. Only `NativeOutput` and `PromptedOutput`
+    text is parsed as JSON: a `TextOutput` function raising `ValidationError` on plain text keeps its retry, and so
+    does JSON that parsed but that the schema or an output validator rejected.
+    """
+    if (
+        response.finish_reason == 'length'
+        and isinstance(output_schema.text_processor, _output.BaseObjectOutputProcessor)
+        and isinstance(error.tool_retry, _messages.RetryFeedbackPart)
+        and error.tool_retry.retry.cause == 'validation_error'
+        and _output.is_incomplete_json(error.__cause__)
+    ):
+        # Chained to the `ValidationError`, as in `run_stream()`.
+        raise exceptions.OutputTokenLimitExceeded(_output.truncated_output_message(max_tokens)) from error.__cause__
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:

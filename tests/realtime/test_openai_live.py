@@ -99,6 +99,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsNow, legacy_retry_prompt_part, no_leaked_tasks, try_import
+from .simulation._loop import SimulatedLoop
 
 with try_import() as imports_successful:
     import httpx2
@@ -116,6 +117,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
     from pydantic_ai.realtime import openai_live as live_module
     from pydantic_ai.realtime._utils import InstructionChangeContext
     from pydantic_ai.realtime.openai import OpenAIRealtimeModel
@@ -209,9 +211,24 @@ def test_websocket_url_is_the_live_endpoint(model: OpenAILiveModel) -> None:
     assert model._live_url() == snapshot('wss://api.openai.com/v1/live/sessions')  # pyright: ignore[reportPrivateUsage]
 
 
-def test_azure_is_rejected() -> None:
+@pytest.mark.parametrize('kind', ['azure', 'renamed-azure', 'compatible-named-azure'])
+def test_azure_is_rejected(kind: str) -> None:
     """Azure does not serve GPT-Live, so pointing at it fails with a pointer to what does."""
-    provider = AzureProvider(azure_endpoint='https://example.openai.azure.com', api_key='k', api_version='v')
+
+    class RenamedAzureProvider(AzureProvider):
+        @property
+        def name(self) -> str:
+            return 'my-azure'
+
+    endpoint = 'https://example.openai.azure.com'
+    provider: Provider[AsyncOpenAI]
+    if kind == 'azure':
+        provider = AzureProvider(azure_endpoint=endpoint, api_key='k', api_version='v')
+    elif kind == 'renamed-azure':
+        provider = RenamedAzureProvider(azure_endpoint=endpoint, api_key='k', api_version='v')
+        assert provider.name == 'my-azure'
+    else:
+        provider = OpenAICompatibleProvider('azure', base_url=f'{endpoint}/openai/v1/', api_key='k')
     with pytest.raises(UserError, match='Azure OpenAI does not serve GPT-Live'):
         OpenAILiveModel('gpt-live-1', provider=provider)
 
@@ -1189,6 +1206,9 @@ async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
         BinaryContent(data=b'png', media_type='image/png'),
         TextContent(content='The invoice:'),
         BinaryContent(data=b'pdf', media_type='application/pdf'),
+        BinaryContent(
+            data=b'pptx', media_type='application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        ),
         CachePoint(),
         ImageUrl(url='https://example.com/kiwi.jpg'),
         DocumentUrl(url='https://example.com/terms.pdf'),
@@ -1216,6 +1236,11 @@ async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
                             'file_data': 'data:application/pdf;base64,cGRm',
                             'filename': 'filename.pdf',
                         },
+                        {
+                            'type': 'input_file',
+                            'file_data': 'data:application/vnd.openxmlformats-officedocument.presentationml.presentation;base64,cHB0eA==',
+                            'filename': 'filename.pptx',
+                        },
                         {'image_url': 'https://example.com/kiwi.jpg', 'type': 'input_image', 'detail': 'auto'},
                         {'type': 'input_file', 'file_url': 'https://example.com/terms.pdf'},
                         {'type': 'input_image', 'file_id': 'file-abc', 'detail': 'auto'},
@@ -1234,6 +1259,8 @@ async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
         (VideoUrl(url='https://example.com/clip'), 'cannot send `VideoUrl` content'),
         (BinaryContent(data=b'x', media_type='audio/wav'), 'cannot send `audio/wav` content'),
         (BinaryContent(data=b'x', media_type='video/mp4'), 'cannot send `video/mp4` content'),
+        # No document either: `mimetypes` knows no extension for it
+        (BinaryContent(data=b'x', media_type='application/custom'), 'cannot send `application/custom` content'),
         (DocumentUrl(url='https://example.com/clip.mp3'), 'cannot send a `audio/mpeg` `DocumentUrl`'),
         (
             DocumentUrl(url='https://example.com/clip', media_type='video/mp4'),
@@ -1859,6 +1886,19 @@ async def test_the_agents_model_is_used_when_reached_the_same_way(
     agent = Agent(OpenAIResponsesModel('gpt-6-luna', provider=provider(agent_route)))
     live = OpenAILiveModel('gpt-live-1', provider=provider(live_route))
     assert await _session_backend(agent, live) == backend
+
+
+async def test_the_agents_model_is_used_through_a_renamed_provider() -> None:
+    """A provider that renames itself reaches the Live session's server as long as both models use it."""
+
+    class RenamedOpenAIProvider(OpenAIProvider):
+        @property
+        def name(self) -> str:
+            return 'my-openai'
+
+    provider = RenamedOpenAIProvider(api_key='x')
+    agent = Agent(OpenAIResponsesModel('gpt-6-luna', provider=provider))
+    assert await _session_backend(agent, OpenAILiveModel('gpt-live-1', provider=provider)) == 'gpt-6-luna'
 
 
 async def test_an_agent_model_not_at_openai_is_not_a_backend(model: OpenAILiveModel) -> None:
@@ -4037,8 +4077,15 @@ async def test_a_backend_request_reported_while_closing_is_held_to_the_request_l
     assert (sessions[0].usage.requests, sessions[0].usage.input_tokens) == (1, 10)
 
 
+@pytest.mark.parametrize(
+    'anyio_backend', [pytest.param(('asyncio', {'loop_factory': SimulatedLoop}), id='virtual-clock')]
+)
 async def test_closing_a_session_whose_socket_drops_finishes_promptly(model: OpenAILiveModel) -> None:
-    """A link that fails while Live is asked to end the session leaves nothing to wait for."""
+    """A link that fails while Live is asked to end the session leaves nothing to wait for.
+
+    On a virtual clock, which only moves when nothing can run, a stalled runner can't use up the deadline, and only
+    waiting out `_END_SESSION_TIMEOUT` can.
+    """
 
     class _DroppingSocket(_FakeWebSocket):
         async def send(self, data: str) -> None:

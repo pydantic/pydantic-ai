@@ -42,7 +42,11 @@ DOMAIN = 'opensandbox.invalid'
 """A name that cannot resolve, so a request that skips the fake's transport fails instead of leaving the host."""
 EXECD_PORT = 44772
 _NOT_FOUND = 'DOCKER::SANDBOX_NOT_FOUND'
-_DRAIN_GRACE = 0.05
+_IDLE_TURNS_AFTER_EXIT = 1000
+"""Event loop turns with nothing to deliver after a command exits, which the readers need to queue what it wrote."""
+_MAX_CHARS_AFTER_EXIT = 1 << 20
+"""Characters of output after a command exits: more than it can have left unread in a full pipe, far below the backend's
+limit."""
 
 
 def _now() -> str:
@@ -72,6 +76,8 @@ class FakeSandbox:
     state: str = 'Running'
     processes: dict[str, asyncio.subprocess.Process] = field(default_factory=lambda: {})
     streams: list[asyncio.Queue[tuple[str, Any]]] = field(default_factory=lambda: [])
+    stream_breaks: int = 0
+    """How often its streams were broken, so a command starting meanwhile can tell."""
 
     def info(self) -> dict[str, Any]:
         info: dict[str, Any] = {
@@ -235,7 +241,9 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
 
     def break_streams(self, sandbox_id: str, sandbox: FakeSandbox | None = None) -> None:
         """Break the sandbox's command streams without stopping its commands, as a network failure does."""
-        for queue in (sandbox or self.sandboxes[sandbox_id]).streams:
+        sandbox = sandbox or self.sandboxes[sandbox_id]
+        sandbox.stream_breaks += 1
+        for queue in sandbox.streams:
             queue.put_nowait(('broken', None))
 
     async def _execd(self, request: httpx.Request) -> httpx.Response:
@@ -261,6 +269,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         cwd = body.get('cwd') or self.image_working_dir
         if not os.path.isdir(cwd):
             return _error(400, 'INVALID_REQUEST_BODY', f'working directory does not exist: {cwd}')
+        stream_breaks = sandbox.stream_breaks
         process = await asyncio.create_subprocess_exec(
             '/bin/bash',
             '-c',
@@ -277,6 +286,13 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         self.processes.append(process)
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         sandbox.streams.append(queue)
+        # The command can run before this registers it, so a kill or a stream break that came meanwhile, and saw
+        # neither the process nor its stream, takes effect here.
+        if sandbox.state != 'Running':  # pragma: lax no cover
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+        if sandbox.stream_breaks != stream_breaks:  # pragma: lax no cover
+            queue.put_nowait(('broken', None))
         return httpx.Response(
             200,
             headers={'content-type': 'text/event-stream'},
@@ -316,26 +332,31 @@ class _EventStream(httpx.AsyncByteStream):
             asyncio.create_task(self._wait()),
         ]
         # execd reports the exit as soon as the command exits, even while a background child holds its output
-        # open: once the command has exited, output still arriving is read for a moment, the rest dropped.
+        # open. What the command wrote is in its pipes by then, and is delivered whatever the machine's speed: the
+        # drain only counts turns with nothing queued, and stops for a background child's output only after more
+        # than any pipe holds. The rest is dropped.
         code: int | None = None
-        deadline: float | None = None
+        idle_turns_left = _IDLE_TURNS_AFTER_EXIT
+        chars_after_exit = 0
         open_pipes = 2
         while code is None or open_pipes:
-            remaining = None if deadline is None else deadline - time.monotonic()
-            if remaining is not None and remaining <= 0:
-                break
-            try:
-                kind, value = await asyncio.wait_for(self._queue.get(), remaining)
-            except TimeoutError:
-                break
+            if code is not None:
+                if not idle_turns_left or chars_after_exit > _MAX_CHARS_AFTER_EXIT:
+                    break
+                if self._queue.empty():
+                    idle_turns_left -= 1
+                    await asyncio.sleep(0)
+                    continue
+            kind, value = await self._queue.get()
             if kind == 'broken':
                 raise httpx.RemoteProtocolError('peer closed connection without sending complete message body')
             if kind == 'exit':
                 code = value
-                deadline = time.monotonic() + _DRAIN_GRACE
             elif kind == 'eof':
                 open_pipes -= 1
             else:
+                if code is not None:
+                    chars_after_exit += len(value)
                 yield event({'type': kind, 'text': value})
         self._sandbox.processes.pop(self._id, None)
         if code == 0:

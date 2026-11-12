@@ -1,4 +1,4 @@
-"""Sandbox sleeps: waited for by the executor, charged to the `max_duration_secs` allowance.
+"""Sandbox sleeps: waited for by the executor, charged to the `max_duration_seconds` allowance.
 
 The executor tests swap in a recording sleep, so they check what was waited for and in what order
 without depending on how long anything takes.
@@ -17,7 +17,7 @@ from pydantic_ai_harness._monty_exec import MontyExecutor
 
 
 async def _run(
-    code: str, *, max_sleep_secs: float | None = None, global_sequential: bool = False, starts_before_waking: int = 1
+    code: str, *, max_sleep_seconds: float | None = None, global_sequential: bool = False, starts_before_waking: int = 1
 ) -> tuple[Any, list[str]]:
     """Run `code` through the executor with a sleep that records when each wait starts and ends.
 
@@ -46,7 +46,7 @@ async def _run(
                 dispatch=dispatch,
                 valid_names=set[str](),
                 global_sequential=global_sequential,
-                max_sleep_secs=max_sleep_secs,
+                max_sleep_seconds=max_sleep_seconds,
                 sleep=sleep,
             )
             completed = await executor.run(partial(session.feed_start, code))
@@ -88,8 +88,8 @@ async def test_sleep_past_the_allowance_raises_without_waiting(second_sleep: str
     code = (
         f'import asyncio, time\ntime.sleep(3)\ntry:\n    {second_sleep}\nexcept TimeoutError as e:\n    r = str(e)\nr'
     )
-    output, events = await _run(code, max_sleep_secs=5)
-    assert output == 'sleeping 3s would exceed the 5s this code may sleep (max_duration_secs); 2s left'
+    output, events = await _run(code, max_sleep_seconds=5)
+    assert output == 'sleeping 3s would exceed the 5s this code may sleep (max_duration_seconds); 2s left'
     assert events == ['start 3', 'end 3']
 
 

@@ -42,7 +42,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
 from pydantic_ai_harness.filesystem import (
     EditFileCallPart,
-    FileChangeRequestEvent,
+    FileChangeRequestedEvent,
     FileEditedEvent,
     FileWrittenEvent,
     ReplacementArgs,
@@ -717,6 +717,8 @@ class LiveEntry:
 
     id: str
     state: LiveState
+    busy: bool = False
+    """Whether it handles input or has some queued, a turn's `TurnEnd` hooks included: Edit and Retry are refused."""
     title: str | None
     workspace: str
 
@@ -908,6 +910,8 @@ class SessionEntry:
     """Hidden from the sidebar unless it lists archived sessions too."""
     openable: bool
     """Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first."""
+    source: str | None = None
+    """The agent it was imported from, `Claude Code` or `Codex`; `None` for CLAI's own sessions."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1320,7 +1324,7 @@ class EventTranslator:
         self._scope = scope
         self._parts: dict[int, str] = {}
         self._count = 0
-        self._writes: dict[tuple[str | None, str], FileChangeRequestEvent] = {}
+        self._writes: dict[tuple[str | None, str], FileChangeRequestedEvent] = {}
         self._streamed: set[str] = set()
         """`run_code` cells already shown from their streamed part, so their call event only completes them."""
 
@@ -1402,7 +1406,7 @@ class EventTranslator:
             return [ToolOutput(id=event.tool_call_id, text=event.text)]
         if isinstance(event, CommandFinishedEvent) and event.tool_call_id is not None:
             return [ShellDone(id=event.tool_call_id, exit_code=event.exit_code)]
-        if isinstance(event, FileChangeRequestEvent) and event.operation == 'write':
+        if isinstance(event, FileChangeRequestedEvent) and event.operation == 'write':
             self._writes[event.tool_call_id, event.path] = event
         elif isinstance(event, FileEditedEvent) and event.tool_call_id is not None:
             diff = Diff(path=event.path, diff=event.diff, truncated=event.truncated)
