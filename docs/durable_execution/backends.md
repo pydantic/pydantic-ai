@@ -376,7 +376,9 @@ class MyEngineDurability(BaseDurabilityCapability):
 
 An engine without a durable timer doesn't override `durable_sleep`, and its waits stay plain sleeps in
 the container's process: the process has to stay up for the wait, and a recovered run waits again. Say
-so in the engine's documentation.
+so in the engine's documentation. An engine whose container runs on an event loop of its own may not
+need an override: [Azure Durable Task](../harness/azure-durable-task.md)'s orchestration loop turns
+every `asyncio` timer, plain sleeps included, into a durable timer.
 
 ## Replays and telemetry
 

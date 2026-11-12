@@ -14,7 +14,14 @@ ENGINE_NAME = 'pgtask'
 
 # pgtask suspends a sleeping task by raising this from `Task.sleep_for`, but neither exports it nor declares it in its
 # type stub, so it's looked up in the native module that defines it.
-TaskSuspended: type[Exception] = vars(importlib.import_module('pgtask._native'))['TaskSuspended']
+try:
+    TaskSuspended: type[Exception] = vars(importlib.import_module('pgtask._native'))['TaskSuspended']
+# Only reached on a pgtask version whose internals moved, which the supported range doesn't include.
+except (ImportError, KeyError) as _error:  # pragma: no cover
+    raise ImportError(
+        "`PGTaskDurability` needs pgtask's internal `pgtask._native.TaskSuspended` error, which the installed pgtask "
+        'does not define. Install a pgtask version supported by `pydantic-ai-harness[pgtask]`.'
+    ) from _error
 
 StepT = TypeVar('StepT')
 

@@ -43,7 +43,7 @@ from pydantic_ai.toolsets.function import FunctionToolsetTool
 from ._agent import DBOSParallelExecutionMode
 from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig, SnapshotStepReservation
 from ._operation_names import DBOSOperationNamer
-from ._utils import ChildWorkflowConfig, StepConfig, durable_sleep, guard_enqueue_in_workflow, in_workflow_code
+from ._utils import ChildWorkflowConfig, StepConfig, guard_enqueue_in_workflow, in_workflow_code, sleep_in_workflow
 
 if TYPE_CHECKING:
     from dbos import StepReservation
@@ -257,7 +257,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
     async def durable_sleep(self, seconds: float) -> None:
         """Wait with `DBOS.sleep_async`, a recorded step, so recovery skips a completed wait."""
-        await durable_sleep(seconds)
+        await sleep_in_workflow(seconds)
 
     def get_default_run_id(self) -> str | None:
         if not self.in_durable_context:
