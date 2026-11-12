@@ -114,7 +114,7 @@ def coder_instructions(
     They differ in the lead sentence. A delegate also measures numeric targets, because it decides on its
     own when the work is good enough. Non-empty `extra` is appended after a blank line.
     `repo_files` names instruction files already loaded (`None` when none are); `nested_instructions`
-    says a subdirectory's files are inlined the first time the model reads there.
+    says a subdirectory's files are inlined the first time the model reads, lists, writes or edits there.
     """
     is_max = autonomy == 'max'
     parent_checks = _checks(measure=autonomy in ('high', 'max'), cleanup=is_max, misread_max=is_max)
