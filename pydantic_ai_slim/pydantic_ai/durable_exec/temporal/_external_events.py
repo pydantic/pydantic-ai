@@ -75,10 +75,11 @@ class _Inbox:
         Temporal delivers a signal that arrived before the handler was registered once it is, so
         registering on the first wait, before `ask` hands the token out, misses none.
         """
-        if isinstance(inbox := workflow.get_signal_handler(_SIGNAL_NAME), cls):
-            return inbox
+        handler: object = workflow.get_signal_handler(_SIGNAL_NAME)  # pyright: ignore[reportUnknownMemberType]
+        if isinstance(handler, cls):
+            return handler
         inbox = cls()
-        workflow.set_signal_handler(_SIGNAL_NAME, inbox)
+        workflow.set_signal_handler(_SIGNAL_NAME, inbox)  # pyright: ignore[reportUnknownMemberType]
         return inbox
 
 
@@ -126,9 +127,8 @@ class TemporalExternalEventWaiter(ExternalEventWaiter):
         pending_key = f'{info.run_id}:{event_key}'
         _pending_asks[pending_key] = ask
         try:
-            answer = await execute_local_activity(
-                self.ask_activity, args=[pending_key, token], summary=f'ask: {name}', **self.ask_config
-            )
+            config: LocalActivityConfig = {**self.ask_config, 'summary': f'ask: {name}'}
+            answer: JsonValue = await execute_local_activity(self.ask_activity, args=[pending_key, token], **config)
         finally:
             del _pending_asks[pending_key]
         if answer is not None:
