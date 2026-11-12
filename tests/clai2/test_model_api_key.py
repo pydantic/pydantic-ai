@@ -70,6 +70,7 @@ async def test_models_that_take_their_key_elsewhere_fail_clearly(store: Settings
         ('openai-codex:gpt-5', 'openai-codex'),
         ('single:x', 'single'),
         ('chain:both', 'chain:both'),
+        ('openai@*:gpt-5', r'openai@\*:gpt-5'),
     ):
         store.save_model_settings(name, {'api_key': 'TEAM_KEY'})
         with pytest.raises(UserError, match=f'{provider} takes no API key from /model settings'):
@@ -79,7 +80,7 @@ async def test_models_that_take_their_key_elsewhere_fail_clearly(store: Settings
 def test_the_row_offers_saved_keys_and_names_the_environment_key(
     store: SettingsStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source = ModelSettingsSource(store, 'openai:gpt-5')
+    source = ModelSettingsSource(store, 'openai:gpt-5', offer_keys=True)
     row = FieldMenu(source).row_for('api_key')
     assert row is not None
     assert (row.label, row.choices, row.note) == ('API Key', ('TEAM_KEY',), 'from OPENAI_API_KEY in the environment')
@@ -90,6 +91,12 @@ def test_the_row_offers_saved_keys_and_names_the_environment_key(
     assert row is not None and row.note == ''
     work = FieldMenu(ModelSettingsSource(store, 'openai@work:gpt-5')).row_for('api_key')
     assert work is not None and work.note == 'from the openai@work sign-in'
+    default = FieldMenu(ModelSettingsSource(store, 'openai@default:gpt-5')).row_for('api_key')
+    assert default is not None and (default.choices, default.note) == ((), 'from TEAM_KEY, saved for openai:gpt-5')
+    assert FieldMenu(ModelSettingsSource(store, 'openai@*:gpt-5')).row_for('api_key') is None
+    monkeypatch.setenv('GEMINI_API_KEY', 'sk-gemini')
+    gemini = FieldMenu(ModelSettingsSource(store, 'google:gemini-2.5-pro')).row_for('api_key')
+    assert gemini is not None and gemini.note == 'from GEMINI_API_KEY in the environment'
     monkeypatch.delenv('OPENAI_API_KEY')
     unset = FieldMenu(ModelSettingsSource(store, 'openai:gpt-4.1')).row_for('api_key')
     assert unset is not None and unset.note == ''
@@ -98,13 +105,10 @@ def test_the_row_offers_saved_keys_and_names_the_environment_key(
 
 
 def test_each_provider_names_its_key_variable(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert [
-        key_profiles.key_variable(provider) for provider in ('openai', 'cohere', 'system-one', 'gateway/openai')
-    ] == [
-        'OPENAI_API_KEY',
-        'CO_API_KEY',
-        'SYSTEM_ONE_API_KEY',
-        'PYDANTIC_AI_GATEWAY_API_KEY',
+    assert [key_profiles.key_variables(provider) for provider in ('openai', 'cohere', 'gateway/openai')] == [
+        ('OPENAI_API_KEY',),
+        ('CO_API_KEY',),
+        ('PYDANTIC_AI_GATEWAY_API_KEY', 'PAIG_API_KEY'),
     ]
     assert key_profiles.takes_key('gateway/openai')
 

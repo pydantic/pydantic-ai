@@ -125,6 +125,8 @@ class ModelResolver:
                 raise _no_api_key(name)
             return [member for model in self._chain(chain) for member in await self.expand(model)]
         ref = _parse(name)
+        if ref.profile == ALL and await self._saved(name, 'api_key') is not None:
+            raise _no_api_key(name)  # Each pooled account keeps its own key.
         members = await self._accounts(ref)
         return [member.pinned(ref.name) for member in members] if members else [name]
 

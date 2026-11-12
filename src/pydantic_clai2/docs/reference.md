@@ -836,8 +836,10 @@ and is read each time the model is built, so a deleted key fails the turn. The r
 shows when the environment variable, such as `OPENAI_API_KEY`, already supplies a key.
 The plain model's `api_key` also applies to its `@default` account, which uses the
 environment's key; a profile such as `openai@work` keeps its own sign-in unless its
-own model sets `api_key`. OpenRouter, vLLM, GitHub Copilot, Codex, chains, and plugin
-models take their keys elsewhere and have no API Key row.
+own model sets `api_key`. OpenRouter, vLLM, GitHub Copilot, Codex, chains, `@*` pools,
+and plugin models take their keys elsewhere and have no API Key row. CLAI versions
+before this setting ignore it and use the environment's key, sending it to any saved
+`base_url`, so don't downgrade while a model relies on both.
 
 For `/set` and `/model add`, Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,

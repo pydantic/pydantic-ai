@@ -48,20 +48,24 @@ URL_ARGUMENTS = {
 """Providers whose constructor names its endpoint something other than `base_url`."""
 
 KEY_VARIABLES = {
-    'openai-chat': 'OPENAI_API_KEY',
-    'openai-responses': 'OPENAI_API_KEY',
-    'openai-decisions': 'OPENAI_API_KEY',
-    'azure': 'AZURE_OPENAI_API_KEY',
-    'azure-responses': 'AZURE_OPENAI_API_KEY',
-    'bedrock': 'AWS_BEARER_TOKEN_BEDROCK',
-    'cohere': 'CO_API_KEY',
-    'heroku': 'HEROKU_INFERENCE_KEY',
-    'huggingface': 'HF_TOKEN',
-    'snowflake': 'SNOWFLAKE_TOKEN',
-    'vercel': 'VERCEL_AI_GATEWAY_API_KEY',
-    'voyageai': 'VOYAGE_API_KEY',
+    'openai-chat': ('OPENAI_API_KEY',),
+    'openai-responses': ('OPENAI_API_KEY',),
+    'openai-decisions': ('OPENAI_API_KEY',),
+    'alibaba': ('ALIBABA_API_KEY', 'DASHSCOPE_API_KEY'),
+    'azure': ('AZURE_OPENAI_API_KEY',),
+    'azure-responses': ('AZURE_OPENAI_API_KEY',),
+    'bedrock': ('AWS_BEARER_TOKEN_BEDROCK',),
+    'bedrock-mantle': ('AWS_BEARER_TOKEN_BEDROCK',),
+    'cohere': ('CO_API_KEY',),
+    'google': ('GOOGLE_API_KEY', 'GEMINI_API_KEY'),
+    'google-cloud': ('GOOGLE_API_KEY', 'GEMINI_API_KEY'),
+    'heroku': ('HEROKU_INFERENCE_KEY',),
+    'huggingface': ('HF_TOKEN',),
+    'snowflake': ('SNOWFLAKE_TOKEN',),
+    'vercel': ('VERCEL_AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN'),
+    'voyageai': ('VOYAGE_API_KEY',),
 }
-"""Providers whose API key variable is not `PROVIDER_API_KEY`."""
+"""Providers whose API key variables are not just `PROVIDER_API_KEY`."""
 
 
 class KeyedProvider(Protocol):
@@ -239,11 +243,11 @@ def takes_key(provider: str) -> bool:
         return True
 
 
-def key_variable(provider: str) -> str:
-    """The environment variable core reads `provider`'s API key from."""
+def key_variables(provider: str) -> tuple[str, ...]:
+    """The environment variables core reads `provider`'s API key from, in the order it reads them."""
     if provider.startswith('gateway/'):
-        return 'PYDANTIC_AI_GATEWAY_API_KEY'
-    return KEY_VARIABLES.get(provider, f'{provider.upper().replace("-", "_")}_API_KEY')
+        return ('PYDANTIC_AI_GATEWAY_API_KEY', 'PAIG_API_KEY')
+    return KEY_VARIABLES.get(provider, (f'{provider.upper().replace("-", "_")}_API_KEY',))
 
 
 def no_api_key(provider: str) -> UserError:

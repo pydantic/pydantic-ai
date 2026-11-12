@@ -16,11 +16,11 @@ from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.api_keys import load_keys
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import github_copilot, openrouter, vllm
-from pydantic_clai2.models.key_profiles import key_variable
+from pydantic_clai2.models.key_profiles import key_variables
 from pydantic_clai2.models.model_catalog import CatalogModel, catalog, github_copilot_models
 from pydantic_clai2.models.model_options import model_options, validate_model_options
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults
-from pydantic_clai2.models.profiles import DEFAULT, parse_model, provider_of
+from pydantic_clai2.models.profiles import ALL, DEFAULT, base_model, parse_model, provider_of
 from pydantic_clai2.plugins.menus import Dialogs, Option, SettingsMenu
 from pydantic_clai2.ui.menus.custom_params import edit_custom_params
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
@@ -44,11 +44,17 @@ class _EditSettings:
 class ModelSettingsSource:
     """One model's overrides, from `ModelSettingsForm`, saved in the store."""
 
-    def __init__(self, store: SettingsStore, model: str, *, settings_as: str | None = None) -> None:
-        """Edits are saved under `model`, offering and validating the controls of `settings_as` (default `model`)."""
+    def __init__(
+        self, store: SettingsStore, model: str, *, settings_as: str | None = None, offer_keys: bool = False
+    ) -> None:
+        """Edits are saved under `model`, offering and validating the controls of `settings_as` (default `model`).
+
+        `offer_keys` lists the saved `/keys` names as the API key's choices, reading the keyring each time.
+        """
         self._store = store
         self.model = model
         self._settings_as = settings_as or model
+        self._offer_keys = offer_keys
 
     @property
     def title(self) -> str:
@@ -95,7 +101,9 @@ class ModelSettingsSource:
         if self.model != self._settings_as:  # A chain, or a plugin model shown with another's controls.
             options.pop('base_url', None)
             options.pop('api_key', None)
-        if 'api_key' in options:
+        if parse_model(self.model).profile == ALL:  # Each pooled account keeps its own key.
+            options.pop('api_key', None)
+        if self._offer_keys and 'api_key' in options:
             options['api_key'] = tuple(load_keys())
         return options
 
@@ -104,8 +112,11 @@ class ModelSettingsSource:
         ref = parse_model(self.model)
         if ref.profile not in (None, DEFAULT):
             return f'from the {ref.account} sign-in'
-        variable = key_variable(ref.provider)
-        return f'from {variable} in the environment' if os.environ.get(variable) else ''
+        plain = base_model(self.model)
+        if ref.profile == DEFAULT and isinstance(inherited := self._store.model_settings(plain).get('api_key'), str):
+            return f'from {inherited}, saved for {plain}'
+        variable = next((name for name in key_variables(ref.provider) if os.environ.get(name)), None)
+        return f'from {variable} in the environment' if variable else ''
 
     def current(self, row: FieldRow) -> str:
         """The effective value, without persisting inherited defaults."""
@@ -497,7 +508,7 @@ def model_settings_menu(store: SettingsStore, model: str, *, settings_as: str | 
     Edits save under `model`, offering and validating the controls of `settings_as` (default `model`).
     """
     return SettingsMenu(
-        source=ModelSettingsSource(store, model, settings_as=settings_as),
+        source=ModelSettingsSource(store, model, settings_as=settings_as, offer_keys=True),
         actions={'custom_params': partial(edit_custom_params, store=store, model=model)},
         searchable=False,
     )
