@@ -1197,25 +1197,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 case responses.ResponseFunctionToolCall():
                     items.append(self._map_function_tool_call(item, response.id))
                 case responses.ResponseCodeInterpreterToolCall():
-                    call_part, return_part, file_parts = map_code_interpreter_tool_call(item, self.system)
-                    items.append(call_part)
-                    items.extend(file_parts)
-                    items.append(return_part)
+                    items.extend(self._map_code_interpreter_call(item))
                 case responses.ResponseFunctionWebSearch():
-                    call_part, return_part = map_web_search_tool_call(item, self.system)
-                    items.append(call_part)
-                    items.append(return_part)
+                    items.extend(map_web_search_tool_call(item, self.system))
                 case responses.ResponseToolSearchCall():
                     items.extend(self._map_tool_search_call(item, tool_search_outputs))
                 case responses.ResponseToolSearchOutputItem():
                     if item.execution == 'server' and item.id not in paired_tool_search_output_ids:
                         items.append(build_tool_search_return_part(item.call_id or item.id, item, self.system))
                 case responses.response_output_item.ImageGenerationCall():
-                    call_part, return_part, file_part = map_image_generation_tool_call(item, self.system)
-                    items.append(call_part)
-                    if file_part:  # pragma: no branch
-                        items.append(file_part)
-                    items.append(return_part)
+                    items.extend(self._map_image_generation_call(item))
                 case ResponseCompactionItem():
                     items.append(map_compaction_item(item, self.system))
                 case responses.ResponseComputerToolCall():  # pragma: no cover
@@ -1228,17 +1219,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
                     pass
                 case responses.ResponseFileSearchToolCall():
-                    call_part, return_part = map_file_search_tool_call(item, self.system)
-                    items.append(call_part)
-                    items.append(return_part)
+                    items.extend(map_file_search_tool_call(item, self.system))
                 case responses.response_output_item.McpCall():
-                    call_part, return_part = map_mcp_call(item, self.system)
-                    items.append(call_part)
-                    items.append(return_part)
+                    items.extend(map_mcp_call(item, self.system))
                 case responses.response_output_item.McpListTools():
-                    call_part, return_part = map_mcp_list_tools(item, self.system)
-                    items.append(call_part)
-                    items.append(return_part)
+                    items.extend(map_mcp_list_tools(item, self.system))
                 case responses.response_output_item.McpApprovalRequest():  # pragma: no cover
                     # Pydantic AI doesn't yet support McpApprovalRequest (explicit tool usage approval)
                     pass
@@ -1292,6 +1277,23 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_name=self.system,
             provider_details=fn_provider_details,
         )
+
+    def _map_code_interpreter_call(
+        self, item: responses.ResponseCodeInterpreterToolCall
+    ) -> Iterator[ModelResponsePart]:
+        call_part, return_part, file_parts = map_code_interpreter_tool_call(item, self.system)
+        yield call_part
+        yield from file_parts
+        yield return_part
+
+    def _map_image_generation_call(
+        self, item: responses.response_output_item.ImageGenerationCall
+    ) -> Iterator[ModelResponsePart]:
+        call_part, return_part, file_part = map_image_generation_tool_call(item, self.system)
+        yield call_part
+        if file_part:  # pragma: no branch
+            yield file_part
+        yield return_part
 
     def _map_tool_search_call(
         self,

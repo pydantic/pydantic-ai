@@ -216,8 +216,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             case responses.ResponseFunctionCallArgumentsDoneEvent():
                 yield from self._finalize_function_call(chunk.item_id, chunk.arguments)
             case responses.ResponseInProgressEvent() | responses.ResponseQueuedEvent():
-                self._record_usage(chunk.response)
-                self._set_state(chunk.response.status)
+                self._map_in_progress(chunk)
             case responses.ResponseIncompleteEvent():
                 self._map_incomplete(chunk)
             case responses.ResponseOutputItemAddedEvent():
@@ -247,38 +246,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             case responses.ResponseTextDoneEvent():
                 yield from self._map_text_done(chunk)
             case responses.ResponseRefusalDeltaEvent():
-                # Accumulate refusal text from deltas as a fallback in case the done event is missing.
-                self._has_refusal = True
-                self.finish_reason = 'content_filter'
-                self._refusal_text += chunk.delta
+                self._map_refusal_delta(chunk)
             case responses.ResponseRefusalDoneEvent():
-                # The done event contains the full refusal text, replacing any accumulated deltas.
-                self._has_refusal = True
-                self.finish_reason = 'content_filter'
-                self._refusal_text = chunk.refusal
+                self._map_refusal_done(chunk)
             case responses.ResponseCodeInterpreterCallCodeDeltaEvent():
-                json_args_delta = to_json(chunk.delta).decode()[1:-1]  # Drop the surrounding `"`
-                yield from self._parts_manager.handle_tool_call_delta_events(
-                    vendor_part_id=f'{chunk.item_id}-call',
-                    args=json_args_delta,
-                )
+                yield from self._map_code_interpreter_code_delta(chunk)
             case responses.ResponseCodeInterpreterCallCodeDoneEvent():
                 yield from self._parts_manager.handle_tool_call_delta_events(
                     vendor_part_id=f'{chunk.item_id}-call',
                     args='"}',
                 )
             case responses.ResponseImageGenCallPartialImageEvent():
-                # Not present on the type, but present on the actual object.
-                # See https://github.com/openai/openai-python/issues/2649
-                output_format = getattr(chunk, 'output_format', 'png')
-                file_part = FilePart(
-                    content=BinaryImage(
-                        data=base64.b64decode(chunk.partial_image_b64),
-                        media_type=f'image/{output_format}',
-                    ),
-                    id=chunk.item_id,
-                )
-                yield self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
+                yield self._map_partial_image(chunk)
             case responses.ResponseMcpCallArgumentsDoneEvent():
                 yield from self._parts_manager.handle_tool_call_delta_events(
                     vendor_part_id=f'{chunk.item_id}-call',
@@ -390,6 +369,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             self.finish_reason = RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
         self._set_state(chunk.response.status)
 
+    def _map_in_progress(self, chunk: responses.ResponseInProgressEvent | responses.ResponseQueuedEvent) -> None:
+        self._record_usage(chunk.response)
+        self._set_state(chunk.response.status)
+
     def _map_function_call_arguments_delta(
         self, chunk: responses.ResponseFunctionCallArgumentsDeltaEvent
     ) -> Iterator[ModelResponseStreamEvent]:
@@ -472,57 +455,22 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 if item.phase is not None:
                     self._phase_by_item[item.id] = item.phase
             case responses.ResponseFunctionWebSearch():
-                call_part, _ = map_web_search_tool_call(item, self.provider_name)
-                yield self._parts_manager.handle_part(
-                    vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None)
-                )
+                yield self._map_web_search_call_added(item)
             case responses.ResponseToolSearchCall():
-                yield self._handle_tool_search_call_added(item)
+                yield self._map_tool_search_call_added(item)
             case responses.ResponseFileSearchToolCall():
-                call_part, _ = map_file_search_tool_call(item, self.provider_name)
-                yield self._parts_manager.handle_part(
-                    vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None)
-                )
+                yield self._map_file_search_call_added(item)
             case responses.ResponseToolSearchOutputItem():
                 # The completed result is emitted from `output_item.done`.
                 pass
             case responses.ResponseCodeInterpreterToolCall():
-                call_part, _, _ = map_code_interpreter_tool_call(item, self.provider_name)
-
-                args_json = call_part.args_as_json_str()
-                # Drop the final `"}` so that we can add code deltas
-                args_json_delta = args_json[:-2]
-
-                yield self._parts_manager.handle_part(
-                    vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None)
-                )
-                yield from self._parts_manager.handle_tool_call_delta_events(
-                    vendor_part_id=f'{item.id}-call',
-                    args=args_json_delta,
-                )
+                yield from self._map_code_interpreter_call_added(item)
             case responses.response_output_item.ImageGenerationCall():
-                call_part, _, _ = map_image_generation_tool_call(item, self.provider_name)
-                yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=call_part)
+                yield self._map_image_generation_call_added(item)
             case responses.response_output_item.McpCall():
-                call_part, _ = map_mcp_call(item, self.provider_name)
-
-                args_json = call_part.args_as_json_str()
-                # Drop the final `{}}` so that we can add tool args deltas
-                args_json_delta = args_json[:-3]
-                assert args_json_delta.endswith('"tool_args":'), (
-                    f'Expected {args_json_delta!r} to end in `"tool_args":"`'
-                )
-
-                yield self._parts_manager.handle_part(
-                    vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None)
-                )
-                yield from self._parts_manager.handle_tool_call_delta_events(
-                    vendor_part_id=f'{item.id}-call',
-                    args=args_json_delta,
-                )
+                yield from self._map_mcp_call_added(item)
             case responses.response_output_item.McpListTools():
-                call_part, _ = map_mcp_list_tools(item, self.provider_name)
-                yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=call_part)
+                yield self._map_mcp_list_tools_added(item)
             case ResponseCompactionItem():
                 # Emit a PartStartEvent so UIs can render compaction in progress.
                 # The "done" event replaces this with the final encrypted_content.
@@ -536,7 +484,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     UserWarning,
                 )
 
-    def _handle_tool_search_call_added(self, item: responses.ResponseToolSearchCall) -> ModelResponseStreamEvent:
+    def _map_web_search_call_added(self, item: responses.ResponseFunctionWebSearch) -> ModelResponseStreamEvent:
+        call_part, _ = map_web_search_tool_call(item, self.provider_name)
+        return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None))
+
+    def _map_tool_search_call_added(self, item: responses.ResponseToolSearchCall) -> ModelResponseStreamEvent:
         """Start the tool search call part, with its arguments left for `output_item.done` to fill in."""
         if item.execution == 'client':
             # Emit a regular function-tool call so the standard
@@ -555,9 +507,50 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             self._pending_tool_search_call_ids.append(call_part.tool_call_id)
         return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None))
 
-    def _map_output_item_done(  # noqa: C901
-        self, item: responses.ResponseOutputItem
+    def _map_file_search_call_added(self, item: responses.ResponseFileSearchToolCall) -> ModelResponseStreamEvent:
+        call_part, _ = map_file_search_tool_call(item, self.provider_name)
+        return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None))
+
+    def _map_code_interpreter_call_added(
+        self, item: responses.ResponseCodeInterpreterToolCall
     ) -> Iterator[ModelResponseStreamEvent]:
+        call_part, _, _ = map_code_interpreter_tool_call(item, self.provider_name)
+
+        args_json = call_part.args_as_json_str()
+        # Drop the final `"}` so that we can add code deltas
+        args_json_delta = args_json[:-2]
+
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None))
+        yield from self._parts_manager.handle_tool_call_delta_events(
+            vendor_part_id=f'{item.id}-call',
+            args=args_json_delta,
+        )
+
+    def _map_image_generation_call_added(
+        self, item: responses.response_output_item.ImageGenerationCall
+    ) -> ModelResponseStreamEvent:
+        call_part, _, _ = map_image_generation_tool_call(item, self.provider_name)
+        return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=call_part)
+
+    def _map_mcp_call_added(self, item: responses.response_output_item.McpCall) -> Iterator[ModelResponseStreamEvent]:
+        call_part, _ = map_mcp_call(item, self.provider_name)
+
+        args_json = call_part.args_as_json_str()
+        # Drop the final `{}}` so that we can add tool args deltas
+        args_json_delta = args_json[:-3]
+        assert args_json_delta.endswith('"tool_args":'), f'Expected {args_json_delta!r} to end in `"tool_args":"`'
+
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None))
+        yield from self._parts_manager.handle_tool_call_delta_events(
+            vendor_part_id=f'{item.id}-call',
+            args=args_json_delta,
+        )
+
+    def _map_mcp_list_tools_added(self, item: responses.response_output_item.McpListTools) -> ModelResponseStreamEvent:
+        call_part, _ = map_mcp_list_tools(item, self.provider_name)
+        return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=call_part)
+
+    def _map_output_item_done(self, item: responses.ResponseOutputItem) -> Iterator[ModelResponseStreamEvent]:
         match item:
             case responses.ResponseFunctionToolCall(id=str(item_id)) if item_id:
                 yield from self._map_function_call_done(item, item_id)
@@ -571,45 +564,22 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         provider_name=self.provider_name,
                     )
             case responses.ResponseCodeInterpreterToolCall():
-                _, return_part, file_parts = map_code_interpreter_tool_call(item, self.provider_name)
-                for i, file_part in enumerate(file_parts):
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-file-{i}', part=file_part)
-                yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+                yield from self._map_code_interpreter_call_done(item)
             case responses.ResponseFunctionWebSearch():
-                call_part, return_part = map_web_search_tool_call(item, self.provider_name)
-
-                yield from self._parts_manager.handle_tool_call_delta_events(
-                    vendor_part_id=f'{item.id}-call',
-                    args=call_part.args,
-                )
-
-                yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+                yield from self._map_web_search_call_done(item)
             case responses.ResponseToolSearchCall():
                 yield from self._handle_tool_search_call_done(item)
             case responses.ResponseToolSearchOutputItem():
                 if item.execution == 'server':
-                    yield self._handle_tool_search_output_done(item)
+                    yield self._map_tool_search_output_done(item)
             case responses.ResponseFileSearchToolCall():
-                call_part, return_part = map_file_search_tool_call(item, self.provider_name)
-
-                yield from self._parts_manager.handle_tool_call_delta_events(
-                    vendor_part_id=f'{item.id}-call',
-                    args=call_part.args,
-                )
-
-                yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+                yield from self._map_file_search_call_done(item)
             case responses.response_output_item.ImageGenerationCall():
-                _, return_part, file_part = map_image_generation_tool_call(item, self.provider_name)
-                if file_part:  # pragma: no branch
-                    yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-file', part=file_part)
-                yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+                yield from self._map_image_generation_call_done(item)
             case responses.response_output_item.McpCall():
-                _, return_part = map_mcp_call(item, self.provider_name)
-                yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+                yield self._map_mcp_call_done(item)
             case responses.response_output_item.McpListTools():
-                _, return_part = map_mcp_list_tools(item, self.provider_name)
-                yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
-                self._mcp_list_tools_return_ids.add(item.id)
+                yield from self._map_mcp_list_tools_done(item)
             case ResponseCompactionItem():
                 # Replace the preliminary part from the "added" event with the
                 # final encrypted_content for round-tripping.
@@ -630,7 +600,27 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         else:
             yield from self._finalize_function_call(item_id, item.arguments)
 
-    def _handle_tool_search_output_done(self, item: responses.ResponseToolSearchOutputItem) -> ModelResponseStreamEvent:
+    def _map_code_interpreter_call_done(
+        self, item: responses.ResponseCodeInterpreterToolCall
+    ) -> Iterator[ModelResponseStreamEvent]:
+        _, return_part, file_parts = map_code_interpreter_tool_call(item, self.provider_name)
+        for i, file_part in enumerate(file_parts):
+            yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-file-{i}', part=file_part)
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+
+    def _map_web_search_call_done(
+        self, item: responses.ResponseFunctionWebSearch
+    ) -> Iterator[ModelResponseStreamEvent]:
+        call_part, return_part = map_web_search_tool_call(item, self.provider_name)
+
+        yield from self._parts_manager.handle_tool_call_delta_events(
+            vendor_part_id=f'{item.id}-call',
+            args=call_part.args,
+        )
+
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+
+    def _map_tool_search_output_done(self, item: responses.ResponseToolSearchOutputItem) -> ModelResponseStreamEvent:
         """Return a server-executed tool search's result, paired with the call it answers."""
         call_id = match_tool_search_output_to_call(item.call_id, self._pending_tool_search_call_ids)
         return self._parts_manager.handle_part(
@@ -641,6 +631,37 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 self.provider_name,
             ),
         )
+
+    def _map_file_search_call_done(
+        self, item: responses.ResponseFileSearchToolCall
+    ) -> Iterator[ModelResponseStreamEvent]:
+        call_part, return_part = map_file_search_tool_call(item, self.provider_name)
+
+        yield from self._parts_manager.handle_tool_call_delta_events(
+            vendor_part_id=f'{item.id}-call',
+            args=call_part.args,
+        )
+
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+
+    def _map_image_generation_call_done(
+        self, item: responses.response_output_item.ImageGenerationCall
+    ) -> Iterator[ModelResponseStreamEvent]:
+        _, return_part, file_part = map_image_generation_tool_call(item, self.provider_name)
+        if file_part:  # pragma: no branch
+            yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-file', part=file_part)
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+
+    def _map_mcp_call_done(self, item: responses.response_output_item.McpCall) -> ModelResponseStreamEvent:
+        _, return_part = map_mcp_call(item, self.provider_name)
+        return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+
+    def _map_mcp_list_tools_done(
+        self, item: responses.response_output_item.McpListTools
+    ) -> Iterator[ModelResponseStreamEvent]:
+        _, return_part = map_mcp_list_tools(item, self.provider_name)
+        yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+        self._mcp_list_tools_return_ids.add(item.id)
 
     def _map_reasoning_summary_delta(
         self, item_id: str, summary_index: int, content: str
@@ -653,6 +674,40 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             id=item_id,
             provider_name=self.provider_name,
         )
+
+    def _map_refusal_delta(self, chunk: responses.ResponseRefusalDeltaEvent) -> None:
+        # Accumulate refusal text from deltas as a fallback in case the done event is missing.
+        self._has_refusal = True
+        self.finish_reason = 'content_filter'
+        self._refusal_text += chunk.delta
+
+    def _map_refusal_done(self, chunk: responses.ResponseRefusalDoneEvent) -> None:
+        # The done event contains the full refusal text, replacing any accumulated deltas.
+        self._has_refusal = True
+        self.finish_reason = 'content_filter'
+        self._refusal_text = chunk.refusal
+
+    def _map_code_interpreter_code_delta(
+        self, chunk: responses.ResponseCodeInterpreterCallCodeDeltaEvent
+    ) -> Iterator[ModelResponseStreamEvent]:
+        json_args_delta = to_json(chunk.delta).decode()[1:-1]  # Drop the surrounding `"`
+        yield from self._parts_manager.handle_tool_call_delta_events(
+            vendor_part_id=f'{chunk.item_id}-call',
+            args=json_args_delta,
+        )
+
+    def _map_partial_image(self, chunk: responses.ResponseImageGenCallPartialImageEvent) -> ModelResponseStreamEvent:
+        # Not present on the type, but present on the actual object.
+        # See https://github.com/openai/openai-python/issues/2649
+        output_format = getattr(chunk, 'output_format', 'png')
+        file_part = FilePart(
+            content=BinaryImage(
+                data=base64.b64decode(chunk.partial_image_b64),
+                media_type=f'image/{output_format}',
+            ),
+            id=chunk.item_id,
+        )
+        return self._parts_manager.handle_part(vendor_part_id=f'{chunk.item_id}-file', part=file_part)
 
     def _map_text_delta(self, chunk: responses.ResponseTextDeltaEvent) -> Iterator[ModelResponseStreamEvent]:
         # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
