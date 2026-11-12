@@ -173,8 +173,8 @@ class SqliteMemoryStore:
         assert row is not None
         return int(row[0])
 
-    def _decode_prefix(self, blob: bytes, max_chars: int) -> tuple[str, bool]:
-        content = self._decode(blob, 'strict', False)[0]
+    def _decode_prefix(self, blob: bytes | None, max_chars: int) -> tuple[str, bool]:
+        content = self._decode(blob or b'', 'strict', False)[0]
         return content[:max_chars], len(content) > max_chars
 
     async def read(self, path: str, *, max_chars: int) -> MemoryFile | None:
