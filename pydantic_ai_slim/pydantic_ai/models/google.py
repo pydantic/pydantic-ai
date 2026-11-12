@@ -542,6 +542,47 @@ def _move_caller_user_agent(headers: dict[str, str], client_headers: Mapping[str
     return True
 
 
+def _request_http_options(client: Client, model_settings: ModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
+    """The per-request HTTP options for `client`: headers, plus the `timeout` and `max_retries` settings."""
+    # The SDK sends the client's timeout, which the provider pins to the HTTP client's read timeout, as
+    # `X-Server-Timeout`: a deadline for the whole request. A read timeout only bounds the wait between bytes,
+    # so the server would cut off a response that streams for longer. The SDK leaves the header alone when
+    # it's already set (in this exact spelling), so ask for at least Google's long-decode figure instead,
+    # unless the caller sent their own in `extra_headers`.
+    if caller_name := next((name for name in headers if name.lower() == 'x-server-timeout'), None):
+        headers['X-Server-Timeout'] = headers.pop(caller_name)
+    elif client_timeout_ms := client._api_client._http_options.timeout:  # pyright: ignore[reportPrivateUsage]
+        server_timeout = max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)
+        headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
+    # With no user-agent from the caller, our per-request `user-agent` replaces the client's own, so carry over
+    # a value the user set on a client they built, and add ours unless the client has it.
+    client_headers = client._api_client._http_options.headers or {}  # pyright: ignore[reportPrivateUsage]
+    client_user_agent = client_headers.get('user-agent', '')
+    if not _move_caller_user_agent(headers, client_headers) and get_user_agent() not in client_user_agent:
+        headers['user-agent'] = f'{client_user_agent} {get_user_agent()}'.strip()
+    http_options: HttpOptionsDict = {'headers': headers}
+    if (timeout := model_settings.get('timeout')) is not None:
+        if isinstance(timeout, int | float):
+            http_options['timeout'] = int(1000 * timeout)
+        else:
+            raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
+    if (max_retries := model_settings.get('max_retries')) is not None:
+        # Per-request `retry_options` replace the client's outright, so carry over everything but the count.
+        client_retry_options = (
+            client._api_client._http_options.retry_options  # pyright: ignore[reportPrivateUsage]
+            or HttpRetryOptions()
+        )
+        http_options['retry_options'] = {
+            'attempts': max_retries + 1,
+            'initial_delay': client_retry_options.initial_delay,
+            'max_delay': client_retry_options.max_delay,
+            'exp_base': client_retry_options.exp_base,
+            'jitter': client_retry_options.jitter,
+            'http_status_codes': client_retry_options.http_status_codes,
+        }
+    return http_options
+
+
 def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
     """Normalize unified thinking effort to a Gemini thinking level."""
     level_by_effort: dict[ThinkingEffort, GoogleThinkingLevel] = {
@@ -1163,46 +1204,6 @@ class GoogleModel(Model[Client]):
         # An explicit thinking config replaces the unified one in `_translate_thinking`.
         return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
 
-    def _build_http_options(self, model_settings: GoogleModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
-        """The per-request HTTP options: headers, plus the `timeout` and `max_retries` settings."""
-        # The SDK sends the client's timeout, which the provider pins to the HTTP client's read timeout, as
-        # `X-Server-Timeout`: a deadline for the whole request. A read timeout only bounds the wait between bytes,
-        # so the server would cut off a response that streams for longer. The SDK leaves the header alone when
-        # it's already set (in this exact spelling), so ask for at least Google's long-decode figure instead,
-        # unless the caller sent their own in `extra_headers`.
-        if caller_name := next((name for name in headers if name.lower() == 'x-server-timeout'), None):
-            headers['X-Server-Timeout'] = headers.pop(caller_name)
-        elif client_timeout_ms := self.client._api_client._http_options.timeout:  # pyright: ignore[reportPrivateUsage]
-            server_timeout = max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)
-            headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
-        # With no user-agent from the caller, our per-request `user-agent` replaces the client's own, so carry over
-        # a value the user set on a client they built, and add ours unless the client has it.
-        client_headers = self.client._api_client._http_options.headers or {}  # pyright: ignore[reportPrivateUsage]
-        client_user_agent = client_headers.get('user-agent', '')
-        if not _move_caller_user_agent(headers, client_headers) and get_user_agent() not in client_user_agent:
-            headers['user-agent'] = f'{client_user_agent} {get_user_agent()}'.strip()
-        http_options: HttpOptionsDict = {'headers': headers}
-        if (timeout := model_settings.get('timeout')) is not None:
-            if isinstance(timeout, int | float):
-                http_options['timeout'] = int(1000 * timeout)
-            else:
-                raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
-        if (max_retries := model_settings.get('max_retries')) is not None:
-            # Per-request `retry_options` replace the client's outright, so carry over everything but the count.
-            client_retry_options = (
-                self.client._api_client._http_options.retry_options  # pyright: ignore[reportPrivateUsage]
-                or HttpRetryOptions()
-            )
-            http_options['retry_options'] = {
-                'attempts': max_retries + 1,
-                'initial_delay': client_retry_options.initial_delay,
-                'max_delay': client_retry_options.max_delay,
-                'exp_base': client_retry_options.exp_base,
-                'jitter': client_retry_options.jitter,
-                'http_status_codes': client_retry_options.http_status_codes,
-            }
-        return http_options
-
     def _translate_thinking(
         self,
         model_settings: GoogleModelSettings,
@@ -1284,7 +1285,7 @@ class GoogleModel(Model[Client]):
         else:
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
-        http_options = self._build_http_options(model_settings, headers)
+        http_options = _request_http_options(self.client, model_settings, headers)
 
         # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)
