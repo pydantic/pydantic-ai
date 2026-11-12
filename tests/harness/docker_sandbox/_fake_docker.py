@@ -120,6 +120,10 @@ image)
 build)
     # `build --tag TAG -- CONTEXT`: keeps the context's Dockerfile as the image.
     [ ! -e "$bin/fail-builds" ] || { echo 'E: Unable to locate package xvfb' >&2; exit 1; }
+    if [ -e "$bin/hold-builds" ]; then
+        echo "$4" > "$bin/build-context"
+        i=0; while [ -e "$bin/hold-builds" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done
+    fi
     mkdir -p "$bin/images"
     cp "$4/Dockerfile" "$bin/images/$2" || exit 1
     ;;
@@ -259,6 +263,19 @@ class FakeDocker:
 
     def fail_builds(self) -> None:
         (self.bin_dir / 'fail-builds').touch()
+
+    def hold_builds(self) -> None:
+        """Hold each build until `release_builds`, after recording its context directory in `build_context`."""
+        (self.bin_dir / 'hold-builds').touch()
+
+    def release_builds(self) -> None:
+        (self.bin_dir / 'hold-builds').unlink(missing_ok=True)
+
+    @property
+    def build_context(self) -> Path | None:
+        """The context directory of the build held last, if one was."""
+        path = self.bin_dir / 'build-context'
+        return Path(path.read_text().strip()) if path.exists() else None
 
     def remove_display(self, *, can_start: bool = True) -> None:
         """Take the display down; `Xvfb` brings it back unless `can_start` is false."""

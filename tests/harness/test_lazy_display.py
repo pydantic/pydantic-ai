@@ -134,6 +134,30 @@ async def test_an_action_does_not_run_on_a_display_that_started_since_the_last_s
     assert (driver.acted, driver.starts) == ([Click(x=2, y=2)], 1)
 
 
+async def test_an_action_does_not_run_after_a_start_that_failed_until_a_screenshot() -> None:
+    """A start that failed may have launched a display anyway, such as when its reply was lost."""
+    driver = FakeDriver()
+    launched_then_failed = True
+
+    async def start() -> bool:
+        await driver.start()
+        if launched_then_failed:
+            raise WorkspaceError('the reply was lost')
+        return False  # the display it launched is running now
+
+    display = LazyDisplay(driver, start)
+    with pytest.raises(WorkspaceError, match='the reply was lost'):
+        await display.act(Click(x=1, y=1))
+    launched_then_failed = False
+    with pytest.raises(WorkspaceError, match='started since the last screenshot'):
+        await display.act(Click(x=1, y=1))
+    assert driver.acted == []
+
+    await display.screenshot()
+    await display.act(Click(x=2, y=2))
+    assert driver.acted == [Click(x=2, y=2)]
+
+
 def test_it_is_a_display_with_every_optional_ability() -> None:
     driver = FakeDriver()
     display = LazyDisplay(driver, driver.start)
