@@ -15,6 +15,7 @@ from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials
+from pydantic_clai2.app import _quiet_credential_store_logs  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.auth import CodexAuth, CodexCredentials
 from pydantic_clai2.config import credential_store
 from pydantic_clai2.config.credential_store import (
@@ -235,16 +236,6 @@ def no_keyring(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) 
 def test_file_fallback_when_no_keyring(
     fallback: Path, no_keyring: None, caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert any(
-        isinstance(handler, logging.NullHandler)
-        for handler in credential_store._logger.handlers  # pyright: ignore[reportPrivateUsage]
-    )
-    save_codex_credentials(fallback=fallback, value='{"access_token":"quiet"}')
-    assert capsys.readouterr().err == ''
-    fallback.unlink()
-    caplog.clear()
-    new_session()
-
     with caplog.at_level('WARNING', logger='pydantic_clai2.config.credential_store'):
         assert load_codex_credentials(fallback=fallback) is None
         assert caplog.records == []
@@ -263,6 +254,23 @@ def test_file_fallback_when_no_keyring(
     assert list(fallback.parent.glob('credentials.*')) == [fallback]
     if sys.platform != 'win32':  # pragma: no branch
         assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
+
+    root = logging.getLogger()
+    handlers = root.handlers
+    root.handlers = []
+    try:
+        new_session()
+        assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
+        assert (
+            capsys.readouterr().err
+            == 'No OS keyring backend available; falling back to 0600 plaintext credential files.\n'
+        )
+        with _quiet_credential_store_logs():
+            new_session()
+            assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
+            assert capsys.readouterr().err == ''
+    finally:
+        root.handlers = handlers
 
 
 def test_file_fallback_when_set_password_has_no_keyring(

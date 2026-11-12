@@ -1,8 +1,9 @@
 """The terminal app: `chat`, its stock agent, and `open_stock_agent` for runs from code."""
 
+import logging
 import os
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager, nullcontext
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from pathlib import Path
 from threading import Thread
 from typing import TypeVar
@@ -227,6 +228,7 @@ async def chat(
     served: WebHandoff | None = None
     with (
         telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
+        _quiet_credential_store_logs(),
         relay_stderr() if console.is_terminal else nullcontext(),
     ):
         async with agent:
@@ -314,6 +316,18 @@ async def chat(
                     fresh = True
             if (relaunch := last.relaunch(web=served)) is not None:
                 raise relaunch
+
+
+@contextmanager
+def _quiet_credential_store_logs() -> Generator[None]:
+    """Keep credential store fallback warnings off stderr during interactive sessions (`/login` reports fallback directly)."""
+    handler = logging.NullHandler()
+    logger = logging.getLogger('pydantic_clai2.config.credential_store')
+    logger.addHandler(handler)
+    try:
+        yield
+    finally:
+        logger.removeHandler(handler)
 
 
 def _create_home_shell(
