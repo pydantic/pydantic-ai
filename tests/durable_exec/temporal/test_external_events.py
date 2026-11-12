@@ -17,6 +17,7 @@ from typing import Any
 
 import anyio
 import pytest
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import RequestInput
@@ -65,7 +66,9 @@ ACTIVITY_CONFIG = ActivityConfig(
 class Records:
     """What the agents' functions did in the current test, as the worker's copy of this module saw it."""
 
-    asked: anyio.Event
+    send_token: MemoryObjectSendStream[str]
+    """Each token `ask` hands on, for the test to receive as the approver would."""
+    receive_token: MemoryObjectReceiveStream[str]
     tokens: list[str] = field(default_factory=list[str])
     asked_about: list[list[str]] = field(default_factory=list[list[str]])
     deleted: list[str] = field(default_factory=list[str])
@@ -91,7 +94,7 @@ async def _hand_on(ctx: RunContext[None], requests: DeferredToolRequests, token:
     records = _current()
     records.tokens.append(token)
     records.asked_about.append([call.tool_call_id for call in requests.approvals])
-    records.asked.set()
+    records.send_token.send_nowait(token)
 
 
 def _delete(path: str) -> str:
@@ -149,6 +152,25 @@ class ApprovalPolicyWorkflow:
         return (await _policy_agent.run(prompt)).output
 
 
+_two_approvals_agent = Agent(
+    FunctionModel(_delete_twice_then_report),
+    name='temporal_two_approvals',
+    deps_type=type(None),
+    capabilities=[
+        TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
+        RequestInput[None](_hand_on, timeout=timedelta(minutes=30)),
+    ],
+)
+_two_approvals_agent.tool_plain(name='delete', requires_approval=True)(_delete)
+
+
+@workflow.defn
+class TwoApprovalsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _two_approvals_agent.run(prompt)).output
+
+
 @pytest.fixture(scope='module')
 def anyio_backend() -> str:
     """Temporal's Python SDK runs on asyncio."""
@@ -156,7 +178,7 @@ def anyio_backend() -> str:
 
 
 @pytest.fixture(scope='module')
-async def env() -> AsyncIterator[WorkflowEnvironment]:
+async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_time_skipping(
         plugins=[PydanticAIPlugin()], download_dest_dir=temporal_dev_server_cache_dir()
     ) as env:
@@ -164,9 +186,11 @@ async def env() -> AsyncIterator[WorkflowEnvironment]:
 
 
 @pytest.fixture(autouse=True)
-async def records() -> Records:
-    _records.append(Records(asked=anyio.Event()))
-    return _current()
+async def records() -> AsyncIterator[Records]:
+    send_token, receive_token = anyio.create_memory_object_stream[str](10)
+    async with send_token, receive_token:
+        _records.append(Records(send_token=send_token, receive_token=receive_token))
+        yield _current()
 
 
 def _worker(
@@ -194,17 +218,16 @@ async def _start(client: Client, task_queue: str) -> WorkflowHandle[Any, str]:
 async def _until_asked(handle: WorkflowHandle[Any, str], records: Records) -> str:
     """Wait until `ask` handed the token on and the history recorded it, and return the token."""
     with anyio.fail_after(30):
-        await records.asked.wait()
+        token = await records.receive_token.receive()
     # Temporal answers a query once the workflow task in progress, which ran `ask`, has completed.
     await handle.query('__stack_trace')
-    [token] = records.tokens
     return token
 
 
 async def test_the_run_waits_for_the_decision_and_a_new_worker_resumes_it_without_asking_again(
-    env: WorkflowEnvironment, records: Records
+    temporal_env: WorkflowEnvironment, records: Records
 ) -> None:
-    client = env.client
+    client = temporal_env.client
     task_queue = f'approvals-{uuid.uuid4()}'
     # Caching nothing keeps the workflow off this worker's sticky queue, so the next worker picks it up right away.
     async with Worker(
@@ -240,24 +263,25 @@ async def test_the_run_waits_for_the_decision_and_a_new_worker_resumes_it_withou
     assert records.deleted == ['b.txt']
 
 
-async def test_a_denial_reaches_the_model_without_running_the_tool(env: WorkflowEnvironment, records: Records) -> None:
+async def test_a_denial_reaches_the_model_without_running_the_tool(
+    temporal_env: WorkflowEnvironment, records: Records
+) -> None:
     """In the workflow sandbox, with the module that defines `ask` passed through, so `ask` shares the worker's state."""
-    client = env.client
+    client = temporal_env.client
     task_queue = f'approvals-{uuid.uuid4()}'
     runner = SandboxedWorkflowRunner(restrictions=SandboxRestrictions.default.with_passthrough_modules(__name__))
     async with _worker(client, task_queue, ApprovalsWorkflow, _approvals_agent, runner):
         handle = await _start(client, task_queue)
         with anyio.fail_after(30):
-            await records.asked.wait()
-        [token] = records.tokens
+            token = await records.receive_token.receive()
         await resolve_external_event(client, token, DeferredToolResults(approvals={'call-1': ToolDenied('Not today.')}))
         assert await handle.result() == 'denied: Not today.'
 
     assert records.deleted == []
 
 
-async def test_a_failed_wait_denies_the_call(env: WorkflowEnvironment, records: Records) -> None:
-    client = env.client
+async def test_a_failed_wait_denies_the_call(temporal_env: WorkflowEnvironment, records: Records) -> None:
+    client = temporal_env.client
     task_queue = f'approvals-{uuid.uuid4()}'
     async with _worker(client, task_queue, ApprovalsWorkflow, _approvals_agent):
         handle = await _start(client, task_queue)
@@ -268,9 +292,9 @@ async def test_a_failed_wait_denies_the_call(env: WorkflowEnvironment, records: 
     assert records.deleted == []
 
 
-async def test_a_wait_that_times_out_denies_the_call(env: WorkflowEnvironment, records: Records) -> None:
+async def test_a_wait_that_times_out_denies_the_call(temporal_env: WorkflowEnvironment, records: Records) -> None:
     """Awaiting the result lets the time-skipping server jump over the 30-minute timeout."""
-    client = env.client
+    client = temporal_env.client
     task_queue = f'approvals-{uuid.uuid4()}'
     async with _worker(client, task_queue, ApprovalsWorkflow, _approvals_agent):
         handle = await _start(client, task_queue)
@@ -283,10 +307,10 @@ async def test_a_wait_that_times_out_denies_the_call(env: WorkflowEnvironment, r
 
 
 async def test_answers_from_ask_are_recorded_and_the_run_continues_without_waiting(
-    env: WorkflowEnvironment, records: Records
+    temporal_env: WorkflowEnvironment, records: Records
 ) -> None:
     """In the default workflow sandbox: each wait's `ask` answers in place, and a replay reuses the answers."""
-    client = env.client
+    client = temporal_env.client
     task_queue = f'approval-policy-{uuid.uuid4()}'
     async with Worker(
         client, task_queue=task_queue, workflows=[ApprovalPolicyWorkflow], plugins=[AgentPlugin(_policy_agent)]
@@ -311,6 +335,27 @@ async def test_answers_from_ask_are_recorded_and_the_run_continues_without_waiti
     assert records.deleted == ['a.txt', 'b.txt']
 
 
-async def test_a_token_from_elsewhere_is_refused(env: WorkflowEnvironment) -> None:
+async def test_a_resolution_for_a_wait_that_ended_is_discarded(
+    temporal_env: WorkflowEnvironment, records: Records
+) -> None:
+    """A late failure of the first wait's token, sent while the run waits again, changes nothing."""
+    client = temporal_env.client
+    task_queue = f'two-approvals-{uuid.uuid4()}'
+    async with _worker(client, task_queue, TwoApprovalsWorkflow, _two_approvals_agent):
+        handle = await client.start_workflow(
+            TwoApprovalsWorkflow.run, args=['clean up'], id=f'two-approvals-{uuid.uuid4()}', task_queue=task_queue
+        )
+        first = await _until_asked(handle, records)
+        await resolve_external_event(client, first, {'approvals': {'call-a.txt': True}})
+        second = await _until_asked(handle, records)
+        await fail_external_event(client, first, 'Sent too late.')
+        await resolve_external_event(client, second, {'approvals': {'call-b.txt': True}})
+        assert await handle.result() == 'deleted a.txt, deleted b.txt'
+
+    assert records.asked_about == [['call-a.txt'], ['call-b.txt']]
+    assert records.deleted == ['a.txt', 'b.txt']
+
+
+async def test_a_token_from_elsewhere_is_refused(temporal_env: WorkflowEnvironment) -> None:
     with pytest.raises(UserError, match='not handed out by a wait for an external event in a Temporal workflow'):
-        await resolve_external_event(env.client, 'not-a-token', {'approvals': {}})
+        await resolve_external_event(temporal_env.client, 'not-a-token', {'approvals': {}})

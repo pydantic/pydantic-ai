@@ -89,15 +89,17 @@ def anyio_backend() -> str:
 
 
 @pytest.fixture(scope='module')
-async def env() -> AsyncIterator[WorkflowEnvironment]:
+async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_time_skipping(
         plugins=[PydanticAIPlugin()], download_dest_dir=temporal_dev_server_cache_dir()
     ) as env:
         yield env
 
 
-async def test_a_question_waits_for_the_answer_and_its_answerer_is_not_asked_again(env: WorkflowEnvironment) -> None:
-    client = env.client
+async def test_a_question_waits_for_the_answer_and_its_answerer_is_not_asked_again(
+    temporal_env: WorkflowEnvironment,
+) -> None:
+    client = temporal_env.client
     _handed_on.append(anyio.Event())
     async with Worker(
         client,

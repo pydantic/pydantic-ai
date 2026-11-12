@@ -40,7 +40,7 @@ It is unique, not secret: the workflow draws it from its replay-safe random sour
 AskActivity = Callable[[str, str], Awaitable[JsonValue]]
 
 _pending_asks: dict[str, Callable[[str], Awaitable[JsonValue]]] = {}
-"""The `ask` callbacks of the waits calling them on this worker, by workflow run and event key.
+"""The `ask` callbacks of the waits in progress on this worker, by workflow run and event key.
 
 `ask` is a closure over the live run, which can't cross a process boundary, so it runs in a local
 activity: Temporal runs a local activity in the worker process that runs the workflow task scheduling
@@ -62,11 +62,15 @@ class _Inbox:
     """The outcomes signalled to one workflow execution, by event key; registered as the workflow's handler for the signal."""
 
     def __init__(self) -> None:
+        self.waiting: set[str] = set()
+        """The event keys of the waits in progress, the only ones whose outcomes are kept."""
         self.outcomes: dict[str, ExternalEventSignal] = {}
 
     def __call__(self, signal: ExternalEventSignal) -> None:
-        # The first outcome wins, as in process: the wait ends with it, and a later one changes nothing.
-        self.outcomes.setdefault(signal.event_key, signal)
+        # The first outcome wins, as in process: the wait ends with it, and a later one, or one for a wait
+        # that already ended, changes nothing.
+        if signal.event_key in self.waiting:
+            self.outcomes.setdefault(signal.event_key, signal)
 
     @classmethod
     def for_current_workflow(cls) -> _Inbox:
@@ -123,23 +127,26 @@ class TemporalExternalEventWaiter(ExternalEventWaiter):
         info = workflow.info()
         event_key = workflow.uuid4().hex
         token = f'{info.workflow_id}:{event_key}'
-        inbox = _Inbox.for_current_workflow()
-
         pending_key = f'{info.run_id}:{event_key}'
+        inbox = _Inbox.for_current_workflow()
+        inbox.waiting.add(event_key)
         _pending_asks[pending_key] = ask
         try:
             config: LocalActivityConfig = {**self.ask_config, 'summary': f'ask: {name}'}
             answer: JsonValue = await execute_local_activity(self.ask_activity, args=[pending_key, token], **config)
+            if answer is not None:
+                return answer
+            try:
+                await workflow.wait_condition(
+                    lambda: event_key in inbox.outcomes, timeout=timeout, timeout_summary=name
+                )
+            except TimeoutError:
+                raise ExternalEventError(f'No resolution arrived within {timeout}.') from None
+            outcome = inbox.outcomes[event_key]
         finally:
             del _pending_asks[pending_key]
-        if answer is not None:
-            return answer
-
-        try:
-            await workflow.wait_condition(lambda: event_key in inbox.outcomes, timeout=timeout, timeout_summary=name)
-        except TimeoutError:
-            raise ExternalEventError(f'No resolution arrived within {timeout}.') from None
-        outcome = inbox.outcomes.pop(event_key)
+            inbox.waiting.discard(event_key)
+            inbox.outcomes.pop(event_key, None)
         if outcome.error is not None:
             raise ExternalEventError(outcome.error)
         return outcome.payload
