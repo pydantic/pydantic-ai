@@ -463,17 +463,10 @@ def _compacted(history: HistoryBuilder, payload: JsonObject, *, at: datetime, mo
 
 def _local_summary(item: JsonObject) -> str:
     """The text of the summary Codex wrote when it compacted the history itself, or empty for any other item."""
-    if item.get('type') != 'message' or item.get('role') != 'user':
+    if item.get('type') != 'message' or item.get('role') != 'user' or _first_typed(item):
         return ''
-    kinds = _kinds(item)
-    texts = [
-        (body, kinds[index] if index < len(kinds) else '')
-        for index, block in enumerate(objects(item.get('content')))
-        if (body := text(block.get('text')))
-    ]
-    summary = '\n\n'.join(body for body, _ in texts)
-    typed = any(_typed(body, kind) for body, kind in texts)
-    return summary if not typed and summary.lstrip().startswith(_SUMMARY_PREFIX) else ''
+    summary = '\n\n'.join(body for block in objects(item.get('content')) if (body := text(block.get('text'))))
+    return summary if summary.lstrip().startswith(_SUMMARY_PREFIX) else ''
 
 
 def _retained_context(history: HistoryBuilder, retained: list[JsonObject], *, at: datetime) -> None:
@@ -491,13 +484,7 @@ def _retained_context(history: HistoryBuilder, retained: list[JsonObject], *, at
 def _retained_kind(item: JsonObject) -> str:
     """The `imported_context` kind of an item compaction kept, from its role or type, and whether it was typed."""
     kind = f'compaction_retained:{text(item.get("role")) or text(item.get("type"))}'
-    kinds = _kinds(item)
-    blocks = objects(item.get('content'))
-    if kind == _RETAINED_USER and not any(
-        _typed(t, kinds[index] if index < len(kinds) else '')
-        for index, block in enumerate(blocks)
-        if (t := text(block.get('text')))
-    ):
+    if kind == _RETAINED_USER and not _first_typed(item):
         # Codex's own context, rather than a prompt it kept.
         return _RETAINED_CONTEXT
     return kind
