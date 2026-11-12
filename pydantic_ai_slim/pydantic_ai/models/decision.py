@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from functools import cached_property
+from math import isfinite
 from typing import Any, ClassVar, Literal, TypeAlias, assert_never, cast
 
 from opentelemetry.trace import INVALID_SPAN, Span, SpanKind
@@ -251,6 +252,11 @@ def _wire(value: DecisionQuestion | DecisionAnswer) -> dict[str, Any]:
     return wire
 
 
+def _text(value: JsonValue) -> str:  # pyright: ignore[reportUnusedFunction]
+    """A protocol value as the text an API takes: a string as it is, anything else as JSON."""
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
 def _half_unit(value: Decimal, float_tolerance: Decimal) -> Decimal:
     """How far a displayed value may be from the one it stands for.
 
@@ -261,7 +267,7 @@ def _half_unit(value: Decimal, float_tolerance: Decimal) -> Decimal:
     return max(Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2, float_tolerance)
 
 
-def _probability_bounds(  # pyright: ignore[reportUnusedFunction]
+def _probability_bounds(
     probabilities: Collection[float], *, float_tolerance: Decimal = Decimal(0)
 ) -> tuple[list[Decimal], list[Decimal]]:
     """The bounded rounding intervals of the displayed probabilities, using at least two decimal places.
@@ -276,7 +282,7 @@ def _probability_bounds(  # pyright: ignore[reportUnusedFunction]
     return lower, upper
 
 
-def _score_fits(  # pyright: ignore[reportUnusedFunction]
+def _score_fits(
     lower: Sequence[Decimal], upper: Sequence[Decimal], score: float, *, float_tolerance: Decimal = Decimal(0)
 ) -> bool:
     """Whether rounded probabilities can sum to one and produce the displayed score.
@@ -300,6 +306,64 @@ def _score_fits(  # pyright: ignore[reportUnusedFunction]
         score_half_unit = _half_unit(displayed_score, float_tolerance)
         valid = displayed_score + score_half_unit >= bounds[0] and displayed_score - score_half_unit <= bounds[1]
     return valid
+
+
+# How far an unrounded probability or score may be from the exact value, on top of display rounding. Jev rounds
+# what it sends to two decimals, but a server such as vLLM, or Google's decisions API, sends a softmax and its
+# expected level unrounded, with all their float digits, and computed in float32 or float64: their sum is one, and
+# the score their mean, only within that arithmetic's error, which float32 puts near 1e-7. A wrong answer is off by
+# far more than this.
+_FLOAT_TOLERANCE = Decimal('1e-6')
+
+
+def _answer_fits(question: DecisionQuestion, answer: DecisionAnswer) -> bool:  # pyright: ignore[reportUnusedFunction]
+    """Whether `answer` is a valid answer to `question`, from a backend that may round or send unrounded floats."""
+    match question:
+        case NoulQuestion():
+            return isinstance(answer, NoulAnswer) and isfinite(answer.noul) and 0 <= answer.noul <= 1
+        case ChoiceQuestion():
+            return (
+                isinstance(answer, ChoiceAnswer)
+                and answer.choice in question.criteria
+                and answer.probabilities.keys() == question.criteria.keys()
+                and _probabilities_fit(answer)
+            )
+        case ScoreQuestion():
+            return isinstance(answer, ScoreAnswer) and _score_answer_fits(question, answer)
+        case _:
+            assert_never(question)
+
+
+def _probabilities_fit(answer: ChoiceAnswer | ScoreAnswer) -> bool:
+    """Whether an answer's confidence and probabilities are probabilities, and its probabilities sum to one."""
+    probabilities = answer.probabilities.values()
+    # Jev displays probabilities to two decimal places, so each may differ by half a unit, which also
+    # covers the float error of a backend that sends them unrounded.
+    return (
+        isfinite(answer.confidence)
+        and 0 <= answer.confidence <= 1
+        and all(isfinite(p) and 0 <= p <= 1 for p in probabilities)
+        and abs(sum(probabilities) - 1) <= float(_FLOAT_TOLERANCE) + len(answer.probabilities) * 0.005
+    )
+
+
+def _score_answer_fits(question: ScoreQuestion, answer: ScoreAnswer) -> bool:
+    """Whether a score answer rates the rubric's levels, and its score is one its probabilities could produce."""
+    levels = set(range(len(question.criteria)))
+    if not (
+        answer.probabilities.keys() == levels
+        and (not answer.legend or answer.legend.keys() == levels)
+        and isfinite(answer.score)
+        and 0 <= answer.score <= len(question.criteria) - 1
+        and _probabilities_fit(answer)
+    ):
+        return False
+    # A displayed score and its probabilities may each be rounded, or carry float error. Check
+    # whether any distribution within their intervals could produce that score, using at least
+    # Jev's two decimals and never less than the float tolerance.
+    probabilities_by_level: list[float] = [answer.probabilities[level] for level in range(len(question.criteria))]
+    lower, upper = _probability_bounds(probabilities_by_level, float_tolerance=_FLOAT_TOLERANCE)
+    return _score_fits(lower, upper, answer.score, float_tolerance=_FLOAT_TOLERANCE)
 
 
 _UNSUPPORTED_FIELD_HINT = (

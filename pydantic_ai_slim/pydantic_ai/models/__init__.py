@@ -47,6 +47,7 @@ from typing import (
     Self,
     TypeAlias,
     TypeVar,
+    assert_never,
     cast,
     get_args,
     overload,
@@ -3550,11 +3551,12 @@ def infer_model_profile(model: str) -> ModelProfile:
         return DEFAULT_PROFILE
 
     try:
-        # `OpenAIProvider` profiles a name such as `gpt-6-luna` for the Responses API, so the Decisions API's model
-        # class brings its own profile, as `OpenAIDecisionsModel._provider_model_profile` does.
+        # `OpenAIProvider` profiles a name such as `gpt-6-luna` for the Responses API, and `GoogleProvider` a Gemini
+        # model for `generateContent`, so each decisions endpoint's model class brings its own profile, as
+        # `OpenAIDecisionsModel._provider_model_profile` and `GoogleDecisionsModel._provider_model_profile` do.
         provider_profile = (
             decision_model_profile(model_name)
-            if provider == 'openai-decisions'
+            if provider in ('openai-decisions', 'google-decisions')
             else provider_class.model_profile(model_name)
         )
     except (ValueError, UserError):
@@ -3566,6 +3568,29 @@ def infer_model_profile(model: str) -> ModelProfile:
         if context_window is not None:
             profile = merge_profile(profile, ModelProfile(context_window=context_window))
     return profile
+
+
+def _decisions_model(
+    model_kind: Literal['openai-decisions', 'google-decisions'], model_name: str, provider: Provider[object]
+) -> Model:
+    """The model for a provider's decisions endpoint, which takes the provider its other models take."""
+    match model_kind:
+        case 'openai-decisions':
+            from ..providers.openai import OpenAIProvider
+            from .openai_decisions import OpenAIDecisionsModel
+
+            if not isinstance(provider, OpenAIProvider):
+                raise UserError('OpenAI Decisions models require an `OpenAIProvider`.')
+            return OpenAIDecisionsModel(model_name, provider=provider)
+        case 'google-decisions':
+            from ..providers.google import GoogleProvider
+            from .google_decisions import GoogleDecisionsModel
+
+            if not isinstance(provider, GoogleProvider):
+                raise UserError('Google Decisions models require a `GoogleProvider`.')
+            return GoogleDecisionsModel(model_name, provider=provider)
+        case _:
+            assert_never(model_kind)
 
 
 def infer_model(  # noqa: C901
@@ -3695,13 +3720,8 @@ def infer_model(  # noqa: C901
         if not isinstance(provider, SystemOneProvider):
             raise UserError('System One models require a `SystemOneProvider`.')
         return SystemOneModel(model_name, provider=provider)
-    elif model_kind == 'openai-decisions':
-        from ..providers.openai import OpenAIProvider
-        from .openai_decisions import OpenAIDecisionsModel
-
-        if not isinstance(provider, OpenAIProvider):
-            raise UserError('OpenAI Decisions models require an `OpenAIProvider`.')
-        return OpenAIDecisionsModel(model_name, provider=provider)
+    elif model_kind in ('openai-decisions', 'google-decisions'):
+        return _decisions_model(model_kind, model_name, provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 

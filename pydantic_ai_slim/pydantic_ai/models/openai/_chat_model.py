@@ -84,7 +84,7 @@ from ...messages import (
 from ...native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, WebSearchTool
 from ...output import OutputObjectDefinition
 from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
-from ...profiles.openai import OpenAIModelProfile, validate_openai_profile
+from ...profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole, validate_openai_profile
 from ...providers import Provider, infer_provider
 from ...settings import CacheSetting, ModelSettings
 from ...tools import ToolDefinition
@@ -201,6 +201,46 @@ _CHAT_AUDIO_FORMATS: dict[str, Literal['wav', 'mp3']] = {
 
 def _chat_audio_format_error(media_type: str) -> str:
     return f'OpenAI Chat Completions takes WAV and MP3 audio only, not {media_type!r}.'
+
+
+def system_prompt_message(role: OpenAISystemPromptRole | None, content: str) -> chat.ChatCompletionMessageParam:
+    """A system prompt or instruction as a message with the role the profile sends them as, `'system'` by default."""
+    if role == 'developer':
+        return chat.ChatCompletionDeveloperMessageParam(role='developer', content=content)
+    elif role == 'user':
+        return chat.ChatCompletionUserMessageParam(role='user', content=content)
+    else:
+        return chat.ChatCompletionSystemMessageParam(role='system', content=content)
+
+
+def backfill_sent_thinking_field(
+    openai_messages: list[chat.ChatCompletionMessageParam], custom_field: str | None
+) -> None:
+    """Set the one thinking field the assistant messages send, empty, on tool-calling turns after the last user turn.
+
+    This is `'auto'` mode of `openai_chat_send_back_thinking_parts`, given the profile's `openai_chat_thinking_field`.
+    """
+    # `'auto'` learns the field only from the mapped messages, so it backfills only when they carry
+    # exactly one of the names `_process_thinking` reads: a server that rejects unknown fields has
+    # already accepted that one. DeepSeek's guide asks for the field on every turn of a request with
+    # tools, but in practice it rejected a current-turn tool call without it and accepted an
+    # earlier-turn one (`test_deepseek_auto_mode_thinking_backfill` records the accepted requests),
+    # so earlier turns go out unchanged. A message backfilled here goes out without the field again
+    # once a newer user message follows it.
+    sent_fields = {
+        name
+        for message in openai_messages
+        if message['role'] == 'assistant'
+        for name in (custom_field, 'reasoning', 'reasoning_content')
+        if name and name in message
+    }
+    if len(sent_fields) != 1:
+        return
+    (sent_field,) = sent_fields
+    last_user_index = max((i for i, message in enumerate(openai_messages) if message['role'] == 'user'), default=-1)
+    for message in openai_messages[last_user_index + 1 :]:
+        if message['role'] == 'assistant' and message.get('tool_calls') and sent_field not in message:
+            message[sent_field] = ''
 
 
 @dataclass(init=False)
@@ -840,26 +880,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             tool_choice = 'required' if supports else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = self._supports_tool_forcing(model_settings, model_request_parameters)
-            effective_mode = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
-            if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
-                tool_choice = {'type': 'function', 'function': {'name': next(iter(tool_names))}}
-            elif self.profile.get('openai_chat_supports_allowed_tools', False):
-                # `allowed_tools` restricts the choice via the API rather than the tools list, so caching is
-                # preserved. Used for the multi-tool case and as the cache-preserving fallback when forcing
-                # isn't supported.
-                tool_choice = {
-                    'type': 'allowed_tools',
-                    'allowed_tools': {
-                        'mode': effective_mode,
-                        # Ignore names that are not currently available, keeping declaration order.
-                        'tools': [{'type': 'function', 'function': {'name': n}} for n in tool_defs if n in tool_names],
-                    },
-                }
-            else:
-                # Breaks caching, but this API isn't known to support `allowed_tools`.
-                tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                tool_choice = effective_mode
+            tool_defs, tool_choice = self._map_tool_choice_restriction(
+                tool_choice_mode, tool_names, tool_defs, model_settings, model_request_parameters
+            )
         else:
             assert_never(resolved_tool_choice)
 
@@ -870,6 +893,34 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             return tools, None
 
         return tools, tool_choice
+
+    def _map_tool_choice_restriction(
+        self,
+        tool_choice_mode: Literal['auto', 'required'],
+        tool_names: set[str],
+        tool_defs: dict[str, ToolDefinition],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[dict[str, ToolDefinition], ChatCompletionToolChoiceOptionParam]:
+        """Map a `tool_choice` that restricts the call to some tools, filtering the tools when the API can't."""
+        supports = self._supports_tool_forcing(model_settings, model_request_parameters)
+        effective_mode = 'auto' if tool_choice_mode == 'auto' or not supports else tool_choice_mode
+        if tool_choice_mode == 'required' and len(tool_names) == 1 and supports:
+            return tool_defs, {'type': 'function', 'function': {'name': next(iter(tool_names))}}
+        if self.profile.get('openai_chat_supports_allowed_tools', False):
+            # `allowed_tools` restricts the choice via the API rather than the tools list, so caching is
+            # preserved. Used for the multi-tool case and as the cache-preserving fallback when forcing
+            # isn't supported.
+            return tool_defs, {
+                'type': 'allowed_tools',
+                'allowed_tools': {
+                    'mode': effective_mode,
+                    # Ignore names that are not currently available, keeping declaration order.
+                    'tools': [{'type': 'function', 'function': {'name': n}} for n in tool_defs if n in tool_names],
+                },
+            }
+        # Breaks caching, but this API isn't known to support `allowed_tools`.
+        return {k: v for k, v in tool_defs.items() if k in tool_names}, effective_mode
 
     def _request_thinks(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1142,7 +1193,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return CHAT_FINISH_REASON_MAP[key] if key in CHAT_FINISH_REASON_MAP else None
 
-    async def _map_messages(  # noqa: C901
+    async def _map_messages(
         self,
         messages: Sequence[ModelMessage],
         model_request_parameters: ModelRequestParameters,
@@ -1150,7 +1201,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
-        openai_messages: list[chat.ChatCompletionMessageParam] = []
         profile = self.profile
         # DeepSeek-style APIs 400 on a tool-calling assistant turn that omits their thinking field while
         # the run is reasoning. A turn another model or provider produced, or one served with thinking off,
@@ -1169,69 +1219,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             and profile.get('openai_chat_thinking_requires_field_on_tool_calls', False)
             and self._request_thinks(model_settings, model_request_parameters)
         )
-        for message in messages:
-            if isinstance(message, ModelRequest):
-                async for item in self._map_user_message(message):
-                    openai_messages.append(item)
-            elif isinstance(message, ModelResponse):
-                backfill = backfill or any(isinstance(part, ThinkingPart) for part in message.parts)
-                if (carried_thinking := self._map_carried_thinking(message)) is not None:
-                    openai_messages.append(carried_thinking)
-                if (mapped := self._map_model_response(message)) is not None:
-                    if (
-                        backfill
-                        and backfill_field
-                        and mapped['role'] == 'assistant'
-                        and mapped.get('tool_calls')
-                        and backfill_field not in mapped
-                    ):
-                        mapped[backfill_field] = ''
-                    openai_messages.append(mapped)
-            else:
-                assert_never(message)
+        openai_messages = await self._map_each_message(messages, backfill_field, backfill=backfill)
         if send_back_thinking == 'auto':
-            # `'auto'` learns the field only from the mapped messages, so it backfills only when they carry
-            # exactly one of the names `_process_thinking` reads: a server that rejects unknown fields has
-            # already accepted that one. DeepSeek's guide asks for the field on every turn of a request with
-            # tools, but in practice it rejected a current-turn tool call without it and accepted an
-            # earlier-turn one (`test_deepseek_auto_mode_thinking_backfill` records the accepted requests),
-            # so earlier turns go out unchanged. A message backfilled here goes out without the field again
-            # once a newer user message follows it.
-            custom_field = profile.get('openai_chat_thinking_field', None)
-            sent_fields = {
-                name
-                for message in openai_messages
-                if message['role'] == 'assistant'
-                for name in (custom_field, 'reasoning', 'reasoning_content')
-                if name and name in message
-            }
-            if len(sent_fields) == 1:
-                (sent_field,) = sent_fields
-                last_user_index = max(
-                    (i for i, message in enumerate(openai_messages) if message['role'] == 'user'), default=-1
-                )
-                for message in openai_messages[last_user_index + 1 :]:
-                    if message['role'] == 'assistant' and message.get('tool_calls') and sent_field not in message:
-                        message[sent_field] = ''
+            backfill_sent_thinking_field(openai_messages, profile.get('openai_chat_thinking_field', None))
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
         system_prompt_count = leading_system_message_count(openai_messages, system_prompt_role)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
-        if instruction_parts:
-            if system_prompt_role == 'developer':
-                instruction_messages: list[chat.ChatCompletionMessageParam] = [
-                    chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
-                    for part in instruction_parts
-                ]
-            elif system_prompt_role == 'user':
-                instruction_messages = [
-                    chat.ChatCompletionUserMessageParam(role='user', content=part.content) for part in instruction_parts
-                ]
-            else:
-                instruction_messages = [
-                    chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
-                    for part in instruction_parts
-                ]
-            openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
+        openai_messages[system_prompt_count:system_prompt_count] = [
+            system_prompt_message(system_prompt_role, part.content) for part in instruction_parts
+        ]
         if (
             model_settings
             and model_settings.get('openai_cache_instructions')
@@ -1263,6 +1259,50 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # After instructions are inserted and system messages merged: the breakpoint may land on a system
         # message, whose string content it turns into a list, and the merge only joins strings.
         move_leading_cache_breakpoints(openai_messages, text_type='text')
+        return openai_messages
+
+    async def _map_each_message(
+        self, messages: Sequence[ModelMessage], backfill_field: str | None, *, backfill: bool
+    ) -> list[chat.ChatCompletionMessageParam]:
+        """Map each message in order.
+
+        `backfill_field` goes on the tool-calling assistant turns from the first response that holds a
+        `ThinkingPart` on, or on every one when `backfill` is set.
+        """
+        openai_messages: list[chat.ChatCompletionMessageParam] = []
+        for message in messages:
+            match message:
+                case ModelRequest():
+                    async for item in self._map_user_message(message):
+                        openai_messages.append(item)
+                case ModelResponse():
+                    backfill = backfill or any(isinstance(part, ThinkingPart) for part in message.parts)
+                    openai_messages.extend(
+                        self._map_response_with_carried_thinking(message, backfill_field if backfill else None)
+                    )
+                case _:
+                    assert_never(message)
+        return openai_messages
+
+    def _map_response_with_carried_thinking(
+        self, message: ModelResponse, backfill_field: str | None
+    ) -> list[chat.ChatCompletionMessageParam]:
+        """Map a `ModelResponse` to its carried-thinking user message and its assistant message, each when present.
+
+        A tool-calling assistant message without the `backfill_field` thinking field gets it, empty.
+        """
+        openai_messages: list[chat.ChatCompletionMessageParam] = []
+        if (carried_thinking := self._map_carried_thinking(message)) is not None:
+            openai_messages.append(carried_thinking)
+        if (mapped := self._map_model_response(message)) is not None:
+            if (
+                backfill_field
+                and mapped['role'] == 'assistant'
+                and mapped.get('tool_calls')
+                and backfill_field not in mapped
+            ):
+                mapped[backfill_field] = ''
+            openai_messages.append(mapped)
         return openai_messages
 
     @staticmethod
@@ -1307,13 +1347,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         file_content: list[UserContent] = []
         for part in _sendable_request_parts(message.parts):
             if isinstance(part, SystemPromptPart):
-                system_prompt_role = self.profile.get('openai_system_prompt_role', None)
-                if system_prompt_role == 'developer':
-                    yield chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
-                elif system_prompt_role == 'user':
-                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
-                else:
-                    yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
+                yield system_prompt_message(self.profile.get('openai_system_prompt_role', None), part.content)
             elif isinstance(part, UserPromptPart):
                 yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
