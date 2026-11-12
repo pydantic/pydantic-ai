@@ -1183,3 +1183,21 @@ async def test_a_replayed_call_and_its_results_pair_up_when_ids_are_fitted(
     ]
     assert calls == results
     assert len(calls[0]) == 9
+
+
+async def test_a_toolset_call_whose_name_isnt_text_is_refused(allow_model_requests: None) -> None:
+    # The SDK builds responses without validating them.
+    block = BetaToolUseBlock.model_construct(
+        id='toolu_1', type='tool_use', name=['left_click'], input={'coordinate': [5, 6]}, toolset_name='computer'
+    )
+    client = MockAnthropic.create_mock(completion_message([block], BetaUsage(input_tokens=1, output_tokens=1)))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    response = await model.request(
+        [ModelRequest.user_text_prompt('Go.')],
+        None,
+        ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
+    (call,) = response.parts
+    assert isinstance(call, ComputerCallPart)
+    assert call.actions is None
+    assert call.tool_call_id == 'toolu_1'
