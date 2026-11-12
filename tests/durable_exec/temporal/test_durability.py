@@ -2983,6 +2983,7 @@ class _HooksOnlyWrapper(WrapperCapability[None]):
         pytest.param(_PerRunModelResolver(), False, id='resolve-model-id'),
         pytest.param(_PerRunModelSupplier(), False, id='supplies-model'),
         pytest.param(_PerRunModelWrapper(), False, id='wraps-model'),
+        pytest.param(CombinedCapability([_PerRunModelWrapper()]), False, id='combined-wraps-model'),
     ],
 )
 async def test_per_run_capability_needing_registration_rejected_inside_workflow(
