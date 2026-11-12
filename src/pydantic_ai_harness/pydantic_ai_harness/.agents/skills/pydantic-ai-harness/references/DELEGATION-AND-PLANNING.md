@@ -151,7 +151,8 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
   callback enables `delegate_task(working_directory=...)`. Import `DelegationWorkspaceRequest` from
   `pydantic_ai_harness.subagents`. Validate permitted delegates and paths in the callback.
   Keep returned workspaces alive until background children finish. Parent/delegate read-only restrictions
-  and the parent's authority levels (per path) still apply; supply trusted read-only tools too. Managed tasks save the resolved directory and reject
+  still apply, and the delegate's workspace gets the lowest authority the parent gives anything in or above
+  that directory; supply trusted read-only tools too. Managed tasks save the resolved directory and reject
   directory changes on resume. Remote and durable delegations reject this argument.
 - `include_self=False`: `True` lists the running agent as delegate `self` (fresh run with all bound
   capabilities). `max_depth=3` caps nesting, counting the top-level run.

@@ -188,8 +188,8 @@ delegation = SubAgents(
 
 The child runs with the returned workspace, so its relative file paths and repository instructions
 use that directory. Read-only restrictions from the parent or `SubAgent(read_only=True)` still apply,
-and so do the parent workspace's `authority` and `path_authority` levels: no file gets more authority in the
-child than the parent gives it.
+and the child's whole workspace gets the lowest `authority` the parent gives anything in or above that
+directory, `path_authority` entries included, so no file gets more authority in the child than the parent gives it.
 Also limit the delegate to trusted read-only tools: arbitrary Python tools can bypass the workspace
 API. The resolver must preserve any additional backend restrictions the application requires.
 

@@ -42,6 +42,8 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+
+# Private, like `_authority_layers` below: the same ordering `Workspace.authority` uses, not yet public.
 from pydantic_ai.workspaces._authority_paths import lowest_authority
 from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
@@ -1616,6 +1618,8 @@ async def _with_parent_authority(parent: Workspace, workspace: Workspace, direct
     It's conservative: a file the parent gives more can get less in the delegate, but none gets more. Wrapping only
     ever lowers, so the resolver's own levels still apply where they're lower.
     """
+    # Core has no public way to read a workspace's `path_authority` entries yet, so this reads the wrapper chain's
+    # private layers, as `Workspace.authority` does; core and harness ship together.
     layers = parent._authority_layers()  # pyright: ignore[reportPrivateUsage]
     if not layers:
         return workspace
