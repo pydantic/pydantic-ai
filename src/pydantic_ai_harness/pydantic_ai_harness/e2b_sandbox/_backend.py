@@ -61,7 +61,7 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
-from pydantic_ai_harness._x11 import DISPLAY, start_x_server, x11_display
+from pydantic_ai_harness._x11 import DISPLAY, START_LOCK, start_x_server, wait_until_ready, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
@@ -131,8 +131,8 @@ _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
 _VIEWER_PORT = 6080
 
 _START_VIEWER = (
-    # One call at a time, from any backend, else two could each write a password or start a viewer.
-    'd=/tmp/pydantic-ai-viewer; mkdir -p "$d"; exec 9>"$d/lock"; flock 9; '
+    # Under the display's lock, else two calls at once could each write a password or start a viewer.
+    f'{START_LOCK}d=/tmp/pydantic-ai-viewer; mkdir -p "$d"; '
     '[ -s "$d/password" ] || tr -dc A-Za-z0-9 </dev/urandom | head -c 8 > "$d/password"; '
     'if ! pgrep -x x11vnc >/dev/null; then '
     'x11vnc -storepasswd "$(cat "$d/password")" "$d/passwd" >/dev/null 2>&1; '
@@ -140,18 +140,16 @@ _START_VIEWER = (
     '>"$d/x11vnc.log" 2>&1 9>&- & '
     # It writes its port once it listens, and exits without one, such as when the port is taken. On IPv4 only, where
     # the viewer connects: with the IPv4 port taken it would otherwise listen on IPv6 alone and still write it.
-    'i=0; until grep -q "^PORT=5900" "$d/x11vnc.log" 2>/dev/null; do '
-    '{ [ $i -ge 100 ] || ! kill -0 $! 2>/dev/null; } && '
-    '{ echo "the VNC server did not start:" >&2; tail -n 5 "$d/x11vnc.log" >&2; exit 1; }; '
-    'sleep 0.1; i=$((i+1)); done; fi; '
-    'if ! pgrep -f \'[w]ebsockify\' >/dev/null; then rm -f "$d/novnc.log"; '
-    f'setsid /opt/noVNC/utils/novnc_proxy --vnc 127.0.0.1:5900 --listen {_VIEWER_PORT} >"$d/novnc.log" 2>&1 9>&- & fi; '
-    'i=0; until grep -q "Navigate to this URL" "$d/novnc.log" 2>/dev/null; do '
-    '[ $i -ge 100 ] && { echo "the viewer did not start:" >&2; tail -n 5 "$d/novnc.log" >&2; exit 1; }; '
-    'sleep 0.1; i=$((i+1)); done; cat "$d/password"'
+    + wait_until_ready('grep -q "^PORT=5900" "$d/x11vnc.log" 2>/dev/null', '$!', 'the VNC server', '"$d/x11vnc.log"')
+    + "fi; if ! pgrep -f '[w]ebsockify' >/dev/null; then "
+    f'setsid /opt/noVNC/utils/novnc_proxy --vnc 127.0.0.1:5900 --listen {_VIEWER_PORT} >"$d/novnc.log" 2>&1 9>&- & '
+    + wait_until_ready(
+        'grep -q "Navigate to this URL" "$d/novnc.log" 2>/dev/null', '$!', 'the viewer', '"$d/novnc.log"'
+    )
+    + 'fi; cat "$d/password"'
 )
 """Starts the template's VNC server and noVNC viewer behind a password, unless they are running, and prints the
-password. Both run until the sandbox stops, so they don't keep the lock, which is released when the script exits."""
+password. Both run until the sandbox stops, so they close the lock, which is released when the script exits."""
 
 _XFCE_ON_DISPLAY = (
     '(for p in $(pgrep -x xfce4-session); do '
@@ -162,7 +160,7 @@ count."""
 
 _START_DESKTOP = start_x_server(_XVFB_LOG) + (
     f'if command -v startxfce4 >/dev/null && ! {_XFCE_ON_DISPLAY}; then '
-    'setsid startxfce4 >/dev/null 2>&1 & i=0; '
+    'setsid startxfce4 >/dev/null 2>&1 9>&- & i=0; '
     'until xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1 || [ $i -ge 100 ]; do '
     'sleep 0.1; i=$((i+1)); done; fi'
 )
@@ -844,7 +842,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         result = await self.run(['sh', '-c', _START_VIEWER], timeout=30)
         if result.exit_code != 0:
             raise WorkspaceError(
-                f'Could not start the desktop viewer: the template needs x11vnc, flock and noVNC in /opt/noVNC '
+                f'Could not start the desktop viewer: the template needs x11vnc and noVNC in /opt/noVNC '
                 f'({(result.stderr or result.stdout).strip()})'
             )
         sandbox = await self.get_sandbox()
