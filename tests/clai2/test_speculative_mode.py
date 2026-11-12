@@ -12,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import anyio
+from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, PartStartEvent, RunContext, Tool
@@ -52,10 +53,12 @@ from pydantic_ai_harness.permissions import PermissionMode, Permissions
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2.app import create_stock_agent
+from pydantic_clai2.builtin_plugins.hooks import HooksPlugin
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
+from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.runtime.eager_timing import EagerExecutionCompletedEvent
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.runtime.session_runtime import create_shell
@@ -659,6 +662,30 @@ class TestWorkspaceMount:
         mounted = 'read-only' if mode == 'read-only' else 'read-write'
         assert all(f'mounted {mounted}' in (text or '') for text in instructions)
         assert secret.read_text() == ('original' if mode == 'read-only' else 'overwritten')
+
+    @pytest.mark.parametrize(
+        ('table', 'expected'),
+        [
+            ({'after_tool': [{'command': ['true']}]}, 'read-write'),
+            ({'before_tool': [{'command': ['true'], 'tools': ['write_file']}]}, None),
+            ({'before_tool': [{'command': ['true']}], 'after_tool': [{'command': ['true']}]}, None),
+        ],
+        ids=['after_only', 'before', 'both'],
+    )
+    def test_a_hooks_table_that_only_reports_keeps_the_mount(
+        self, tmp_path: Path, table: dict[str, JsonValue], expected: str | None
+    ) -> None:
+        """`after_tool` commands can't stop a call, so they don't cost the mount; `before_tool` ones may."""
+        host = PluginHost[None](
+            name='hooks',
+            console=Console(file=io.StringIO()),
+            settings=table,
+            session_id=lambda: 'session-1',
+            workspace=lambda: tmp_path,
+        )
+        plugin = load_plugin(HooksPlugin, host)
+        coder = Coder[None](unrestricted_filesystem=True, repo_context=False)
+        assert mount([coder, *plugin.capabilities]) == expected
 
     @pytest.mark.parametrize(('mode', 'seen'), [('read-only', 'original PermissionError'), ('auto', 'original')])
     async def test_one_permissions_passed_directly_limits_the_mount(

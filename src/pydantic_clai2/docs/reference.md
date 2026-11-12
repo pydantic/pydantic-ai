@@ -1874,10 +1874,10 @@ not the filesystem the file tools act on there.
   `FileSystem`, more than one, a supplied agent that does not expose its
   capabilities, or a plugin that adds a capability function or
   `DynamicCapability` (which could supply one at run time). So does any
-  `Hooks`, such as a `before_tool` or `after_tool` hooks table, and a
-  `ToolCallJudge` over every tool or chosen by metadata or a function: which
-  tools they check can't be read before the run. File access then goes through
-  the file tools only.
+  `Hooks`, such as a `before_tool` hooks table, and a `ToolCallJudge` over
+  every tool or chosen by metadata or a function: which tools they check can't
+  be read before the run. An `after_tool` table only reports, so it keeps the
+  mount. File access then goes through the file tools only.
 
 While the model writes:
 
