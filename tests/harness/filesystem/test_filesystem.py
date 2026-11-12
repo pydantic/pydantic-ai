@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import errno
 import hashlib
-import io
 import os
 import posixpath
 import re
 import socket
 import stat
-import zipfile
 from collections.abc import Sequence
 from dataclasses import replace
 from functools import partial
@@ -314,14 +312,6 @@ def toolset(fs_root: Path) -> FileSystemToolset[None]:
         max_search_results=1000,
         max_find_results=1000,
     )
-
-
-def _zip_with(name: str) -> bytes:
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, 'w') as archive:
-        # A fixed timestamp keeps the bytes, and so the test ids, the same in every xdist worker.
-        archive.writestr(zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)), '<x/>')
-    return buffer.getvalue()
 
 
 def _unhashed_toolset() -> FileSystemToolset[None]:
@@ -822,45 +812,22 @@ class TestReadFile:
         ]
 
     @pytest.mark.parametrize(
-        ('data', 'media_type'),
-        [
-            (b'RIFF\x24\x00\x00\x00WAVEfmt ', 'audio/wav'),
-            (b'ID3\x04\x00\x00\x00\x00', 'audio/mpeg'),
-            (b'FORM\x00\x00\x00\x00AIFFCOMM', 'audio/aiff'),
-            (b'OggS\x00\x02\x00\x00', 'audio/ogg'),
-            (b'fLaC\x00\x00\x00\x22', 'audio/flac'),
-            (b'\xff\xf1\x50\x80\x00', 'audio/aac'),
-            (_zip_with('word/document.xml'), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
-            (_zip_with('xl/workbook.xml'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
-            (b'\x1a\x45\xdf\xa3\x9fB\x82\x88matroska\x00\x00', 'video/x-matroska'),
-        ],
-    )
-    async def test_a_format_some_models_reject_is_described(self, tmp_path: Path, data: bytes, media_type: str) -> None:
-        # Some models whose profile admits the kind reject the format (Gemini takes no Office documents or
-        # Matroska, and OpenAI-compatible endpoints report audio input for models that reject it), so sending one
-        # would fail the request there rather than become a note.
-        name = 'clip'
-        (tmp_path / name).write_bytes(data)
-        result = await _unhashed_toolset().read_file(name, workspace=LocalWorkspaceBackend(tmp_path))
-        assert isinstance(result, str)
-        assert 'Binary file; the first bytes in hex:' in result
-
-    @pytest.mark.parametrize(
         'data',
         [
-            _zip_with('notes.txt'),
-            b'\x00\x00\x00\x20ftypM4A \x00\x00',
-            b'\x00\x00\x00\x18ftypheic\x00\x00',
-            b'\x00\x00\x00\x1cftypavif\x00\x00',
-            b'\xff\xfa\xf0\x00',  # MPEG audio sync with a reserved bitrate
-            b'\xff\x00\x00\x00',
+            pytest.param(b'\x1a\x45\xdf\xa3\x9fB\x82\x88matroska\x00\x00', id='matroska'),
+            pytest.param(b'\x00\x00\x00\x20ftypM4A \x00\x00', id='m4a'),
+            pytest.param(b'\x00\x00\x00\x18ftypheic\x00\x00', id='heic'),
+            pytest.param(b'\x00\x00\x00\x1cftypavif\x00\x00', id='avif'),
+            pytest.param(b'fLaC\x00\x00\x00\x22', id='flac'),
+            pytest.param(b'PK\x03\x04\x14\x00\x00\x00', id='office'),
         ],
     )
-    async def test_a_container_no_media_type_names_is_described(self, tmp_path: Path, data: bytes) -> None:
-        # A ZIP is no office document, HEIC and AVIF photos aren't video, MPEG-4 audio has no
-        # `AudioMediaType`, and a stray 0xFF is no audio frame.
-        (tmp_path / 'blob').write_bytes(data)
-        result = await _unhashed_toolset().read_file('blob', workspace=LocalWorkspaceBackend(tmp_path))
+    async def test_a_format_that_stays_described(self, tmp_path: Path, data: bytes) -> None:
+        # Only video `ftyp` brands on the allowlist and WebM's EBML DocType are sent as files, so Matroska and
+        # the M4A, HEIC and AVIF `ftyp` brands are described. Audio and Office documents aren't sniffed at all:
+        # some models whose profile admits the kind reject them, so FLAC and a ZIP guard that deferral.
+        (tmp_path / 'clip').write_bytes(data)
+        result = await _unhashed_toolset().read_file('clip', workspace=LocalWorkspaceBackend(tmp_path))
         assert isinstance(result, str)
         assert 'Binary file; the first bytes in hex:' in result
 
