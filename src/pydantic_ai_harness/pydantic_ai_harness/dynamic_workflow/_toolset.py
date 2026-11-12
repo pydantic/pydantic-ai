@@ -64,9 +64,8 @@ from pydantic_ai_harness._sub_agent_output import (
 from pydantic_ai_harness._warn import renamed_duration_limit
 
 if TYPE_CHECKING:
-    from aws_durable_execution_sdk_python.config import ParallelConfig
-
     from pydantic_ai_harness.aws_lambda._bridge import StepBridge
+    from pydantic_ai_harness.aws_lambda._operation_backend import AWSLambdaOperationConfig
 
 # Set while a workflow script is executing, so `get_tools` hides `run_workflow` from sub-agents
 # running inside it -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
@@ -232,8 +231,7 @@ def _lambda_bridge() -> StepBridge | None:
 @dataclass
 class _Branch:
     run: Callable[[], Awaitable[Any]]
-    serdes: object
-    config: ParallelConfig | None
+    config: AWSLambdaOperationConfig
     future: asyncio.Future[Any]
 
 
@@ -256,13 +254,12 @@ class _LambdaBranches:
     ) -> asyncio.Future[Any] | None:
         """Add the run to the batch if `agent` runs under `AWSLambdaDurability`, else return `None`."""
         # The bridge is only active in a durable handler, which imported this.
-        from pydantic_ai_harness.aws_lambda._capability import AWSLambdaDurability, parallel_config
+        from pydantic_ai_harness.aws_lambda._capability import AWSLambdaDurability, operation_config
 
         durability = BaseDurabilityCapability.from_agent(agent)
         if not isinstance(durability, AWSLambdaDurability) or not durability.in_durable_context:
             return None
-        serdes, config = parallel_config(durability)
-        branch = _Branch(operation, serdes, config, asyncio.get_running_loop().create_future())
+        branch = _Branch(operation, operation_config(durability), asyncio.get_running_loop().create_future())
         self._pending.append(branch)
         return branch.future
 
@@ -274,10 +271,12 @@ class _LambdaBranches:
         # One `parallel` operation per serializer, so each run's result is checkpointed with its agent's.
         groups: dict[int, list[_Branch]] = {}
         for branch in pending:
-            groups.setdefault(id(branch.serdes), []).append(branch)
+            groups.setdefault(id(branch.config.serdes), []).append(branch)
         for group in groups.values():
             # If this raises, `MontyExecutor` cancels the dispatches waiting on these futures.
-            results = await self.bridge.run_parallel(self.name, [branch.run for branch in group], group[0].config)
+            results = await self.bridge.run_parallel(
+                self.name, [branch.run for branch in group], group[0].config.parallel_config
+            )
             for branch, result in zip(group, results):
                 if not branch.future.done():  # pragma: no branch - only a cancelled dispatch is done early
                     branch.future.set_result(result)

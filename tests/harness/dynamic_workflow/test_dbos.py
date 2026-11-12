@@ -47,9 +47,21 @@ def model_calls() -> list[str]:
 
 
 @pytest.fixture
-def workflow(dbos: DBOS, model_calls: list[str]) -> Callable[[], Awaitable[str]]:
+def tool_calls() -> list[str]:
+    return []
+
+
+@pytest.fixture
+def workflow(dbos: DBOS, model_calls: list[str], tool_calls: list[str]) -> Callable[[], Awaitable[str]]:
+    @DBOS.step(name='noop_step')
+    def noop_step() -> str:
+        tool_calls.append('noop')
+        return 'ok'
+
     # Built outside the event loop: registering a DBOS workflow reads its source.
-    orchestrator = build_orchestrator(DBOSDurability, summarize_model(model_calls, alpha_waits_for_beta=False))
+    orchestrator = build_orchestrator(
+        DBOSDurability, summarize_model(model_calls, alpha_waits_for_beta=False), tool=noop_step
+    )
     attempts: list[str] = []
 
     @DBOS.workflow(name='dynamic_workflow_dbos')
@@ -64,17 +76,17 @@ def workflow(dbos: DBOS, model_calls: list[str]) -> Callable[[], Awaitable[str]]
 
 
 async def test_sub_agents_run_one_at_a_time_and_recover_their_own_steps(
-    dbos: DBOS, workflow: Callable[[], Awaitable[str]], model_calls: list[str]
+    dbos: DBOS, workflow: Callable[[], Awaitable[str]], model_calls: list[str], tool_calls: list[str]
 ) -> None:
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
         await workflow()
     assert model_calls == ['alpha 1', 'alpha 3', 'beta 1', 'beta 3']
-    # Each sub-agent keeps its own model-request checkpoints.
+    # Each sub-agent keeps its own model-request and `@DBOS.step` tool checkpoints.
     steps = await dbos.list_workflow_steps_async(workflow_id)
     assert [step['function_name'] for step in steps] == [
         'orchestrator__model.request',
-        *['summarize__model.request'] * 4,
+        *['summarize__model.request', 'noop_step', 'summarize__model.request'] * 2,
         'orchestrator__model.request',
     ]
 
@@ -82,6 +94,7 @@ async def test_sub_agents_run_one_at_a_time_and_recover_their_own_steps(
     handle = await DBOS.resume_workflow_async(workflow_id)
     assert await handle.get_result(polling_interval_sec=0.01) == EXPECTED
     assert len(model_calls) == 4
+    assert tool_calls == ['noop', 'noop']
 
 
 async def test_sub_agents_outside_a_workflow_run_concurrently(dbos: DBOS) -> None:

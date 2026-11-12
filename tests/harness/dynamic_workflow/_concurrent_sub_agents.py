@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable
 from typing import Any
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -64,13 +64,14 @@ def build_orchestrator(
     durable_orchestrator: bool = True,
     durable_sub_agents: bool = True,
     script: str = SCRIPT,
+    tool: Callable[[], str] = noop,
 ) -> Agent[None, str]:
     """An orchestrator that runs `script`, by default gathering two `summarize` sub-agents, which carry `durability()`."""
     summarize_agent = Agent(
         summarize,
         name='summarize',
         description='Summarize a text.',
-        tools=[noop],
+        tools=[Tool(tool, name='noop')],
         capabilities=[durability()] if durable_sub_agents else [],
     )
     return Agent(
