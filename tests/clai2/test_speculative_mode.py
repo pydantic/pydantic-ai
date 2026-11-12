@@ -527,7 +527,7 @@ class TestWorkspaceMount:
         ],
     )
     def test_judges_and_hooks_limit_the_mount(self, check: AbstractCapability[None], expected: str | None) -> None:
-        """A `ToolCallJudge` or `Hooks` limits the mount as a `ToolGuardrail` does, top-level or nested."""
+        """A `ToolCallJudge` limits the mount as a `ToolGuardrail` does, and any `Hooks` costs it, top-level or nested."""
         coder = Coder[None](unrestricted_filesystem=True, repo_context=False)
         assert mount([coder, check]) == expected
         assert mount([CombinedCapability[None]([coder, check])]) == expected
