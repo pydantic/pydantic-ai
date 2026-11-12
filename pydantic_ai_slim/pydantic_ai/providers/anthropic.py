@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TypeAlias, overload
 
+from pydantic import JsonValue
+
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
 from pydantic_ai.profiles import merge_profile
@@ -271,6 +273,29 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
     - Removes title and $schema fields
     """
 
+    @staticmethod
+    def _has_removed_schema_information(before: JsonValue, after: JsonValue) -> bool:
+        if isinstance(before, dict):
+            if not isinstance(after, dict):
+                return True
+            return any(
+                key not in after or AnthropicJsonSchemaTransformer._has_removed_schema_information(value, after[key])
+                for key, value in before.items()
+            )
+        if isinstance(before, list):
+            if not isinstance(after, list) or len(before) > len(after):
+                return True
+            return any(
+                not any(
+                    not AnthropicJsonSchemaTransformer._has_removed_schema_information(before_item, after_item)
+                    for after_item in after
+                )
+                for before_item in before
+            )
+        if isinstance(before, str) and isinstance(after, str):
+            return before not in after
+        return before != after
+
     def walk(self) -> JsonSchema:
         schema = super().walk()
 
@@ -285,7 +310,15 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
         if self.strict is True:
             from anthropic import transform_schema
 
-            return transform_schema(schema)
+            transformed_schema = transform_schema(schema)
+            if not _COUNTING_STRICT_SCHEMAS.get() and self._has_removed_schema_information(schema, transformed_schema):
+                warnings.warn(
+                    "Anthropic's strict-schema transformation removed constraint information from the JSON schema. "
+                    'The model may not enforce those constraints.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            return transformed_schema
         else:
             return schema
 
