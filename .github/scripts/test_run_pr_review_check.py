@@ -481,11 +481,25 @@ def test_review_span_reports_every_outcome_and_the_plan_of_its_last_run(
     }
 
 
+@pytest.mark.parametrize(
+    ('steps', 'restart'),
+    [
+        pytest.param(shlex.quote(_step(10)), {'pr_review_checks.restarted': True}, id='after-a-step'),
+        pytest.param('', {}, id='before-a-step'),
+    ],
+)
 def test_review_span_marks_a_review_the_chain_restarted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[dict[str, object]]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exported: list[dict[str, object]],
+    steps: str,
+    restart: dict[str, object],
 ) -> None:
-    """A review the first account rate-limited after steps names the account that restarted and served it."""
-    rate_limited = f'printf "%s\\n" {shlex.quote(_step(10))} {shlex.quote(RATE_LIMITED)}; exit 1'
+    """A review the first account rate-limited after steps is marked restarted; a handover before a step is not.
+
+    Both reach the backup account as the third attempt.
+    """
+    rate_limited = f'printf "%s\\n" {steps} {shlex.quote(RATE_LIMITED)}; exit 1'
     answer = f'printf "%s\\n" {" ".join(shlex.quote(line) for line in ANSWER)}'
     zai = f'if [ "$ZHIPU_API_KEY" = zai-key ]; then {rate_limited}; else {answer}; fi'
     launches = _fake_opencode(tmp_path, monkeypatch, f'printf "%s\\n" {shlex.quote(GO_REFUSAL)}; exit 1', zai)
@@ -503,7 +517,7 @@ def test_review_span_marks_a_review_the_chain_restarted(
         'pr_review_checks.provider': 'zai-coding-plan',
         'pr_review_checks.plan': 'the backup Coding Plan',
         'pr_review_checks.attempts': '3',
-        'pr_review_checks.restarted': True,
+        **restart,
     }
 
 
