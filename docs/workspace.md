@@ -477,7 +477,8 @@ tool definition; workspace calls it makes still run as the engine's activities, 
   such as a sandbox image, do not apply: every unit rebuilds the workspace from the agent's. A previous `result.workspace` without a ref starts a fresh workspace. Put policy on the agent's capability instead, such as
   `LocalWorkspace(..., read_only=True)` or `LocalWorkspace(..., authority='none')`.
 - `workspace.backend` is not available in workflow code, which includes DBOS function tools and
-  tools with `metadata={'durable': False}`. Reach the provider's own API from a tool that
+  tools that run outside their durable unit, with `metadata={'durable': False}` or an engine key such as
+  `metadata={'temporal': False}`. Reach the provider's own API from a tool that
   runs as an activity or task.
 - Inside a workflow or flow, the deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` wrappers
   refuse a workspace; use the durability capability instead.

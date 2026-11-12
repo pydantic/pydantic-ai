@@ -3630,9 +3630,7 @@ def test_a_hostname_derived_toolset_id_leaves_tool_cache_keys_as_they_were() -> 
 
     The projection is what it was when the toolset had no `id`, so a flow run before the upgrade still finds its tasks.
     """
-    from pydantic_ai.durable_exec.prefect._cache_policies import (
-        _replace_toolset_tools,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.durable_exec.prefect._cache_policies import _replace_toolset_tools  # pyright: ignore[reportPrivateUsage]
 
     def projection(toolset: MCPToolset[None]) -> object:
         tool = ToolsetTool(
