@@ -7,8 +7,10 @@ and replay are the SDK's own.
 from __future__ import annotations
 
 import base64
+import gc
 import itertools
 import json
+import weakref
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -125,7 +127,7 @@ class _Service:
             callback_details=CallbackDetails(callback_id=callback_id, result=result),
         )
 
-    def _invoke(self, orchestrator: Agent[None, str]) -> dict[str, Any]:
+    def _invoke(self, orchestrator: Agent[None, str]) -> dict[str, str]:
         @durable_execution
         @durable_agent_handler
         async def handler(event: Any, context: Any) -> str:
@@ -340,7 +342,7 @@ class _UnhashableSealed(_Sealed):
 
 
 @pytest.mark.parametrize('sealed', [_Sealed(), _UnhashableSealed()], ids=['hashable', 'unhashable'])
-def test_sub_agents_sharing_a_serializer_share_a_parallel_operation(sealed: SerDes[Any]) -> None:
+def test_sub_agents_sharing_a_serializer_share_a_parallel_operation(sealed: _Sealed) -> None:
     calls: list[str] = []
     model = summarize_model(calls)
     alpha, beta = (
@@ -356,3 +358,12 @@ def test_sub_agents_sharing_a_serializer_share_a_parallel_operation(sealed: SerD
     assert [operation.name for operation in service.operations.values() if operation.parent_id is None].count(
         'run_workflow'
     ) == 1
+
+
+def test_a_durability_does_not_keep_its_serializer_alive() -> None:
+    sealed = _Sealed()
+    durability = AWSLambdaDurability(step_config={'serdes': sealed})
+    reference = weakref.ref(sealed)
+    del durability, sealed
+    gc.collect()
+    assert reference() is None

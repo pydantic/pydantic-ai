@@ -203,6 +203,7 @@ async def _ask_for_json(ask: Callable[[str], Awaitable[JsonValue]], token: str) 
     return None if answer is None else to_json(answer).decode()
 
 
-def parallel_config(durability: AWSLambdaDurability[Any]) -> ParallelConfig | None:
-    """The config that checkpoints a `parallel` operation's results with `durability`'s `serdes`, if it sets one."""
-    return durability._operation_config.parallel_config  # pyright: ignore[reportPrivateUsage]
+def parallel_config(durability: AWSLambdaDurability[Any]) -> tuple[object, ParallelConfig | None]:
+    """`durability`'s `serdes`, and the config that checkpoints a `parallel` operation's results with it."""
+    config = durability._operation_config  # pyright: ignore[reportPrivateUsage]
+    return config.serdes, config.parallel_config

@@ -250,8 +250,8 @@ runs close to it can stop at a different point on replay and cause a `Nondetermi
 
 `DBOSDurability` numbers steps in the order they start, so the steps of concurrent sub-agents would
 interleave by timing and recovery could replay one sub-agent's results into another call. When
-sub-agents carry it, the script runs them one at a time, so each keeps its own step checkpoints and
-recovery replays them into the same call. An `asyncio.gather` over sub-agents then takes the sum of
+sub-agents carry it, all of the script's calls run one at a time, so each sub-agent keeps its own step
+checkpoints and recovery replays them into the same call. An `asyncio.gather` over sub-agents then takes the sum of
 their run times rather than the longest.
 
 `AWSLambdaDurability` numbers a context's steps in the order they start too. When sub-agents carry it,

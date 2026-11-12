@@ -293,8 +293,8 @@ class MontyExecutor:
     # CodeMode's `os_access`. Only needed here to answer host-state calls inside a Temporal workflow.
     os_handler: OsHandler | None = None
     # Awaited before deferred calls are resolved. Every call dispatched so far has started by then, so
-    # a host can run the calls it collected from them as one batch, in dispatch order. Only parallel
-    # dispatch starts calls before this: with `global_sequential` or `sequential_names` they start later.
+    # a host can run the calls it collected from them as one batch, in dispatch order. That holds for
+    # parallel dispatch only: under `global_sequential`, calls start after this.
     flush: Callable[[], Awaitable[None]] | None = None
 
     _slept_seconds: float = field(default=0.0, init=False)
