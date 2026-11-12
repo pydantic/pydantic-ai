@@ -19,8 +19,7 @@ projection on both sides of the `supports_request_scoped_system_prompts` flag.
 from __future__ import annotations as _annotations
 
 import json
-import re
-from collections.abc import Generator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
@@ -73,7 +72,7 @@ with try_import() as anthropic_available:
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile
-    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.anthropic import AnthropicProvider, AsyncAnthropicClient
 
     from .test_anthropic import (
         MockAnthropic,
@@ -135,11 +134,6 @@ class TurnReminder(AbstractCapability[Any]):
         ctx.messages.append(reminder)
         request_context.messages = [*request_context.messages, reminder]
         return request_context
-
-
-def unref(value: Any) -> Any:
-    """`value` with the `<system>` tags normalized, so assertions name the tag."""
-    return json.loads(re.sub(r'<system>', '<system>', json.dumps(value)))
 
 
 def weather_agent(model: Any, **kwargs: Any) -> Agent[None, str]:
@@ -303,7 +297,7 @@ async def test_anthropic_request_scoped_fallback_on_model_without_native_support
             for block in message['content']
             if block['type'] == 'text' and 'Reminder' in block['text']
         ]
-        assert unref(texts) == [f'<system>Reminder: be terse. This is request {n}.</system>']
+        assert texts == [f'<system>Reminder: be terse. This is request {n}.</system>']
         last_content = body['messages'][-1]['content']
         assert last_content[-1] == {'text': texts[0], 'type': 'text'}
     assert cache_breakpoints(bodies[1]) == case.breakpoints
@@ -378,7 +372,7 @@ async def test_superseded_reminders_are_left_out_without_native_support():
 
     result = await agent.run(PROMPT)
 
-    assert unref(
+    assert (
         [[part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)] for messages in seen]
     ) == [
         [PROMPT, '<system>Reminder: be terse. This is request 1.</system>'],
@@ -489,7 +483,7 @@ async def test_reminder_enqueued_from_before_model_request_matches_two_writes():
 
     (enqueued_seen, enqueued_history), (written_seen, written_history) = runs
     assert [request_scoped_texts(messages) for messages in enqueued_seen] == [[], [], []]
-    assert unref(
+    assert (
         [
             [str(part.content) for part in messages[-1].parts if isinstance(part, UserPromptPart)]
             for messages in enqueued_seen
@@ -519,7 +513,7 @@ async def test_enqueued_request_scoped_prompt():
 
     result = await agent.run(PROMPT)
 
-    assert unref(
+    assert (
         [
             [str(part.content) for message in messages for part in message.parts if isinstance(part, UserPromptPart)][
                 1:
@@ -573,7 +567,7 @@ async def test_current_reminder_survives_compaction():
 
     result = await agent.run(PROMPT)
 
-    assert unref(
+    assert (
         [
             [
                 str(part.content)
@@ -660,7 +654,7 @@ async def test_retry_without_response_drops_the_request_scoped_prompt():
 
     result = await agent.run('hello')
 
-    assert unref(
+    assert (
         [
             [
                 str(part.content)
@@ -697,7 +691,7 @@ async def test_resuming_a_suspended_response_defers_the_enqueued_reminder():
 
     assert result.output == 'done'
     assert 'Reminder' not in str(seen[0])
-    assert unref(
+    assert (
         [
             [
                 str(part.content)
@@ -735,7 +729,7 @@ async def test_fallback_attempts_keep_the_request_scoped_prompt():
 
     result = await agent.run('hello')
 
-    assert unref(
+    assert (
         [[str(part.content) for part in messages[-1].parts if isinstance(part, UserPromptPart)] for messages in seen]
     ) == [
         ['hello', '<system>Reminder: be terse. This is request 1.</system>'],
@@ -899,7 +893,7 @@ async def test_sealed_model_keeps_request_scoped_prompts_in_sealed_clear_at_entr
 @pytest.mark.parametrize('model_name', ['claude-sonnet-5-5', 'claude-haiku-5-5'])
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 def test_request_scoped_support_follows_the_transport_on_sealed_models(
-    make_client: Any, expected: bool, model_name: str
+    make_client: Callable[[], AsyncAnthropicClient], expected: bool, model_name: str
 ):
     """The entry needs a transport that serves the `system` role, whatever the model's lasting messages use."""
     model = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=make_client()))
@@ -1246,7 +1240,7 @@ async def test_lasting_text_equal_to_a_reminder_keeps_the_cache_point_bedrock(
     with converse_request_bodies(model) as bodies:
         await send(model, duplicate_text_history(SystemPromptPart('Reminder.')), settings)
 
-    assert unref(bodies[0]['messages'][-1]['content'][-3:]) == [
+    assert (bodies[0]['messages'][-1]['content'][-3:]) == [
         {'text': '<system>Reminder.</system>'},
         {'cachePoint': {'type': 'default'}},
         {'text': '<system>Reminder.</system>'},

@@ -53,7 +53,7 @@ from . import (
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    get_user_agent,
+    _with_default_user_agent,  # pyright: ignore[reportPrivateUsage]
 )
 from ._sdk_retries import with_max_retries
 from .decision import (
@@ -251,9 +251,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/decisions` endpoint."""
-        extra_headers: dict[str, str] = dict(model_settings.get('extra_headers', {}))
-        if all(name.lower() != 'user-agent' for name in extra_headers):
-            extra_headers['User-Agent'] = get_user_agent()
+        extra_headers = _with_default_user_agent(model_settings.get('extra_headers', {}))
         self._check_request_limits(image_count=len(request.images), question_count=len(request.questions))
         if any(not image.is_image for image in request.images):
             raise UserError('OpenAI Decisions supports image evidence only; `request.images` contains a non-image.')

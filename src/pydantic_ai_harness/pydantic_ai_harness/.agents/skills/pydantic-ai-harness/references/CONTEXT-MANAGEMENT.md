@@ -106,6 +106,13 @@ Gotchas: a tier's own `max_*` trigger is ignored inside `TieredCompaction` but m
 hence `max_tokens=1` / `max_messages=1`. `tiers` must be non-empty and exactly one of
 `target_tokens` / `target_fraction` is required. Any object with
 `async def compact(messages, ctx) -> list[ModelMessage]` (`CompactionStrategy`) can be a tier.
+Each tier's kept messages set a floor under `target_tokens`: its `keep_tokens`/`keep_messages` tail
+with the current turn, the first user message under `preserve_first_user_message`, and pins. A target
+below that floor can't be reached. The outermost chain then logs a warning on each attempt and sets
+`compaction.target_unreached`, `compaction.target_tokens` and `compaction.estimate` on its span when
+the history changes; a no-op has no span, only the warning. The logger is
+`pydantic_ai_harness.compaction._tiered_compaction`. Use `preserve_first_user_message=False` on tiers
+that may drop or summarize the first user message.
 
 ## The individual strategies
 
@@ -138,7 +145,8 @@ Useful keyword options: `model_settings`, `summarization_capabilities` (outer ca
 run on the summary call), `incremental=True` (update the previous summary rather than
 re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary_prompt` (must
 contain `{messages}` and no other replacement field; any other prompt emits a `HarnessDeprecationWarning`
-and will raise `ValueError` in a future release), `instructions`, `bridge_prefix=False`, `receipts=False`,
+and will raise `ValueError` in a future release; a custom prompt replaces the default's rule that instructions
+inside tool results aren't the user's, so include your own), `instructions`, `bridge_prefix=False`, `receipts=False`,
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
 `keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 On its own trigger, a summary whose compacted history is not estimated smaller than the original
@@ -243,7 +251,7 @@ least one limit is required; `warn_on` may only name configured kinds (`'iterati
 `'context_window'`, `'total_tokens'`).
 
 `ReportContextUsage(context_window=None, fallback_context_window=200_000, tokenizer=None)` emits a
-`ContextUsageEvent` (`used_tokens`, `window_tokens`, `fraction`, `resolved`) before each request.
+`ContextUsageMeasuredEvent` (`used_tokens`, `window_tokens`, `fraction`, `resolved`) before each request.
 `resolved=False` means the window is the fallback guess. The `on_usage=` callback is deprecated;
 subscribe to the event.
 
@@ -255,7 +263,7 @@ from pydantic_ai_harness import (
     SummarizingCompaction,
     WarnNearLimits,
 )
-from pydantic_ai_harness.compaction import ContextUsageEvent
+from pydantic_ai_harness.compaction import ContextUsageMeasuredEvent
 
 agent = Agent(
     'test',
@@ -267,12 +275,12 @@ agent = Agent(
 )
 
 
-@agent.on_event(ContextUsageEvent)
+@agent.on_event(ContextUsageMeasuredEvent)
 async def show(ctx, event):
     print(f'{event.fraction:.0%}')
 ```
 
-`WarnNearLimits` tells the model; to alert an operator, log from the `ContextUsageEvent` handler
+`WarnNearLimits` tells the model; to alert an operator, log from the `ContextUsageMeasuredEvent` handler
 (`if event.fraction > 0.8: logger.warning(...)`). Register `ReportContextUsage` after a compaction
 capability to see post-compaction usage, before it to see what triggered compaction.
 
@@ -287,6 +295,8 @@ capability to see post-compaction usage, before it to see what triggered compact
   instructions come back. Summaries leave load records out. `preserve_loaded_capabilities=False` unloads them instead and
   leaves a note naming them.
   Provider-native compaction still unloads them.
+- The same strategies keep tool search discoveries (a `search_tools` exchange, a native search result or a
+  `ToolReturn.tools` reveal) by recording them again after the summary as a `ToolAvailabilityDeltaPart`.
 - `receipts=True` on `SlidingWindowCompaction` / `SummarizingCompaction` appends a note saying
   history was compacted; with `StepPersistence` attached it includes the run handle.
 - `await compact_now(strategy, history, model=..., focus=..., conversation_id=...)` (plus `deps=` for typed deps) runs a
@@ -413,8 +423,8 @@ payloads live. Nothing here goes in `capabilities=[...]`.
 
 Use `warn_on_cache_busts.WarnOnCacheBusts` (not `cache_stability` / `CacheStabilityMonitor`),
 `tool_output_limits.ToolOutputLimits` (not `overflowing_tool_output` / `OverflowingToolOutput`),
-`SlidingWindowCompaction` (not `SlidingWindow`), and `WarnNearLimits` (not `LimitWarner`). The
-old `context` module is `repo_context`.
+`SlidingWindowCompaction` (not `SlidingWindow`), `WarnNearLimits` (not `LimitWarner`), and
+`ContextUsageMeasuredEvent` (not `ContextUsageEvent`). The old `context` module is `repo_context`.
 
 ## See also
 

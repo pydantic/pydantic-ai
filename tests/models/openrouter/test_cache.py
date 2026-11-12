@@ -1521,10 +1521,10 @@ async def test_openrouter_cache_instructions_add_a_point_after_appending_blocks(
         [
             'Static instructions.',
             """\
-<context id="agent:catalog">
+<pyai:context id="agent:catalog">
 Catalog.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
         ]
     )

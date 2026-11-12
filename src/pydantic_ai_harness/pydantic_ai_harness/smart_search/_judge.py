@@ -18,7 +18,7 @@ import anyio
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
-from pydantic_ai._framing import TOOL_RESULT_TAG, neutralize_tags, second_model_prompt, wrap
+from pydantic_ai._framing import neutralize_tags, second_model_prompt, wrap
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness._judge import claim_request, claimed_request_limits
@@ -57,7 +57,9 @@ class Relevance(BaseModel):
 def _state(chunk: Chunk) -> str:
     """What the judge sees: the snippet, framed as data with where it lives, so its text cannot pose as instructions."""
     lines = f'{chunk.line}-{chunk.end_line}'
-    return wrap(TOOL_RESULT_TAG, chunk.text, name='snippet', path=chunk.path, lines=lines, symbol=chunk.symbol)
+    # The plain `<tool_result>` data tag, not core's prefixed conversation frame: the judge reads one snippet, with no
+    # application text around it that the prefix would set the frame apart from.
+    return wrap('tool_result', chunk.text, name='snippet', path=chunk.path, lines=lines, symbol=chunk.symbol)
 
 
 def _instructions(query: str) -> str:
@@ -70,7 +72,7 @@ def _instructions(query: str) -> str:
     )
 
 
-def build_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
+def make_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
     """The one-shot judge agent for `query`, named after the capability."""
     agent = Agent(
         model,
@@ -125,7 +127,7 @@ async def judge(
     Any failed judgment fails the whole search and cancels the rest: a partial scan reported as a complete
     one is worse than an error.
     """
-    agent = build_agent(model, query)
+    agent = make_agent(model, query)
     # Judgments start through the gate while others finish, so the nested run takes the claimed-request
     # limits rather than `claim_offset_limits`, whose preflight would see the other claims too.
     limits = claimed_request_limits(ctx.usage_limits)

@@ -32,17 +32,21 @@ _TASK_FRAME_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?(?:task[-_]output|task_que
 def make_task_output(body: str, *, task_id: str, agent_name: str, outcome: str, generation: int) -> UserPromptPart:
     """Frame `body` as `<task_output>` data that can't end its own element or open a framing tag, with escaped attributes.
 
-    Every opening or closing framing tag core writes (`<system>`, `<context_diff>`, `<tool_result>` and the rest)
+    Every opening or closing framing tag core writes (`<system>`, `<pyai:context_diff>`, `<pyai:tool_result>` and the rest)
     is neutralized in the body, as are `<task_output>` itself and `<task_question>`.
 
-    Like a background tool's `<tool_result>`, the frame carries `outcome` only when the task didn't succeed.
+    Like a background tool's `<pyai:tool_result>`, the frame carries `outcome` only when the task didn't succeed.
     """
     attributes = {'task_id': task_id, 'agent_name': agent_name, **({'outcome': outcome} if outcome != 'ok' else {})}
-    attrs = ''.join(f' {name}="{html.escape(value)}"' for name, value in attributes.items())
+    rendered_attributes = ''.join(f' {name}="{html.escape(value)}"' for name, value in attributes.items())
     body = _TASK_FRAME_TAG_OPENER.sub('&lt;', neutralize_tags(body))
     metadata = {'origin': _TASK_REPORT_ORIGIN, 'task_id': task_id, 'generation': generation}
     return UserPromptPart(
-        [framework_frame_text(f'<task_output{attrs}>\n{body}\n</task_output>', metadata=metadata, author='tool')]
+        [
+            framework_frame_text(
+                f'<task_output{rendered_attributes}>\n{body}\n</task_output>', metadata=metadata, author='tool'
+            )
+        ]
     )
 
 
@@ -51,11 +55,15 @@ def make_task_question(question: str, *, task_id: str, agent_name: str, question
 
     The question was written by the child's model, so like its output it never enters system voice.
     """
-    attrs = f' task_id="{html.escape(task_id)}" agent_name="{html.escape(agent_name)}"'
+    rendered_attributes = f' task_id="{html.escape(task_id)}" agent_name="{html.escape(agent_name)}"'
     body = _TASK_FRAME_TAG_OPENER.sub('&lt;', neutralize_tags(question))
     metadata = {'origin': _TASK_QUESTION_ORIGIN, 'task_id': task_id, 'question_id': question_id}
     return UserPromptPart(
-        [framework_frame_text(f'<task_question{attrs}>\n{body}\n</task_question>', metadata=metadata, author='tool')]
+        [
+            framework_frame_text(
+                f'<task_question{rendered_attributes}>\n{body}\n</task_question>', metadata=metadata, author='tool'
+            )
+        ]
     )
 
 

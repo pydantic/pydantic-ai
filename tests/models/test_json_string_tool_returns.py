@@ -375,7 +375,9 @@ def _tool_call(call_id: str, city: str) -> ChatCompletion:
 
 
 def _agent(model: Model) -> Agent[None, str]:
-    agent = Agent(model, instructions='Answer briefly.')
+    # The tool output's lookalike needs the announcement; with `'always'` it's in the first request already, so the
+    # only thing a later request can change is the tool content.
+    agent = Agent(model, instructions='Answer briefly.', model_settings={'framing_announcement': 'always'})
 
     @agent.tool_plain
     def get_status(city: str) -> str:

@@ -43,6 +43,7 @@ from pydantic_ai import (
     ModelSelectionContext,
     NativeToolCallPart,
     NativeToolReturnPart,
+    OutputTokenLimitExceeded,
     PrefixedToolset,
     RequestUsage,
     RetryFeedbackPart,
@@ -218,7 +219,6 @@ requires_mistral = pytest.mark.skipif(MistralProvider is None, reason='mistral n
 READINESS_WAIT_TIMEOUT = 10
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
     """`run_sync` must replace a closed thread-current event loop.
 
@@ -238,7 +238,6 @@ def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.Abstract
     assert not asyncio.all_tasks(replacement_loop)
 
 
-@pytest.mark.usefixtures('young_gc')
 def test_run_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
     """`run_sync` must create and install an event loop when the thread has none.
 
@@ -2021,7 +2020,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
-                usage=RequestUsage(input_tokens=80, output_tokens=5),
+                usage=RequestUsage(input_tokens=82, output_tokens=5),
                 model_name='function:call_tool:',
                 model_id='function:function:call_tool:',
                 timestamp=IsDatetime(),
@@ -3184,7 +3183,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=91, output_tokens=12),
+                usage=RequestUsage(input_tokens=93, output_tokens=12),
                 model_name='function:return_city_location:',
                 model_id='function:function:return_city_location:',
                 timestamp=IsDatetime(),
@@ -3266,7 +3265,7 @@ def test_prompted_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=RequestUsage(input_tokens=80, output_tokens=11),
+                usage=RequestUsage(input_tokens=82, output_tokens=11),
                 model_name='function:call_tool:',
                 model_id='function:function:call_tool:',
                 timestamp=IsDatetime(),
@@ -4776,8 +4775,9 @@ def test_tool_exceeds_token_limit_error():
     with pytest.raises(
         IncompleteToolCall,
         match=r'Model token limit \(10\) exceeded while generating a tool call, resulting in incomplete arguments\.',
-    ):
+    ) as exc_info:
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
+    assert isinstance(exc_info.value, OutputTokenLimitExceeded)
 
     with pytest.raises(
         IncompleteToolCall,
@@ -4813,13 +4813,13 @@ def test_empty_response_with_finish_reason_length():
     agent = Agent(FunctionModel(return_empty_response), output_type=str)
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(10\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(provider default\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello')
@@ -4834,13 +4834,13 @@ def test_thinking_only_response_with_finish_reason_length():
     agent = Agent(FunctionModel(return_thinking_only), output_type=str)
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(10\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(provider default\) exceeded before any response was generated.',
     ):
         agent.run_sync('Hello')
@@ -4864,13 +4864,13 @@ def test_truncated_structured_output_raises_without_retry(output_type: NativeOut
     agent = Agent(FunctionModel(truncated), output_type=output_type, retries=3)
 
     with pytest.raises(
-        UnexpectedModelBehavior,
+        OutputTokenLimitExceeded,
         match=r'Model token limit \(10\) exceeded while generating structured output, resulting in incomplete JSON\.',
     ):
         agent.run_sync('Hello', model_settings=ModelSettings(max_tokens=10))
     assert calls == 1
 
-    with pytest.raises(UnexpectedModelBehavior, match=r'Model token limit \(provider default\) exceeded'):
+    with pytest.raises(OutputTokenLimitExceeded, match=r'Model token limit \(provider default\) exceeded'):
         agent.run_sync('Hello')
 
 
@@ -13792,7 +13792,7 @@ async def test_agent_allows_none_output_validator_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
-                usage=RequestUsage(input_tokens=75, output_tokens=1),
+                usage=RequestUsage(input_tokens=77, output_tokens=1),
                 model_name='function:model_then_text:',
                 model_id='function:function:model_then_text:',
                 timestamp=IsNow(tz=UTC),

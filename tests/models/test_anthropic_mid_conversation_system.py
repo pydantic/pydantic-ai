@@ -176,7 +176,7 @@ class Case:
     id: str
     model: str
     expected_messages: list[dict[str, Any]]
-    expected_system: str | list[dict[str, str]] = 'You are a code reviewer.'
+    expected_system: str = 'You are a code reviewer.'
 
 
 CASES = [
@@ -203,11 +203,8 @@ CASES = [
     Case(
         id='inline-system-unsupported',
         model='claude-sonnet-5',
-        # The instructions also end with what the `<system>` tag means, on every request from the first.
-        expected_system=[
-            {'text': 'You are a code reviewer.', 'type': 'text'},
-            {'text': lookalike_note_announcement(system_role=False), 'type': 'text'},
-        ],
+        # The system prompt also says what the `<system>` tag means, from the request with the first `<system>` block.
+        expected_system=f'{lookalike_note_announcement(system_role=False)}\n\nYou are a code reviewer.',
         expected_messages=snapshot(
             [
                 {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -720,10 +717,7 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
     await Agent(model).run('Review it again.', message_history=message_history())
 
     call_kwargs = foundry_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['system'] == [
-        {'text': 'You are a code reviewer.', 'type': 'text'},
-        {'text': lookalike_note_announcement(system_role=False), 'type': 'text'},
-    ]
+    assert call_kwargs['system'] == f'{lookalike_note_announcement(system_role=False)}\n\nYou are a code reviewer.'
     assert call_kwargs['messages'] == snapshot(
         [
             {'role': 'user', 'content': [{'text': 'Review `def add(a, b): return a + b`.', 'type': 'text'}]},
@@ -1435,9 +1429,9 @@ async def test_haiku_follows_a_withdrawn_instruction_after_a_tool_result(
             'content': [
                 {
                     'text': """\
-<context id="agent:sign_off">
+<pyai:context id="agent:sign_off">
 This context has been withdrawn.
-</context>\
+</pyai:context>\
 """,
                     'type': 'text',
                 }

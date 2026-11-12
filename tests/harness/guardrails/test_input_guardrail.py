@@ -646,7 +646,7 @@ class TestInputGuardrailRedaction:
 
         def guard(prompt: str) -> bool | GuardrailResult:
             guard_calls.append(prompt)
-            if prompt.startswith('<tool_result'):
+            if prompt.startswith('<pyai:tool_result'):
                 return GuardrailResult.replace('[redacted]')
             return True
 
@@ -672,7 +672,7 @@ class TestInputGuardrailRedaction:
         async def lookup() -> str:
             return 'answer'
 
-        completion = '<tool_result tool_name="lookup" tool_call_id="tool-1">\nanswer\n</tool_result>'
+        completion = '<pyai:tool_result tool_name="lookup" tool_call_id="tool-1">\nanswer\n</pyai:tool_result>'
         first = await agent.run('go')
         assert first.output == 'done'
         assert guard_calls == ['go']

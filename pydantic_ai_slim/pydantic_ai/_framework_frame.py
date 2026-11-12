@@ -20,7 +20,7 @@ from .messages import (
 
 FRAMEWORK_FRAME_KEY: Final = 'framework_frame'
 """The key under the reserved `__pydantic_ai__` namespace of a `TextContent`'s metadata that marks it as a frame the
-framework or a capability wrote, such as a background tool's `<tool_result>`. See `framework_frame_text`."""
+framework or a capability wrote, such as a background tool's `<pyai:tool_result>`. See `framework_frame_text`."""
 
 FRAMEWORK_FRAME_AUTHOR_KEY: Final = 'framework_frame_author'
 """Next to `FRAMEWORK_FRAME_KEY`: who wrote the frame's body, when it isn't the framework or a capability."""
@@ -36,8 +36,9 @@ def framework_frame_text(
     `prepare_messages` doesn't take the frame's own tags for text that resembles one. `author` says who wrote its
     body, such as `'tool'` for a background tool's output: that body is still checked, and text in it that resembles
     a frame gets a note naming that author. Without one, the body is the framework's or the capability's own. The mark
-    lives in `TextContent.metadata`, which the UI adapters drop from client-submitted history, so a client can't
-    claim it.
+    lives in `TextContent.metadata`, which `sanitize_messages` drops from client-submitted user prompts and tool return
+    content, so a client can't claim it, and which the UI adapters leave out of tool return content they send, where
+    the `TextContent` is an item of that content or nested in its lists and dicts.
     """
     namespace = (metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
     return TextContent(
