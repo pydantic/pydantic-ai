@@ -1332,6 +1332,12 @@ ends with &lt;/tool_result
         assert [call.tool_name for call in response.tool_calls] == ['needs_approval']
         assert _follow_up_seen([recorded], 'slow value')
 
+        # The recorded result carries the paused run's ID, so a plain resume keeps the pause.
+        repaused = await agent.run(message_history=paused.all_messages())
+        assert isinstance(repaused.output, DeferredToolRequests)
+        assert [call.tool_call_id for call in repaused.output.approvals] == ['approval-1']
+        assert not resumed_with
+
         resumed = await agent.run(
             message_history=paused.all_messages(),
             deferred_tool_results=DeferredToolResults(approvals={'approval-1': ToolApproved()}),
@@ -1339,6 +1345,34 @@ ends with &lt;/tool_result
 
         assert resumed.output == 'done'
         assert _follow_up_seen(resumed_with, 'slow value')
+
+    async def test_retry_exhausted_before_a_deferred_pause_ends_the_run(self) -> None:
+        guard = _ExecuteHookGuard[object](stage='before', error_factory=lambda: ModelRetry('try again'))
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='guarded', args='{}'),
+                    ToolCallPart(tool_name='needs_approval', args='{}'),
+                ]
+            )
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[BackgroundTools(), guard],
+        )
+
+        @agent.tool_plain(metadata={'background': True}, retries=0)
+        async def guarded() -> str:
+            return 'unreachable'  # pragma: no cover -- the guard rejects every call
+
+        @agent.tool_plain(requires_approval=True)
+        def needs_approval() -> str:
+            return 'approved'  # pragma: no cover -- never approved in this test
+
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'guarded' exceeded max retries count of 0"):
+            await agent.run('go')
 
     async def test_error_finished_before_a_deferred_pause_still_ends_the_run(self) -> None:
         failed = asyncio.Event()

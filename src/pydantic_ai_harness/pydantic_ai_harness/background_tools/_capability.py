@@ -428,6 +428,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             # A task sends its outcome before it stops counting as live, so several can still be buffered here.
             for outcome in self._arrived():
                 self._deliver(ctx, outcome)
+            # No later node will settle them, so a retry that exhausts its budget ends the run here.
+            self._settle(ctx)
             return result
 
         for outcome in self._arrived():
