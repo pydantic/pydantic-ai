@@ -305,7 +305,7 @@ its daily quota is a `ModelQuotaExceededError`), and a 503 is only unavailable u
 overloaded. Anthropic's tier spend cap is a 429 too, but its `enforced_spend_limit_reached` error code makes it a
 `ModelQuotaExceededError`. A 400 is a `ModelRequestRejectedError`, or one of its subclasses when the provider says
 why: a `ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAuthenticationError` (the Gemini API
-sends `API_KEY_INVALID` as a 400). Exhausted credits, a reached spend limit or disabled billing are a
+sends `API_KEY_INVALID` as a 400). Exhausted credits, a reached spend limit, or disabled billing are a
 `ModelQuotaExceededError` instead, even when the provider sends them as a 400, as Anthropic and the Gemini API do.
 
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
