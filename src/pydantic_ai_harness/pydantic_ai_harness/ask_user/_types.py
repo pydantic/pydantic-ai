@@ -5,12 +5,23 @@ from __future__ import annotations
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Annotated, Protocol, TypeAlias
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 from typing_extensions import TypedDict
 
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai._utils import is_google_files_api_url
+from pydantic_ai.messages import (
+    CachePoint,
+    FileUrl,
+    TextContent,
+    ToolCallPart,
+    ToolReturn,
+    UploadedFile,
+    UserContent,
+    UserPromptPart,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 TOOL_NAME = 'ask_user_question'
@@ -149,17 +160,38 @@ class AskUserRequest:
         """
         if call.tool_name != TOOL_NAME:
             raise ValueError(f'expected an {TOOL_NAME!r} call, got {call.tool_name!r}')
-        arguments = _TOOL_ARGUMENTS.validate_python(call.args_as_dict())
-        return cls(questions=tuple(arguments['questions']), id=call.tool_call_id)
+        return rebuild_request(call)
+
+
+def rebuild_request(call: ToolCallPart, *, questions: object = None, request_id: object = None) -> AskUserRequest:
+    """The request behind an `ask_user_question` call, whatever name a toolset wrapper such as `PrefixTools` gave it.
+
+    `questions`, when given, are the ones the tool received, after hooks such as `before_tool_execute`
+    rewrote the call's arguments; otherwise the call's own arguments are used. `request_id`, when given,
+    is the ID the tool asked under; otherwise it is the call's ID.
+    """
+    arguments = _TOOL_ARGUMENTS.validate_python(call.args_as_dict() if questions is None else {'questions': questions})
+    return AskUserRequest(
+        questions=tuple(arguments['questions']),
+        id=request_id if isinstance(request_id, str) else call.tool_call_id,
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
 class AskUserAnswer:
-    """Picked labels, or a custom answer instead of those labels, for one question."""
+    """Picked labels, or a custom answer instead, with optional user notes for one question."""
 
     header: str
     selected: tuple[str, ...] = ()
     custom_answer: str | None = None
+    note: tuple[UserContent, ...] = ()
+    """User text and attachments, in order, accompanying either selected labels or a custom answer.
+
+    Text follows the custom-answer character rules. A nonempty note must contain nonblank text
+    or an attachment, not only whitespace or cache markers. Notes do not replace the answer.
+    File URLs must use HTTP(S) with `force_download=False`; provider-uploaded file references
+    are not accepted. Text metadata is not forwarded to message history.
+    """
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -168,6 +200,10 @@ class AskUserResponse:
 
     answers: tuple[AskUserAnswer, ...] = ()
     cancelled: bool = False
+
+
+AskUserResult: TypeAlias = ToolReturn[dict[str, list[str]]] | dict[str, list[str]] | str
+"""The answer dictionary or decline text, wrapped in `ToolReturn` when user notes accompany the answers."""
 
 
 class Answerer(Protocol):
@@ -180,6 +216,42 @@ class Answerer(Protocol):
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         """Put `request` to the user and return what they picked."""
         ...  # pragma: no cover
+
+
+def _check_note(note: tuple[UserContent, ...]) -> None:
+    if not isinstance(note, tuple):
+        raise ValueError('must be a tuple of `UserContent` items')
+    if not note:
+        return
+    # Reuse core's content-type guard before notes reach a model adapter.
+    try:
+        UserPromptPart(content=note)
+    except ValueError as exc:
+        raise ValueError('must contain only `UserContent` items') from exc
+    has_content = False
+    for item in note:
+        _check_note_file(item)
+        if isinstance(item, str | TextContent):
+            text = item if isinstance(item, str) else item.content
+            _printable(text, newlines=True)
+            has_content |= bool(text.strip())
+        elif not isinstance(item, CachePoint):
+            has_content = True
+    if not has_content:
+        raise ValueError('must not be blank')
+
+
+def _check_note_file(item: UserContent) -> None:
+    if isinstance(item, FileUrl):
+        if urlparse(item.url).scheme not in {'http', 'https'}:
+            raise ValueError('file URLs must use http or https')
+        if item.force_download is not False:
+            raise ValueError('file URLs must use `force_download=False`')
+        # Google treats these URLs as authenticated Files API references, not public downloads.
+        if is_google_files_api_url(item.url):
+            raise ValueError('must not contain provider-uploaded file references')
+    elif isinstance(item, UploadedFile):
+        raise ValueError('must not contain provider-uploaded file references')
 
 
 class ContextAnswerer(Protocol[AgentDepsT]):
@@ -197,10 +269,28 @@ class ContextAnswerer(Protocol[AgentDepsT]):
         ...  # pragma: no cover
 
 
-AnyAnswerer: TypeAlias = Answerer | ContextAnswerer[AgentDepsT]
-"""Either answerer signature, for hosts storing a callback to pass to `AskUser`.
+class TokenAnswerer(Protocol[AgentDepsT]):
+    """An answerer that may hand the question on and let the answer arrive later, through a resume token.
 
-`Answerer` remains the request-only protocol; `ContextAnswerer` also receives the asking run's context.
+    Three required positional parameters select this form. Return the response to answer right away,
+    as the other forms do, or `None` after delivering `token` to whoever will answer, such as in a
+    Slack message. The run then waits until the token is resolved with the JSON form of an
+    `AskUserResponse`: with `pydantic_ai.external_events.resolve_external_event` in process, or
+    through the durable engine's API, such as AWS Lambda's `SendDurableExecutionCallbackSuccess`.
+    """
+
+    async def __call__(
+        self, ctx: RunContext[AgentDepsT], request: AskUserRequest, token: str, /
+    ) -> AskUserResponse | None:
+        """Answer `request`, or deliver `token` and return `None`."""
+        ...  # pragma: no cover
+
+
+AnyAnswerer: TypeAlias = Answerer | ContextAnswerer[AgentDepsT] | TokenAnswerer[AgentDepsT]
+"""Any answerer signature, for hosts storing a callback to pass to `AskUser`.
+
+`Answerer` remains the request-only protocol; `ContextAnswerer` also receives the asking run's context,
+and `TokenAnswerer` also a resume token, so it can let the answer arrive later.
 """
 
 
@@ -209,6 +299,9 @@ def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
 
     A cancelled response carries no answers. A completed one answers every question with distinct
     labels that question offered, one of them unless `multi_select`, or a nonblank custom answer.
+    Notes must be `UserContent` tuples; a nonempty note needs nonblank text or an attachment.
+    Note text follows the custom-answer character rules. File references cannot claim provider
+    uploads, non-HTTP(S) URLs or privileged download modes.
     """
     if response.cancelled:
         if response.answers:
@@ -219,21 +312,29 @@ def check_response(request: AskUserRequest, response: AskUserResponse) -> None:
         question = questions.pop(answer.header, None)
         if question is None:
             raise ValueError(f'answer for unknown or repeated question {answer.header!r}')
-        if answer.custom_answer is not None:
-            if answer.selected:
-                raise ValueError('a custom answer cannot also select options')
-            if not answer.custom_answer.strip():
-                raise ValueError('a custom answer must not be blank')
-            _printable(answer.custom_answer, newlines=True)
-            continue
-        labels = {option.label for option in question.options}
-        if unknown := [label for label in answer.selected if label not in labels]:
-            raise ValueError(f'answer for {answer.header!r} picked options it does not offer: {unknown}')
-        if not answer.selected:
-            raise ValueError(f'answer for {answer.header!r} picked nothing')
-        if len(set(answer.selected)) != len(answer.selected):
-            raise ValueError(f'answer for {answer.header!r} picked the same option twice')
-        if len(answer.selected) > 1 and not question.multi_select:
-            raise ValueError(f'answer for {answer.header!r} picked several options but it is single-select')
+        _check_answer(question, answer)
     if questions:
         raise ValueError(f'unanswered questions: {sorted(questions)}')
+
+
+def _check_answer(question: Question, answer: AskUserAnswer) -> None:
+    try:
+        _check_note(answer.note)
+    except ValueError as exc:
+        raise ValueError(f'answer note for {answer.header!r} {exc}') from exc
+    if answer.custom_answer is not None:
+        if answer.selected:
+            raise ValueError('a custom answer cannot also select options')
+        if not answer.custom_answer.strip():
+            raise ValueError('a custom answer must not be blank')
+        _printable(answer.custom_answer, newlines=True)
+        return
+    labels = {option.label for option in question.options}
+    if unknown := [label for label in answer.selected if label not in labels]:
+        raise ValueError(f'answer for {answer.header!r} picked options it does not offer: {unknown}')
+    if not answer.selected:
+        raise ValueError(f'answer for {answer.header!r} picked nothing')
+    if len(set(answer.selected)) != len(answer.selected):
+        raise ValueError(f'answer for {answer.header!r} picked the same option twice')
+    if len(answer.selected) > 1 and not question.multi_select:
+        raise ValueError(f'answer for {answer.header!r} picked several options but it is single-select')

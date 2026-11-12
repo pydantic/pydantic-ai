@@ -8,18 +8,20 @@ opened with `open` or `new` run here, each as a task of `serving`, and close aft
 import logging
 import time
 from collections.abc import AsyncGenerator, Callable, Generator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from anyio import CancelScope, Event, create_task_group, sleep
+from anyio import CancelScope, Event, create_task_group, sleep, to_thread
 from anyio.abc import TaskGroup, TaskStatus
 
 from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import LiveSession, SessionEndReason
+from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.plugins.process_plugins import JoinedSessions, LiveRuntime, handling
+from pydantic_clai2.runtime.live_registry import LiveRegistry
 from pydantic_clai2.runtime.session import continuing_fork
 from pydantic_clai2.runtime.session_workspace import workspace_directory
 
@@ -50,6 +52,18 @@ class Served(Protocol):
 
     async def serve(self, *, resume: str | None, ready: Callable[[], None]) -> SessionEndReason:
         """Restore `resume`, load plugins, call `ready`, and take input until it ends or is cancelled."""
+        ...
+
+    def send_input(self, text: str) -> None:
+        """Enter `text` as Enter at its prompt does."""
+        ...
+
+    def restarts_clai(self) -> bool:
+        """Whether `/reload` and `/update` restart CLAI from it."""
+        ...
+
+    def restart_refusal(self) -> str | None:
+        """Why `/reload` and `/update` cannot restart CLAI from it now; `None` when they can."""
         ...
 
 
@@ -94,16 +108,23 @@ class LiveRuntimes(JoinedSessions):
         """Builds the sessions `open` and `new` start; `None` where CLAI opens no others, as with `-p`."""
         self.focused: str | None = None
         """The session the terminal shows, never closed for being idle; `None` while no terminal shows one."""
+        self.dialogs: Dialogs | None = None
+        """A remote UI's dialogs, where a command asks while CLAI has no terminal; the web UI sets its own."""
         self._group: TaskGroup | None = None
         self._opening: dict[str, Event] = {}
         """Conversations being opened or resumed, set once that is done."""
         self._switching: dict[str, Event] = {}
         """Sessions resuming another conversation, by ID, set once they have."""
         self._building = False
+        self.registry = LiveRegistry(self.listing)
 
     def listing(self) -> list[LiveSession]:
         """Every live session, oldest first, leaving out those `open` and `new` are still loading."""
         return [live.runtime.live_session for live in self._live.values() if live.ready]
+
+    def restarter(self) -> Served | None:
+        """The live session CLAI restarts from; `None` while none does, as while the terminal shows one not listed."""
+        return next((live.runtime for live in self._live.values() if live.ready and live.runtime.restarts_clai()), None)
 
     def add(self, runtime: Served) -> None:
         """Count `runtime` among the live sessions, following the settings the others save; once is enough."""
@@ -170,18 +191,23 @@ class LiveRuntimes(JoinedSessions):
         What the block raises propagates as it is, not in an exception group.
         """
         try:
-            async with create_task_group() as group:
-                # Set at once: a browser may open a session as soon as the web UI it serves is up.
-                self._group = group
-                group.start_soon(self._close_idle_ones)
+            async with AsyncExitStack() as stack:
                 try:
-                    # A new sessions database switches to WAL on first use, which fails at once when two sessions'
-                    # first saves race, so make it before the sessions opened from here run.
-                    await self._conversations.listing(limit=1)
-                    yield
-                finally:
-                    self._group = None
-                    group.cancel_scope.cancel()
+                    await stack.enter_async_context(self.registry.serving(self.subscribe))
+                except OSError as exc:
+                    _LOGGER.warning('Live session discovery unavailable: %s', exc)
+                async with create_task_group() as group:
+                    # Set at once: a browser may open a session as soon as the web UI it serves is up.
+                    self._group = group
+                    group.start_soon(self._close_idle_ones)
+                    try:
+                        # A new sessions database switches to WAL on first use, which fails at once when two sessions'
+                        # first saves race, so make it before the sessions opened from here run.
+                        await self._conversations.listing(limit=1)
+                        yield
+                    finally:
+                        self._group = None
+                        group.cancel_scope.cancel()
         except BaseExceptionGroup as errors:
             if len(errors.exceptions) == 1:
                 raise errors.exceptions[0] from None
@@ -210,14 +236,16 @@ class LiveRuntimes(JoinedSessions):
             saved = await self._conversations.get(conversation_id=conversation_id)
             continuing = await continuing_fork(self._conversations, saved.summary)
             if continuing is None:
-                return await self._start(workspace_directory(saved.summary.workspace), resume=conversation_id)
+                directory = await to_thread.run_sync(workspace_directory, saved.summary.workspace)
+                return await self._start(directory, resume=conversation_id)
         finally:
             del self._opening[conversation_id]
             opened.set()
         return await self.open(continuing.conversation_id)
 
     async def new(self, *, workspace: Path | None = None) -> LiveSession:
-        return await self._start(None if workspace is None else workspace_directory(str(workspace)), resume=None)
+        directory = None if workspace is None else await to_thread.run_sync(workspace_directory, str(workspace))
+        return await self._start(directory, resume=None)
 
     @contextmanager
     def claim(self, conversation_id: str, *, holder: LiveSession) -> Generator[None]:

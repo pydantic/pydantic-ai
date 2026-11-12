@@ -45,6 +45,7 @@ from pydantic_ai_harness.code_mode import (
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.guardrails import GuardrailResult, ToolGuardrail
+from pydantic_ai_harness.permissions import PermissionMode, Permissions
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.cli.command_context import CommandContext
@@ -57,7 +58,6 @@ from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.speculation import Speculation, SpeculationCounters
 from pydantic_clai2.runtime.speculative_mode import (
     NATIVE_TOOLS,
-    SPECULATIVE_TOOLS,
     ShowSandboxCalls,
     SpeculativeExecution,
     WorkspaceCodeMode,
@@ -204,7 +204,8 @@ class TestFold:
             capabilities=[Coder[None](repo_context=False), customization_guide(), LocalWorkspace(tmp_path)],
         )
         await agent.run('hi')
-        assert {*SPECULATIVE_TOOLS, *NATIVE_TOOLS} <= set(seen)
+        assert {'list_files', 'read_file', 'grep', *NATIVE_TOOLS} <= set(seen)
+        assert 'search_clai_docs' not in seen and 'read_clai_docs' not in seen
 
     async def test_shell_folds_in_but_other_code_tools_stay_native(self, tmp_path: Path) -> None:
         seen: list[AgentInfo] = []
@@ -285,6 +286,62 @@ class TestFold:
 
 
 class TestEagerTiming:
+    @pytest.mark.parametrize(
+        'call',
+        [
+            'await read_clai_docs(path="reference#saved-api-keys")',
+            'await search_clai_docs(query="saved api keys")',
+        ],
+        ids=['read-docs', 'search-docs'],
+    )
+    async def test_loaded_docs_tools_speculate(self, call: str, tmp_path: Path) -> None:
+        counters = SpeculationCounters()
+        probe_started, stream_finished = anyio.Event(), anyio.Event()
+        head = f'text = {call}\nwaited = await probe()\npad = 0\n'
+        tail = 'done = 1\ntext\n'
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if len(messages) == 1:
+                yield {0: DeltaToolCall(name='load_capability', json_args='{"id": "clai_customization"}')}
+                return
+            if len(messages) > 3:
+                yield 'done'
+                return
+            args = json.dumps({'code': head + tail})
+            yield {0: DeltaToolCall(name='run_code')}
+            split = args.index('done = 1')
+            for offset in range(0, split, 8):
+                yield {0: DeltaToolCall(json_args=args[offset : min(offset + 8, split)])}
+                await anyio.sleep(0)
+            await probe_started.wait()
+            yield {0: DeltaToolCall(json_args=args[split:])}
+            stream_finished.set()
+
+        docs = customization_guide()
+        sandbox = speculative_capabilities(counters, (docs,))
+        agent = Agent(
+            FunctionModel(stream_function=stream),
+            deps_type=type(None),
+            capabilities=[docs, *sandbox, LocalWorkspace(tmp_path)],
+        )
+
+        @agent.tool_plain
+        async def probe() -> str:
+            """Hold the stream open until the preceding docs call has run."""
+            probe_started.set()
+            await stream_finished.wait()
+            return 'probed'
+
+        agent_run_messages: list[ModelMessage] = []
+        with anyio.fail_after(10):
+            async with agent.run_stream_events('Find the saved API keys documentation') as events:
+                async for event in events:
+                    if isinstance(event, AgentRunResultEvent):
+                        agent_run_messages = event.result.all_messages()
+        assert (counters.hits, counters.misses, counters.wasted) == (1, 0, 0)
+        returns = [part for message in agent_run_messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        assert any('Saved API keys' in str(part.content) for part in returns)
+
     @pytest.mark.parametrize('rekey', [False, True])
     async def test_counts_speculative_hits_and_eager_overlap(self, rekey: bool, tmp_path: Path) -> None:
         counters = SpeculationCounters()
@@ -518,6 +575,35 @@ class TestWorkspaceMount:
         assert returned == ['original PermissionError']
         assert secret.read_text() == 'original'
 
+    @pytest.mark.parametrize(('mode', 'seen'), [('read-only', 'original PermissionError'), ('auto', 'original')])
+    async def test_read_only_permissions_mount_read_only(self, tmp_path: Path, mode: PermissionMode, seen: str) -> None:
+        """`/permissions read-only` asks before file writes, so `pathlib` in the sandbox must not make them unasked."""
+        secret = tmp_path.resolve() / '.env'
+        secret.write_text('original')
+        calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(secret))})])
+        returned: list[object] = []
+        instructions: list[str | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            returned.extend(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+            )
+            return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+        file_system = FileSystem[object](read_only_patterns=[])
+        permissions = Permissions[object](mode)
+        sandbox = speculative_capabilities(SpeculationCounters(), (file_system, permissions))
+        capabilities = [file_system, permissions, *sandbox, LocalWorkspace(tmp_path)]
+        await Agent(streamed(respond), capabilities=capabilities).run('go')
+        assert returned == [seen]
+        mounted = 'read-only' if mode == 'read-only' else 'read-write'
+        assert all(f'mounted {mounted}' in (text or '') for text in instructions)
+        assert secret.read_text() == ('original' if mode == 'read-only' else 'overwritten')
+
     async def test_sandbox_workspace_is_not_mounted(self, tmp_path: Path) -> None:
         """A sandbox plugin's workspace is elsewhere, so the host directory stays out of the sandbox."""
         secret = tmp_path.resolve() / '.env'
@@ -588,7 +674,9 @@ class TestSpeculativeExecution:
         for event in (
             claimed(ready=True, elapsed_ms=250),
             claimed(ready=False, elapsed_ms=900),
-            SpeculativeCallMissedEvent(sandbox_function='grep', wrapped_tool_name='grep', nested_tool_call_id='c__2'),
+            SpeculativeCallMissedEvent(
+                sandbox_function_name='grep', wrapped_tool_name='grep', nested_tool_call_id='c__2'
+            ),
             SpeculativeCallEvictedEvent(launch_id='l2', wrapped_tool_name='grep', state='ready'),
             EagerExecutionCompletedEvent(saved_ms=1_000),
             PartStartEvent(index=0, part=TextPart('ignored')),

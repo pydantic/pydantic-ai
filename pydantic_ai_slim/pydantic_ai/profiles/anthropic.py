@@ -20,6 +20,35 @@ _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetch
 `AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
 per-model in the profile below."""
 
+_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
+
+This is the list Anthropic publishes for the feature, and accepting the entry is not the same as
+honoring it. Older models reject it outright (`role 'system' is not supported on this model`), but
+`claude-sonnet-5` returns 200 and then ignores it — the docs say the feature "is not available on
+Claude Sonnet 5; use the top-level `system` field instead", and measuring agrees: asked to lift a
+restriction the top-level prompt set, it refuses every time where Opus 5 complies every time, and on
+a plain formatting instruction the `<system>`-tagged fallback actually lands more often than the
+entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for adding a model here.
+
+`claude-sonnet-5-5` is published as supported and stays in although, asked to lift a restriction the
+top-level prompt set, it refuses every time. It refuses the `<system>`-tagged fallback every time too,
+so the entry costs nothing measurable and keeps the instruction's operator authority.
+
+`claude-mythos-5` is published as supported but isn't reachable with our credentials.
+
+It lives here rather than beside `AnthropicProvider` so `OpenRouterProvider` can share it without the `anthropic`
+SDK. It's a fact about Anthropic's API, not the model family, so `anthropic_model_profile()` doesn't apply it: the
+Bedrock Converse API and other OpenAI-compatible gateways share that profile.
+"""
+
 ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 """The unified sampling settings gated by `anthropic_disallows_sampling_settings`.
 
@@ -63,7 +92,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_supports_fast_speed: bool
     """Whether the model supports fast inference speed (`anthropic_speed='fast'`). Default: `False`.
 
-    Currently Claude Opus 4.6, 4.7, 4.8, 5, and 5.5 support fast mode. See the Anthropic docs for the latest list.
+    Currently Claude Opus 4.6, 4.7, 4.8, 5, and 5.5, Fable 5.2, and Mythos 5.2 support fast mode. See the Anthropic docs
+    for the latest list.
     """
 
     anthropic_supports_adaptive_thinking: bool
@@ -87,7 +117,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model supports Anthropic-managed dynamic filtering for web search/fetch. Default: `False`.
 
     When enabled, Pydantic AI selects the `web_search_20260209` / `web_fetch_20260209` tool versions,
-    which let Claude filter web results via code execution before they enter context.
+    which let Claude filter web results via code execution before they enter context. Anthropic web tool
+    `provider_settings` can select the `20260318` versions instead, which also support dynamic filtering.
     """
 
     anthropic_supports_xhigh_effort: bool
@@ -154,7 +185,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     [`AnthropicModel.compact_messages`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages] raises a
     `UserError` for a model without it. It's a fact about the Messages API, which no `AnthropicModel` client narrows,
     so `AnthropicProvider` sets it for Claude
-    Fable 5 and 5.1, Mythos 5, 5.1 and Preview, Opus 4.6, 4.7, 4.8, 5 and 5.5, Sonnet 4.6, 5 and 5.5, and Haiku 5.5;
+    Fable 5, 5.1 and 5.2, Mythos 5, 5.1, 5.2 and Preview, Opus 4.6, 4.7, 4.8, 5 and 5.5, Sonnet 4.6, 5 and 5.5, and Haiku 5.5;
     see [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand).
     """
 
@@ -168,7 +199,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """The most output tokens the model can generate in one response, thinking included. Default: `None` (unknown).
 
     `AnthropicModel` sends it as `max_tokens` when the request doesn't set one, so responses are only cut off at the
-    model's limit, like on APIs where the output limit is optional.
+    model's limit, like on APIs where the output limit is optional, and lowers a `max_tokens` above it to it, as
+    Anthropic rejects that with a 400. `BedrockConverseModel` does the same for Claude.
     """
 
     anthropic_rejects_max_tokens_beyond_context_window: bool
@@ -183,9 +215,11 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_binds_thinking_blocks: bool
     """Whether the model binds each thinking block to the conversation prefix that produced it. Default: `False`.
 
-    Claude Fable 5.1, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Haiku 5.5 bind replayed thinking blocks to
-    the conversation prefix. Anthropic documents a 400 after `system`, `tools`, or earlier `messages` change; for
-    accounts created before 31 August 2026, the error requires `thinking.block_binding.prefix_mismatch_behavior`.
+    Claude Fable 5.1 and 5.2, Claude Mythos 5.2, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Haiku 5.5 bind
+    replayed thinking blocks to the conversation prefix. Anthropic documents a 400 after `system`, `tools`, or earlier
+    `messages` change; on Fable 5.1, Opus 5.5, Sonnet 5.5, and Haiku 5.5, for accounts created before 31 August 2026,
+    the error requires `thinking.block_binding.prefix_mismatch_behavior`. Fable 5.2 and Mythos 5.2 return it on every
+    account.
     When True, Pydantic AI preserves the account's default behavior on the first request; if Anthropic
     rejects a stale block, it retries once with `thinking.block_binding.prefix_mismatch_behavior='drop_block'`
     and warns after the retry succeeds. See [Anthropic's thinking troubleshooting
@@ -246,6 +280,16 @@ class AnthropicModelProfile(ModelProfile, total=False):
     and Foundry clients, whose count endpoints haven't been verified to accept them. Of the endpoints an
     `AsyncAnthropic` client reaches, the Anthropic API's and Pydantic AI Gateway's are verified: set it to `False` if
     your client's `base_url` points at a proxy whose count endpoint rejects server tools.
+    """
+
+    anthropic_calls_cited_web_tools_directly: bool
+    """Whether a request that asks for citations sends the `20260209` or `20260318` web tools it cites with
+    `allowed_callers=['direct']`, so their results are cited. Default: `False`.
+
+    See [Web Tool Callers](../models/anthropic.md#web-tool-callers) for the requests that keep the default callers.
+    When the provider's profile doesn't set it, `AnthropicModel` turns it on for the `AsyncAnthropic` client and leaves
+    it off for every other client. Of those, Claude Platform on AWS (`AsyncAnthropicAWS`) and Microsoft Foundry also
+    send those versions, but haven't been verified to accept `allowed_callers` with citations.
     """
 
 
@@ -324,7 +368,14 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 
     supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
     anthropic_supports_fast_speed = model_name.startswith(
-        ('claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5')
+        (
+            'claude-opus-4-6',
+            'claude-opus-4-7',
+            'claude-opus-4-8',
+            'claude-opus-5',
+            'claude-fable-5-2',
+            'claude-mythos-5-2',
+        )
     )
 
     # Sonnet 4.6+, Opus 4.6+, and Haiku 5.5 support adaptive thinking; older models use budget-based.
@@ -476,24 +527,41 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     disables_thinking_with_between_tools = model_name.startswith('claude-sonnet-5-5')
     distrusts_system_after_tool_result = model_name.startswith('claude-haiku-5-5')
 
-    # The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` (`any`/`tool`) outright, unlike
-    # other Anthropic models which only reject forcing alongside extended thinking. Anthropic's
-    # forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1, and `claude-fable-5` accepts
-    # both forcing shapes live (200 on `any` and `tool`, GA and beta endpoints), so Fable 5, Mythos 5,
+    # The 5.1 and 5.2 generations, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` (`any`/`tool`) outright,
+    # unlike other Anthropic models which only reject forcing alongside extended thinking. Anthropic's
+    # forcing-tool-use table names Claude Fable 5.1 and 5.2 and Claude Mythos 5.1 and 5.2, and `claude-fable-5`
+    # accepts both forcing shapes live (200 on `any` and `tool`, GA and beta endpoints), so Fable 5, Mythos 5,
     # and Mythos Preview no longer belong here. `claude-opus-5-5` returns a 400 for both shapes where
     # `claude-opus-5` returns 200, and likewise `claude-sonnet-5-5` where `claude-sonnet-5` returns 200.
     supports_forced_tool_choice = not model_name.startswith(
-        ('claude-fable-5-1', 'claude-mythos-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5')
+        (
+            'claude-fable-5-1',
+            'claude-fable-5-2',
+            'claude-mythos-5-1',
+            'claude-mythos-5-2',
+            'claude-opus-5-5',
+            'claude-sonnet-5-5',
+        )
     )
 
-    # Claude Fable 5.1, Opus 5.5, Sonnet 5.5, and Haiku 5.5 bind thinking blocks to the conversation prefix.
-    # Anthropic documents this behavior for Haiku 5.5; a live `drop_block` probe returned the expected transformation
-    # after a prefix change, but the explicit `error` behavior was not probed. Claude Fable 5, Opus 5, and Sonnet 5
-    # return 200 for a replayed block under explicit `prefix_mismatch_behavior='error'` where Opus 5.5 and Sonnet 5.5
-    # return a 400 after the `system` prompt changes. Anthropic documents that Claude Mythos 5.1 "doesn't run this
-    # check" — the one capability on which it is not Fable 5.1's mirror.
+    # Claude Fable 5.1 and 5.2, Mythos 5.2, Opus 5.5, Sonnet 5.5, and Haiku 5.5 bind thinking blocks to the
+    # conversation prefix. Anthropic documents this behavior for Haiku 5.5; a live `drop_block` probe returned the
+    # expected transformation after a prefix change, but the explicit `error` behavior was not probed. Claude Fable 5,
+    # Opus 5, and Sonnet 5 return 200 for a replayed block under explicit `prefix_mismatch_behavior='error'` where
+    # Opus 5.5 and Sonnet 5.5 return a 400 after the `system` prompt changes. `claude-fable-5-2` returns that 400 with
+    # `prefix_mismatch_behavior` unset on an account created before 31 August 2026, where `claude-fable-5-1` returns
+    # 200; Anthropic documents Mythos 5.2 as enforcing the check on every account, as Fable 5.2 does. Anthropic
+    # documents that Claude Mythos 5.1 "doesn't run this check" — the one capability on which it is not Fable 5.1's
+    # mirror.
     binds_thinking_blocks = model_name.startswith(
-        ('claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5')
+        (
+            'claude-fable-5-1',
+            'claude-fable-5-2',
+            'claude-mythos-5-2',
+            'claude-opus-5-5',
+            'claude-sonnet-5-5',
+            'claude-haiku-5-5',
+        )
     )
 
     supports_dynamic_filtering = model_name.startswith(

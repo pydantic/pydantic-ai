@@ -1,6 +1,6 @@
 # Agents Core
 
-Read this file when the user needs the core `Agent` workflow: creating agents, choosing output types, using dependencies, defining specs, selecting models, or choosing how to run/stream an agent.
+Read this file when the user needs the core `Agent` workflow: creating agents, choosing output types, using dependencies, defining specs, selecting models, reusing an OpenAI Responses WebSocket, or choosing how to run/stream an agent.
 
 ## Create a Basic Agent
 
@@ -15,7 +15,7 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
 )
@@ -199,7 +199,7 @@ Deferred capabilities and realtime sessions do not support this update policy.
 Leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
 A `@agent.system_prompt(dynamic=True)` function is re-run for each later run of a conversation and, by default, rewrites its part in history in place, which busts the prompt cache. Prefer instructions; when a system prompt is needed (other agents continue the history), use `@agent.system_prompt(on_change='append')` (which implies `dynamic=True`): a changed value is appended as a new `SystemPromptPart` sent as `<context id="system_prompt:<name>">`, where `<name>` (the function's `__name__`, or `name=`) is visible to the model. History ties the prompt to the function's `__qualname__`, so renaming or moving the function disconnects it from existing conversations, even with `name=`.
 The deferred capability catalog and Harness `SubAgents` and `RepoContext` instructions already append their changes.
-So do MCP server instructions from `MCPToolset(..., include_instructions=True)`, keyed `toolset:<id>` (a URL toolset's `id` defaults to its hostname; durable execution needs an explicit one); stdio and in-process servers need an `id=` to append. Only enable `include_instructions` for servers you trust.
+So do MCP server instructions from `MCPToolset(..., include_instructions=True)`, keyed `toolset:<id>` (a URL toolset's `id` defaults to its hostname; durable execution needs an explicit one); stdio and in-process servers need an `id=` to append. Only enable `include_instructions` for servers you trust. The `MCP` capability includes them by default; pass `MCP(..., include_instructions=False)` for a server you don't trust, such as one your end users supply.
 
 ## Define Agents Declaratively with Specs
 
@@ -245,10 +245,24 @@ Examples:
 
 Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/), one `PYDANTIC_AI_GATEWAY_API_KEY` reaches models from several providers, with spending limits and cost monitoring in Logfire. Prefix the model string with `gateway/`, using the provider's API format:
 
-- `gateway/anthropic:claude-fable-5-1`
+- `gateway/anthropic:claude-fable-5-2`
 - `gateway/openai:gpt-6-sol`
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
+
+## Reuse an OpenAI Responses WebSocket
+
+Install `pydantic-ai-slim[openai-realtime]`. Pass `OpenAIResponsesModelSettings(openai_transport='websocket')` as `settings=` on `OpenAIResponsesModel`, or as `model_settings=` on an agent or run. A plain dict fails type checking because `openai_transport` is not a `ModelSettings` key.
+Other models ignore the setting, so code that takes a model string doesn't change.
+Each run opens a socket on its first request that can use one and closes it at the end; wrap back-to-back runs, or an app's lifetime, in `async with agent:` or `async with model:` to keep one socket.
+WebSocket-mode requests, including HTTP overflow, default `openai_previous_response_id` to `'auto'`, continuing only from reachable state. A single-request run pays the handshake for nothing.
+Runs given the same model instance share one socket per event loop: on `api.openai.com` each concurrent request gets its own `stream_id` lane; other hosts run one at a time unless the profile sets `openai_responses_supports_websocket_stream_id=True`.
+These requests use HTTP without a warning: a direct `model.request()` outside a run or `async with`, durable execution units without an outer model or agent context on their loop, background or resumed requests, no free lane, and headers that differ from the handshake's. To share a connection across Temporal activities, enter the registered model around `Worker`; the activity result still checkpoints independently. Inspect `pydantic_ai.transport` on the `chat` span. Under Temporal, inspect the model activity span instead. WebSocket mode records `'websocket'` or `'http'`. HTTP-only mode leaves the attribute unset.
+Early rejection frames with status 408, 409, 429 or 5xx use the effective `max_retries` budget. Set it to zero when the durable engine owns retries; a disconnect or error after response events start propagates to the caller.
+A missing extra, non-asyncio backends, and models whose profile sets `openai_responses_supports_websocket=False` warn and use HTTP. `profile=OpenAIModelProfile(openai_responses_supports_websocket=True)` overrides the flag for Azure and the gateway with static credentials. The OAuth providers, `OpenAICodexModel`, and clients with API key callbacks, workload identities, Azure AD token providers or HTTP client authentication always use HTTP, so credentials resolve for every request.
+A closed or failed socket, or one nearing OpenAI's 60-minute limit, is replaced on the next request; a failure mid-request raises `ModelConnectionError`, so `ModelFallback` works.
+A response stored server-side (the default) continues from any socket or HTTP; with `openai_store=False`, keep the full message history, since only the socket that created it can continue from it.
+Use [OpenAI Responses WebSockets](https://pydantic.dev/docs/ai/models/openai/#responses-websockets) for the full list of fallbacks and limits.
 
 ## Run Methods and Streaming
 
@@ -323,15 +337,15 @@ from pydantic_ai.capabilities import ModelFallback
 agent = Agent(
     'openai:gpt-6.1-sol',
     name='fallback_agent',
-    capabilities=[ModelFallback('anthropic:claude-fable-5-1')],
+    capabilities=[ModelFallback('anthropic:claude-fable-5-2')],
 )
 ```
 
-`fallback_on` defaults to `ModelAPIError`; it also takes exception types, exception handlers, and response handlers (`(ModelResponse) -> bool`, which reject a successful response). Each candidate gets its own `prepare_model_request` pass and native tool factory call (with the candidate as `ctx.model`), so provider-specific preparation is redone per model, and outer capabilities only see the accepted response. Use `FallbackModel` instead only outside an agent (direct model requests or a standalone `Model`).
+`fallback_on` defaults to `(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)`: API errors, refusals (any `finish_reason='content_filter'` response, empty or with partial text) and cut-off responses (any `finish_reason='length'` response, including cut-off text that would otherwise be the output). The backup model applies its own safety policy and may answer within the token limit. Leave `ContentFilterError` or `OutputTokenLimitExceeded` out to opt out of either, e.g. when `max_tokens` is a deliberate cap. `FallbackModel` defaults to `(ModelAPIError,)` and falls back on refusals or cut-off responses only when `ContentFilterError` or `OutputTokenLimitExceeded` is named. Streamed refusals and cut-off responses are never fallen back from. `fallback_on` also takes exception types, exception handlers, and response handlers (`(ModelResponse) -> bool`, which reject a successful response). Each candidate gets its own `prepare_model_request` pass and native tool factory call (with the candidate as `ctx.model`), so provider-specific preparation is redone per model, and outer capabilities only see the accepted response. Use `FallbackModel` instead only outside an agent (direct model requests or a standalone `Model`).
 
 Each step restarts the chain from the step's model. Pass `sticky=True` to keep a conversation on the candidate it fell back to, which keeps that provider's prompt cache warm and stops retrying a failing primary every step. The agent records the answering model as each response's `model_id` and a fallback as its `failed_attempts`, so stickiness carries over to later runs continuing that history. Only a fallback makes a conversation sticky: a candidate picked with `run(model=...)` that answered without one doesn't. It only replaces the agent's default model, not `run(model=...)`, `override(model=...)` or `SelectModel`, and if the sticky candidate fails, the chain continues after it and wraps around.
 
-In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError], sticky: true}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
+In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError], sticky: true}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions`, `ContentFilterError` and `OutputTokenLimitExceeded`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
 
 Good defaults:
 

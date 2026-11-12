@@ -57,17 +57,21 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.capabilities.model_fallback import _SpecFallbackError  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import (
+    ContentFilterError,
     FallbackExceptionGroup,
+    IncompleteToolCall,
     ModelAPIError,
     ModelRateLimitError,
     ModelRetry,
+    OutputTokenLimitExceeded,
     RetryModelRequest,
     RunCancelled,
     RunTimedOut,
+    UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import CompactionPart, ModelRequestAttempt, ToolReturnPart
+from pydantic_ai.messages import CompactionPart, ModelRequestAttempt, ModelResponsePart, ToolReturnPart
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -1592,7 +1596,7 @@ async def test_rejected_attempt_span_status_says_what_rejected_it(capfire: Captu
     await _capability_agent(*chain, instrument=True).run('x')
     assert rejected_statuses() == ['Response rejected']
     await _fallback_model_agent(*chain, instrument=True).run('x')
-    assert rejected_statuses() == ['Response rejected by a `fallback_on` response handler']
+    assert rejected_statuses() == ['Response rejected by `fallback_on`']
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
@@ -2557,13 +2561,13 @@ async def test_spec_fallback_on_names_only_fall_back_on_those_errors(fallback_on
 
 
 def test_spec_fallback_on_names_every_public_model_api_error():
-    """Every public `ModelAPIError` class can be named in a spec, and nothing else can."""
+    """Every public `ModelAPIError` class, `ContentFilterError` and `OutputTokenLimitExceeded` can be named in a spec."""
     public_errors = {
         name
         for name in exceptions.__all__
         if isinstance(cls := getattr(exceptions, name), type) and issubclass(cls, ModelAPIError)
     }
-    assert set(get_args(_SpecFallbackError)) == public_errors
+    assert set(get_args(_SpecFallbackError)) == public_errors | {'ContentFilterError', 'OutputTokenLimitExceeded'}
 
 
 @pytest.mark.parametrize(
@@ -2571,8 +2575,8 @@ def test_spec_fallback_on_names_every_public_model_api_error():
     [
         pytest.param(
             {'ModelFallback': {'models': ['working'], 'fallback_on': ['ModelRateLimitError', 'UserError']}},
-            "`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, got ['UserError']. "
-            'Valid names: ModelAPIError, ModelHTTPError, ',
+            '`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, '
+            "`ContentFilterError` and `OutputTokenLimitExceeded`, got ['UserError']. Valid names: ModelAPIError, ",
             id='not-a-model-api-error',
         ),
         pytest.param(
@@ -2653,3 +2657,304 @@ async def test_override_spec_sets_the_fallback():
         result = await agent.run('x')
     assert result.output == 'success (no tool calls)'
     assert attempted_models(result) == ['failing', 'test']
+
+
+# --- Refusals ---
+
+
+def _refusal(name: str, calls: list[str], text: str | None = None) -> FunctionModel:
+    """A model whose content filter ends every response, as a provider's safety refusal does."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        return ModelResponse(
+            parts=[TextPart(text)] if text else [],
+            finish_reason='content_filter',
+            provider_details={'refusal': 'I cannot help with that.'},
+            usage=RequestUsage(input_tokens=10, output_tokens=2),
+        )
+
+    return FunctionModel(respond, model_name=name)
+
+
+def _answering(name: str, calls: list[str]) -> FunctionModel:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        return ModelResponse(parts=[TextPart(f'{name} answered')])
+
+    return FunctionModel(respond, model_name=name)
+
+
+@pytest.mark.parametrize('text', [None, 'I cannot help with that.'], ids=['empty', 'with-text'])
+async def test_falls_back_when_a_model_refuses_by_default(text: str | None):
+    """A response the content filter ended falls back to the next model, whether or not it has partial text."""
+    calls: list[str] = []
+    agent = Agent(_refusal('primary', calls, text), capabilities=[ModelFallback(_answering('backup', calls))])
+    result = await agent.run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('primary', 'rejected')]
+    # The refused response was billed.
+    assert result.usage.input_tokens == 10 + 51
+
+
+async def test_a_refusal_ends_the_run_when_opted_out():
+    """With `fallback_on=(ModelAPIError,)`, a refusal is accepted, so the run ends on `ContentFilterError` as before."""
+    calls: list[str] = []
+    agent = Agent(
+        _refusal('primary', calls),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(ModelAPIError,))],
+    )
+    with pytest.raises(ContentFilterError, match='Content filter triggered'):
+        await agent.run('x')
+    assert calls == ['primary']
+
+
+async def test_a_refusal_with_text_is_the_output_when_opted_out():
+    """With `fallback_on=(ModelAPIError,)`, a refusal with text is the run's output, as without `ModelFallback`."""
+    calls: list[str] = []
+    agent = Agent(
+        _refusal('primary', calls, 'I cannot help with that.'),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(ModelAPIError,))],
+    )
+    assert (await agent.run('x')).output == 'I cannot help with that.'
+    assert calls == ['primary']
+
+
+async def test_only_content_filter_error_names_refusals():
+    """A supertype of `ContentFilterError`, like `UnexpectedModelBehavior` or `Exception`, doesn't name refusals."""
+    calls: list[str] = []
+    agent = Agent(
+        _refusal('primary', calls),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(Exception,))],
+    )
+    with pytest.raises(ContentFilterError):
+        await agent.run('x')
+    assert calls == ['primary']
+
+
+async def test_every_model_refusing_raises_the_group():
+    calls: list[str] = []
+    agent = Agent(_refusal('primary', calls), capabilities=[ModelFallback(_refusal('backup', calls))])
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x')
+    assert [(a.model_name, a.outcome) for a in exc_info.value.attempts] == [
+        ('primary', 'rejected'),
+        ('backup', 'rejected'),
+    ]
+
+
+async def test_fallback_model_does_not_fall_back_on_refusals_by_default():
+    """`FallbackModel` keeps its `(ModelAPIError,)` default, so a refusal ends the run as before."""
+    calls: list[str] = []
+    with pytest.raises(ContentFilterError):
+        await Agent(FallbackModel(_refusal('primary', calls), _answering('backup', calls))).run('x')
+    assert calls == ['primary']
+
+
+@pytest.mark.parametrize('text', [None, 'I cannot help with that.'], ids=['empty', 'with-text'])
+async def test_fallback_model_falls_back_on_refusals_when_named(text: str | None):
+    """`FallbackModel` falls back on a refusal, empty or with text, when `fallback_on` names `ContentFilterError`."""
+    calls: list[str] = []
+    model = FallbackModel(
+        _refusal('primary', calls, text), _answering('backup', calls), fallback_on=(ModelAPIError, ContentFilterError)
+    )
+    result = await Agent(model).run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
+
+
+async def test_spec_falls_back_on_refusals_by_default_and_can_opt_out():
+    calls: list[str] = []
+    models = {'primary': _refusal('primary', calls), 'backup': _answering('backup', calls)}
+    resolve = ResolveModelId(lambda ctx, model_id: models.get(model_id))
+
+    agent = Agent.from_spec({'capabilities': [{'ModelFallback': ['backup']}]}, model='primary', capabilities=[resolve])
+    assert (await agent.run('x')).output == 'backup answered'
+
+    calls.clear()
+    agent = Agent.from_spec(
+        {'capabilities': [{'ModelFallback': {'models': ['backup'], 'fallback_on': ['ModelAPIError']}}]},
+        model='primary',
+        capabilities=[resolve],
+    )
+    with pytest.raises(ContentFilterError):
+        await agent.run('x')
+    assert calls == ['primary']
+
+    calls.clear()
+    agent = Agent.from_spec(
+        {'capabilities': [{'ModelFallback': {'models': ['backup'], 'fallback_on': 'ContentFilterError'}}]},
+        model='primary',
+        capabilities=[resolve],
+    )
+    assert (await agent.run('x')).output == 'backup answered'
+
+
+async def test_sticky_stays_on_the_model_that_answered_a_refusal():
+    """A refusal that fell back makes the conversation sticky, like any other fallback."""
+    calls: list[str] = []
+    agent = _with_noop(
+        Agent(_refusal('primary', calls), capabilities=[ModelFallback(_answering('backup', calls), sticky=True)])
+    )
+    first = await agent.run('x')
+    assert first.output == 'backup answered'
+    calls.clear()
+    second = await agent.run('y', message_history=first.all_messages())
+    assert second.output == 'backup answered'
+    assert calls == ['backup']
+
+
+@pytest.mark.parametrize(
+    'make, message',
+    [
+        pytest.param(
+            lambda: ModelFallback(FunctionModel(success), fallback_on=[]),
+            '`ModelFallback` created with an empty `fallback_on`: all exceptions will propagate and all responses '
+            'will be accepted. Use `fallback_on=(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)` for the '
+            'default behavior.',
+            id='ModelFallback',
+        ),
+        pytest.param(
+            lambda: FallbackModel(FunctionModel(success), fallback_on=[]),
+            '`FallbackModel` created with an empty `fallback_on`: all exceptions will propagate and all responses '
+            'will be accepted. Use `fallback_on=(ModelAPIError,)` for the default behavior.',
+            id='FallbackModel',
+        ),
+    ],
+)
+def test_an_empty_fallback_on_suggests_the_owners_default(make: Callable[[], object], message: str):
+    with pytest.raises(UserError) as exc_info:
+        make()
+    assert str(exc_info.value) == message
+
+
+# --- Responses cut off by the output token limit ---
+
+
+def _cut_off(name: str, calls: list[str], parts: list[ModelResponsePart] | None = None) -> FunctionModel:
+    """A model whose every response reaches the output token limit."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        return ModelResponse(
+            parts=[TextPart('The three largest cities are Tokyo, Delhi and')] if parts is None else parts,
+            finish_reason='length',
+            usage=RequestUsage(input_tokens=10, output_tokens=20),
+        )
+
+    return FunctionModel(respond, model_name=name)
+
+
+@pytest.mark.parametrize(
+    'parts',
+    [
+        pytest.param(None, id='text'),
+        pytest.param([], id='empty'),
+        pytest.param([ToolCallPart('get_city', '{"name": "Tok')], id='incomplete-tool-call'),
+        pytest.param([ToolCallPart('get_city', '{"name": "Tokyo"}')], id='complete-tool-call'),
+    ],
+)
+async def test_falls_back_when_the_output_is_cut_off_by_default(parts: list[ModelResponsePart] | None):
+    """A response that reached the output token limit falls back to the next model, whatever it holds."""
+    calls: list[str] = []
+    agent = Agent(_cut_off('primary', calls, parts), capabilities=[ModelFallback(_answering('backup', calls))])
+
+    @agent.tool_plain
+    def get_city(name: str) -> str:
+        raise AssertionError('The cut-off response is rejected, so its tool call is never run.')  # pragma: no cover
+
+    result = await agent.run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('primary', 'rejected')]
+    # The cut-off response was billed.
+    assert result.usage.output_tokens == 20 + 2
+
+
+async def test_cut_off_text_is_the_output_when_opted_out():
+    """Without `OutputTokenLimitExceeded` in `fallback_on`, cut-off text is the run's output, as without `ModelFallback`."""
+    calls: list[str] = []
+    agent = Agent(
+        _cut_off('primary', calls),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(ModelAPIError, ContentFilterError))],
+    )
+    result = await agent.run('x')
+    assert result.output == 'The three largest cities are Tokyo, Delhi and'
+    assert result.response.finish_reason == 'length'
+    assert calls == ['primary']
+
+
+async def test_an_empty_cut_off_response_raises_when_opted_out():
+    calls: list[str] = []
+    agent = Agent(
+        _cut_off('primary', calls, []),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(ModelAPIError,))],
+    )
+    with pytest.raises(OutputTokenLimitExceeded, match=r'Model token limit \(provider default\) exceeded before any'):
+        await agent.run('x')
+    assert calls == ['primary']
+
+
+@pytest.mark.parametrize('fallback_on', [UnexpectedModelBehavior, IncompleteToolCall])
+async def test_only_output_token_limit_exceeded_names_cut_off_responses(fallback_on: type[Exception]):
+    """A supertype doesn't name cut-off responses, and nor does `IncompleteToolCall`, which names a cut-off tool call."""
+    calls: list[str] = []
+    agent = Agent(
+        _cut_off('primary', calls),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=fallback_on)],
+    )
+    assert (await agent.run('x')).output == 'The three largest cities are Tokyo, Delhi and'
+    assert calls == ['primary']
+
+
+async def test_every_model_cut_off_raises_the_group():
+    calls: list[str] = []
+    agent = Agent(_cut_off('primary', calls), capabilities=[ModelFallback(_cut_off('backup', calls))])
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x')
+    assert [(a.model_name, a.outcome) for a in exc_info.value.attempts] == [
+        ('primary', 'rejected'),
+        ('backup', 'rejected'),
+    ]
+
+
+async def test_fallback_model_falls_back_on_cut_off_responses_only_when_named():
+    """`FallbackModel` keeps its `(ModelAPIError,)` default, and falls back on cut-off responses when told to."""
+    calls: list[str] = []
+    result = await Agent(FallbackModel(_cut_off('primary', calls), _answering('backup', calls))).run('x')
+    assert result.output == 'The three largest cities are Tokyo, Delhi and'
+    assert calls == ['primary']
+
+    calls.clear()
+    model = FallbackModel(
+        _cut_off('primary', calls), _answering('backup', calls), fallback_on=(ModelAPIError, OutputTokenLimitExceeded)
+    )
+    assert (await Agent(model).run('x')).output == 'backup answered'
+    assert calls == ['primary', 'backup']
+
+
+async def test_spec_falls_back_on_cut_off_responses_by_default_and_can_opt_out():
+    calls: list[str] = []
+    models = {'primary': _cut_off('primary', calls), 'backup': _answering('backup', calls)}
+    resolve = ResolveModelId(lambda ctx, model_id: models.get(model_id))
+
+    agent = Agent.from_spec({'capabilities': [{'ModelFallback': ['backup']}]}, model='primary', capabilities=[resolve])
+    assert (await agent.run('x')).output == 'backup answered'
+
+    calls.clear()
+    agent = Agent.from_spec(
+        {'capabilities': [{'ModelFallback': {'models': ['backup'], 'fallback_on': ['ModelAPIError']}}]},
+        model='primary',
+        capabilities=[resolve],
+    )
+    assert (await agent.run('x')).output == 'The three largest cities are Tokyo, Delhi and'
+    assert calls == ['primary']
+
+    calls.clear()
+    agent = Agent.from_spec(
+        {'capabilities': [{'ModelFallback': {'models': ['backup'], 'fallback_on': 'OutputTokenLimitExceeded'}}]},
+        model='primary',
+        capabilities=[resolve],
+    )
+    assert (await agent.run('x')).output == 'backup answered'

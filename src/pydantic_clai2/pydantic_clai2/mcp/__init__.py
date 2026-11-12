@@ -34,7 +34,7 @@ from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
 from pydantic_clai2.runtime.session import WorkspacelessCapability
 
 if TYPE_CHECKING:
-    from pydantic_clai2.mcp._client import SignIn, http_client
+    from pydantic_clai2.mcp.client import SignIn, http_client
 
 __all__ = [
     'CLAUDE_MCP_FILE',
@@ -74,9 +74,9 @@ __all__ = [
 def __getattr__(name: str) -> object:
     # FastMCP loads the MCP SDK, so it is imported on first use, not when this plugin loads at startup.
     if name in ('SignIn', 'http_client'):
-        from pydantic_clai2.mcp import _client
+        from pydantic_clai2.mcp import client
 
-        return getattr(_client, name)
+        return getattr(client, name)
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 

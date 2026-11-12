@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from pr_gates import ChangedFile, Commit, GateError, GhCli, Label, Verdict
-from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIES
+from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIES, REVIEW_ENGINES
+from publish_pr_review_checks import MARKER as PR_REVIEW_CHECKS_MARKER
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 ReviewGate = Literal['douwebot']
@@ -50,7 +51,7 @@ class ReviewPullRequest(BaseModel):
 
 
 class Review(BaseModel):
-    """A submitted review, including its immutable reviewed commit."""
+    """A submitted review; GitHub can move its `commit_id` after a push, but not its body's marker."""
 
     id: int
     user: ReviewUser
@@ -61,7 +62,7 @@ class Review(BaseModel):
 
 
 class ReviewComment(BaseModel):
-    """The parent review identifies the head; `commit_id` can move on later pushes."""
+    """The parent review's marker identifies the head, else `original_commit_id`; `commit_id` can move on later pushes."""
 
     pull_request_review_id: int
     user: ReviewUser
@@ -144,8 +145,8 @@ def douwebot_approval(
 ) -> Verdict:
     """Verify provenance and associate findings with their immutable review head.
 
-    GitHub can move a comment's `commit_id` after a push. Use its parent's reviewed
-    commit, or `original_commit_id` when the parent is unavailable.
+    GitHub can move a review's and a comment's `commit_id` after a push. Use the parent's
+    marker head, or `original_commit_id` when the parent is unavailable or unmarked.
     """
     verdict = Verdict()
     own_reviews: list[Review] = []
@@ -157,6 +158,12 @@ def douwebot_approval(
         if marker and marker[2] == pull.head.sha:
             marked_ids.add(review.id)
             body = review.body[: marker.start()]
+            if (engine := marker[3]) == 'claude' or engine == 'opencode' or engine == 'opencode-deepinfra':
+                suffix = '\n\n' + REVIEW_ENGINES[engine]
+                if body.endswith(suffix):
+                    body = body[: -len(suffix)]
+                else:
+                    verdict.failures.append('Douwebot review engine attribution is missing.')
             if body not in REVIEW_BODIES.values() or (review.state == 'APPROVED' and body != APPROVAL_BODY):
                 verdict.failures.append('Douwebot has discussion findings on this head.')
             if github.verified_review_run(int(marker[1]), pull.head.sha):
@@ -172,19 +179,23 @@ def douwebot_approval(
         if comment.user.login != 'github-actions[bot]' or comment.user.type != 'Bot':
             continue
         parent = by_id.get(comment.pull_request_review_id)
-        reviewed_head = parent.commit_id if parent else comment.original_commit_id
+        marker = DOUWEBOT_MARKER.search(parent.body) if parent else None
+        reviewed_head = marker[2] if marker else comment.original_commit_id
         if reviewed_head != pull.head.sha:
             continue
         if comment.pull_request_review_id in marked_ids:
             verdict.failures.append('Douwebot has inline findings on this head, including resolved/optional ones.')
         else:
-            # gh-aw gives its reviews a separate receipt despite sharing the account.
+            # gh-aw and PR Review Checks give their reviews separate receipts despite sharing the account.
+            if parent and PR_REVIEW_CHECKS_MARKER.search(parent.body):
+                continue
             receipt = f'{parent.body if parent else ""}\n{comment.body}'
             if any(
                 f'<!-- gh-aw-workflow-call-id: {workflow} -->' in receipt
                 or f'[gh-aw-workflow-call-id]: # "{workflow.replace("/", "%2F")}"' in receipt
                 for workflow in (
                     'pydantic/pydantic-ai/pydantic-ai-pr-review',
+                    # Retired, but an open PR's head can still carry its comments.
                     'pydantic/pydantic-ai/pydantic-ai-ui-security-review',
                 )
             ):

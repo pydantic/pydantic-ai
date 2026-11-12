@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+import anyio
 import pytest
 from mongomock_motor import AsyncMongoMockClient
 from pymongo import AsyncMongoClient
@@ -79,7 +80,10 @@ def test_needs_exactly_one_of_client_or_db_url_and_a_database(monkeypatch: pytes
 
 
 async def test_a_store_closes_only_the_client_it_created() -> None:
-    store = MongoConversationStore(db_url='mongodb://127.0.0.1:1', database='t', media_store=None)
+    # Building a client touches the filesystem; users build stores outside the event loop.
+    store = await anyio.to_thread.run_sync(
+        lambda: MongoConversationStore(db_url='mongodb://127.0.0.1:1', database='t', media_store=None)
+    )
 
     await store.aclose()
 

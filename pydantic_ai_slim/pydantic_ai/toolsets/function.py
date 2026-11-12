@@ -114,7 +114,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
             defer_loading: Whether to hide tools from the model until they're revealed by tool search,
@@ -723,10 +723,15 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             include_return_schema=include_return_schema,
         )
         self.add_tool(tool)
+        # `add_tool` applies the toolset's `requires_approval=True`; an explicit `False` passed here overrides it.
+        tool.requires_approval = requires_approval
         return tool
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
+
+        The toolset's `requires_approval=True` and `metadata` apply to the tool, and so does its `max_retries`
+        when the tool sets none.
 
         Args:
             tool: The tool to add.
@@ -735,6 +740,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
         if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
+        if self.requires_approval:
+            tool.requires_approval = True
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool

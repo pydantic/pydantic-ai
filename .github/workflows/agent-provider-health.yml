@@ -6,7 +6,6 @@ on:
   # it checks out the default-branch controller, parses artifacts as data, and receives no Z.AI key.
   workflow_run:
     workflows:
-      - Pydantic AI Attention Triage
       - Pydantic AI Bug Hunter
       - Pydantic AI Community Demand
       - Pydantic AI Docs Drift
@@ -18,7 +17,7 @@ on:
       - Pydantic AI Round-Trip Sweep
       - Pydantic AI Stale Issues Finder
       - Pydantic AI Streaming Resilience Sweep
-      - Pydantic AI UI Security Review
+      - Pydantic AI Weekly Agent Instructions Audit
     types: [completed]
   schedule:
     - cron: '13 * * * *'
@@ -34,13 +33,16 @@ permissions: {}
 jobs:
   triage:
     # Fork and Dependabot pull_request runs (re-runs included) get no Actions secrets, so they have no provider key;
-    # their unknown quota cannot establish an outage.
+    # their unknown quota cannot establish an outage. The monitor accepts pull_request_review records from
+    # same-repository runs only.
     if: >-
       github.repository == 'pydantic/pydantic-ai' &&
       github.event_name == 'workflow_run' &&
       (github.event.workflow_run.event != 'pull_request' ||
        (github.event.workflow_run.head_repository.full_name == github.repository &&
-        github.event.workflow_run.actor.login != 'dependabot[bot]'))
+        github.event.workflow_run.actor.login != 'dependabot[bot]')) &&
+      (github.event.workflow_run.event != 'pull_request_review' ||
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -113,6 +115,7 @@ jobs:
           --run-attempt "$RUN_ATTEMPT"
           --conclusion "$CONCLUSION"
           --health-artifact provider-health/provider-health.json
+          --run-result provider-health/run-result.json
           --agent-artifact agent
   monitor:
     needs: triage
@@ -134,6 +137,8 @@ jobs:
       actions: read
       contents: read
       issues: write
+      # Hourly task-incident retirement reads each incident's PR.
+      pull-requests: read
     steps:
       - name: Check out trusted provider-health controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -198,8 +203,9 @@ jobs:
           --run-attempt "$RUN_ATTEMPT"
           --conclusion "$CONCLUSION"
           --health-artifact provider-health/provider-health.json
+          --run-result provider-health/run-result.json
           --agent-artifact agent
-      - name: Check quota and recover elapsed provider incidents
+      - name: Retire stale task incidents, check quota and recover elapsed provider incidents
         if: github.event_name == 'schedule'
         env:
           GITHUB_TOKEN: ${{ github.token }}

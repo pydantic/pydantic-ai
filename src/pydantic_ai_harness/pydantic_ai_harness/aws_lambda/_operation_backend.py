@@ -19,7 +19,7 @@ from pydantic_ai.toolsets import ToolsetTool
 
 from ._bridge import ENGINE_NAME, current_bridge
 
-_TOOL_CONFIG_KEY = 'aws_lambda'
+TOOL_CONFIG_KEY = 'aws_lambda'
 # Derived rather than listed so a new SDK `StepConfig` field is accepted, not rejected as unknown.
 _STEP_CONFIG_FIELDS = frozenset(field.name for field in fields(StepConfig))
 _STEP_CONFIG_MAPPING_ADAPTER = TypeAdapter(dict[str, object])
@@ -41,6 +41,8 @@ _STEP_CONFIG_VALUE_ADAPTERS = {
 class AWSLambdaOperationConfig(RoleBasedOperationConfig[StepConfig | None]):
     def __init__(self, base: Mapping[str, Any] | None) -> None:
         base_config = _parse_step_config(base)
+        self.base_step_config = base_config
+        """The `StepConfig` every step gets unless a tool's metadata overrides it."""
 
         def resolve_tool(
             operation_id: DurableOperationId, tool: object | None, tool_name: str
@@ -48,12 +50,12 @@ class AWSLambdaOperationConfig(RoleBasedOperationConfig[StepConfig | None]):
             del operation_id
             toolset_tool = _toolset_tool(tool)
             metadata = toolset_tool.tool_def.metadata if toolset_tool is not None else None
-            metadata_config: object = metadata.get(_TOOL_CONFIG_KEY) if metadata is not None else None
+            metadata_config: object = metadata.get(TOOL_CONFIG_KEY) if metadata is not None else None
             if metadata_config is False:
                 return False
             if metadata_config is not None and not isinstance(metadata_config, dict):
                 raise UserError(
-                    f'Tool {tool_name!r} has invalid {_TOOL_CONFIG_KEY!r} metadata: expected a dict '
+                    f'Tool {tool_name!r} has invalid {TOOL_CONFIG_KEY!r} metadata: expected a dict '
                     f'(`{ENGINE_NAME} durable config`) or `False`, got {type(metadata_config).__name__}.'
                 )
             config = dict(base or {})
@@ -63,7 +65,7 @@ class AWSLambdaOperationConfig(RoleBasedOperationConfig[StepConfig | None]):
                 except ValidationError:
                     # Raised as a `ValidationError`, this would reach the model as invalid tool arguments.
                     raise UserError(
-                        f'Tool {tool_name!r} has invalid {_TOOL_CONFIG_KEY!r} metadata: '
+                        f'Tool {tool_name!r} has invalid {TOOL_CONFIG_KEY!r} metadata: '
                         'step config keys must be strings.'
                     ) from None
             return _parse_step_config(config)
@@ -107,7 +109,7 @@ def _parse_step_config(config: Mapping[str, Any] | None) -> StepConfig | None:
     unknown = sorted(set(config) - _STEP_CONFIG_FIELDS)
     if unknown:
         raise UserError(
-            f'Unknown {_TOOL_CONFIG_KEY!r} step config {"key" if len(unknown) == 1 else "keys"} '
+            f'Unknown {TOOL_CONFIG_KEY!r} step config {"key" if len(unknown) == 1 else "keys"} '
             f'{", ".join(repr(key) for key in unknown)}. Supported keys are '
             f'{", ".join(repr(field) for field in sorted(_STEP_CONFIG_FIELDS))}.'
         )
@@ -125,7 +127,7 @@ def _validate_step_config_value(key: str, value: object) -> None:
         adapter.validate_python(value, strict=True)
     except ValidationError:
         raise UserError(
-            f'Invalid {_TOOL_CONFIG_KEY!r} step config value for {key!r}: expected {expected}, '
+            f'Invalid {TOOL_CONFIG_KEY!r} step config value for {key!r}: expected {expected}, '
             f'got {type(value).__name__}.'
         ) from None
 

@@ -181,7 +181,7 @@ class MCPServers:
         signed_out = await _signed_out(name, connection.server)
         if signed_out is not None:
             connection.error = signed_out
-            self.log(name, f'start failed: {connection.error}')
+            await to_thread.run_sync(self.log, name, f'start failed: {connection.error}')
             return connection.error
         stack = AsyncExitStack()
         try:
@@ -191,12 +191,12 @@ class MCPServers:
             await stack.aclose()
             required = _sign_in_required(exc)
             connection.error = str(required) if required else f'{type(exc).__name__}: {exc}'
-            self.log(name, f'start failed: {connection.error}')
+            await to_thread.run_sync(self.log, name, f'start failed: {connection.error}')
             return connection.error
         connection.stack, connection.started, connection.error = stack, time.monotonic(), None
         connection.tools = tuple(f'{name}_{tool.name}' for tool in listed)
         connection.about = _about(connection.toolset)
-        self.log(name, f'started with {len(listed)} tools')
+        await to_thread.run_sync(self.log, name, f'started with {len(listed)} tools')
         return None
 
     async def stop(self, name: str) -> str:
@@ -204,7 +204,7 @@ class MCPServers:
         entry = self.get(name)
         self._set_enabled(entry, enabled=False)
         await self._release(name)
-        self.log(name, 'stopped')
+        await to_thread.run_sync(self.log, name, 'stopped')
         return f'Stopped {name}. Its tools are unavailable until /mcp start {name}.'
 
     async def restart(self, name: str) -> str:
@@ -318,6 +318,9 @@ class MCPServers:
             self._overrides[entry.origin] = enabled
 
     async def _connection(self, entry: ServerEntry) -> _Connection:
+        if isinstance(entry.server, StdioServer):
+            # Its stderr goes to a log file there. Made first, so nothing awaits between the lookup and the store below.
+            await to_thread.run_sync(partial(self.store.logs.mkdir, parents=True, exist_ok=True))
         connection = self._connections.get(entry.name)
         if connection is not None and _shape(connection.server) == _shape(entry.server):
             return connection
@@ -337,12 +340,11 @@ class MCPServers:
 
     def _build(self, entry: ServerEntry) -> 'MCPToolset[None]':
         from pydantic_ai.mcp import MCPToolset
-        from pydantic_clai2.mcp._client import SSETransport, StdioTransport, StreamableHttpTransport, http_client
+        from pydantic_clai2.mcp.client import SSETransport, StdioTransport, StreamableHttpTransport, http_client
 
         server = entry.server
         transport: StdioTransport | StreamableHttpTransport | SSETransport
         if isinstance(server, StdioServer):
-            self.store.logs.mkdir(parents=True, exist_ok=True)
             transport = StdioTransport(
                 command=server.command,
                 args=server.args,

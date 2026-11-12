@@ -12,11 +12,12 @@ eagerly.
 
 from typing import TYPE_CHECKING
 
+from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.media import PostgresConnection, PostgresPool
 from pydantic_ai_harness.step_persistence._capability import StepPersistence
 from pydantic_ai_harness.step_persistence._conversation_postgres import PostgresConversationStore
 from pydantic_ai_harness.step_persistence._conversation_sqlite import SqliteConversationStore
-from pydantic_ai_harness.step_persistence._events import SnapshotSaved
+from pydantic_ai_harness.step_persistence._events import STEP_PERSISTENCE_EVENTS, SnapshotSavedEvent
 from pydantic_ai_harness.step_persistence._helpers import (
     annotate_tool_effect,
     continue_run,
@@ -45,6 +46,7 @@ if TYPE_CHECKING:
     from pydantic_ai_harness.step_persistence._mongo import MongoStepStore
 
 __all__ = [
+    'STEP_PERSISTENCE_EVENTS',
     'ContinuableSnapshot',
     'EventKind',
     'FileStepStore',
@@ -56,7 +58,7 @@ __all__ = [
     'PostgresPool',
     'PostgresStepStore',
     'RunRecord',
-    'SnapshotSaved',
+    'SnapshotSavedEvent',
     'SnapshotState',
     'SqliteConversationStore',
     'SqliteStepStore',
@@ -77,6 +79,10 @@ def __getattr__(name: str) -> object:
         from pydantic_ai_harness.step_persistence._conversation_mongo import MongoConversationStore
 
         return MongoConversationStore
+
+    if name == 'SnapshotSaved':
+        warn_class_renamed(name, 'SnapshotSavedEvent', __name__)
+        return SnapshotSavedEvent
     if name == 'MongoStepStore':
         from pydantic_ai_harness.step_persistence._mongo import MongoStepStore
 
