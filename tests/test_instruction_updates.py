@@ -2191,8 +2191,8 @@ async def test_requests_with_equal_instructions_share_one_string():
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('look')] if len(messages) == 1 else [TextPart('done')])
 
-    # Two parts, so each request joins them into a new string, and over 64 characters, so loading JSON doesn't
-    # share them on its own.
+    # Two parts, so each request joins them into a new string, and at least 64 characters long, since pydantic-core
+    # caches shorter strings when it parses JSON, which would share them on its own.
     instructions = [
         'Answer briefly, in plain sentences, and say when you are unsure of something.',
         'Cite the files you read.',
