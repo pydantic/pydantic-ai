@@ -7,7 +7,7 @@ from typing import Any
 
 import anyio
 import pytest
-from daytona import DaytonaInternalServerError, DaytonaTimeoutError
+from daytona import DaytonaInternalServerError, DaytonaRateLimitError, DaytonaTimeoutError
 
 from pydantic_ai import Agent, UserError
 from pydantic_ai.computer_use import (
@@ -36,7 +36,7 @@ from .fake_daytona import FakeDaytona, FakeSandbox
 
 async def _started(fake_daytona: FakeDaytona) -> tuple[DaytonaSandboxBackend, FakeSandbox]:
     backend = DaytonaSandboxBackend(desktop=True)
-    # Starts the desktop, and shows it, which an action on a desktop that just started waits for.
+    # Starts the desktop.
     await screen(backend).screenshot()
     (sandbox,) = fake_daytona.sandboxes
     sandbox.desktop_calls.clear()
@@ -296,6 +296,33 @@ async def test_a_desktop_that_does_not_answer_in_time_is_a_timeout(
     monkeypatch.setattr(sandbox.computer_use, 'take_full_screen', slow)
     with pytest.raises(WorkspaceTimeoutError, match='The Daytona desktop did not answer in time'):
         await screen(backend).screenshot()
+
+
+async def test_a_rate_limit_reaches_the_caller_as_it_came(
+    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A durable engine retries Daytona's own transient errors, so they are not turned into a `WorkspaceError`."""
+    backend, sandbox = await _started(fake_daytona)
+
+    async def limited(request_timeout: float | None = None) -> SimpleNamespace:
+        raise DaytonaRateLimitError('Too many requests', status_code=429)
+
+    monkeypatch.setattr(sandbox.computer_use, 'take_full_screen', limited)
+    with pytest.raises(DaytonaRateLimitError):
+        await screen(backend).screenshot()
+
+
+async def test_a_scroll_the_desktop_reports_as_failed_is_an_error(
+    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, sandbox = await _started(fake_daytona)
+
+    async def refused(*args: Any, **kwargs: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(sandbox.computer_use, 'scroll', refused)
+    with pytest.raises(WorkspaceError, match='did not scroll'):
+        await screen(backend).act(Scroll(x=1, y=1, direction='down', amount=3))
 
 
 async def test_a_desktop_that_stopped_answering_ends_the_run(fake_daytona: FakeDaytona) -> None:

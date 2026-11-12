@@ -863,6 +863,8 @@ class DaytonaSandboxBackend(
                     yield
             except daytona.DaytonaTimeoutError as error:
                 raise WorkspaceTimeoutError(f'The Daytona desktop did not answer in time: {error}') from error
+            except daytona.DaytonaRateLimitError:
+                raise  # transient, so a durable engine can retry it, as for the workspace's own operations
             except daytona.DaytonaError as error:
                 # A server error, such as from a desktop that stopped with its sandbox, fails only this call: the
                 # display starts again on the next.
