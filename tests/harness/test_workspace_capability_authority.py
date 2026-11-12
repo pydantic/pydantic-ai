@@ -28,7 +28,7 @@ CAPABILITIES = [
 def _capability(name: str) -> type[AbstractCapability[Any]]:
     try:
         return getattr(pydantic_ai_harness, name)
-    except ImportError:  # pragma: no cover - only without the capability's extra
+    except ImportError:  # pragma: lax no cover - only without the capability's extra
         pytest.skip(f'{name} needs its extra')
 
 
