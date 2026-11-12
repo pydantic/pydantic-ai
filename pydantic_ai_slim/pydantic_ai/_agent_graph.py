@@ -1423,6 +1423,22 @@ def mark_deferred_pause(request: _messages.ModelRequest) -> None:
     }
 
 
+def final_tool_results_request(
+    parts: list[_messages.ModelRequestPart], state: GraphAgentState, output: Any
+) -> _messages.ModelRequest:
+    """The request recording the results of the calls a step ran before the run ended with `output`.
+
+    When the run ends with `DeferredToolRequests`, the step's other calls are answered and the rest wait, so the
+    request is marked as the pause: resuming the history then runs only the waiting calls.
+    """
+    request = _messages.ModelRequest(
+        parts=parts, run_id=state.run_id, conversation_id=state.conversation_id, timestamp=now_utc()
+    )
+    if isinstance(output, DeferredToolRequests):
+        mark_deferred_pause(request)
+    return request
+
+
 def _last_response_index(history: Sequence[_messages.ModelMessage]) -> int | None:
     return next((i for i in range(len(history) - 1, -1, -1) if isinstance(history[i], _messages.ModelResponse)), None)
 
@@ -4391,16 +4407,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # To allow this message history to be used in a future run without dangling tool calls,
         # append a new ModelRequest using the tool returns and retries
         if tool_responses:
-            request = _messages.ModelRequest(
-                parts=tool_responses,
-                run_id=ctx.state.run_id,
-                conversation_id=ctx.state.conversation_id,
-                timestamp=now_utc(),
-            )
-            if isinstance(final_result.output, DeferredToolRequests):
-                # The step's other calls are answered and the rest wait: resuming this history runs only those.
-                mark_deferred_pause(request)
-            messages.append(request)
+            messages.append(final_tool_results_request(tool_responses, ctx.state, final_result.output))
 
         return End(final_result)
 
