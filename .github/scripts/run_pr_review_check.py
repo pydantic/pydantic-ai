@@ -368,7 +368,9 @@ def main() -> None:
         # Configured instructions follow the builtin system prompt without replacing its tool/security guidance.
         extra_env={
             **telemetry,
-            'OPENCODE_CONFIG_CONTENT': json.dumps({'instructions': [str(workspace / PROMPTS / 'final-answer.md')]}),
+            'OPENCODE_CONFIG_CONTENT': json.dumps(
+                {'instructions': [str(workspace / PROMPTS.parent / 'final-answer.md')]}
+            ),
         },
     )
     changed = {change.path: change.positions for change in changes}

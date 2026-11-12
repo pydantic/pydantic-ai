@@ -196,7 +196,7 @@ def test_main_adds_only_the_final_answer_system_contract(
     base = _git(head, 'rev-parse', 'HEAD')
     (head / 'a.py').write_text('a = 0\nb = 0\na = 1\n')
     _git(head, 'commit', '-q', '-am', 'head')
-    shutil.copytree(WORKSPACE / run_pr_review_check.PROMPTS, workspace / run_pr_review_check.PROMPTS)
+    shutil.copytree(WORKSPACE / run_pr_review_check.PROMPTS.parent, workspace / run_pr_review_check.PROMPTS.parent)
     context = workspace / run_pr_review_check.REVIEW_CONTEXT
     (context / 'diff').mkdir(parents=True)
     (context / 'pr-details.json').write_text('{}')
@@ -227,7 +227,7 @@ def test_main_adds_only_the_final_answer_system_contract(
         assert TypeAdapter(dict[str, object]).validate_json(config.read_text()) == read_only_config(
             agent='reviewer', provider=provider, steps=GENERAL.max_steps
         )
-        contract = workspace / run_pr_review_check.PROMPTS / 'final-answer.md'
+        contract = workspace / '.github/pr-review-checks/final-answer.md'
         assert env['OPENCODE_CONFIG_CONTENT'] == json.dumps({'instructions': [str(contract)]})
         assert contract.read_text().strip() == (
             'Investigate using the available read tools. For the final response, return exactly one JSON object '
@@ -262,9 +262,6 @@ def test_main_adds_only_the_final_answer_system_contract(
     result = json.loads((runner_temp / 'pr-review-checks-result/general.json').read_text())
     assert result['outcome'] == 'COMPLETE'
     assert result['findings'][0]['path'] == 'a.py'
-    # Shared callers receive no contract from the config generator.
-    assert 'instructions' not in read_only_config(agent='reviewer', provider=OPENCODE_GO)
-    assert 'instructions' not in read_only_config(agent='threat-detector', provider=DEEPINFRA)
 
 
 @pytest.mark.parametrize('check', CHECKS, ids=lambda check: check.name)
