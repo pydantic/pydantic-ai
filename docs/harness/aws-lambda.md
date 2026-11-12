@@ -17,7 +17,21 @@ checkpointing, a resumed run would repeat every model request and tool call.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![A Lambda handler decorated with durable_execution and durable_agent_handler runs an agent named support that has the AWSLambdaDurability capability. In the first invocation, each model request and tool call runs as a durable step, and Lambda records its result in the checkpoint log under a step name such as support__model.request; the invocation times out during the second model request. The resumed invocation runs the handler again from the top: the two completed steps return their recorded results without calling the model or the tool again, and only the unfinished model request runs, is recorded, and finishes the run.](../img/harness/aws-lambda.svg)
+```mermaid
+sequenceDiagram
+    accTitle: AWS Lambda Durability: resume an agent run from its last completed step
+    accDescr: AWSLambdaDurability runs each model request and tool call as a durable step. Invocation 1 records a model request and a get_weather call in the checkpoint log, then its next model request times out. Invocation 2 gets both replayed from the log without running them again, then a model request runs now and is recorded.
+    participant one as Invocation 1
+    participant log as Checkpoint log
+    participant two as Invocation 2
+    Note over one,two: AWSLambdaDurability() runs each model request<br/>and tool call as a durable step
+    one->>log: model request<br/>recorded
+    one->>log: get_weather call<br/>recorded
+    one->>one: model request<br/>times out
+    log-->>two: model request<br/>replayed, not run again
+    log-->>two: get_weather call<br/>replayed, not run again
+    two->>log: model request<br/>runs now and is recorded
+```
 
 ## Installation
 
@@ -302,6 +316,9 @@ execution's traces show only the work that invocation did, and costs are counted
   concurrently scheduled tool calls could claim each other's checkpoints when the execution
   resumes. Inside a durable handler the run is switched to sequential tool execution. Outside one
   the agent keeps its configured parallelism.
+  [`DynamicWorkflow`](dynamic-workflow.md#running-under-other-durable-engines) sub-agents are the
+  exception: they run concurrently, each in a branch of a Lambda `parallel` operation, which numbers
+  its steps on its own.
 - **Changing the shape of the run breaks in-flight executions.** A resumed execution matches
   checkpoints by the order operations are reached, so anything that changes the number or order of
   steps breaks executions started under the old code: adding or removing a tool or MCP server,

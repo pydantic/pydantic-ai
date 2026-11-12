@@ -11,7 +11,24 @@ Let the model ask the user multiple-choice questions mid-run and wait for the an
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls ask_user_question with one to ten multiple-choice questions. AskUser validates them, rejecting calls outside the limits or with control characters as a retry, then hands an AskUserRequest to the answerer you supply, such as a terminal menu or a web form. The answerer returns an AskUserResponse. The model gets the picked labels keyed by header, a sentence saying the user declined or did not answer in time, or, with answerer=None, the run pauses with DeferredToolRequests until you answer in a later run.](../img/harness/ask-user.svg)
+```mermaid
+flowchart TB
+    accTitle: Ask User: the model asks multiple-choice questions mid-run
+    accDescr: The model sends questions to ask_user_question on AskUser and gets the picked labels. AskUser rejects calls outside the limits or with control characters as a retry and passes an AskUserRequest to the answerer, a terminal menu or web form, which asks the user the questions and returns the picks as an AskUserResponse. With answerer=None, the run pauses with DeferredToolRequests.
+    model(["model"])
+    ask["AskUser()<br/>ask_user_question"]:::capability
+    rejected["outside the limits or<br/>control characters"]:::blocked
+    answerer["answerer<br/>terminal menu<br/>or web form"]
+    paused["run pauses with<br/>DeferredToolRequests"]
+    user(["user"])
+    model <-->|"questions, picked labels"| ask
+    ask -.-x|"rejects as a retry"| rejected
+    ask <-->|"AskUserRequest,<br/>AskUserResponse"| answerer
+    ask -.->|"answerer=None"| paused
+    answerer <-->|"questions, picks"| user
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Usage
 

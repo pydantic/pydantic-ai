@@ -256,6 +256,7 @@ def _fake_opencode(
     monkeypatch.setenv('OPENCODE_API_KEY', 'go-key')
     monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
     monkeypatch.delenv('ZAI_BACKUP_API_KEY', raising=False)
+    monkeypatch.setenv('GITHUB_RUN_NUMBER', '3188')
     return launches
 
 

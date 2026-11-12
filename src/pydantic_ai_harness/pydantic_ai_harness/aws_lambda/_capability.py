@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, ClassVar
 
-from aws_durable_execution_sdk_python.config import CallbackConfig, Duration, StepConfig
+from aws_durable_execution_sdk_python.config import CallbackConfig, Duration, ParallelConfig, StepConfig
 from aws_durable_execution_sdk_python.exceptions import CallbackError, ExecutionError
 from pydantic import JsonValue
 from pydantic_core import from_json, to_json
@@ -201,3 +201,8 @@ async def _ask_for_json(ask: Callable[[str], Awaitable[JsonValue]], token: str) 
     """Call `ask`, and record an answer as the JSON string a resolver would send, so both are read back the same way."""
     answer = await ask(token)
     return None if answer is None else to_json(answer).decode()
+
+
+def parallel_config(durability: AWSLambdaDurability[Any]) -> ParallelConfig | None:
+    """The config that checkpoints a `parallel` operation's results with `durability`'s `serdes`, if it sets one."""
+    return durability._operation_config.parallel_config  # pyright: ignore[reportPrivateUsage]
