@@ -12,7 +12,7 @@ from tests.conftest import detach_dbos_logging, try_import, without_admin_server
 from tests.harness.dynamic_workflow._concurrent_sub_agents import EXPECTED, build_orchestrator, summarize_model
 
 with try_import() as imports_successful:
-    from dbos import DBOS, DBOSConfig, SetWorkflowID
+    from dbos import DBOS, DBOSConfig, DBOSContextSetAuth, SetWorkflowID
 
     from pydantic_ai.durable_exec.dbos import DBOSDurability
 
@@ -95,6 +95,68 @@ async def test_sub_agents_run_one_at_a_time_and_recover_their_own_steps(
     assert await handle.get_result(polling_interval_sec=0.01) == EXPECTED
     assert len(model_calls) == 4
     assert tool_calls == ['noop', 'noop']
+
+
+CATCHING_SCRIPT = (
+    "try:\n    result = await summarize(task='alpha')\nexcept RuntimeError as error:\n    result = str(error)\nresult"
+)
+
+
+@pytest.fixture
+def admin_workflow(dbos: DBOS, model_calls: list[str], tool_calls: list[str]) -> Callable[[], Awaitable[str]]:
+    # A class-level default is the role DBOS checks only when a step is called from workflow code.
+    @DBOS.default_required_roles(['admin'])
+    class AdminSteps:
+        @staticmethod
+        @DBOS.step(name='admin_noop_step')
+        def noop_step() -> str:
+            tool_calls.append('noop')
+            return 'ok'
+
+    orchestrator = build_orchestrator(
+        DBOSDurability,
+        summarize_model(model_calls, alpha_waits_for_beta=False),
+        script=CATCHING_SCRIPT,
+        tool=AdminSteps.noop_step,
+    )
+
+    @DBOS.workflow(name='dynamic_workflow_dbos_admin')
+    async def run() -> str:
+        return (await orchestrator.run('Summarize alpha')).output
+
+    return run
+
+
+async def test_sub_agent_step_tools_keep_their_role_checks(
+    admin_workflow: Callable[[], Awaitable[str]], tool_calls: list[str]
+) -> None:
+    assert await admin_workflow() == "done: sub-agent 'summarize' raised DBOSNotAuthorizedError"
+    assert tool_calls == []
+
+    with DBOSContextSetAuth('alice', ['admin']):
+        assert await admin_workflow() == 'done: summary of alpha'
+    assert tool_calls == ['noop']
+
+
+@pytest.fixture
+def plain_sub_agents_workflow(dbos: DBOS, model_calls: list[str]) -> Callable[[], Awaitable[str]]:
+    # Only the orchestrator is durable; alpha's model waits for beta, so the calls must overlap.
+    orchestrator = build_orchestrator(DBOSDurability, summarize_model(model_calls), durable_sub_agents=False)
+
+    @DBOS.workflow(name='dynamic_workflow_dbos_plain_sub_agents')
+    async def run() -> str:
+        return (await orchestrator.run('Summarize alpha and beta')).output
+
+    return run
+
+
+async def test_sub_agents_without_dbos_durability_run_concurrently_in_a_workflow(
+    plain_sub_agents_workflow: Callable[[], Awaitable[str]], model_calls: list[str]
+) -> None:
+    assert await plain_sub_agents_workflow() == EXPECTED
+    # Alpha, dispatched first, finished last.
+    assert sorted(model_calls) == ['alpha 1', 'alpha 3', 'beta 1', 'beta 3']
+    assert model_calls[-1] == 'alpha 3'
 
 
 async def test_sub_agents_outside_a_workflow_run_concurrently(dbos: DBOS) -> None:
