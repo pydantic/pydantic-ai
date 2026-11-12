@@ -1,3 +1,4 @@
+import hashlib
 from collections.abc import Callable
 from dataclasses import fields, is_dataclass
 from typing import Any, TypeGuard
@@ -5,6 +6,7 @@ from typing import Any, TypeGuard
 from prefect.cache_policies import INPUTS, RUN_ID, TASK_SOURCE, CachePolicy
 from prefect.context import TaskRunContext
 from prefect.utilities.hashing import hash_objects
+from prefect.utilities.importtools import to_qualified_name
 from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
@@ -12,6 +14,14 @@ from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 _NON_SERIALIZABLE = '<non-serializable>'
+_BINARY_KEY = '__pydantic_ai_binary__'
+
+
+class _ProjectedDict(dict[str, Any]):
+    """Keep generated binary encodings and escaped keys unchanged across projection passes.
+
+    Prefect serializes this as an ordinary JSON object; the type is only an in-memory marker.
+    """
 
 
 def _is_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
@@ -52,7 +62,7 @@ def _cacheable_value(value: Any) -> Any:
         if hash_objects(value, raise_on_failure=False) is not None:
             return value
         if _is_dict(value):
-            return {key: exclude_non_serializable(item) for key, item in value.items()}
+            return _map_container(value, exclude_non_serializable)
         if _is_list(value):
             return [exclude_non_serializable(item) for item in value]
         if _is_tuple(value):
@@ -61,7 +71,9 @@ def _cacheable_value(value: Any) -> Any:
             return {name: exclude_non_serializable(getattr(value, name)) for name in type(value).model_fields}
         return _NON_SERIALIZABLE
 
-    return exclude_non_serializable(projected)
+    # Expanding a model can expose bytes the first projection didn't reach. Keep any dataclasses
+    # exposed alongside them intact, including their type and per-run fields, as the fallback did.
+    return _hash_binary_values(exclude_non_serializable(projected))
 
 
 def _replace_run_context(
@@ -139,6 +151,20 @@ def _replace_run_context(
                 # hash it by value; `None` (bare/synthetic context) hashes distinctly.
                 'usage_limits': value.usage_limits,
                 **({'workspace': value.workspace.ref} if value.workspace.ref is not None else {}),
+                # A dynamic toolset's discovery, validation and call tasks list it again under this
+                # path and read retry counts by the names it gives the tools, so one toolset listed
+                # under two prefixes must not share a cache entry. Projected only when set, so other
+                # keys are unchanged.
+                **(
+                    {'_tool_name_path': tool_name_path}
+                    if (tool_name_path := value._tool_name_path)  # pyright: ignore[reportPrivateUsage]
+                    else {}
+                ),
+                # A tool reading `deadline` or `remaining_time()` must not replay a result computed under
+                # a different time budget. A flow retry records the run's start time, so a retried run with
+                # the same `timeout=` has the same deadline and still hits. Projected only when set, so the
+                # keys of runs without a deadline are unchanged.
+                **({'deadline': value.deadline} if value.deadline is not None else {}),
             }
 
     return inputs
@@ -173,13 +199,32 @@ def _strip_cache_excluded_fields(
                 ):
                     value = '<framework-generated>'
                 result[f.name] = _strip_cache_excluded_fields(value)
-        return result
+        return _project_dict(result, lambda item: item)
     elif _is_dict(obj):
-        return {k: _strip_cache_excluded_fields(v) for k, v in obj.items()}
+        return _map_container(obj, _strip_cache_excluded_fields)
     elif _is_list(obj):
         return [_strip_cache_excluded_fields(item) for item in obj]
     elif _is_tuple(obj):
         return tuple(_strip_cache_excluded_fields(item) for item in obj)
+    return _hash_binary_values(obj)
+
+
+def _hash_binary_values(obj: Any) -> Any:
+    """Normalize binary values in plain containers without expanding models or dataclasses."""
+    if _is_container(obj):
+        return _map_container(obj, _hash_binary_values)
+    if isinstance(obj, bytes | bytearray):
+        try:
+            obj.decode()
+        except UnicodeDecodeError:
+            # Prefect's JSON encoder decodes these as UTF-8, so binary content like an image pushes
+            # `hash_objects` onto its `cloudpickle` fallback, where the key depends on which objects
+            # the payload shares as well as on their values (see `_replace_toolset_tools`). A digest
+            # stays on the JSON path. Ordinary dict keys in this namespace are escaped below,
+            # so a caller-supplied descriptor cannot replay a binary input's result.
+            return _ProjectedDict(
+                {_BINARY_KEY: {'__class__': to_qualified_name(type(obj)), 'sha256': hashlib.sha256(obj).hexdigest()}}
+            )
     return obj
 
 
@@ -188,12 +233,28 @@ def _is_container(obj: Any) -> bool:
 
 
 def _map_container(container: Any, project: Callable[[Any], Any]) -> Any:
-    """Apply `project` to each item of a list/tuple/dict, preserving the container type."""
+    """Project container items and escape reserved dictionary keys once."""
     if _is_dict(container):
-        return {key: project(item) for key, item in container.items()}
+        return _project_dict(container, project)
     if _is_tuple(container):
         return tuple(project(item) for item in container)
     return [project(item) for item in container]
+
+
+def _project_dict(container: dict[str, Any], project: Callable[[Any], Any]) -> dict[str, Any]:
+    result = {key: project(item) for key, item in container.items()}
+    if isinstance(container, _ProjectedDict):
+        return _ProjectedDict(result)
+    if any(isinstance(key, str) and key.startswith(_BINARY_KEY) for key in result):
+        # Escape the whole prefix, including already-prefixed caller keys, to avoid moving
+        # the collision to another ordinary dict. The marker prevents escaping twice.
+        return _ProjectedDict(
+            {
+                _BINARY_KEY + key if isinstance(key, str) and key.startswith(_BINARY_KEY) else key: item
+                for key, item in result.items()
+            }
+        )
+    return result
 
 
 def _replace_toolset_tools(
@@ -230,7 +291,8 @@ def _replace_toolset_tools(
         if _is_container(value):
             return _map_container(value, project)
         if _is_toolset_tool(value):
-            return {'toolset': value.toolset.id, 'tool_def': _cacheable_value(value.tool_def)}
+            # Keyed by the `id` chosen for the toolset, so a hostname-derived one leaves keys as they were.
+            return {'toolset': value.toolset._explicit_id, 'tool_def': _cacheable_value(value.tool_def)}  # pyright: ignore[reportPrivateUsage]
         if _is_tool_definition(value):
             return _cacheable_value(value)
         return value

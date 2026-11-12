@@ -410,7 +410,7 @@ class State:
 
 
 email_writer_agent = Agent(
-    'google:gemini-3-pro-preview',
+    '{{ google:large }}',
     output_type=Email,
     instructions='Write a welcome email to our tech blog.',
 )
@@ -450,7 +450,7 @@ class EmailOk(BaseModel):
 
 
 feedback_agent = Agent[object, EmailRequiresWrite | EmailOk](
-    'openai:gpt-5.2',
+    '{{ openai:medium }}',
     output_type=EmailRequiresWrite | EmailOk,
     instructions=(
         'Review the email and provide feedback, email must reference the users specific interests.'

@@ -4,7 +4,7 @@ import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Self, TypeAlias
 
-from .._run_context import AgentDepsT, RunContext
+from .._run_context import AgentDepsT, RunContext, without_tool_name_path
 from ..messages import InstructionPart
 from ..tools import ToolDefinition
 from .abstract import AbstractToolset, ToolsetTool
@@ -52,7 +52,7 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
 
     async def _evaluate_factory(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Evaluate the toolset factory function."""
-        toolset = self.toolset_func(ctx)
+        toolset = self.toolset_func(without_tool_name_path(ctx))
         if inspect.isawaitable(toolset):
             toolset = await toolset
         return toolset

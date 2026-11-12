@@ -5,7 +5,7 @@ description: "Run a Pydantic AI agent inside Zed and other editors over the Agen
 
 # ACP (Agent Client Protocol)
 
-Editors like [Zed](https://zed.dev/docs/ai/external-agents) speak ACP: a stdio JSON-RPC protocol that lets a TUI or editor drive an external coding agent -- streaming its text, rendering its file edits as diffs, and prompting the user to approve sensitive tool calls. Reach for this capability when you want a Pydantic AI `Agent` to appear as a first-class agent inside one of those editors, without implementing the ACP server side yourself.
+Editors like [Zed](https://zed.dev/docs/ai/external-agents) speak ACP: a stdio JSON-RPC protocol that lets a TUI or editor drive an external coding agent -- streaming its text, rendering its file edits as diffs, and prompting the user to approve sensitive tool calls. Reach for this capability when you want a Pydantic AI `Agent` to run as an agent inside one of those editors, without implementing the ACP server side yourself.
 
 !!! warning "Experimental"
     Unlike the graduated capabilities in these docs, ACP itself may still be **removed**, not just changed -- it lives under `pydantic_ai_harness.experimental` and may change or be removed in any release, without a deprecation period. Import it from the experimental path -- there is no top-level export:
@@ -22,6 +22,8 @@ Editors like [Zed](https://zed.dev/docs/ai/external-agents) speak ACP: a stdio J
 
     warnings.filterwarnings('ignore', category=HarnessExperimentalWarning)
     ```
+
+![An editor such as Zed launches the agent script as a subprocess and talks to it over stdio with ACP JSON-RPC messages. session/new carries the workspace directory, and session_config roots the FileSystem and Shell tools there. session/prompt starts an agent run, and session/update streams its text and tool calls back so the editor shows them as messages and diffs. A tool that requires approval sends session/request_permission and waits as pending until the user allows or rejects it.](../img/harness/acp.svg)
 
 ## The problem
 
@@ -58,7 +60,7 @@ from pydantic_ai_harness.experimental.acp import run_acp_stdio_sync
 
 
 def build_agent() -> Agent[None, str]:
-    return Agent('anthropic:claude-sonnet-5', instructions='You are a coding assistant.')
+    return Agent('{{ anthropic:medium }}', instructions='You are a coding assistant.')
 
 
 if __name__ == '__main__':
@@ -99,7 +101,7 @@ from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.experimental.acp import AcpSession, AcpSessionConfig, run_acp_stdio_sync
 
-agent = Agent('anthropic:claude-sonnet-5')
+agent = Agent('{{ anthropic:medium }}')
 
 
 def session_config(session: AcpSession) -> AcpSessionConfig[None]:
@@ -151,7 +153,7 @@ def delete_file(path: str) -> str:
     ...
 ```
 
-The lifecycle the client sees is `pending` (awaiting approval) -> `in_progress` (granted, running) -> `completed`/`failed`, so an unapproved action is never shown as already running. "Always allow"/"always reject" decisions are remembered for the session, scoped by default to the exact call (tool name plus arguments) so approving one call never silently approves a different one. Pass `permission_policy` to widen or narrow that scope.
+The lifecycle the client sees is `pending` (awaiting approval) -> `in_progress` (granted, running) -> `completed`/`failed`, so an unapproved action is never shown as already running. "Always allow"/"always reject" decisions are remembered for the session, scoped by default to the exact call (tool name plus arguments) so approving one call does not approve a different one. Pass `permission_policy` to widen or narrow that scope.
 
 ## Rich tool rendering
 
@@ -159,7 +161,7 @@ By default the adapter recognizes the harness `FileSystem` and `Shell` tool call
 
 ## MCP servers
 
-An ACP client may offer MCP servers during session setup. This adapter does not connect them itself; a `session_config` is the place to turn `session.mcp_servers` into Pydantic AI toolsets (for example with `pydantic_ai.mcp.MCPToolset`). If a client sends MCP servers and no `session_config` is installed to consume them, the session request is rejected rather than silently ignoring them. A spec-following client only sends HTTP/SSE MCP servers when the agent advertises support during `initialize`; when your `session_config` connects them, say so:
+An ACP client may offer MCP servers during session setup. This adapter does not connect them itself; a `session_config` is the place to turn `session.mcp_servers` into Pydantic AI toolsets (for example with `pydantic_ai.mcp.MCPToolset`). If a client sends MCP servers and no `session_config` is installed to consume them, the session request is rejected rather than ignoring them. A spec-following client only sends HTTP/SSE MCP servers when the agent advertises support during `initialize`; when your `session_config` connects them, say so:
 
 ```python
 from acp import schema
@@ -192,17 +194,17 @@ from pydantic_ai_harness.experimental.acp import InMemorySessionStore
 run_acp_stdio_sync(agent, session_store=InMemorySessionStore())
 ```
 
-`InMemorySessionStore` keeps sessions for the lifetime of the process. Implement the `SessionStore` protocol (`save`/`load` a `StoredSession`) over a file or database to make them survive a restart -- the stored values are Pydantic models, so they serialize with Pydantic. Session persistence is for *reopening a conversation*; it is orthogonal to per-run durability. To also make individual turns crash-resilient, add a [step-durability capability](step-persistence.md) -- each ACP turn is one agent run, so the two layers compose with no glue.
+`InMemorySessionStore` keeps sessions for the lifetime of the process. Implement the `SessionStore` protocol (`save`/`load` a `StoredSession`) over a file or database to make them survive a restart -- the stored values are Pydantic models, so they serialize with Pydantic. Session persistence is for *reopening a conversation*; it is orthogonal to per-run durability. To also make individual turns resumable after an interruption, add [Step Persistence](step-persistence.md) -- each ACP turn is one agent run, so the two compose with no glue.
 
 ## Model selection
 
 Pass `models` to advertise a stable ACP session config option named `model` (using Pydantic AI [model names](../models/overview.md)). The first is each session's default. A selection is applied as a per-run override -- the shared agent is never mutated -- and is persisted with the session when a `session_store` is set.
 
 ```python
-run_acp_stdio_sync(agent, models=['anthropic:claude-sonnet-5', 'anthropic:claude-opus-4-8', 'openai:gpt-4o'])
+run_acp_stdio_sync(agent, models=['{{ anthropic:medium }}', '{{ anthropic:large }}', '{{ openai:medium }}'])
 ```
 
-A model id is any string a Pydantic AI model accepts, so newer models not yet in `KnownModelName` work too. Pass `models='all'` to offer every model Pydantic AI knows. To advertise ids `infer_model` does not understand (OAuth or subscription models), pass `model_resolver` to map the selected id to a prebuilt `Model`.
+A model id is any string a Pydantic AI model accepts, so models not listed in `KnownModelName` work too. Pass `models='all'` to offer every model `KnownModelName` lists. To advertise ids `infer_model` does not understand (OAuth or subscription models), pass `model_resolver` to map the selected id to a prebuilt `Model`.
 
 ## Cancellation and limitations
 
@@ -212,7 +214,7 @@ A model id is any string a Pydantic AI model accepts, so newer models not yet in
 - **Overwrite diffs.** `write_file` renders an overwrite as if creating a new file, so the diff understates what it replaced.
 - **Live terminal panes.** `acp_terminal` returns a command's captured output; it does not embed a live terminal pane in the tool call.
 - **Images.** Prompt image blocks are off by default and must be enabled via `prompt_capabilities` with a model that accepts them.
-- **Slash commands.** The adapter does not yet advertise any commands, so no slash commands appear in the client. Planned.
+- **Slash commands.** The adapter does not yet advertise any commands, so no slash commands appear in the client.
 
 ## API
 
@@ -229,7 +231,7 @@ run_acp_stdio(            # async; serve until the client disconnects
     mcp_capabilities=None,    # MCP transports to advertise; needs a session_config to connect them
     tool_presenter=None,      # defaults to the FileSystem/Shell presenter
     session_store=None,       # enables session/load by persisting each session
-    models=None,              # models offered as the `model` config option ('all' for every known model)
+    models=None,              # models offered as the `model` config option ('all' for every `KnownModelName`)
     model_resolver=None,      # maps an advertised model id to the Model used for the run
     usage_limits=None,        # no request limit by default; pass UsageLimits(...) to set ceilings
 )

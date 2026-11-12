@@ -8,7 +8,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
@@ -49,17 +49,17 @@ def _delegate_returns(result: Any) -> list[str]:
         str(part.content)
         for message in result.all_messages()
         for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task'
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'delegate_task' and part.outcome != 'retried'
     ]
 
 
 def _delegate_retries(result: Any) -> list[str]:
-    """The `delegate_task` retry-prompt contents from a run result, in order."""
+    """The `delegate_task` retry contents from a run result, in order."""
     return [
         str(part.content)
         for message in result.all_messages()
         for part in message.parts
-        if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried' and part.tool_name == 'delegate_task'
     ]
 
 

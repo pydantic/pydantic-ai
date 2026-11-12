@@ -4,12 +4,12 @@ The built-in `github` plugin: GitHub's hosted MCP tools, through harness `GitHub
 
 The token comes from the GitHub CLI's browser sign-in, or from `/keys`. The plugin's settings hold only
 which one (and a key's name) plus the non-secret `GitHub` options, all edited in the settings menu that
-`/plugins configure github` opens.
+`GitHubPlugin.settings_menu` declares, so it opens with `/plugins configure github` and in the web UI's
+plugins panel.
 """
 
-import asyncio
-import concurrent.futures
 import re
+import threading
 import webbrowser
 from collections.abc import Callable, Sequence
 from dataclasses import replace
@@ -18,32 +18,26 @@ from urllib.parse import urlsplit
 
 import anyio
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, field_validator
-from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
-from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.github import GITHUB_MCP_URL, GitHub
-from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, SavedKey, load_keys, prompt_api_key, save_key
+from pydantic_clai2.config.api_keys import KeyReference, SavedKey, load_keys
 from pydantic_clai2.gh_cli import GhLogin, GhToken, gh_host, gh_token, start_login
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
+from pydantic_clai2.plugins.keys import choose_key
+from pydantic_clai2.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_clai2.ui.browser import open_browser
-from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
-from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker, worker_stopping
+from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 KEY_NAME = 'GITHUB_TOKEN'
 """The conventional `/keys` label, shared by every plugin that uses a GitHub token. Not read from the environment."""
 SETUP = 'Run /plugins configure github to sign in or choose a token.'
 ENTERPRISE = 'enterprise'
 """The host choice that asks for a GitHub Enterprise Cloud URL."""
-RUNNERS: Runners = TERMINAL
-"""How the settings menu's widgets are shown; tests swap in scripted ones."""
 OPEN_BROWSER: Callable[[str], bool] = open_browser
 """Opens GitHub's device page during `gh` sign-in; tests swap it out."""
-FINISHED = 'gh-finished'
-"""The key the sign-in screen receives once `gh auth login` exits."""
 _GROUP = re.compile(r'[a-z][a-z0-9_]*')
 
 
@@ -92,6 +86,7 @@ class GitHubPlugin(Plugin[GitHubSettings, DepsT]):
         )
         return (
             GitHub[DepsT](
+                defer_loading=True,
                 auth=auth,
                 url=settings.url,
                 read_only=settings.read_only,
@@ -100,8 +95,15 @@ class GitHubPlugin(Plugin[GitHubSettings, DepsT]):
             ),
         )
 
-    async def configure(self) -> str:
-        return await _configure(GitHubSource(self.host))
+    def settings_menu(self) -> SettingsMenu:
+        source = GitHubSource(self.host)
+        return SettingsMenu(
+            source=source,
+            actions={
+                'login': lambda dialogs: _pick_login(source, dialogs),
+                'url': lambda dialogs: _pick_host(source, dialogs),
+            },
+        )
 
     async def on_session_start(self, event: SessionStart) -> None:
         # Loading anyway keeps the settings menu available; each run fails closed until there is a token.
@@ -266,85 +268,84 @@ class GitHubSource(Generic[DepsT]):
         return GitHubSettings.model_validate(data)
 
 
-async def _configure(source: GitHubSource[DepsT]) -> str:
-    loop = asyncio.get_running_loop()
-
-    def pick_token() -> list[str]:
-        # The key picker is async, so the menu's thread hands it back to the event loop. Its widgets
-        # watch their own stop signal, so cancelling this worker must cancel the picker explicitly.
-        name = source.settings.token.name
-        label = f'GitHub token (saved in /keys as {name})'
-        picking = asyncio.run_coroutine_threadsafe(prompt_api_key(prompt=_MaskedPrompt(), label=label), loop)
-        while not (picking.done() or worker_stopping()):
-            concurrent.futures.wait([picking], timeout=0.05)
-        if not picking.done():
-            picking.cancel()
-            return []
-        # Saving happens here, after the cancellable picker, so a cancelled menu saves nothing.
-        reference = _saved(name, picking.result())
-        if reference is None:
-            return []
-        source.save(source.settings.model_copy(update={'login': 'key', 'token': reference}))
-        return [f'GitHub uses the saved key {reference.name}. Manage it in /keys.']
-
-    def pick_login(menu: FieldMenu) -> list[str]:
-        pick = RUNNERS.run_choice(menu.build_choices(_LOGIN))
-        if pick.cancelled or pick.item is None:
-            return []
-        return pick_token() if pick.item.value == 'key' else _sign_in_with_gh(source)
-
-    def flow() -> list[str]:
-        menu = FieldMenu(source)
-
-        def refreshed(submenu: Callable[[], list[str]]) -> Callable[[], list[str]]:
-            def run() -> list[str]:
-                messages = submenu()
-                menu.rows = list(source.rows())
-                return messages
-
-            return run
-
-        submenus = {'login': refreshed(lambda: pick_login(menu)), 'url': refreshed(lambda: _pick_host(menu, source))}
-        return run_flow(menu, RUNNERS, submenus=submenus)
-
-    messages = await run_worker(flow)
-    return '\n'.join(messages) or 'GitHub settings unchanged.'
+def _options(row: FieldRow) -> list[Option]:
+    return [Option(value=choice, label=row.display(choice)) for choice in row.choices]
 
 
-def _sign_in_with_gh(source: GitHubSource[DepsT]) -> list[str]:
+async def _pick_login(source: GitHubSource[DepsT], dialogs: Dialogs) -> list[str]:
+    """Pick where the token comes from, then sign in through `gh` or pick a key in `/keys`."""
+    picked = await dialogs.choose(
+        title=f'Choose {_LOGIN.label}', options=_options(_LOGIN), current=source.settings.login
+    )
+    if picked is None:
+        return []
+    return await (_pick_token(source, dialogs) if picked == 'key' else _sign_in_with_gh(source, dialogs))
+
+
+async def _pick_token(source: GitHubSource[DepsT], dialogs: Dialogs) -> list[str]:
+    """Pick a saved key or save a new masked one; only its name goes into the settings."""
+    name = source.settings.token.name
+    reference = await choose_key(name=name, label=f'GitHub token (saved in /keys as {name})', dialogs=dialogs)
+    if reference is None:
+        return []
+    settings = source.settings.model_copy(update={'login': 'key', 'token': reference})
+    await anyio.to_thread.run_sync(source.save, settings)
+    return [f'GitHub uses the saved key {reference.name}. Manage it in /keys.']
+
+
+async def _sign_in_with_gh(source: GitHubSource[DepsT], dialogs: Dialogs) -> list[str]:
     """Use `gh`'s login for the configured host, signing in through the browser when it has none."""
     hostname = gh_host(source.settings.url)
     messages: list[str] = []
     try:
-        if gh_token(hostname) is None:
-            login = start_login(hostname, stopping=worker_stopping)
-            if login is None:
+        if await anyio.to_thread.run_sync(gh_token, hostname, abandon_on_cancel=True) is None:
+            if not await dialogs.wait(
+                title='Signing in to GitHub',
+                description=(
+                    'Approve the one-time code in your browser; gh copied it to your clipboard.\n\n'
+                    'This closes by itself once gh finishes. Esc cancels and stops gh.'
+                ),
+                task=lambda show: _gh_login(hostname, show, messages),
+            ):
                 return []
-            if isinstance(login, str):
-                return [login]
-            if not _wait_for_browser(login):
-                login.cancel()
-                return []
-            messages.append(login.finish())
-            if gh_token(hostname) is None:
+            if await anyio.to_thread.run_sync(gh_token, hostname, abandon_on_cancel=True) is None:
                 return messages
     except UserError as exc:
         return [*messages, str(exc)]
-    source.save(source.settings.model_copy(update={'login': 'gh'}))
+    await anyio.to_thread.run_sync(source.save, source.settings.model_copy(update={'login': 'gh'}))
     return [*messages, f'GitHub uses your GitHub CLI login for {hostname}.']
 
 
-def _wait_for_browser(login: GhLogin) -> bool:
-    """Show the one-time code until `gh` finishes; Enter opens the page again, Esc gives up."""
-    _open(login.url)
-    menu = _browser_menu(login)
-    while True:
-        pick = RUNNERS.run_choice(menu)
-        if pick.cancelled or pick.item is None:
-            return False
-        if pick.item.value == FINISHED:
-            return True
-        _open(login.url)
+async def _gh_login(hostname: str, show: Callable[[str], None], messages: list[str]) -> None:
+    """Run `gh auth login --web`, showing its code and opening the page; add how it ended to `messages`.
+
+    Cancelling stops `gh`, whether it is still starting or waiting for the browser.
+    """
+    stop = threading.Event()
+    started: list[GhLogin] = []
+
+    def start() -> GhLogin | str | None:
+        login = start_login(hostname, stopping=stop.is_set)
+        if isinstance(login, GhLogin):
+            started.append(login)
+            if stop.is_set():  # Cancelled just as the code arrived: `finally` below may have missed it.
+                login.cancel()
+        return login
+
+    try:
+        login = await anyio.to_thread.run_sync(start, abandon_on_cancel=True)
+        if isinstance(login, str):
+            messages.append(login)
+        if not isinstance(login, GhLogin):
+            return  # A failure, or `None` once stopped, which nothing awaits by then.
+        show(f'Enter {login.code} at {login.url}')
+        await anyio.to_thread.run_sync(_open, login.url, abandon_on_cancel=True)
+        messages.append(await anyio.to_thread.run_sync(login.finish, abandon_on_cancel=True))
+    finally:
+        stop.set()
+        for login in started:
+            if login.process.poll() is None:
+                login.cancel()
 
 
 def _open(url: str) -> None:
@@ -354,82 +355,24 @@ def _open(url: str) -> None:
         pass  # The URL is on screen.
 
 
-def _browser_menu(login: GhLogin) -> Menu:
-    def finished_key() -> str:  # pragma: no cover -- read by the terminal menu
-        return FINISHED if login.process.poll() is not None else menu_key()
-
-    return (
-        MenuBuilder(f'Enter {login.code} at {login.url}')
-        .style(markdown_style())
-        .items([MenuItem(f'Open {login.url} again', value='open')])
-        .on_key(FINISHED, lambda menu, item: MenuResult(item=MenuItem('finished', value=FINISHED)))
-        .footer_hint('Approve the code in your browser; gh copied it to your clipboard - Esc cancel')
-        .key_source(finished_key)
-        .build()
+async def _pick_host(source: GitHubSource[DepsT], dialogs: Dialogs) -> list[str]:
+    """github.com, or a GitHub Enterprise Cloud host typed and checked like any other edit."""
+    url = source.settings.url
+    picked = await dialogs.choose(
+        title=f'Choose {_HOST.label}',
+        options=_options(_HOST),
+        current=GITHUB_MCP_URL if url == GITHUB_MCP_URL else ENTERPRISE,
     )
-
-
-def _pick_host(menu: FieldMenu, source: GitHubSource[DepsT]) -> list[str]:
-    pick = RUNNERS.run_choice(menu.build_choices(_HOST))
-    if pick.cancelled or pick.item is None:
+    if picked is None:
         return []
-    if pick.item.value != ENTERPRISE:
-        return [source.apply(_HOST, GITHUB_MCP_URL)]
-    typed = RUNNERS.run_text(menu.build_editor(_ENTERPRISE_URL))
-    if typed.cancelled or not isinstance(typed.value, str) or not typed.value.strip():
-        return []
-    return [source.apply(_ENTERPRISE_URL, typed.value.strip())]
-
-
-class _MaskedPrompt:
-    """`prompt_api_key`'s value prompt as a masked termflow input, matching the settings menu."""
-
-    async def prompt_async(self, label: str, /, *, is_password: bool = False) -> str:
-        builder = (
-            TextInputBuilder(label)
-            .style(markdown_style())
-            .prompt('Token: ')
-            .placeholder('Paste a GitHub token; it is saved in /keys')
-            .footer_hint('Enter save - Esc cancel')
-            .key_source(menu_key)
-        )
-        builder.mask()
-        widget = builder.build()
-        result = await run_worker(lambda: RUNNERS.run_text(widget))
-        if result.cancelled or not isinstance(result.value, str):
-            raise EOFError  # `prompt_api_key` reads this as cancellation.
-        return result.value
-
-
-def _saved(name: str, choice: str | KeyReference | None) -> KeyReference | None:
-    """A picked key as is, or a typed token saved under `name`; `None` means cancelled."""
-    if choice is None or isinstance(choice, KeyReference):
-        return choice
-    value = choice.strip()
-    if not value:
-        return None
-    try:
-        save_key(name=name, value=value, replace=False)
-    except KeyExistsError:
-        if not _confirm_replace(name):
-            return None
-        save_key(name=name, value=value)
-    return KeyReference(name=name)
-
-
-def _confirm_replace(name: str) -> bool:
-    menu = (
-        MenuBuilder(f'{name} is already in /keys')
-        .style(markdown_style())
-        .items(
-            [
-                MenuItem('Keep the saved token', value=False),
-                MenuItem(f'Replace {name} for every plugin and connection that uses it', value=True),
-            ]
-        )
-        .footer_hint('Enter select - Esc keep')
-        .key_source(menu_key)
-        .build()
+    if picked != ENTERPRISE:
+        return [await anyio.to_thread.run_sync(source.apply, _HOST, GITHUB_MCP_URL)]
+    typed = await dialogs.text(
+        title=f'New value for {_ENTERPRISE_URL.label}',
+        placeholder=f'current: {url}',
+        check=lambda text: source.problem(_ENTERPRISE_URL, text),
+        description=_ENTERPRISE_URL.description,
     )
-    pick = RUNNERS.run_choice(menu)
-    return not pick.cancelled and pick.item is not None and pick.item.value is True
+    if not typed:
+        return []
+    return [await anyio.to_thread.run_sync(source.apply, _ENTERPRISE_URL, typed)]

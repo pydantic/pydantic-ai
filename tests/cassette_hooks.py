@@ -3,8 +3,8 @@
 `before_record_request` / `before_record_response` run on live traffic before it is written to a cassette:
 they drop noisy headers, scrub credentials the built-in filters don't know about, and normalize the smart
 quotes LLM APIs return so cassettes and the snapshots built from them stay ASCII. `normalize_uri` runs on
-both recorded and incoming URIs at match time, so a cassette recorded against one AWS account or GCP
-project replays for another.
+both recorded and incoming URIs at match time, so a cassette recorded against one AWS account, GCP
+project or Anthropic SDK version replays for another.
 """
 
 from __future__ import annotations
@@ -74,6 +74,7 @@ FILTERED_HEADERS = {
     'via',
     'set-cookie',
     'api-key',
+    'xi-api-key',
 }
 ALLOWED_HEADER_PREFIXES = {
     # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
@@ -94,6 +95,8 @@ ALLOWED_HEADERS = {
 }
 
 SCRUBBED_JSON_FIELDS = ('access_token', 'id_token', 'refresh_token', 'safety_identifier')
+# ElevenLabs `GET /v1/convai/agents/{id}` bodies carry the workspace owner's identity in `access_info`.
+SCRUBBED_NESTED_JSON_FIELDS = ('creator_email', 'creator_name')
 SCRUBBED_FORM_FIELDS = (
     'assertion',
     'client_id',
@@ -117,7 +120,13 @@ _BEDROCK_HOST = re.compile(r'bedrock-runtime\.[a-z0-9-]+\.amazonaws\.com')
 _VERTEX_HOST = re.compile(r'[a-z0-9-]+-aiplatform\.googleapis\.com')
 _VERTEX_LOCATION = re.compile(r'/locations/[a-z0-9-]+/')
 _VERTEX_PROJECT = re.compile(r'/projects/[a-z0-9-]+/')
+# Anthropic SDKs before 2.3.0 hardcode `?beta=true` into beta endpoint paths; 2.3.0 stopped sending it,
+# since the `anthropic-beta` header alone selects the beta API.
+_ANTHROPIC_BETA_QUERY = re.compile(r'\?beta=true(&|$)')
 _SAFETY_IDENTIFIER = re.compile(r'("safety_identifier"\s*:\s*)"(?:\\.|[^"\\])*"')
+# ElevenLabs `GET /v1/convai/conversation/get-signed-url` bodies carry a short-lived conversation
+# token in the query string of `signed_url`.
+_SIGNED_URL_TOKEN = re.compile(r'(conversation_signature|token)=[^&]+')
 
 
 def scrub_aws_account_id(uri: str) -> str:
@@ -125,16 +134,18 @@ def scrub_aws_account_id(uri: str) -> str:
 
 
 def normalize_uri(uri: str) -> str:
-    """Erase the region, project and account a cassette was recorded against before matching.
+    """Erase the region, project, account and SDK version a cassette was recorded with before matching.
 
     Bedrock cassettes are recorded in whatever region the recording developer's credentials use, and
-    Vertex AI cassettes against their GCP project; neither is what the test asserts on.
+    Vertex AI cassettes against their GCP project; neither is what the test asserts on. Anthropic
+    cassettes recorded on an SDK that sends the `beta=true` query replay for one that doesn't.
     """
     uri = scrub_aws_account_id(uri)
     uri = _BEDROCK_HOST.sub('bedrock-runtime.REGION.amazonaws.com', uri)
     uri = _VERTEX_HOST.sub('aiplatform.googleapis.com', uri)
     uri = _VERTEX_LOCATION.sub('/locations/REGION/', uri)
-    return _VERTEX_PROJECT.sub('/projects/PROJECT/', uri)
+    uri = _VERTEX_PROJECT.sub('/projects/PROJECT/', uri)
+    return _ANTHROPIC_BETA_QUERY.sub(lambda m: '?' if m[1] else '', uri)
 
 
 def filter_headers(headers: dict[str, list[str]]) -> dict[str, list[str]]:
@@ -175,6 +186,19 @@ def _decompress(body: bytes, headers: dict[str, list[str]]) -> bytes:
     return body
 
 
+def _scrub_nested_fields(obj: Any) -> None:
+    """Blank the `SCRUBBED_NESTED_JSON_FIELDS` strings wherever they sit in a parsed JSON body."""
+    if isinstance(obj, dict):
+        for key, value in cast('dict[Any, Any]', obj).items():
+            if key in SCRUBBED_NESTED_JSON_FIELDS and isinstance(value, str):
+                obj[key] = 'scrubbed'
+            else:
+                _scrub_nested_fields(value)
+    elif isinstance(obj, list):
+        for item in cast('list[Any]', obj):
+            _scrub_nested_fields(item)
+
+
 def scrub_json_body(body: bytes) -> bytes:
     """Normalize smart characters and blank the credentials a JSON body may carry.
 
@@ -190,6 +214,9 @@ def scrub_json_body(body: bytes) -> bytes:
         for field in SCRUBBED_JSON_FIELDS:
             if parsed.get(field) is not None:
                 parsed[field] = 'scrubbed'
+        if isinstance(signed_url := parsed.get('signed_url'), str):
+            parsed['signed_url'] = _SIGNED_URL_TOKEN.sub(r'\1=scrubbed', signed_url)
+    _scrub_nested_fields(parsed)
     return json.dumps(parsed).encode('utf-8')
 
 

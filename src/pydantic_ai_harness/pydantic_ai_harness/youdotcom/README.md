@@ -8,6 +8,8 @@ lookup cannot settle.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/youdotcom/)
 
+![The model calls tools from two capabilities. YouSearch adds web_search, which returns the top ten hits with excerpts, and get_page, which returns one page as markdown capped at 10,000 characters. YouResearch adds answer, research and finance_research, which return cited answers. Each tool calls one method of the You.com API. Every tool returns a ToolReturn: the text goes to the model and the sources entry of its metadata holds YouSource records for your app. Authentication, billing and permission errors stop the run; other failures come back as a retry.](https://pydantic.dev/docs/ai/img/harness/youdotcom.svg)
+
 ## Installation
 
 The examples below use an Anthropic model and `Agent.from_file`, so they also
@@ -78,7 +80,7 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[YouSearch(), YouResea
 
 | Tool | Capability | Purpose |
 |---|---|---|
-| `web_search` | `YouSearch` | Search the web and return the top `num_results` pages, each with title, URL, and its most relevant excerpts. |
+| `web_search` | `YouSearch` | Search the web and return the top `max_results` pages, each with title, URL, and its most relevant excerpts. |
 | `get_page` | `YouSearch` | Retrieve the markdown of one specific URL -- a promising `web_search` hit, or a URL the user provided. |
 | `answer` | `YouResearch` | Get a synthesized answer with citations, grounded in live web results, in one call. |
 | `research` | `YouResearch` | Run multi-step research that reads across many sources and returns a thorough, cited answer. |
@@ -93,8 +95,9 @@ full markdown instead.
 characters, keeping the **head** (a page's lead carries the substance); when a
 page exceeds the cap the output ends with a
 `[... page text truncated at N characters]` marker. The number of results is
-limited the same way: `num_results` is sent to You.com, and applied again to
+limited the same way: `max_results` is sent to You.com, and applied again to
 the response that comes back.
+`num_results` is the deprecated name of `max_results` and still works, with a warning.
 
 A `web_search` query that matches nothing is a valid answer, not an error: the
 tool returns `No results found for {query!r}.`, which the model can pass on to
@@ -163,7 +166,7 @@ Every field of `YouSearch` with its default:
 from pydantic_ai_harness import YouSearch
 
 YouSearch(
-    num_results=10,              # results per web_search call (1 to 20)
+    max_results=10,              # results per web_search call (1 to 20)
     extraction_mode='highlights',  # 'highlights' excerpts, or 'full_page' markdown
     max_text_chars=10_000,       # get_page / full-page text cap, in characters
     include_domains=[],          # only return results from these domains (allowlist)
@@ -237,7 +240,7 @@ contributes the same default research guidance.
 
 ## Durable execution
 
-Under [durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/), each You.com request is recorded, so a
+Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each You.com request is recorded, so a
 recovered run reuses the result instead of making the request again. Temporal
 and Prefect record each tool call in its own activity or task. DBOS runs
 function tools in workflow code, so there the request runs as its own step.
@@ -247,7 +250,7 @@ exceed: it waits up to `timeout_ms`, 600 seconds by default. Give the tool calls
 longer with
 `TemporalDurability(toolset_activity_config={'you_research': ActivityConfig(...)})`,
 keyed by the capability's `id`,
-as in [Temporal timeouts](https://pydantic.dev/docs/ai/harness/durable-execution/#temporal-timeouts).
+as in [Temporal timeouts](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-command-timeouts).
 
 The records are named after the capability's `id`, which defaults to
 `you_search` for `YouSearch` and `you_research` for `YouResearch`, so durable
@@ -287,8 +290,10 @@ To use the provider's search where there is one and You.com's elsewhere, either:
   `get_page` stays available on every model. `include_domains` and
   `exclude_domains` become the native tool's `allowed_domains` and
   `blocked_domains`.
-  Whether the native search applies them depends on the provider: Gemini's
-  native search ignores them, so on Gemini they only restrict the fallback.
+  A model whose native search can't apply a domain filter you set gets
+  You.com's `web_search` instead, so the filter still holds: on Gemini, whose
+  native search takes no domain filters, setting either list means You.com
+  searches.
 - Or pass You.com's search as the fallback of core `WebSearch`, to configure the
   native search with `WebSearch`'s own options:
 
@@ -296,7 +301,7 @@ To use the provider's search where there is one and You.com's elsewhere, either:
   from pydantic_ai.capabilities import WebSearch
   from pydantic_ai_harness.youdotcom import YouSearch
 
-  WebSearch(local=YouSearch(num_results=10).web_search_tool())
+  WebSearch(local=YouSearch(max_results=10).web_search_tool())
   ```
 
 Otherwise, give an agent one web search capability: core `WebSearch`, harness
@@ -321,7 +326,7 @@ tool, which is called `duckduckgo_search` and does not clash.
 model: anthropic:claude-sonnet-4-6
 capabilities:
   - YouSearch:
-      num_results: 5
+      max_results: 5
       freshness: month
   - YouResearch:
       research_effort: deep
@@ -334,8 +339,7 @@ from pydantic_ai_harness import YouResearch, YouSearch
 agent = Agent.from_file('agent.yaml', custom_capability_types=[YouSearch, YouResearch])
 ```
 
-Pass `custom_capability_types` so the spec loader knows how to instantiate the
-capabilities. The `client` field is not spec-serializable; spec-loaded
+The `client` field is not spec-serializable; spec-loaded
 instances always build the default client from `YDC_API_KEY`. In specs,
 `output_schema` takes the JSON-schema dict form.
 

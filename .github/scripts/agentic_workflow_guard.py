@@ -23,22 +23,29 @@ budget before anyone noticed, documented in #6766:
   killed before it could emit anything.
 - `compiler_versions` — a partial `gh aw compile` leaves locks on mixed compiler
   versions, which is how source and lock drift apart unnoticed.
-- `compiled_runner_contract` — every generated agent job must keep the command-line
-  contract required by the Pydantic AI runner shim.
-- `awf_binary_version` — `engine.command` makes gh-aw skip its own AWF install, so
-  `shared/pre-steps.md` re-runs the installer with a hand-written version. #8041 moved
-  gh-aw to a release bundling AWF v0.27.44 without touching that pin, and the v0.27.42
+- `compiled_runner_contract` — every generated agent job must use the public
+  engine with the pinned runtime, repository policy and isolated Z.ai credentials.
+- `awf_binary_version` — the installed firewall must match the compiler bundle.
+  #8041 moved gh-aw to a release bundling AWF v0.27.44 without touching that pin, and the v0.27.42
   binary rejected the v0.27.44 config (`config.apiProxy.providers is not supported`).
   The agent job died before the model started, on every workflow using the shim.
-- `ai_credits_accounting` — `apiProxy.providers` is the API proxy's AI-credits pricing
-  table, not a reporting field, and AWF caps a run at 10,000 credits with nothing in
-  frontmatter able to lift it. Pricing `MiniMax-M3` there made one ordinary request cost
-  tens of thousands, so every agent job 403'd on its first call.
+- `ai_credits_accounting` — provider overlays use USD per token, unlike default
+  pricing's USD per million. Confusing those units exhausted the fixed firewall
+  credit cap on one request. Only the verified GLM overlay is allowed here.
+- `daily_aic_guardrail` — gh-aw's daily AI-credits guardrail listed the artifacts of every
+  run from the past 24h on each activation, about 700 REST calls per CI Review activation,
+  and exhausted the repo's `GITHUB_TOKEN` rate limit to total credits that were always 0.
+- `engine_sys_path_order` — #10347 imported an engine revision from before #12818, so
+  every lock's wrapper put the checkout ahead of installed packages on `sys.path` (#12815).
 - `compiler_version_compatibility` — the compiler version in every generated lock
   must not appear in gh-aw's live blocked-version policy.
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
   `*.lock.yml` in the same change as its `*.md` source. GitHub Actions runs the
   lock, so an un-recompiled source is a silent no-op.
+- `logfire-import` / `logfire-compiled` / `logfire-network` — three Z.AI
+  workflows reached `main` without the shared Logfire import or compiled OTLP
+  settings, so their runs exported no traces (#19). The compiled firewall must
+  also allow all six Logfire ingest hosts or it can silently block export.
 
 Run over the repo with `python .github/scripts/agentic_workflow_guard.py check`,
 or as policy tests via `test_agentic_workflow_guard.py`.
@@ -54,12 +61,12 @@ import shlex
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeGuard, cast
 
 import yaml
+from agent_provider_health import AGENT_START_HEALTH_STEPS
 
 WORKFLOWS_DIR = Path('.github/workflows')
 AGENTIC_GLOB = 'pydantic-ai-*.md'
@@ -76,15 +83,12 @@ SANDBOX_PREFIX = '/tmp/gh-aw/'
 # These stay outside `$GITHUB_WORKSPACE` while PR review context was moved into it
 # (#6766 F3), so an agent that reaches for `Read` here still hits the old failure.
 # Worth revisiting if a sweep is seen burning turns on them.
-# Every entry ends in `/`, including the one naming a single file, and the candidate
-# path gets one appended before comparison. That makes the match land on a whole path
-# component in both directions: without it `bin` also allows `bindings/`, and
-# `open-issues.tsv` also allows `open-issues.tsv.bak`.
+# Every entry ends in `/`, and the candidate path gets one appended before comparison.
+# That makes the match land on a whole path component in both directions: without it
+# `bin` also allows `bindings/`, and `github-context` also allows `github-context.bak`.
 PROMPT_PATH_ALLOWLIST_PREFIXES = (
     '/tmp/gh-aw/bin/',
     '/tmp/gh-aw/agent/github-context/',
-    '/tmp/gh-aw/agent/open-issues.tsv/',
-    '/tmp/gh-aw/agent/issues/',
 )
 
 # A fenced block opens with three or more backticks or tildes, indented at most three
@@ -110,6 +114,41 @@ SANDBOX_PATH = re.compile(rf'{re.escape(SANDBOX_PREFIX)}[^\s`\'"()\[\]<>]*')
 # the version may be quoted, and the capture must not swallow those quotes: a pin that
 # only differs from the compiled version by a pair of them is the same pin.
 AWF_INSTALL_VERSION = re.compile(r'install_awf_binary\.sh"?\s+"?([^"\s]+)')
+
+# The script gh-aw's daily AI-credits guardrail step runs. Match it rather than the step id,
+# which changes across releases: `daily-effective-workflow-guardrail` in v0.86.2,
+# `daily-ai-credits-workflow-guardrail` in v0.92.6.
+DAILY_AIC_GUARDRAIL_SCRIPT = 'check_daily_aic_workflow_guardrail.cjs'
+
+# The job `shared/provider-health.md` adds after the agent job to record its terminal result on the host.
+HOST_RESULT_JOB = 'provider_health_record'
+# Expression context names are case-insensitive, and `secrets['X']` and `toJSON(secrets)` read the same context.
+SECRETS_CONTEXT = re.compile(r'\bsecrets\b', re.IGNORECASE)
+# The engine's Python wrapper is the `AGENT_MODULE` JS template literal in a step's `run`.
+# It must contain no `sys.path.insert(0, ...)` statement.
+ENGINE_WRAPPER_MODULE = re.compile(r'const AGENT_MODULE = `((?:\\.|[^`\\])*)`')
+SYS_PATH_PREPEND = re.compile(r'^\s*sys\.path\.insert\(\s*0\s*,', re.MULTILINE)
+
+# The agent-start recheck fetches the controller through the contents API with no `ref`,
+# which serves the default branch, then runs `check` from the file it fetched. A workspace
+# copy can come from the PR head or its base branch.
+AGENT_START_HEALTH_CHECK = re.compile(
+    r'/contents/\.github/scripts/agent_provider_health\.py"(?:\s|\\)*>\s*(?P<path>"[^"]+")\s*'
+    r'python3\s+(?P=path)\s+check\b'
+)
+
+# The agent-start recheck's step id. Its `account` output selects the engine's Z.AI key.
+AGENT_START_HEALTH_STEP_ID = 'agent_start_health'
+# The primary and backup Coding Plan keys, which the gate, the recheck and the host record all receive.
+ZAI_KEYS = {
+    'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}',
+    'ZAI_BACKUP_API_KEY': '${{ secrets.ZAI_BACKUP_API_KEY }}',
+}
+# The engine's provider credential: the backup key only when the recheck selected that account.
+ENGINE_CREDENTIAL = (
+    f"${{{{ steps.{AGENT_START_HEALTH_STEP_ID}.outputs.account == 'backup' "
+    '&& secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}'
+)
 
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
@@ -496,68 +535,103 @@ def check_compiler_versions(locks: list[Path]) -> list[Violation]:
     ]
 
 
+def shell_commands(script: str) -> list[list[str]]:
+    """Tokenize commands without treating quoted strings or comments as executions."""
+    lexer = shlex.shlex(script.replace('\\\n', ''), posix=True, punctuation_chars=';&|\n')
+    lexer.whitespace = ' \t\r'
+    lexer.whitespace_split = True
+    commands: list[list[str]] = []
+    command: list[str] = []
+    try:
+        for token in lexer:
+            if all(char in ';&|\n' for char in token):
+                if command:
+                    commands.append(command)
+                    command = []
+            else:
+                command.append(token)
+    except ValueError:
+        return []
+    if command:
+        commands.append(command)
+    return commands
+
+
 def check_compiled_runner_contract(lock: Path) -> list[Violation]:
-    """The generated agent command must retain the interface our runner implements."""
+    """Require the public engine, workflow policy and isolated Z.ai credentials."""
     workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
     agent = _as_mapping(_as_mapping(workflow.get('jobs')).get('agent'))
     steps = agent.get('steps')
-    commands: list[list[str]] = []
-    for raw_step in cast(list[Any], steps) if isinstance(steps, list) else []:
-        run = _as_mapping(raw_step).get('run')
-        if not isinstance(run, str) or 'pydantic-ai-runner-launch' not in run:
-            continue
-        with suppress(ValueError):
-            outer_arguments = shlex.split(run)
-            for index, argument in enumerate(outer_arguments[:-1]):
-                if argument != '-c' or 'pydantic-ai-runner-launch' not in outer_arguments[index + 1]:
-                    continue
-                with suppress(ValueError):
-                    inner_arguments = shlex.split(outer_arguments[index + 1])
-                    for runner_index, inner_argument in enumerate(inner_arguments):
-                        if inner_argument.endswith('/pydantic-ai-runner-launch'):
-                            commands.append(inner_arguments[runner_index:])
-    if len(commands) != 1:
-        return [
-            Violation(
-                str(lock),
-                'compiled-runner-contract',
-                'the `agent` job must contain exactly one invocation of '
-                '`pydantic-ai-runner-launch`. The custom runner is the compatibility '
-                'boundary between gh-aw and Pydantic AI.',
-            )
-        ]
-
-    command = commands[0]
+    executions: list[Mapping[str, object]] = []
+    for raw_step in steps if _is_object_sequence(steps) else ():
+        step = _as_mapping(raw_step)
+        if step.get('id') == 'agentic_execution':
+            executions.append(step)
     missing: list[str] = []
-    if '--output-format' not in command or command.index('--output-format') == len(command) - 1:
-        missing.append('`--output-format stream-json`')
-    elif command[command.index('--output-format') + 1] != 'stream-json':
-        missing.append('`--output-format stream-json`')
-    if '--mcp-config' not in command or command.index('--mcp-config') == len(command) - 1:
-        missing.append('`--mcp-config`')
-    if '--allowed-tools' not in command or command.index('--allowed-tools') == len(command) - 1:
-        missing.append('`mcp__safeoutputs` in `--allowed-tools`')
-    elif 'mcp__safeoutputs' not in command[command.index('--allowed-tools') + 1].split(','):
-        missing.append('`mcp__safeoutputs` in `--allowed-tools`')
-    if not missing:
-        return []
-    return [
-        Violation(
-            str(lock),
-            'compiled-runner-contract',
-            f'the generated Pydantic AI runner invocation is missing {", ".join(missing)}. '
-            'Recompiling changed the gh-aw interface that the custom runner implements.',
-        )
-    ]
+    runtime = str(_as_mapping(agent.get('env')).get('GH_AW_ENGINE_VERSION', ''))
+    runtime_match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)', runtime)
+    if runtime_match is None or tuple(map(int, runtime_match.groups())) < (0, 64, 0):
+        missing.append('a published runtime pin of 0.64.0 or newer')
+    if len(executions) != 1:
+        missing.append('exactly one public engine execution')
+    else:
+        execution = executions[0]
+        run = execution.get('run')
+        commands = shell_commands(run) if isinstance(run, str) else []
+        awf_commands = [command for command in commands if command[0] == 'awf']
+        awf = awf_commands[0] if len(awf_commands) == 1 else []
+        harness_commands: list[list[str]] = []
+        if '--' in awf:
+            child = awf[awf.index('--') + 1 :]
+            if len(child) >= 3 and child[:2] == ['/bin/bash', '-c']:
+                harness_commands = shell_commands(child[2])
+        env = _as_mapping(execution.get('env'))
+        harness_paths = {
+            '${RUNNER_TEMP}/gh-aw/actions/pydantic-ai_harness.cjs',
+            '/tmp/gh-aw/actions/pydantic-ai_harness.cjs',
+        }
+        if not any(
+            len(command) == 4
+            and command[0] == 'exec'
+            and command[1] in {'node', '$GH_AW_NODE_EXEC'}
+            and command[2] in harness_paths
+            and command[3] == 'clai2'
+            for command in harness_commands[-1:]
+        ):
+            missing.append('the public CLAI 2 harness')
+        for name, expected, description in (
+            ('XDG_CONFIG_HOME', '/tmp/gh-aw/clai2-config', 'isolated CLAI settings for the workflow budgets'),
+            ('PYTHONPATH', '/tmp/gh-aw/workflow-python', 'the staged workflow-policy import path'),
+            ('PAI_AGENT', 'pydantic_ai_gh_aw_shim.agent:agent', 'the repository workflow policy'),
+            ('PAI_RESULT_METADATA', 'pydantic_ai_gh_aw_shim.agent:result_metadata', 'authenticated workflow metadata'),
+            ('PAI_OTEL_EXPORT_PATH', '/tmp/gh-aw/pydantic-ai-private-otel.jsonl', 'credential-free workflow tracing'),
+            ('GH_AW_PROTECTED_SESSION_CAPTURE', '1', 'native protected session capture'),
+        ):
+            if str(env.get(name)) != expected:
+                missing.append(description)
+        options = awf[: awf.index('--')] if '--' in awf else awf
+        captures = [value for flag, value in zip(options, options[1:]) if flag == '--capture-command-output']
+        if captures != ['${RUNNER_TEMP}/gh-aw-protected-capture-${GH_AW_PROTECTED_CAPTURE_ID}'] or not env.get(
+            'GH_AW_PROTECTED_CAPTURE_ID'
+        ):
+            missing.append('native protected session capture')
+        exclusions = {value for flag, value in zip(options, options[1:]) if flag == '--exclude-env'}
+        if 'ANTHROPIC_API_KEY' not in exclusions:
+            missing.append('AWF exclusion of the provider credential')
+        if not env.get('PYDANTIC_AI_TASK_ID') or 'PYDANTIC_AI_TASK_ID' in exclusions:
+            missing.append('task identity available inside the agent sandbox')
+        if env.get('PAI_MODEL') != 'anthropic/${{ vars.GH_AW_MODEL }}':
+            missing.append('the unchanged Z.ai model selected through Anthropic')
+        if env.get('ANTHROPIC_API_KEY') != ENGINE_CREDENTIAL:
+            missing.append('injection of the account-selected Z.ai key at the provider proxy')
+    return [Violation(str(lock), 'compiled-runner-contract', 'Missing ' + ', '.join(missing) + '.')] if missing else []
 
 
 def check_awf_binary_version(lock: Path) -> list[Violation]:
-    """The hand-pinned AWF binary must be the one gh-aw compiled the lock against.
+    """The installed AWF binary must match the version of its compiled configuration.
 
-    `GH_AW_INFO_AWF_VERSION` is what gh-aw bundles and what it writes the firewall
-    config against; the install step's argument is maintained by hand because
-    `engine.command` makes gh-aw skip its own install. A gh-aw upgrade moves the
-    first and leaves the second, and the older binary then refuses the newer config.
+    Built-in engines report the bundled version in `GH_AW_INFO_AWF_VERSION`.
+    Custom engines can leave it empty, so their schema URL supplies the reference.
 
     A lock that pins a version but declares none also fails: the comparison has lost
     its reference, and passing there would disarm the check on a gh-aw rename.
@@ -576,11 +650,15 @@ def check_awf_binary_version(lock: Path) -> list[Violation]:
             if isinstance(run, str):
                 pinned.update(match.group(1) for match in AWF_INSTALL_VERSION.finditer(run))
             version = _as_mapping(step.get('env')).get('GH_AW_INFO_AWF_VERSION')
-            if isinstance(version, str):
+            if isinstance(version, str) and version:
                 bundled.add(version)
 
-    # No install step means this lock does not use the shim, so there is no hand-written
-    # pin to drift.
+    # Custom engines may leave the info field empty. The generated configuration
+    # still declares its AWF schema version, independently of the installer pin.
+    if not bundled:
+        bundled.update(re.findall(r'gh-aw-firewall/releases/download/(v[0-9.]+)/', lock.read_text(encoding='utf-8')))
+
+    # Without an install step there is no binary pin to compare.
     if not pinned:
         return []
     # A pin with nothing to compare it against is the check losing its reference, not a
@@ -592,7 +670,7 @@ def check_awf_binary_version(lock: Path) -> list[Violation]:
                 str(lock),
                 'awf-binary-version',
                 f'the AWF install step pins {", ".join(sorted(pinned))} but the lock declares no '
-                '`GH_AW_INFO_AWF_VERSION` to check it against. gh-aw stopped reporting the AWF '
+                '`GH_AW_INFO_AWF_VERSION` or AWF schema URL to check it against. gh-aw stopped reporting the AWF '
                 'version it bundles, so this check needs a new source before the pin can be trusted.',
             )
         ]
@@ -604,38 +682,115 @@ def check_awf_binary_version(lock: Path) -> list[Violation]:
             str(lock),
             'awf-binary-version',
             f'the AWF install step pins {", ".join(unexpected)} but gh-aw compiled this lock against '
-            f'{", ".join(sorted(bundled))}. Update the version in the `pre-steps` that re-run '
-            '`install_awf_binary.sh` and recompile; an older binary rejects the newer firewall config.',
+            f'{", ".join(sorted(bundled))}. Recompile with a gh-aw release that emits matching AWF installer '
+            'and schema versions; an older binary rejects the newer firewall config.',
         )
     ]
 
 
-def check_ai_credits_accounting(lock: Path) -> list[Violation]:
-    """No lock may price a model into the API proxy's AI-credits table.
+def compiled_awf_configs(lock: Path) -> list[Mapping[str, object]]:
+    """Read emitted AWF configurations, excluding informational environment values."""
+    workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+    configs: list[Mapping[str, object]] = []
+    for raw_job in _as_mapping(workflow.get('jobs')).values():
+        steps = _as_mapping(raw_job).get('steps')
+        for raw_step in steps if _is_object_sequence(steps) else ():
+            run = _as_mapping(raw_step).get('run')
+            for command in shell_commands(run) if isinstance(run, str) else ():
+                if command[0] != 'printf':
+                    continue
+                for argument in command[1:]:
+                    if not argument.startswith('{'):
+                        continue
+                    try:
+                        value: object = json.loads(argument)
+                    except json.JSONDecodeError:
+                        # Decode shell-escaped JSON without executing budget expansion.
+                        # Its numeric value is irrelevant to pricing and network checks.
+                        try:
+                            value = json.loads(
+                                argument.replace('\\"', '"')
+                                .replace('\\$', '$')
+                                .replace('${GH_AW_MAX_AI_CREDITS}', '-1')
+                            )
+                        except json.JSONDecodeError:
+                            continue
+                    config = _as_mapping(value)
+                    if config.get('apiProxy'):
+                        configs.append(config)
+    return configs
 
-    `models.providers` in a source compiles to `apiProxy.providers`, which AWF reads as
-    the pricing table for AI-credits accounting rather than as reporting metadata. A
-    priced model gets charged, and AWF caps a run at 10,000 credits — a limit no
-    frontmatter field lifts, since `max-ai-credits` only drops gh-aw's own budget. The
-    weekly spend report reads token counts from each run's artifact, so nothing here
-    needs the overlay.
-    """
-    # The AWF config is a single-line JSON string inside a `printf`, quoted bare in the
-    # agent job and backslash-escaped where it is nested one level deeper. Match the two
-    # keys on the same line so the informational `GH_AW_INFO_MODEL_COSTS` env var, which
-    # carries the same overlay but configures nothing, is not mistaken for the config.
-    if not any(
-        'apiProxy' in line and ('"providers":' in line or '\\"providers\\":' in line)
-        for line in lock.read_text(encoding='utf-8').splitlines()
-    ):
-        return []
+
+def check_ai_credits_accounting(lock: Path) -> list[Violation]:
+    """Allow verified GLM prices in USD per token, never per-million overlay values."""
+    expected: dict[str, object] = {
+        'anthropic': {
+            'models': {'glm-5.3-flash': {'cost': {'input': 0.00000015, 'cache_read': 0.00000003, 'output': 0.00000050}}}
+        }
+    }
+    fallback: dict[str, float] = {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50}
     return [
         Violation(
             str(lock),
             'ai-credits-accounting',
-            "the AWF config carries `apiProxy.providers`, which prices a model into the API proxy's "
-            'AI-credits accounting. AWF then rejects the run at its 10,000-credit cap, which no '
-            'frontmatter field can raise. Drop `models.providers` from the source and recompile.',
+            '`models.providers` must use the verified GLM-5.3-Flash USD-per-token rates; '
+            'per-million values incorrectly exhaust the fixed AWF credit cap. '
+            '`models.default-ai-credits-pricing` must use the same rates in USD per million tokens.',
+        )
+        for config in compiled_awf_configs(lock)
+        for proxy in [_as_mapping(config.get('apiProxy'))]
+        if (proxy.get('providers') is not None and proxy.get('providers') != expected)
+        or (proxy.get('defaultAiCreditsPricing') is not None and proxy.get('defaultAiCreditsPricing') != fallback)
+    ]
+
+
+def check_daily_aic_guardrail(lock: Path) -> list[Violation]:
+    """No lock may compile gh-aw's daily AI-credits guardrail.
+
+    With a threshold set, the guardrail spends hundreds of REST calls per activation on
+    the repo's `GITHUB_TOKEN` to total AI credits, which do not measure the Z.AI quota.
+    gh-aw drops it only for `max-daily-ai-credits: -1` in the workflow's own frontmatter.
+    An imported `-1` only skips the scan at run time and still compiles the guardrail
+    with its conclusion-job cache steps, so this reads the lock.
+    """
+    if DAILY_AIC_GUARDRAIL_SCRIPT not in lock.read_text(encoding='utf-8'):
+        return []
+    return [
+        Violation(
+            str(lock),
+            'daily-aic-guardrail',
+            "the lock compiles gh-aw's daily AI-credits guardrail. With a threshold set, every activation "
+            "lists each recent run's artifacts and exhausts the `GITHUB_TOKEN` rate limit. With `-1` only "
+            'in an import, that scan is skipped but its conclusion-job cache steps still run whenever the conclusion job runs. '
+            "Set `max-daily-ai-credits: -1` in the source's own frontmatter and recompile.",
+        )
+    ]
+
+
+def check_engine_sys_path_order(lock: Path) -> list[Violation]:
+    """No compiled engine wrapper (`AGENT_MODULE`) may contain a `sys.path.insert(0, ...)` statement.
+
+    The wrapper comes from the engine revision `shared/engine-zai.md` imports, so a lock
+    compiled from a revision before #12818 still puts the checkout first on `sys.path`.
+    """
+    workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+    wrappers: list[str] = []
+    for raw_job in _as_mapping(workflow.get('jobs')).values():
+        steps = _as_mapping(raw_job).get('steps')
+        for raw_step in steps if _is_object_sequence(steps) else ():
+            run = _as_mapping(raw_step).get('run')
+            if isinstance(run, str):
+                wrappers.extend(match.group(1) for match in ENGINE_WRAPPER_MODULE.finditer(run))
+    if not wrappers:
+        return [Violation(str(lock), 'engine-sys-path-order', 'Compiled lock has no engine wrapper (`AGENT_MODULE`).')]
+    if not any(SYS_PATH_PREPEND.search(wrapper) for wrapper in wrappers):
+        return []
+    return [
+        Violation(
+            str(lock),
+            'engine-sys-path-order',
+            'The compiled engine wrapper (`AGENT_MODULE`) contains a `sys.path.insert(0, ...)` statement. '
+            'Import an engine revision that includes #12818 in `shared/engine-zai.md` and recompile.',
         )
     ]
 
@@ -740,6 +895,55 @@ def _is_zai_workflow(frontmatter: Mapping[str, object]) -> bool:
     return 'shared/engine-zai.md' in imports or engine_env.get('ANTHROPIC_BASE_URL') == 'https://api.z.ai/api/anthropic'
 
 
+def check_logfire_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Every Z.AI workflow must compile the shared Logfire export settings."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        frontmatter = parse_frontmatter(source)
+        if not _is_zai_workflow(frontmatter):
+            continue
+        if 'shared/otel-logfire.md' not in _as_strings(frontmatter.get('imports')):
+            violations.append(
+                Violation(str(source), 'logfire-import', 'Z.AI workflow does not import `shared/otel-logfire.md`.')
+            )
+
+        lock = source.with_suffix('.lock.yml')
+        if not lock.is_file():
+            violations.append(Violation(str(lock), 'logfire-compiled', 'Z.AI workflow has no compiled lock.'))
+            continue
+        compiled = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+        env = _as_mapping(compiled.get('env'))
+        required = ('OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS', 'GH_AW_OTLP_ENDPOINTS')
+        if not all(isinstance(env.get(name), str) and env[name] for name in required):
+            violations.append(
+                Violation(str(lock), 'logfire-compiled', 'Compiled Z.AI workflow lacks shared OTLP export settings.')
+            )
+
+        logfire_hosts = {
+            'logfire-api.pydantic.dev',
+            'logfire-eu.pydantic.dev',
+            'logfire-us.pydantic.dev',
+            'logfire-api.pydantic.info',
+            'logfire-eu.pydantic.info',
+            'logfire-us.pydantic.info',
+        }
+        jobs = _as_mapping(compiled.get('jobs'))
+        allowed_domain_sets: list[set[str]] = []
+        for job in jobs.values():
+            steps_value: object = _as_mapping(job).get('steps')
+            if not _is_object_sequence(steps_value):
+                continue
+            for step in steps_value:
+                domains = _as_mapping(_as_mapping(step).get('env')).get('GH_AW_ALLOWED_DOMAINS')
+                if isinstance(domains, str):
+                    allowed_domain_sets.append(set(domains.split(',')))
+        if not allowed_domain_sets or any(not logfire_hosts <= domains for domains in allowed_domain_sets):
+            violations.append(
+                Violation(str(lock), 'logfire-network', 'Compiled Z.AI workflow firewall omits Logfire ingest hosts.')
+            )
+    return violations
+
+
 def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
     """Shared and workflow-local engines must use the shared provider configuration."""
     engine_path = workflows_dir / 'shared' / 'engine-zai.md'
@@ -768,6 +972,9 @@ def check_provider_engine_config(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
     )
     violations: list[Violation] = []
     for engine_name, engine_value in shared_engines:
+        # `false` disables the gh-aw engine; its replacement uses no provider endpoint.
+        if engine_value is False:
+            continue
         engine_env = _as_mapping(_as_mapping(engine_value).get('env'))
         if engine_env.get('ANTHROPIC_BASE_URL') != endpoint or engine_env.get('ANTHROPIC_API_KEY') != credential:
             violations.append(
@@ -839,12 +1046,18 @@ def check_provider_health_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
             )
         safe_outputs = _as_mapping(frontmatter.get('safe-outputs'))
         noop = _as_mapping(safe_outputs.get('noop'))
-        if safe_outputs.get('report-failure-as-issue') is not False or noop.get('report-as-issue') is not False:
+        # `report-failed-jobs` files an `[aw] Failed jobs` issue per run with a failed custom job, which
+        # duplicates the incident the provider-health monitor opens for the same run.
+        if (
+            safe_outputs.get('report-failure-as-issue') is not False
+            or safe_outputs.get('report-failed-jobs') is not False
+            or noop.get('report-as-issue') is not False
+        ):
             violations.append(
                 Violation(
                     str(source),
                     'provider-health-reporting',
-                    'Z.AI workflows must disable gh-aw generic failure-as-issue reporting.',
+                    'Z.AI workflows must disable gh-aw generic failure-as-issue and failed-job reporting.',
                 )
             )
         lock = source.with_suffix('.lock.yml')
@@ -901,7 +1114,7 @@ def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[
     engine = engine_path.read_text(encoding='utf-8')
     health = health_path.read_text(encoding='utf-8')
     assignment = re.compile(r'^\s*PYDANTIC_AI_TASK_KEY:\s*(.+?)\s*$', re.MULTILINE)
-    engine_match = assignment.search(engine)
+    engine_match = re.search(r'^\s*PYDANTIC_AI_TASK_(?:ID|KEY):\s*(.+?)\s*$', engine, re.MULTILINE)
     health_match = assignment.search(health)
     attempt_assignment = re.compile(r'^\s*PYDANTIC_AI_RUN_ATTEMPT:\s*(.+?)\s*$', re.MULTILINE)
     engine_attempt_match = attempt_assignment.search(engine)
@@ -953,7 +1166,7 @@ def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[
             engine_env.get('GITHUB_WORKFLOW') != '${{ github.workflow }}'
             or engine_env.get('PYDANTIC_AI_TRIGGER_EVENT') != '${{ github.event_name }}'
             or engine_env.get('PYDANTIC_AI_RUN_ATTEMPT') != expected_attempt
-            or engine_env.get('PYDANTIC_AI_TASK_KEY') != expected_task_key
+            or (engine_env.get('PYDANTIC_AI_TASK_ID') or engine_env.get('PYDANTIC_AI_TASK_KEY')) != expected_task_key
         ):
             return [
                 Violation(
@@ -965,8 +1178,215 @@ def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[
     return []
 
 
+def check_provider_health_recovery_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Z.AI workflows must expose the incident-bound recovery input when dispatch can reach the model."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        frontmatter = parse_frontmatter(source)
+        if not _is_zai_workflow(frontmatter):
+            continue
+        trigger = _as_mapping(_as_mapping(frontmatter.get('on')).get('workflow_dispatch'))
+        recovery_input = _as_mapping(_as_mapping(trigger.get('inputs')).get('recovery_issue'))
+        if recovery_input.get('type') != 'string' or recovery_input.get('required') is not False:
+            violations.append(
+                Violation(
+                    str(source),
+                    'provider-health-recovery-input',
+                    'Z.AI workflows must expose optional string input `recovery_issue` for operator-verified recovery.',
+                )
+            )
+    health_path = workflows_dir / 'shared' / 'provider-health.md'
+    if (
+        not health_path.is_file()
+        or "PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}"
+        not in health_path.read_text(encoding='utf-8')
+    ):
+        violations.append(
+            Violation(
+                str(health_path),
+                'provider-health-recovery-input',
+                'The trusted provider-health job must pass the optional `recovery_issue` input to its artifact.',
+            )
+        )
+    return violations
+
+
+def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Z.AI agent jobs must repeat the gate once they hold the agent slot, and stop before inference when blocked."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        lock = source.with_suffix('.lock.yml')
+        if not _is_zai_workflow(parse_frontmatter(source)) or not lock.is_file():
+            continue
+        jobs = _as_mapping(_as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8'))).get('jobs'))
+        gate_steps = _as_mapping(jobs.get('provider_health')).get('steps')
+        agent_steps = _as_mapping(jobs.get('agent')).get('steps')
+        gate = [_as_mapping(step) for step in gate_steps] if _is_object_sequence(gate_steps) else []
+        steps = [_as_mapping(step) for step in agent_steps] if _is_object_sequence(agent_steps) else []
+        gate_env = next((step.get('env') for step in gate if step.get('id') == 'health'), None)
+        execution = next((i for i, step in enumerate(steps) if step.get('id') == 'agentic_execution'), 0)
+        recheck = next(
+            (
+                i
+                for i, step in enumerate(steps[:execution])
+                if AGENT_START_HEALTH_CHECK.search(str(step.get('run', '')))
+            ),
+            None,
+        )
+        stop_condition = f"steps.{steps[recheck].get('id')}.outputs.ready != 'true'" if recheck is not None else None
+        after_recheck = steps[recheck + 1 : execution] if recheck is not None else []
+        recheck_name, replace_name, stop_name, account_stop_name = AGENT_START_HEALTH_STEPS
+        # The monitor recognizes these steps by name, so a renamed step reads as a setup failure.
+        named = (
+            recheck is not None
+            and steps[recheck].get('name') == recheck_name
+            and any(step.get('name') == replace_name for step in after_recheck)
+        )
+        stops = any(
+            step.get('name') == stop_name
+            and _normalized_condition(str(step.get('if', ''))) == _normalized_condition(str(stop_condition))
+            and str(step.get('run', '')).rstrip().endswith('exit 1')
+            and not step.get('continue-on-error')
+            for step in after_recheck
+        )
+        keyed = (
+            recheck is not None
+            and steps[recheck].get('id') == AGENT_START_HEALTH_STEP_ID
+            and all(_as_mapping(gate_env).get(key) == value for key, value in ZAI_KEYS.items())
+        )
+        # A failed replacement leaves the gate's account in the artifact; the run must not go on under another one.
+        replace_id = next((step.get('id') for step in after_recheck if step.get('name') == replace_name), None)
+        account_condition = (
+            f"steps.{replace_id}.outcome == 'failure' && steps.{AGENT_START_HEALTH_STEP_ID}.outputs.account "
+            '!= needs.provider_health.outputs.account'
+        )
+        guards_account = (
+            replace_id is not None
+            and _as_mapping(_as_mapping(jobs.get('provider_health')).get('outputs')).get('account')
+            == '${{ steps.health.outputs.account }}'
+            and any(
+                step.get('name') == account_stop_name
+                and _normalized_condition(str(step.get('if', ''))) == _normalized_condition(account_condition)
+                and str(step.get('run', '')).rstrip().endswith('exit 1')
+                and not step.get('continue-on-error')
+                for step in after_recheck
+            )
+        )
+        if (
+            recheck is None
+            or gate_env is None
+            or steps[recheck].get('env') != gate_env
+            or not named
+            or not stops
+            or not keyed
+            or not guards_account
+        ):
+            violations.append(
+                Violation(
+                    str(lock),
+                    'provider-health-agent-start',
+                    'The agent job must rerun the default-branch provider-health check with the gate environment '
+                    'before engine execution, then fail before inference unless it reports ready. The steps must '
+                    'keep the names in `agent_provider_health.AGENT_START_HEALTH_STEPS`, the recheck its id '
+                    f'`{AGENT_START_HEALTH_STEP_ID}`, and the gate both Z.AI keys and an `account` output. A failed '
+                    "replacement must stop the job when the recheck's account differs from the gate's.",
+                )
+            )
+    return violations
+
+
+def check_provider_health_host_result(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Z.AI workflows must record the agent's terminal result in a host job that also follows a failed agent job."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        lock = source.with_suffix('.lock.yml')
+        if not _is_zai_workflow(parse_frontmatter(source)) or not lock.is_file():
+            continue
+        jobs = _as_mapping(_as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8'))).get('jobs'))
+        gate_steps = _as_mapping(jobs.get('provider_health')).get('steps')
+        gate = [_as_mapping(step) for step in gate_steps] if _is_object_sequence(gate_steps) else []
+        gate_env = _as_mapping(next((step.get('env') for step in gate if step.get('id') == 'health'), None))
+        if not gate_env or not _records_host_result(_as_mapping(jobs.get(HOST_RESULT_JOB)), gate_env):
+            violations.append(
+                Violation(
+                    str(lock),
+                    'provider-health-host-result',
+                    f'The `{HOST_RESULT_JOB}` job must follow the agent job, including a failed one, check out only '
+                    "the default-branch controller, and download this run's `agent` artifact and health decision. "
+                    'Its record step must run exactly the `record` command, skipped only when a download failed, with '
+                    'the gate identity and the Z.AI keys, which nothing else in the job references. It must then '
+                    'upload `run-result.json` with the health decision, and a failed record must not fail the run.',
+                )
+            )
+    return violations
+
+
+def _records_host_result(job: Mapping[str, object], gate_env: Mapping[str, object]) -> bool:
+    """Whether `job` is the host record job `check_provider_health_host_result` requires."""
+    controller = '.github/scripts/agent_provider_health.py'
+    raw_steps = job.get('steps')
+    steps = [_as_mapping(step) for step in raw_steps] if _is_object_sequence(raw_steps) else []
+    checkouts = [step for step in steps if str(step.get('uses', '')).startswith('actions/checkout@')]
+    checkout = _as_mapping(checkouts[0].get('with')) if len(checkouts) == 1 else {}
+    # This run's `agent` artifact and health decision only: no other artifact, run or repository.
+    downloads = {
+        str(step.get('id')): i
+        for i, step in enumerate(steps)
+        if str(step.get('uses', '')).startswith('actions/download-artifact@')
+        and (step.get('id'), _as_mapping(step.get('with')))
+        in (
+            ('agent_artifact', {'name': 'agent', 'path': 'agent'}),
+            ('health_artifact', {'name': 'provider-health', 'path': 'provider-health'}),
+        )
+    }
+    record_command = (
+        f'python3 -I {controller} record --agent-session agent/agent-session.jsonl '
+        '--health-artifact provider-health/provider-health.json --output provider-health/run-result.json'
+    )
+    record = next(
+        (
+            i
+            for i, step in enumerate(steps)
+            if ' '.join(str(step.get('run', '')).replace('\\\n', ' ').split()) == record_command
+        ),
+        None,
+    )
+    if len(downloads) != 2 or record is None or record < max(downloads.values()):
+        return False
+    record_step = steps[record]
+    record_env = _as_mapping(record_step.get('env'))
+    identity = ('GITHUB_WORKFLOW', 'PYDANTIC_AI_TRIGGER_EVENT', 'PYDANTIC_AI_RUN_ATTEMPT', 'PYDANTIC_AI_TASK_KEY')
+    # gh-aw wraps the authored condition in its clean-detection guard; the authored part also follows a failed agent.
+    after_agent = _normalized_condition(
+        "${{ needs.detection.result == 'success' && needs.detection.outputs.detection_success == 'true' && "
+        "((!cancelled()) && needs.agent.result != 'skipped') }}"
+    )
+    # The record step skips only when a download failed.
+    downloaded = "steps.agent_artifact.outcome == 'success' && steps.health_artifact.outcome == 'success'"
+    return (
+        'agent' in _as_strings(job.get('needs'))
+        and _normalized_condition(str(job.get('if', ''))) == after_agent
+        and job.get('continue-on-error') is True
+        and checkout.get('repository') == '${{ github.repository }}'
+        and checkout.get('ref') == '${{ github.event.repository.default_branch }}'
+        and checkout.get('persist-credentials') is False
+        and checkout.get('sparse-checkout') == controller
+        # A `shell` or `working-directory` would change what the exact command runs.
+        and set(record_step) <= {'name', 'if', 'env', 'run'}
+        and _normalized_condition(str(record_step.get('if', ''))) == _normalized_condition(downloaded)
+        and all(record_env.get(key) == gate_env.get(key) for key in (*identity, *ZAI_KEYS))
+        and not SECRETS_CONTEXT.search(str({**job, 'steps': steps[:record] + steps[record + 1 :]}))
+        and any(
+            str(step.get('uses', '')).startswith('actions/upload-artifact@')
+            and _as_mapping(step.get('with')).get('name') == 'provider-health'
+            and 'run-result.json' in str(_as_mapping(step.get('with')).get('path'))
+            for step in steps[record + 1 :]
+        )
+    )
+
+
 def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:  # noqa: C901
-    """The serialized monitor only accepts completions from the enumerated Z.AI workflows."""
+    """The monitor accepts completions only from the enumerated Z.AI workflows and serializes only incident work."""
     monitor_path = workflows_dir / 'agent-provider-health.yml'
     if not monitor_path.is_file():
         return [Violation(str(monitor_path), 'provider-health-monitor', 'Provider-health monitor is missing.')]
@@ -998,6 +1418,21 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 'Monitor needs schedule and manual recovery triggers.',
             )
         )
+    dispatch_inputs = _as_mapping(_as_mapping(triggers.get('workflow_dispatch')).get('inputs'))
+    expected_recovery_inputs = {
+        'recover_issue': ('number', True),
+    }
+    for input_name, (input_type, required) in expected_recovery_inputs.items():
+        configured = _as_mapping(dispatch_inputs.get(input_name))
+        if configured.get('type') != input_type or configured.get('required') is not required:
+            violations.append(
+                Violation(
+                    str(monitor_path),
+                    'provider-health-monitor-recovery-inputs',
+                    'Manual provider recovery must require the original `recover_issue` input.',
+                )
+            )
+            break
     if str(monitor.get('name', '')) in monitor_names:
         violations.append(
             Violation(
@@ -1007,27 +1442,38 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
             )
         )
     jobs = _as_mapping(monitor.get('jobs'))
+    triage_job = _as_mapping(jobs.get('triage'))
     monitor_job = _as_mapping(jobs.get('monitor'))
-    if ' '.join(str(monitor_job.get('if', '')).split()) != (
+    if ' '.join(str(triage_job.get('if', '')).split()) != (
         "github.repository == 'pydantic/pydantic-ai' && "
-        "(github.event_name != 'workflow_run' || "
-        "github.event.workflow_run.event != 'pull_request' || "
+        "github.event_name == 'workflow_run' && "
+        "(github.event.workflow_run.event != 'pull_request' || "
+        '(github.event.workflow_run.head_repository.full_name == github.repository && '
+        "github.event.workflow_run.actor.login != 'dependabot[bot]')) && "
+        "(github.event.workflow_run.event != 'pull_request_review' || "
         'github.event.workflow_run.head_repository.full_name == github.repository)'
     ):
         violations.append(
             Violation(
                 str(monitor_path),
-                'provider-health-monitor-fork-gate',
-                'Monitor must exclude fork `pull_request` completions while retaining trusted runs and recovery triggers.',
+                'provider-health-monitor-credential-gate',
+                'Triage must exclude fork and Dependabot `pull_request` completions, and fork `pull_request_review` '
+                'completions.',
             )
         )
-    concurrency = _as_mapping(monitor.get('concurrency'))
-    if not concurrency.get('group') or concurrency.get('cancel-in-progress') is not False:
+    # Only the incident work `triage` hands over may queue; `.github/workflows/AGENTS.md` explains the overflow.
+    concurrency = _as_mapping(monitor_job.get('concurrency'))
+    if (
+        'concurrency' in monitor
+        or 'concurrency' in triage_job
+        or not concurrency.get('group')
+        or concurrency.get('cancel-in-progress') is not False
+    ):
         violations.append(
             Violation(
                 str(monitor_path),
                 'provider-health-monitor-concurrency',
-                'Monitor reconciliation must use one non-cancelling concurrency group.',
+                'Only the `monitor` job may hold the one non-cancelling concurrency group, never the workflow or triage.',
             )
         )
     if concurrency.get('queue') != 'max':
@@ -1038,45 +1484,100 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 'Monitor reconciliation must use FIFO `queue: max` and retain up to the platform limit of 100 pending runs.',
             )
         )
-    steps_value: object = monitor_job.get('steps')
+    triage_steps: list[Mapping[str, object]] = []
     steps: list[Mapping[str, object]] = []
-    if _is_object_sequence(steps_value):
-        for raw_step in steps_value:
-            step = _as_mapping(raw_step)
-            if step:
-                steps.append(step)
-    checkout_steps: list[Mapping[str, object]] = [
-        step for step in steps if str(step.get('uses', '')).startswith('actions/checkout@')
-    ]
-    checkout: Mapping[str, object] = _as_mapping(checkout_steps[0].get('with')) if len(checkout_steps) == 1 else {}
+    for job, job_steps in ((triage_job, triage_steps), (monitor_job, steps)):
+        steps_value: object = job.get('steps')
+        if _is_object_sequence(steps_value):
+            for raw_step in steps_value:
+                step = _as_mapping(raw_step)
+                if step:
+                    job_steps.append(step)
+    triage_command = 'python3 .github/scripts/agent_provider_health.py triage'
+    monitor_command = 'python3 .github/scripts/agent_provider_health.py monitor'
+    # Triage classifies a completion for the monitor, so both must read the same artifacts the same way.
+    triage_index = next((i for i, step in enumerate(triage_steps) if step.get('id') == 'triage'), len(triage_steps))
+    reconcile_index = next(
+        (
+            i
+            for i, step in enumerate(steps)
+            if "github.event_name == 'workflow_run'" in str(step.get('if', ''))
+            and str(step.get('run', '')).strip().startswith(monitor_command)
+        ),
+        len(steps),
+    )
+    triage_step: Mapping[str, object] = triage_steps[triage_index] if triage_index < len(triage_steps) else {}
+    reconcile_step: Mapping[str, object] = steps[reconcile_index] if reconcile_index < len(steps) else {}
+    triage_reads_monitor_inputs = (
+        str(triage_step.get('run', '')).strip().startswith(triage_command)
+        and triage_steps[:triage_index] == steps[:reconcile_index]
+        and triage_step.get('if') == reconcile_step.get('if')
+        and triage_step.get('env') == reconcile_step.get('env')
+        and str(triage_step.get('run', '')).replace(triage_command, monitor_command, 1)
+        == str(reconcile_step.get('run', ''))
+    )
     if (
-        len(checkout_steps) != 1
-        or checkout.get('repository') != '${{ github.repository }}'
-        or checkout.get('ref') != '${{ github.event.repository.default_branch }}'
-        or checkout.get('persist-credentials') is not False
-        or checkout.get('sparse-checkout') != '.github/scripts/agent_provider_health.py'
+        monitor_job.get('needs') != 'triage'
+        or ' '.join(str(monitor_job.get('if', '')).split())
+        != "!cancelled() && github.repository == 'pydantic/pydantic-ai' && "
+        "(github.event_name != 'workflow_run' || needs.triage.outputs.reconcile == 'true')"
+        or _as_mapping(triage_job.get('outputs')).get('reconcile') != '${{ steps.triage.outputs.reconcile }}'
+        or not triage_reads_monitor_inputs
     ):
         violations.append(
             Violation(
                 str(monitor_path),
+                'provider-health-monitor-triage',
+                'The monitor job must reconcile a completion only when `triage`, reading the same artifacts '
+                'with the same steps, hands it over, and must still run scheduled and manual recovery.',
+            )
+        )
+    untrusted_checkout = False
+    for job_steps in (triage_steps, steps):
+        checkout_steps: list[Mapping[str, object]] = [
+            step for step in job_steps if str(step.get('uses', '')).startswith('actions/checkout@')
+        ]
+        checkout: Mapping[str, object] = _as_mapping(checkout_steps[0].get('with')) if len(checkout_steps) == 1 else {}
+        untrusted_checkout = untrusted_checkout or (
+            len(checkout_steps) != 1
+            or checkout.get('repository') != '${{ github.repository }}'
+            or checkout.get('ref') != '${{ github.event.repository.default_branch }}'
+            or checkout.get('persist-credentials') is not False
+            or checkout.get('sparse-checkout') != '.github/scripts/agent_provider_health.py'
+        )
+    if untrusted_checkout:
+        violations.append(
+            Violation(
+                str(monitor_path),
                 'provider-health-monitor-trusted-checkout',
-                'Monitor must check out only the controller script from the repository default branch, without persisted credentials.',
+                'Triage and monitor must each check out only the controller script from the repository default branch, '
+                'without persisted credentials.',
             )
         )
     artifact_steps: list[Mapping[str, object]] = [
-        step for step in steps if str(step.get('uses', '')).startswith('actions/download-artifact@')
+        step for step in triage_steps + steps if str(step.get('uses', '')).startswith('actions/download-artifact@')
     ]
-    if any(str(step.get('if', '')).strip() != "github.event_name == 'workflow_run'" for step in artifact_steps):
+    source_artifact_condition = "github.event_name == 'workflow_run'"
+    if any(
+        not (
+            (
+                str(step.get('if', '')).strip() == source_artifact_condition
+                or str(step.get('if', '')).strip().startswith(source_artifact_condition + ' && ')
+            )
+            and _as_mapping(step.get('with')).get('run-id') == '${{ github.event.workflow_run.id }}'
+        )
+        for step in artifact_steps
+    ):
         violations.append(
             Violation(
                 str(monitor_path),
                 'provider-health-monitor-artifact-trigger',
-                'Agent artifacts may only be downloaded for the allowlisted `workflow_run` event.',
+                'Artifacts may only be downloaded for allowlisted workflow completions and their exact source run.',
             )
         )
     artifact_paths = re.compile(r'(?:^|[\s"\'=])(?:\./)?(?:agent|provider-health)/\S+')
     artifact_execution = False
-    for step in steps:
+    for step in triage_steps + steps:
         uses = str(step.get('uses', ''))
         run = str(step.get('run', '')).strip()
         if uses.startswith(('./agent/', './provider-health/')):
@@ -1085,9 +1586,7 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
             continue
         is_stub = run.splitlines() == ['mkdir -p agent', ': > agent/agent-stdio.log']
         is_controller = (
-            run.startswith('python3 .github/scripts/agent_provider_health.py monitor')
-            and '\n' not in run
-            and not re.search(r';|&&|\|\|', run)
+            run.startswith((monitor_command, triage_command)) and '\n' not in run and not re.search(r';|&&|\|\|', run)
         )
         if not is_stub and not is_controller:
             artifact_execution = True
@@ -1099,7 +1598,7 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 'Downloaded agent artifacts must be parsed only as input to the trusted controller, never executed as code.',
             )
         )
-    provider_keys: tuple[str, ...] = ('ZAI_API_KEY',)
+    provider_keys = tuple(ZAI_KEYS)
     workflow_env: Mapping[str, object] = _as_mapping(monitor.get('env'))
     job_env: Mapping[str, object] = _as_mapping(monitor_job.get('env'))
     if job_env.get('PYDANTIC_AI_RUN_ATTEMPT') != '${{ github.run_attempt }}':
@@ -1110,18 +1609,24 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 'Monitor job must pass its own positive run attempt to scheduled and manual reconciliation.',
             )
         )
-    source_reconcile_steps = [
-        step
-        for step in steps
-        if "github.event_name == 'workflow_run'" in str(step.get('if', ''))
-        and str(step.get('run', '')).strip().startswith('python3 .github/scripts/agent_provider_health.py monitor')
-    ]
-    if (
-        len(source_reconcile_steps) != 1
-        or _as_mapping(source_reconcile_steps[0].get('env')).get('RUN_ATTEMPT')
-        != '${{ github.event.workflow_run.run_attempt }}'
-        or '--run-attempt "$RUN_ATTEMPT"' not in str(source_reconcile_steps[0].get('run', ''))
+    source_attempt_mismatch = False
+    for job_steps, command in (
+        (triage_steps, triage_command),
+        (steps, monitor_command),
     ):
+        source_reconcile_steps = [
+            step
+            for step in job_steps
+            if "github.event_name == 'workflow_run'" in str(step.get('if', ''))
+            and str(step.get('run', '')).strip().startswith(command)
+        ]
+        source_attempt_mismatch = source_attempt_mismatch or (
+            len(source_reconcile_steps) != 1
+            or _as_mapping(source_reconcile_steps[0].get('env')).get('RUN_ATTEMPT')
+            != '${{ github.event.workflow_run.run_attempt }}'
+            or '--run-attempt "$RUN_ATTEMPT"' not in str(source_reconcile_steps[0].get('run', ''))
+        )
+    if source_attempt_mismatch:
         violations.append(
             Violation(
                 str(monitor_path),
@@ -1129,8 +1634,33 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 'Completed workflow reconciliation must pass the source workflow run attempt from the workflow_run event.',
             )
         )
+    recovery_steps = [
+        step
+        for step in steps
+        if str(step.get('if', '')).strip() == "github.event_name == 'workflow_dispatch'"
+        and 'ISSUE_NUMBER' in _as_mapping(step.get('env'))
+    ]
+    if (
+        len(recovery_steps) != 1
+        or _as_mapping(recovery_steps[0].get('env')).get('ISSUE_NUMBER') != '${{ inputs.recover_issue }}'
+        or '--recover-issue "$ISSUE_NUMBER"' not in str(recovery_steps[0].get('run', ''))
+    ):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-manual-recovery',
+                'Manual provider recovery must pass the original `recover_issue` input to the controller.',
+            )
+        )
     provider_key_events: dict[str, set[str]] = {key: set() for key in provider_keys}
-    if any(key in workflow_env or key in job_env for key in provider_keys):
+    triage_env: Mapping[str, object] = _as_mapping(triage_job.get('env'))
+    if any(
+        key in workflow_env
+        or key in job_env
+        or key in triage_env
+        or any(key in _as_mapping(step.get('env')) for step in triage_steps)
+        for key in provider_keys
+    ):
         violations.append(
             Violation(
                 str(monitor_path),
@@ -1160,12 +1690,26 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
             )
         )
     permissions = _as_mapping(monitor_job.get('permissions'))
-    if permissions != {'actions': 'read', 'contents': 'read', 'issues': 'write'}:
+    if permissions != {
+        'actions': 'read',
+        'contents': 'read',
+        'issues': 'write',
+        'pull-requests': 'read',
+    }:
         violations.append(
             Violation(
                 str(monitor_path),
                 'provider-health-monitor-permissions',
-                'Monitor job permissions must be exactly `actions: read`, `contents: read`, and `issues: write`.',
+                'Monitor job permissions must be exactly `actions: read`, `contents: read`, `issues: write`, '
+                'and `pull-requests: read`.',
+            )
+        )
+    if _as_mapping(triage_job.get('permissions')) != {'actions': 'read', 'contents': 'read'}:
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-permissions',
+                'Triage job permissions must be exactly `actions: read` and `contents: read`.',
             )
         )
     return violations
@@ -1242,6 +1786,8 @@ def run_checks(
         violations += check_compiled_runner_contract(lock)
         violations += check_awf_binary_version(lock)
         violations += check_ai_credits_accounting(lock)
+        violations += check_daily_aic_guardrail(lock)
+        violations += check_engine_sys_path_order(lock)
     for source in sources:
         violations += check_safe_output_job_max(source)
         violations += check_timeout_declared(source)
@@ -1249,9 +1795,13 @@ def run_checks(
     for markdown in [*sources, *shared]:
         violations += check_prompt_paths(markdown)
     violations += check_compiler_versions(locks)
+    violations += check_logfire_wiring(workflows_dir)
     violations += check_provider_engine_config(workflows_dir)
     violations += check_provider_health_wiring(workflows_dir)
     violations += check_provider_health_identity(workflows_dir)
+    violations += check_provider_health_recovery_wiring(workflows_dir)
+    violations += check_provider_health_agent_start(workflows_dir)
+    violations += check_provider_health_host_result(workflows_dir)
     violations += check_provider_health_monitor(workflows_dir)
     violations += check_assigned_alert_metadata_gate(workflows_dir)
     if compatibility is not None:

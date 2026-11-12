@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import traceback
+from urllib.parse import parse_qsl
 
 import httpx2
 import pytest
@@ -20,6 +21,7 @@ with try_import() as imports_successful:
         OpenAICodexCredentials,
         OpenAICodexProvider,
         _post_token_request,  # pyright: ignore[reportPrivateUsage]
+        _token_response_ta,  # pyright: ignore[reportPrivateUsage]
     )
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed')]
@@ -85,6 +87,37 @@ async def test_sdk_does_not_hide_persistence_failure(stale: bool):
     assert requests == (0 if stale else 1)
 
 
+async def test_failed_save_keeps_the_refreshed_set_over_the_stored_one_it_spent():
+    """A refresh whose save failed keeps its replacement over the stored set that refresh spent."""
+    source = FakeCredentialSource(make_credentials(exp=0))
+    save_failing = True
+    grants: list[str] = []
+
+    async def save(credentials: OpenAICodexCredentials) -> None:
+        if save_failing:
+            raise RuntimeError('storage unavailable')
+        source.credentials = credentials
+
+    source.save = save
+    rotations = iter([TOKEN_RESPONSE, {**TOKEN_RESPONSE, 'access_token': 'access-3', 'refresh_token': 'refresh-3'}])
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.host == 'auth.openai.com':
+            grants.append(dict(parse_qsl(request.content.decode()))['refresh_token'])
+            return httpx2.Response(200, json=next(rotations))
+        return httpx2.Response(200 if request.headers['authorization'] == 'Bearer access-3' else 401)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        provider = OpenAICodexProvider(credential_source=source, http_client=client)
+        with pytest.raises(CredentialsPersistenceError):
+            await client.get(CODEX_URL)
+        save_failing = False
+        assert (await client.get(CODEX_URL)).status_code == 200
+
+    assert grants == ['refresh-1', 'refresh-2']
+    assert provider.credentials.refresh_token == source.credentials.refresh_token == 'refresh-3'
+
+
 @pytest.mark.parametrize('field', ['access_token', 'refresh_token', 'account_id'])
 @pytest.mark.parametrize('value', ['', None])
 def test_cli_rejects_malformed_fields_without_leaking(field: str, value: str | None):
@@ -123,7 +156,13 @@ async def test_token_endpoint_rejects_malformed_fields_without_leaking(field: st
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         with pytest.raises(CredentialsRefreshError) as exc:
-            await _post_token_request('https://auth.openai.com/oauth/token', {}, http_client=client)
+            await _post_token_request(
+                'https://auth.openai.com/oauth/token',
+                {},
+                _token_response_ta,
+                provider_name='openai-codex',
+                http_client=client,
+            )
     formatted = ''.join(traceback.format_exception(exc.value))
     for token in ('SENTINEL_ACCESS', 'SENTINEL_REFRESH', 'SENTINEL_ID'):
         assert token not in formatted

@@ -762,6 +762,74 @@ def test_compaction_in_the_history_is_not_unexpected() -> None:
     assert chat_cache_attributes(exporter)[-1]['pydantic_ai.cache.collapse_reason'] == 'compacted'
 
 
+def test_summary_replacing_an_earlier_summary_is_compacted() -> None:
+    """A second application summary replaces the first, so the history's `CompactionPart` count stays the same:
+    the collapse it causes is still `compacted`, judged by the newest part rather than the count alone."""
+    model = ConversationModel()
+    agent, exporter = conversation_agent(model)
+
+    model.usages = [CacheUsage(write=14000)]
+    first = agent.run_sync('first turn')
+    conversation_id = first.conversation_id
+    model.usages = [CacheUsage(write=3000)]
+    second = agent.run_sync(
+        'second turn',
+        message_history=[ModelRequest([CompactionPart(content='First summary')])],
+        conversation_id=conversation_id,
+    )
+    model.usages = [CacheUsage(read=3000, write=11000)]
+    agent.run_sync('third turn', message_history=second.all_messages())
+    model.usages = [CacheUsage(write=3000)]
+    agent.run_sync(
+        'fourth turn',
+        message_history=[ModelRequest([CompactionPart(content='Second summary')])],
+        conversation_id=conversation_id,
+    )
+
+    attributes = chat_cache_attributes(exporter)
+    assert [attrs.get('pydantic_ai.cache.collapse_reason') for attrs in attributes] == [
+        None,
+        'compacted',
+        None,
+        'compacted',
+    ]
+    assert not [event for span in exporter.get_finished_spans() for event in span.events]
+
+
+def test_a_summary_with_the_same_text_as_the_one_it_replaced_is_compacted() -> None:
+    """An incremental summarizer can write the same text twice; the metadata saying which compaction wrote each
+    summary still tells the replacement apart."""
+    model = ConversationModel()
+    agent, exporter = conversation_agent(model)
+
+    model.usages = [CacheUsage(write=14000)]
+    first = agent.run_sync('first turn')
+    conversation_id = first.conversation_id
+    model.usages = [CacheUsage(write=3000)]
+    second = agent.run_sync(
+        'second turn',
+        message_history=[ModelRequest([CompactionPart(content='Same summary', metadata={'written': '1'})])],
+        conversation_id=conversation_id,
+    )
+    model.usages = [CacheUsage(read=3000, write=11000)]
+    agent.run_sync('third turn', message_history=second.all_messages())
+    model.usages = [CacheUsage(write=3000)]
+    agent.run_sync(
+        'fourth turn',
+        message_history=[ModelRequest([CompactionPart(content='Same summary', metadata={'written': '2'})])],
+        conversation_id=conversation_id,
+    )
+
+    attributes = chat_cache_attributes(exporter)
+    assert [attrs.get('pydantic_ai.cache.collapse_reason') for attrs in attributes] == [
+        None,
+        'compacted',
+        None,
+        'compacted',
+    ]
+    assert not [event for span in exporter.get_finished_spans() for event in span.events]
+
+
 def test_continuation_after_cache_expiry_is_ttl_expired(mocker: MockerFixture) -> None:
     t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     mocker.patch('pydantic_ai._utils.now_utc', side_effect=[t0, t0 + timedelta(minutes=30)])

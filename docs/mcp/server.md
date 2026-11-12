@@ -17,7 +17,7 @@ from pydantic_ai import Agent
 
 server = FastMCP('Pydantic AI Server')
 server_agent = Agent(
-    'anthropic:claude-haiku-4-5', instructions='always reply in rhyme'
+    '{{ anthropic:small }}', instructions='always reply in rhyme'
 )
 
 

@@ -31,7 +31,7 @@ from pathlib import Path
 
 from pydantic_ai import ImageGenerator
 
-generator = ImageGenerator('openai:gpt-image-2')
+generator = ImageGenerator('{{ openai:image }}')
 
 
 async def main():
@@ -78,7 +78,7 @@ Pass reference images through `images` to edit or transform them. The input can 
 ```python {title="image_edit.py"}
 from pydantic_ai import BinaryImage, ImageGenerator
 
-generator = ImageGenerator('google:gemini-3.1-flash-lite-image')
+generator = ImageGenerator('{{ google:image }}')
 
 
 async def replace_subject(source: BinaryImage) -> BinaryImage:
@@ -207,7 +207,7 @@ from pydantic_ai.images.openai import OpenAIImageGenerationModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 model = OpenAIImageGenerationModel(
-    'gpt-image-2',
+    '{{ openai:image.name }}',
     provider=OpenAIProvider(base_url='https://my-provider.com/v1', api_key='your-api-key'),
 )
 generator = ImageGenerator(model)
@@ -228,7 +228,7 @@ from pydantic_ai.images import ImageGenerationSettings
 from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 
 generator = ImageGenerator(
-    'openai:gpt-image-2',
+    '{{ openai:image }}',
     settings=OpenAIImageGenerationSettings(openai_quality='low', openai_output_format='jpeg'),
 )
 
@@ -296,7 +296,7 @@ ratio and answers for itself. Every Grok Imagine dash is the transport rather th
 `ImageAspectRatio` enum `xai-sdk` generates has no member for `1:4`, `1:8`, `4:1`, `4:5`, `5:4`, `8:1` or `21:9`, so
 the request cannot carry them.
 
-| Ratio | GPT Image 1.x | GPT Image 2 | Gemini 2.5 Flash | Gemini 3 Pro | Gemini 3.1 Flash / Flash Lite | Grok Imagine |
+| Ratio | GPT Image 1.x | GPT Image 2 and 2.6 | Gemini 2.5 Flash | Gemini 3 Pro | Gemini 3.1 Flash / Flash Lite | Grok Imagine |
 | --- | --- | --- | --- | --- | --- | --- |
 | `1:1` | `1024×1024` | `1024×1024` | `1024×1024` | `1024×1024` | `1024×1024` | `1024×1024` |
 | `1:2` | — | `704×1408` | — | — | — | `704×1408` |
@@ -327,7 +327,7 @@ them exactly:
 | Model family | Exact dimensions accepted |
 | --- | --- |
 | GPT Image 1.x (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`) | `1024×1024`, `1024×1536`, or `1536×1024`. |
-| GPT Image 2 | Any positive dimensions where both sides are multiples of 16, the longest edge is at most 3840, the aspect ratio does not exceed 3:1, and the total area is between 655,360 and 8,294,400 pixels. |
+| GPT Image 2 and 2.6 (`gpt-image-2`, `gpt-image-2.6-flare`, `gpt-image-2.6-sunburst`) | Any positive dimensions where both sides are multiples of 16, the longest edge is at most 3840, the aspect ratio does not exceed 3:1, and the total area is between 655,360 and 8,294,400 pixels. |
 | Any other OpenAI model except DALL·E | Any positive dimensions, forwarded as `size` for OpenAI to accept or reject. |
 | Gemini 2.5 Flash Image | The ten dimensions shown in its canonical column above. This model has no separate resolution tier. |
 | Gemini 3.1 Flash Lite Image | The fourteen `1K` dimensions shown in its column above. This model serves no other tier. |
@@ -400,8 +400,8 @@ from pydantic_ai import ImageGenerator
 from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 from pydantic_ai.images.xai import XaiImageGenerationSettings
 
-openai_generator = ImageGenerator('openai:gpt-image-2', settings=OpenAIImageGenerationSettings(openai_n=3))
-xai_generator = ImageGenerator('xai:grok-imagine-image', settings=XaiImageGenerationSettings(xai_n=3))
+openai_generator = ImageGenerator('{{ openai:image }}', settings=OpenAIImageGenerationSettings(openai_n=3))
+xai_generator = ImageGenerator('{{ xai:image }}', settings=XaiImageGenerationSettings(xai_n=3))
 ```
 
 Gemini returns one image per request, so there is no Google equivalent.
@@ -420,7 +420,7 @@ than one image or need per-image metadata such as `revised_prompt`.
 ```python {title="image_generation_result.py"}
 from pydantic_ai import ImageGenerator
 
-generator = ImageGenerator('openai:gpt-image-2')
+generator = ImageGenerator('{{ openai:image }}')
 
 
 async def main():
@@ -473,7 +473,7 @@ Because a block is reported as an exception rather than an empty result, you can
 from pydantic_ai import ImageGenerator
 from pydantic_ai.exceptions import ContentFilterError
 
-generator = ImageGenerator('openai:gpt-image-2')
+generator = ImageGenerator('{{ openai:image }}')
 
 
 async def main():
@@ -505,7 +505,7 @@ from pydantic_ai import ImageGenerator
 
 logfire.configure()
 
-generator = ImageGenerator('openai:gpt-image-2', instrument=True)
+generator = ImageGenerator('{{ openai:image }}', instrument=True)
 
 # Or instrument all image generators globally
 ImageGenerator.instrument_all()
@@ -520,7 +520,7 @@ Each call opens a span named `image_generation {model}` carrying `gen_ai.operati
 `gen_ai.output.type='image'`. `image_generation` is a custom operation name: the OpenTelemetry GenAI conventions
 enumerate no value for image generation, while `image` is one of their standard output types.
 
-See the [Debugging and Monitoring guide](logfire.md) for more details on using Logfire with Pydantic AI.
+See the [Debugging and Monitoring guide](logfire.md#using-logfire) for Logfire setup and more details on using it with Pydantic AI.
 
 ## Testing
 
@@ -532,7 +532,7 @@ from pydantic_ai.images import ImageGenerationSettings, TestImageGenerationModel
 
 
 async def test_image_workflow():
-    generator = ImageGenerator('openai:gpt-image-2')
+    generator = ImageGenerator('{{ openai:image }}')
     test_model = TestImageGenerationModel()
 
     with generator.override(model=test_model):

@@ -5,13 +5,18 @@ module keeps a shim package at its old path, and a renamed class keeps a module-
 `__getattr__` alias, both emitting `HarnessDeprecationWarning` through these helpers.
 `warn_default_changed` covers an option whose default moved, where existing callers keep
 working but get different behavior, `warn_argument_ignored` an argument that is still
-accepted but no longer does anything, and `warn_argument_renamed` an argument still accepted
-under its old name.
+accepted but no longer does anything, `warn_argument_renamed` an argument still accepted
+under its old name, `warn_callable_renamed` a method still callable under its old name, and
+`renamed_duration_limit` a `resource_limits` dict still using the `max_duration_secs` key.
 """
 
 from __future__ import annotations
 
 import warnings
+from copy import copy
+from typing import Literal, TypeVar
+
+from typing_extensions import TypedDict
 
 
 class HarnessDeprecationWarning(UserWarning):
@@ -39,15 +44,18 @@ class MCPReadOnlyNoToolsWarning(UserWarning):
     """
 
 
-def warn_module_renamed(old: str, new: str) -> None:
+def warn_module_renamed(old: str, new: str, *, reason: str = '') -> None:
     """Emit a `HarnessDeprecationWarning` that `pydantic_ai_harness.<old>` is now `pydantic_ai_harness.<new>`.
 
     Called at import time from the shim package left at the old module path, so existing
-    imports keep working with a clear pointer to the new location.
+    imports keep working with a clear pointer to the new location. `reason`, one or more
+    sentences, says why, when the new name alone doesn't.
     """
+    message = f'`pydantic_ai_harness.{old}` has been renamed to `pydantic_ai_harness.{new}`.'
+    if reason:
+        message += f' {reason}'
     warnings.warn(
-        f'`pydantic_ai_harness.{old}` has been renamed to `pydantic_ai_harness.{new}`. '
-        f'Update your imports; this compatibility shim will be removed in a future release.',
+        f'{message} Update your imports; this compatibility shim will be removed in a future release.',
         category=HarnessDeprecationWarning,
         stacklevel=2,
     )
@@ -104,6 +112,19 @@ def warn_argument_renamed(owner: str, old: str, new: str, *, stacklevel: int = 3
     )
 
 
+def warn_callable_renamed(old: str, new: str) -> None:
+    """Emit a `HarnessDeprecationWarning` that `<old>()` is now `<new>()`.
+
+    Called from the thin wrapper left under the old method name.
+    """
+    warnings.warn(
+        f'`{old}()` has been renamed to `{new}()`. '
+        'Update the call; this deprecated alias will be removed in a future release.',
+        category=HarnessDeprecationWarning,
+        stacklevel=3,
+    )
+
+
 SET_WORKING_DIR_ON_THE_WORKSPACE = (
     "commands/paths start in the workspace's working directory; set it on the workspace, e.g. "
     "`LocalWorkspace('./repo')`."
@@ -123,3 +144,35 @@ def warn_argument_ignored(owner: str, argument: str, fix: str, *, stacklevel: in
         category=HarnessDeprecationWarning,
         stacklevel=stacklevel,
     )
+
+
+class _DurationLimit(TypedDict, total=False):
+    max_duration_seconds: float
+    max_duration_secs: float
+
+
+_LimitsT = TypeVar('_LimitsT', bound=_DurationLimit)
+
+
+def renamed_duration_limit(
+    limits: _LimitsT | Literal['unlimited'] | None, owner: str, *, stacklevel: int = 4
+) -> _LimitsT | Literal['unlimited'] | None:
+    """Return `limits` with a deprecated `max_duration_secs` key moved to `max_duration_seconds`, warning about it.
+
+    Called from the `__post_init__` of the dataclasses that take `resource_limits`, which store the result
+    so that their per-run copies do not warn again.
+    """
+    if limits is None or limits == 'unlimited' or 'max_duration_secs' not in limits:
+        return limits
+    if 'max_duration_seconds' in limits:
+        raise TypeError('Pass `max_duration_seconds` only: `max_duration_secs` is its deprecated name.')
+    warnings.warn(
+        f"`{owner}(resource_limits={{'max_duration_secs': ...}})` has been renamed to "
+        f"`{owner}(resource_limits={{'max_duration_seconds': ...}})`. "
+        'Update the call; this deprecated alias will be removed in a future release.',
+        category=HarnessDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    renamed = copy(limits)
+    renamed['max_duration_seconds'] = renamed.pop('max_duration_secs')
+    return renamed

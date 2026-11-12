@@ -1,0 +1,158 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: conversation_initiation_client_data
+    source_info:
+      source: unknown
+      version: pydantic-ai/<version>
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: Answer in one short sentence. Use the get_weather tool for any weather
+            question.
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_3001m52p1mj5f98vazafe3hepxn9
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  at: 0.001
+  data:
+    type: user_message
+    text: What is the weather in Berlin?
+- kind: message
+  direction: received
+  at: 0.834
+  data:
+    client_tool_call:
+      tool_name: get_weather
+      tool_call_id: get_weather_7ce87451fd574570a6312ccea6efac48
+      parameters:
+        city: Berlin
+      event_id: 1
+      expects_response: true
+    type: client_tool_call
+- kind: message
+  direction: sent
+  at: 0.834
+  data:
+    type: client_tool_result
+    tool_call_id: get_weather_7ce87451fd574570a6312ccea6efac48
+    result: '{"error":"Unknown tool name: ''get_weather''. No tools available."}'
+    is_error: true
+- kind: message
+  direction: received
+  at: 0.884
+  data:
+    agent_tool_response:
+      tool_name: get_weather
+      tool_call_id: get_weather_7ce87451fd574570a6312ccea6efac48
+      tool_type: client
+      is_error: true
+      is_blocked: false
+      event_id: 1
+      is_called: true
+      status: error
+    type: agent_tool_response
+- kind: message
+  direction: received
+  at: 1.75
+  data:
+    ping_event:
+      event_id: 2
+      ping_ms: null
+    type: ping
+- kind: message
+  direction: sent
+  at: 1.75
+  data:
+    type: pong
+    event_id: 2
+- kind: message
+  direction: received
+  at: 3.451
+  data:
+    ping_event:
+      event_id: 3
+      ping_ms: 46
+    type: ping
+- kind: message
+  direction: sent
+  at: 3.451
+  data:
+    type: pong
+    event_id: 3
+- kind: message
+  direction: received
+  at: 5.152
+  data:
+    ping_event:
+      event_id: 4
+      ping_ms: 46
+    type: ping
+- kind: message
+  direction: sent
+  at: 5.152
+  data:
+    type: pong
+    event_id: 4
+- kind: message
+  direction: received
+  at: 5.629
+  data:
+    audio_event:
+      audio_base_64: AwAGAAEAAAACAAEAAAD///7//v/+//7/AQABAP///f/9
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 5.695
+  data:
+    audio_event:
+      audio_base_64: /AL5BpYJkQptClAJUweABB8CvQGYAtwD5gWPCZwNwRAx
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 5.928
+  data:
+    audio_event:
+      audio_base_64: ///+//7//v/9//3//v/+//7/////////AQAAAAAAAQAC
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 5.938
+  data:
+    agent_response_event:
+      agent_response: I'm unable to check the weather right now, but you can easily
+        find the current weather in Berlin through a weather app or website.
+      event_id: 1
+      response_id: 6bf33464-ae99-47c8-8533-85b57e3bad6c
+      in_response_to_ids:
+      - 1ae24fc7-bf8a-4ebc-b98c-5b98070aefb9
+      response_type: text
+      attachments: []
+    type: agent_response
+- kind: message
+  direction: received
+  at: 5.939
+  data:
+    context_usage_event:
+      event_id: 1
+      model: gpt-4o
+      context_tokens: 537
+      context_limit_tokens: 128000
+    type: context_usage
