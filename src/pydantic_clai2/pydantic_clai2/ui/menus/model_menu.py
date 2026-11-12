@@ -1,5 +1,6 @@
 """The `/model add` menu: pick the model for the next prompt, or edit one model's settings."""
 
+import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from functools import partial
@@ -12,12 +13,14 @@ from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.config.api_keys import load_keys
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import github_copilot, openrouter, vllm
+from pydantic_clai2.models.key_profiles import key_variable
 from pydantic_clai2.models.model_catalog import CatalogModel, catalog, github_copilot_models
 from pydantic_clai2.models.model_options import model_options, validate_model_options
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults
-from pydantic_clai2.models.profiles import provider_of
+from pydantic_clai2.models.profiles import DEFAULT, parse_model, provider_of
 from pydantic_clai2.plugins.menus import Dialogs, Option, SettingsMenu
 from pydantic_clai2.ui.menus.custom_params import edit_custom_params
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
@@ -55,9 +58,7 @@ class ModelSettingsSource:
     def rows(self) -> list[FieldRow]:
         """Every form field with its description and any fixed choices."""
         rows: list[FieldRow] = []
-        options = model_options(model=self._settings_as)
-        if self.model != self._settings_as:  # A chain, or a plugin model shown with another's controls.
-            options.pop('base_url', None)
+        options = self._options()
         saved = self._store.model_settings(self.model)
         for key, info in ModelSettingsForm.model_fields.items():
             if key not in options and key not in saved:
@@ -83,9 +84,28 @@ class ModelSettingsSource:
                     else {},
                     default=shown(model_defaults(model=self._settings_as).get(key)),
                     choices=options.get(key, ()) or _choices(info.annotation),
+                    note=self._environment_key() if key == 'api_key' and 'api_key' not in saved else '',
                 )
             )
         return rows
+
+    def _options(self) -> dict[str, tuple[str, ...]]:
+        """The rows to offer, with the saved `/keys` names as the API key's choices."""
+        options = model_options(model=self._settings_as)
+        if self.model != self._settings_as:  # A chain, or a plugin model shown with another's controls.
+            options.pop('base_url', None)
+            options.pop('api_key', None)
+        if 'api_key' in options:
+            options['api_key'] = tuple(load_keys())
+        return options
+
+    def _environment_key(self) -> str:
+        """Where the key comes from without one saved: the environment variable, when it is set and used."""
+        ref = parse_model(self.model)
+        if ref.profile not in (None, DEFAULT):
+            return f'from the {ref.account} sign-in'
+        variable = key_variable(ref.provider)
+        return f'from {variable} in the environment' if os.environ.get(variable) else ''
 
     def current(self, row: FieldRow) -> str:
         """The effective value, without persisting inherited defaults."""
@@ -137,6 +157,8 @@ class ModelSettingsSource:
         }
         form = ModelSettingsForm.model_validate({**saved, row.key: value})
         validate_model_options(model=self._settings_as, form=form)
+        if row.key == 'api_key' and form.api_key is not None and form.api_key not in load_keys():
+            raise ValueError(f'{form.api_key} is not in /keys. Save the key there first.')
         return form
 
 
@@ -147,6 +169,7 @@ def setting_label(key: str) -> str:
         'top_p': 'Top-P (Nucleus Sampling)',
         'cache': 'Prompt Caching',
         'base_url': 'Base URL',
+        'api_key': 'API Key',
         'openai_text_verbosity': 'Verbosity',
         'anthropic_thinking_mode': 'Extended Thinking',
         'anthropic_thinking_budget': 'Thinking Budget',

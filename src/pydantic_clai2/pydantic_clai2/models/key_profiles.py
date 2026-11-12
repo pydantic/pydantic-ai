@@ -47,6 +47,22 @@ URL_ARGUMENTS = {
 }
 """Providers whose constructor names its endpoint something other than `base_url`."""
 
+KEY_VARIABLES = {
+    'openai-chat': 'OPENAI_API_KEY',
+    'openai-responses': 'OPENAI_API_KEY',
+    'openai-decisions': 'OPENAI_API_KEY',
+    'azure': 'AZURE_OPENAI_API_KEY',
+    'azure-responses': 'AZURE_OPENAI_API_KEY',
+    'bedrock': 'AWS_BEARER_TOKEN_BEDROCK',
+    'cohere': 'CO_API_KEY',
+    'heroku': 'HEROKU_INFERENCE_KEY',
+    'huggingface': 'HF_TOKEN',
+    'snowflake': 'SNOWFLAKE_TOKEN',
+    'vercel': 'VERCEL_AI_GATEWAY_API_KEY',
+    'voyageai': 'VOYAGE_API_KEY',
+}
+"""Providers whose API key variable is not `PROVIDER_API_KEY`."""
+
 
 class KeyedProvider(Protocol):
     """A provider class that can be built from string options, such as an API key alone."""
@@ -151,13 +167,20 @@ async def _save_token(*, provider: str, name: str, token: SecretStr | KeyReferen
     return True
 
 
-def model(name: str, *, base_url: str | None = None) -> Model:
-    """Build a core provider's model with the profile's saved key, or its `base_url`, instead of the environment's."""
+def model(name: str, *, base_url: str | None = None, api_key: str | None = None) -> Model:
+    """Build a core provider's model with a saved key and `base_url` instead of the environment's.
+
+    `api_key` names the `/keys` entry saved for the model, which wins over the profile's own key.
+    """
     ref = parse_model(name)
+    key = None if api_key is None else resolve_key(token=KeyReference(name=api_key))
     if ref.profile is None:
-        return infer_model(name, provider_factory=partial(build_provider, base_url=base_url))
+        return infer_model(name, provider_factory=partial(build_provider, key=key, base_url=base_url))
     if keyed_provider(ref.provider) is None:
         raise _no_profiles(ref.provider)
+    if key is not None:
+        provider = build_provider(ref.provider, key=key, base_url=base_url)
+        return infer_model(f'{ref.provider}:{ref.name}', provider_factory=lambda _: provider)
     raw = load_codex_credentials(account=ref.account)
     if raw is None:
         raise UserError(f'{ref.account} is not connected. Run /login {ref.account}.')
@@ -185,7 +208,9 @@ def build_provider(provider: str, *, key: str | None = None, base_url: str | Non
     options = {name: value for name, value in options.items() if value is not None}
     provider_class = keyed_provider(provider, *options)
     if provider_class is None:
-        raise _no_profiles(provider) if base_url is None else no_endpoint(provider)
+        if base_url is not None and not takes_endpoint(provider):
+            raise no_endpoint(provider)
+        raise _no_profiles(provider)
     return provider_class(**options)
 
 
@@ -197,6 +222,33 @@ def takes_endpoint(provider: str) -> bool:
         return keyed_provider(provider, _url_argument(provider)) is not None
     except ImportError:  # A known provider; building it reports the missing extra.
         return True
+
+
+def takes_key(provider: str) -> bool:
+    """Whether a `/keys` entry saved for a `provider:` model replaces its environment's API key.
+
+    Connections such as OpenRouter keep the key `/model add` saved, and Codex signs in instead.
+    """
+    if provider in ('openrouter', 'vllm', 'github-copilot', 'openai-codex'):
+        return False
+    if provider.startswith('gateway/'):
+        return True
+    try:
+        return keyed_provider(provider) is not None
+    except ImportError:  # A known provider; building it reports the missing extra.
+        return True
+
+
+def key_variable(provider: str) -> str:
+    """The environment variable core reads `provider`'s API key from."""
+    if provider.startswith('gateway/'):
+        return 'PYDANTIC_AI_GATEWAY_API_KEY'
+    return KEY_VARIABLES.get(provider, f'{provider.upper().replace("-", "_")}_API_KEY')
+
+
+def no_api_key(provider: str) -> UserError:
+    """The error for an `api_key` saved for a provider that takes its key some other way."""
+    return UserError(f'{provider} takes no API key from /model settings. Reset api_key in /model settings.')
 
 
 def _grpc_host(base_url: str) -> str:

@@ -291,6 +291,7 @@ def test_delegate_menu_settings_validate_save_and_reset() -> None:
         '{"light":{"model":"fixture:"}}',
         '{"light":{"model":"fixture:light","settings":{"thinking":"invalid"}}}',
         '{"light":{"model":"fixture:light","settings":{"base_url":"https://gateway.example/v1"}}}',
+        '{"light":{"model":"fixture:light","settings":{"api_key":"TEAM_KEY"}}}',
     ):
         assert source.problem(row, value) is not None
     with pytest.raises(ValidationError):

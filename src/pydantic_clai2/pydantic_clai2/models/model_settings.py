@@ -124,6 +124,11 @@ class ModelSettingsForm(BaseModel):
         min_length=1,
         description="Endpoint this model's provider is built with, such as a gateway. Wins over its environment variable.",
     )
+    api_key: str | None = Field(
+        default=None,
+        pattern=r'^[A-Z_][A-Z0-9_]*$',
+        description='The /keys entry this model uses instead of the API key in its environment variable.',
+    )
 
     @field_validator('base_url')
     @classmethod

@@ -273,7 +273,14 @@ def test_chat_compatible_reasoning_defaults_can_be_overridden(tmp_path: Path, na
 @pytest.mark.parametrize('model', ['azure:o3', 'azure:gpt-5'])
 def test_azure_without_family_defaults_keeps_generic_rows(model: str) -> None:
     """Only the GPT-6 and GPT-5.6 families get Chat Completions rows on Azure, for the defaults clai2 sends."""
-    assert set(model_options(model=model)) == {'max_tokens', 'thinking', 'custom_params', 'cache', 'base_url'}
+    assert set(model_options(model=model)) == {
+        'max_tokens',
+        'thinking',
+        'custom_params',
+        'cache',
+        'base_url',
+        'api_key',
+    }
 
 
 @pytest.mark.parametrize('model', ['custom:gpt-6', 'custom:o3'])

@@ -202,7 +202,7 @@ On non-Windows platforms, stock CLAI 2 is a broad local-execution profile: its d
 - Most tools, `shell` included, run through eager Code Mode by default, from `run_code` statements while the model is still writing. The REPL state is saved with the session.
 - `!` commands run in the host shell, not the agent workspace, and their output is saved for the next prompt.
 - Environment filtering covers selected credential names and does not isolate other secrets or files readable by the OS user.
-- A model's saved `base_url` receives its provider's credentials: saved keys, keyed profiles, and Codex sign-ins. Whoever can write the model settings can redirect them; `delegate_models` settings cannot set it.
+- A model's saved `base_url` receives its provider's credentials: saved keys, keyed profiles, and Codex sign-ins. Whoever can write the model settings can redirect them; `delegate_models` settings cannot set it. A model's saved `api_key` holds only the name of a `/keys` entry, never the key.
 - `open_stock_agent` gives code and ACP hosts the same Coder and workspace defaults.
 
 See the CLAI 2 docs on [environment variables](src/pydantic_clai2/docs/reference.md#environment-variables), [Code Mode](src/pydantic_clai2/README.md#code-mode-and-speculative-execution), [agent folders](src/pydantic_clai2/docs/reference.md#agent-folders), and [the stock agent in your own code](src/pydantic_clai2/docs/reference.md#the-stock-agent-in-your-own-code).
