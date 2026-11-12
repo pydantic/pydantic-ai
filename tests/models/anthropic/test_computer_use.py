@@ -60,7 +60,7 @@ with try_import() as imports_successful:
     from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
     from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.models.anthropic._computer import COMPUTER_NOT_EXECUTED, map_computer_member
+    from pydantic_ai.models.anthropic._computer import map_computer_member
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -238,7 +238,7 @@ async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_request
         [
             _turn(
                 _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
-                _tool_use('toolu_2', 'wait', {'duration': 60}),
+                _tool_use('toolu_2', 'left_click', {'coordinate': [-1, 6]}),
             ),
             _turn(BetaTextBlock(text='done', type='text')),
         ]
@@ -250,7 +250,7 @@ async def test_an_invalid_member_is_refused_and_nothing_runs(allow_model_request
     _, second = get_mock_chat_completion_kwargs(client)
     results = second['messages'][-1]['content']
     assert [(r['tool_use_id'], r['is_error']) for r in results] == [('toolu_1', True), ('toolu_2', True)]
-    assert all('less than or equal to 30' in r['content'][0]['text'] for r in results)
+    assert all('greater than or equal to 0' in r['content'][0]['text'] for r in results)
 
 
 async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_requests: None) -> None:
@@ -675,7 +675,7 @@ _CHANGED = 'Before it ran, this call was changed to: [...]. Ran 1 action.'
             [1, 1],
             ['Action 1 of 2 (click) failed: busy.', _PNG],
             {'performed': 0, 'error': 'busy'},
-            [['Failed: busy', 'image'], [COMPUTER_NOT_EXECUTED]],
+            [['Failed: busy', 'image'], [NOT_EXECUTED]],
             id='first-call-failed',
         ),
         # Content stored as a JSON string reads as the list it encodes, screenshot and all.
@@ -751,13 +751,13 @@ async def test_a_result_answers_each_member_call(
 async def test_a_stored_call_whose_actions_do_not_validate_still_replays_as_its_member_calls(
     allow_model_requests: None,
 ) -> None:
-    """A wait longer than the tool takes is sent back for a retry; once stored, its call is no longer typed."""
+    """A click off the screen is sent back for a retry; once stored, its call is no longer typed."""
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    block = {'id': 'toolu_1', 'name': 'wait', 'input': {'duration': 60}}
+    block = {'id': 'toolu_1', 'name': 'left_click', 'input': {'coordinate': [-1, 6]}}
     call = ToolCallPart(
         'computer',
-        {'actions': [{'type': 'wait', 'seconds': 60}]},
+        {'actions': [{'type': 'click', 'x': -1, 'y': 6}]},
         tool_call_id='toolu_1',
         tool_kind=COMPUTER_KIND.id,
         provider_name='anthropic',
@@ -770,13 +770,13 @@ async def test_a_stored_call_whose_actions_do_not_validate_still_replays_as_its_
     history = ModelMessagesTypeAdapter.validate_json(
         ModelMessagesTypeAdapter.dump_json(
             [
-                ModelRequest.user_text_prompt('Wait.'),
+                ModelRequest.user_text_prompt('Click.'),
                 ModelResponse(parts=[call], provider_name='anthropic'),
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
                             'computer',
-                            'At most 30 seconds.',
+                            'Positions are at least 0.',
                             tool_call_id='toolu_1',
                             tool_kind=COMPUTER_KIND.id,
                             outcome='retried',
@@ -795,7 +795,7 @@ async def test_a_stored_call_whose_actions_do_not_validate_still_replays_as_its_
 
     (body,) = get_mock_chat_completion_kwargs(client)
     (tool_use,) = body['messages'][1]['content']
-    assert (tool_use['name'], tool_use.get('toolset_name')) == ('wait', 'computer')
+    assert (tool_use['name'], tool_use.get('toolset_name')) == ('left_click', 'computer')
     (result,) = body['messages'][2]['content']
     assert (result['tool_use_id'], result['is_error']) == ('toolu_1', True)
 
