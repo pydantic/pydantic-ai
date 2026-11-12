@@ -5,6 +5,7 @@ import logging
 import os
 import stat
 import sys
+from io import StringIO
 from pathlib import Path
 from uuid import UUID
 
@@ -265,10 +266,17 @@ def test_file_fallback_when_no_keyring(
             capsys.readouterr().err
             == 'No OS keyring backend available; falling back to 0600 plaintext credential files.\n'
         )
-        with _quiet_credential_store_logs():
+        with _quiet_credential_store_logs(console=Console(file=StringIO(), force_terminal=True)):
             new_session()
             assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
             assert capsys.readouterr().err == ''
+        with _quiet_credential_store_logs(console=Console(file=StringIO(), force_terminal=False)):
+            new_session()
+            assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
+            assert (
+                capsys.readouterr().err
+                == 'No OS keyring backend available; falling back to 0600 plaintext credential files.\n'
+            )
     finally:
         root.handlers = handlers
 

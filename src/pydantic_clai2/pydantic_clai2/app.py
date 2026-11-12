@@ -228,7 +228,7 @@ async def chat(
     served: WebHandoff | None = None
     with (
         telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
-        _quiet_credential_store_logs(),
+        _quiet_credential_store_logs(console=console),
         relay_stderr() if console.is_terminal else nullcontext(),
     ):
         async with agent:
@@ -319,8 +319,11 @@ async def chat(
 
 
 @contextmanager
-def _quiet_credential_store_logs() -> Generator[None]:
-    """Keep credential store fallback warnings off stderr during interactive sessions (`/login` reports fallback directly)."""
+def _quiet_credential_store_logs(*, console: Console | None = None) -> Generator[None]:
+    """Keep credential store fallback warnings off stderr during interactive terminal sessions (`/login` reports fallback directly)."""
+    if console is not None and not console.is_terminal:
+        yield
+        return
     handler = logging.NullHandler()
     logger = logging.getLogger('pydantic_clai2.config.credential_store')
     logger.addHandler(handler)
