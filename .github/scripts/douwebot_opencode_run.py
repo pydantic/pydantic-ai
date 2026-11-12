@@ -90,6 +90,7 @@ def read_only_config(*, agent: str, provider: Provider, steps: int | None = None
             agent: agent_config,
             'title': {'model': provider.model},
             'compaction': {'model': provider.model},
+            'summary': {'model': provider.model},
         },
         'policies': policies,
     }

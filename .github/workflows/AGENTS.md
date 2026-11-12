@@ -308,7 +308,7 @@ workspace: douwebot's OpenCode fallback, each `PR Review Checks` review and Open
 
 Every other failure fails as it does on Go alone, including a rejected key, a provider outage, a time-budget stop, a
 timeout and an invalid answer. The DeepInfra run gets only the rest of the time budget. Each run's config allows
-only its provider and pins the `title` and `compaction` agents to its model. Its environment holds only that
+only its provider and pins the `title`, `compaction` and `summary` agents to its model. Its environment holds only that
 provider's key. The job log names the model that served the run. When a run's process fails, Go or DeepInfra, the
 job log names that run's model and the `type` and `status` of its stream's last `error` event. It prints a type
 only when the type is shaped like OpenCode's own, such as `provider.auth`. It never prints the error message or
