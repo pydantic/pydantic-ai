@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.skills._loader import SkillDefinition
-
-UntrustedSkillsReader = Callable[[RunContext[Any]], Awaitable[list[SkillDefinition]]]
-"""Reads the skills below `'operator'` authority the model may load, through the run's workspace."""
 
 
 class UntrustedSkillsToolset(FunctionToolset[AgentDepsT]):
@@ -21,16 +17,19 @@ class UntrustedSkillsToolset(FunctionToolset[AgentDepsT]):
     `ctx.workspace` rather than keeping a run's catalog.
     """
 
-    def __init__(self, read: UntrustedSkillsReader, *, id: str | None) -> None:
+    def __init__(
+        self, read: Callable[[RunContext[AgentDepsT]], Awaitable[list[SkillDefinition]]], *, id: str | None
+    ) -> None:
+        """`read` gives the skills below `'operator'` authority the model may load, for the run in `ctx`."""
         super().__init__(id=id)
         self._read = read
         self.add_function(self.list_skills)
         self.add_function(self.load_skill)
 
     async def list_skills(self, ctx: RunContext[AgentDepsT]) -> dict[str, str]:
-        """List the skills in this workspace, each skill's name mapped to its description.
+        """List the skills held back from your instructions, each skill's name mapped to its description.
 
-        The operator did not write these skills. Call `load_skill` to read one's instructions.
+        They aren't offered as the operator's instructions. Call `load_skill` to read one's instructions.
         """
         return {skill.name: skill.description for skill in await self._read(ctx)}
 

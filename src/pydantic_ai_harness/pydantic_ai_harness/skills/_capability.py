@@ -383,7 +383,7 @@ class Skills(AbstractCapability[AgentDepsT]):
             self._toolset = UntrustedSkillsToolset[AgentDepsT](self._untrusted_skills, id=self.id)
         return self._toolset
 
-    async def _untrusted_skills(self, ctx: RunContext[Any]) -> list[SkillDefinition]:
+    async def _untrusted_skills(self, ctx: RunContext[AgentDepsT]) -> list[SkillDefinition]:
         """The lowered skills, read again for a `list_skills` or `load_skill` call, reporting skips as `for_run` does."""
         catalog, lowered = await self._load(ctx.workspace)
         self._report_skipped(ctx, catalog)

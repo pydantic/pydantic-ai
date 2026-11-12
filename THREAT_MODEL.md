@@ -193,6 +193,8 @@ Canonical guidance: [workflow rules](.github/workflows/AGENTS.md) and [securing 
 
 `LocalWorkspace` does not establish a security isolation boundary. Bypasses of file-tool containment or allow, deny, and read-only patterns that remain within the workspace process's existing OS authority are correctness bugs rather than security vulnerabilities, including when command execution is disabled. Evaluate security reports against documented security boundaries and the configured backend's guarantees. A sandbox protects only its configured boundary; selecting one does not make every file inside it confidential from the agent.
 
+A workspace's authority (`AuthorityWorkspace`, or `authority` and `path_authority` on a workspace capability) decides the channel a file-reading capability sends a file's text on, not what the agent can do in the workspace. `Skills` keeps a skill whose `SKILL.md` is below `'operator'` out of its catalog, which the model reads as the application's instructions, and offers it through `list_skills` and `load_skill`, whose results are tool output. A stock workspace runs at `'operator'`, so there a repository's skills still reach the model as instructions. See [workspace authority](docs/workspace.md#workspace-authority) and [Skills](docs/harness/skills.md#skills-from-files-you-didnt-write).
+
 Code Mode pool creation, connection, and checkout errors go to the application caller, not the model.
 Remote host-side execution failures omit error details from model retries because pool URLs and
 credentials may appear in them. Sandbox diagnostics and nested tool results still reach the model;

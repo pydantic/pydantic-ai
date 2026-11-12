@@ -145,7 +145,7 @@ reads the instructions at run time.
 
 ## Skills from files you didn't write
 
-The model reads the catalog as your instructions, so a skill whose `SKILL.md` is below `'operator'` [authority](../workspace.md#workspace-authority), such as one in a repository the operator doesn't control, stays out of it. The instructions say instead that the workspace has skills, and the model calls `list_skills` for their names and descriptions and `load_skill` for one's instructions. Both reach it as tool output rather than as your instructions. This costs a tool call when a task may need a skill.
+The model reads the catalog as your instructions, so a skill whose `SKILL.md` is below `'operator'` [authority](../workspace.md#workspace-authority), such as one in a repository the operator doesn't control, stays out of it. The instructions point the model at two tools instead: it calls `list_skills` for their names and descriptions and `load_skill` for one's instructions. Both reach it as tool output rather than as your instructions. This costs a tool call when a task may need a skill.
 
 Each skill takes the level of its own file, [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of], in the workspace its library is read from. So with a run workspace at `authority='none'`, `Skills('skills', workspace=LocalWorkspaceBackend('/app'))` keeps its skills in the catalog, while `Skills('skills')`, read from the run's workspace, offers its skills through `list_skills`; and a `path_authority` entry such as `{'skills/vendored': 'none'}` moves just those skills.
 

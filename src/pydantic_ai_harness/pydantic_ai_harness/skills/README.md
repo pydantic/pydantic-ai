@@ -152,7 +152,7 @@ The model reads the catalog as your instructions, so a skill whose `SKILL.md` is
 below `'operator'`
 [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority),
 such as one in a repository the operator doesn't control, stays out of it. The
-instructions say instead that the workspace has skills, and the model calls
+instructions point the model at two tools instead: it calls
 `list_skills` for their names and descriptions and `load_skill` for one's
 instructions. Both reach it as tool output rather than as your instructions.
 This costs a tool call when a task may need a skill.
