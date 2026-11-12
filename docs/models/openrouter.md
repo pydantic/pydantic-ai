@@ -120,6 +120,10 @@ A [mid-conversation system prompt](../message-history.md#mid-conversation-system
 
 Other routes get a `<system>`-tagged user message instead. This keeps prompt caching effective: on Gemini and older Claude models, a native mid-conversation `system` message doesn't stay where it was sent, which would invalidate the cached prefix after it.
 
+## Video input
+
+OpenRouter answers 404 ("No endpoints found that support input video") when video is sent to a model that doesn't read it, such as Claude, GPT or DeepSeek. So only the profiles of models that read video, Gemini and Amazon Nova, say they take it. For other models, video a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance) instead of failing the request. To send video a tool returns to another model that reads it, pass `profile=ModelProfile(supports_video_input=True)`.
+
 ## Prompt Caching
 
 OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it.

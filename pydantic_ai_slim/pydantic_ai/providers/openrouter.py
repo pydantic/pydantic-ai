@@ -334,7 +334,8 @@ class OpenRouterProvider(_OpenAISDKProvider):
 
         # Three-layer merge:
         # 1. Fallback layer — `OpenAIJsonSchemaTransformer` is the default unless an upstream profile sets one explicitly
-        #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`).
+        #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`), and video input
+        #    is off unless the upstream profile turns it on.
         # 2. Upstream profile — model-specific traits from the lab's profile function.
         # 3. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
         #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field, cache capabilities). OpenRouter
@@ -344,7 +345,13 @@ class OpenRouterProvider(_OpenAISDKProvider):
         #    It keeps mid-conversation system messages only on some routes (see `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`)
         #    and moves or rewrites them on the others, so those get the deliberate `<system>`-wrapped fallback.
         return merge_profile(
-            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            OpenAIModelProfile(
+                json_schema_transformer=OpenAIJsonSchemaTransformer,
+                # OpenRouter answers 404 "No endpoints found that support input video" for a model without video
+                # input (checked live with Claude, GPT and DeepSeek routes, 2026-11-12), so video is off unless the
+                # upstream profile turns it on, as Google's and Amazon Nova's do.
+                supports_video_input=False,
+            ),
             profile,
             OpenRouterModelProfile(
                 openai_chat_send_back_thinking_parts='field',
