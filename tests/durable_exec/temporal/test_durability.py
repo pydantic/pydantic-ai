@@ -2958,7 +2958,7 @@ class _PerRunModelResolver(AbstractCapability[None]):
 
 @dataclass
 class _PerRunModelSupplier(AbstractCapability[None]):
-    def get_model(self) -> Model:  # pragma: no cover
+    def get_model(self) -> Model:
         return TestModel()
 
 
