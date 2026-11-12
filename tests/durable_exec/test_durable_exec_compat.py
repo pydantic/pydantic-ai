@@ -271,6 +271,7 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__dynamic_toolset__dynamic__call_tool',
     'agent__compat__dynamic_toolset__dynamic__validate_args',
     'agent__compat__capability__compat__operation',
+    'agent__compat__external_event_ask',
 }
 
 TEMPORAL_CHILD_WORKFLOW_NAMES = {

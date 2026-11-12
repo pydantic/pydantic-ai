@@ -16,12 +16,12 @@ holds no compute while it lasts. Engines whose API hands out tokens map onto it 
 durable functions call it a callback, Restate an awakeable, Trigger.dev a waitpoint token, Vercel
 Workflow a hook. An engine installs an [`ExternalEventWaiter`][pydantic_ai.external_events.ExternalEventWaiter]
 for each durable agent run with [`external_event_scope`][pydantic_ai.external_events.external_event_scope].
-In the durable runs of an engine that installs none, such as Temporal, DBOS or Prefect so far, the wait
-is refused: a wait in process would not be recorded, so a replay would ask again, could get a different
-answer than the one the run already acted on, and diverge from the engine's history.
+In the durable runs of an engine that installs none, such as DBOS or Prefect so far, the wait is refused:
+a wait in process would not be recorded, so a replay would ask again, could get a different answer than
+the one the run already acted on, and diverge from the engine's history.
 Engines whose external events are addressed by name rather than by token (Temporal signals, Azure
 Durable Task external events, DBOS messages) can implement the same contract by encoding the
-execution's ID and an event key in the token they hand out.
+execution's ID and an event key in the token they hand out, as Temporal's does.
 """
 
 from __future__ import annotations
@@ -200,7 +200,8 @@ class _UnsupportedWaiter(ExternalEventWaiter):
             'not be recorded: a replay would ask again and could get a different answer than the one the run '
             'already acted on, diverging from the recorded history, and a restart would lose the wait. End the '
             'run with `DeferredToolRequests` output and start a new run with the results, or use an engine that '
-            'supports it, such as AWS Lambda durable functions with `AWSLambdaDurability` from `pydantic-ai-harness`.'
+            'supports it, such as Temporal with `TemporalDurability`, or AWS Lambda durable functions with '
+            '`AWSLambdaDurability` from `pydantic-ai-harness`.'
         )
 
 
@@ -237,13 +238,14 @@ async def wait_for_external_event(
     [`fail_external_event`][pydantic_ai.external_events.fail_external_event] ends it. It only lives
     as long as the process does.
 
-    Inside a durable run on an engine that supports it, currently AWS Lambda durable functions through
-    Pydantic AI Harness's `AWSLambdaDurability`, the engine records the token, the answer `ask` returns
-    and the payload, and suspends the run while it waits, so the wait survives restarts and a replay
-    doesn't ask again. The token is then resolved through the engine's API. Inside an agent run on a
-    durable engine that doesn't support it, the engine refuses the wait with a `UserError`: a wait in
-    process would not be recorded, so a replay would ask again and could get a different answer than
-    the one the run already acted on, and a restart would lose the wait.
+    Inside a durable run on an engine that supports it, currently Temporal through
+    [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] and AWS Lambda durable
+    functions through Pydantic AI Harness's `AWSLambdaDurability`, the engine records the token, the
+    answer `ask` returns and the payload, and suspends the run while it waits, so the wait survives
+    restarts and a replay doesn't ask again. The token is then resolved through the engine's API.
+    Inside an agent run on a durable engine that doesn't support it, the engine refuses the wait with a
+    `UserError`: a wait in process would not be recorded, so a replay would ask again and could get a
+    different answer than the one the run already acted on, and a restart would lose the wait.
 
     Args:
         name: A name for the wait in a durable engine's history. Keep it stable across deployments.
@@ -271,8 +273,8 @@ async def wait_for_external_event(
             '`wait_for_external_event()` was called from inside a durable unit, such as a tool call or an '
             '`ask` callback. The wait has to be recorded by the durable run itself, so resolve the call '
             'with `RequestInput`, or call it from a `handle_deferred_tool_calls` capability hook only outside '
-            'durable runs or on an engine that supports waiting for external events, such as AWS Lambda durable '
-            'functions with `AWSLambdaDurability`.'
+            'durable runs or on an engine that supports waiting for external events, such as Temporal with '
+            '`TemporalDurability` or AWS Lambda durable functions with `AWSLambdaDurability`.'
         )
     # A durable engine installs its waiter, or one that refuses, for its runs; elsewhere, wait in process.
     waiter = _current_waiter.get() or _IN_PROCESS_WAITER
@@ -297,7 +299,8 @@ def resolve_external_event(token: str, payload: object) -> None:
 
     Call it from anywhere in the process the run is waiting in, such as the endpoint your approval UI
     posts to, from any thread. A token from a durable engine is resolved through that engine's API
-    instead, such as AWS Lambda's `SendDurableExecutionCallbackSuccess`.
+    instead, such as [`resolve_external_event`][pydantic_ai.durable_exec.temporal.resolve_external_event]
+    from `pydantic_ai.durable_exec.temporal` or AWS Lambda's `SendDurableExecutionCallbackSuccess`.
 
     `payload` is converted to its JSON form, as it would be on its way through a durable engine, so the
     wait gets the same value in process as on an engine.

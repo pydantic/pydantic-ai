@@ -586,7 +586,12 @@ print(agent.run_sync('Set up storage').output)
 - Each question is a deferred call marked `kind='question'` (`requests.kind(id) == 'question'`); `AskUser`
   answers its own in `handle_deferred_tool_calls`, after the step's other tool calls finish, one question
   at a time, through core `wait_for_external_event` like `RequestInput`: in process by default, journaled
-  and suspended on AWS Lambda durable functions; on Temporal/DBOS/Prefect the engine refuses it with `UserError`
+  and suspended on AWS Lambda durable functions and on Temporal (`TemporalDurability`: the answerer runs in
+  a local activity whose result the history records, the workflow waits on a condition, and the token is
+  resolved with `await pydantic_ai.durable_exec.temporal.resolve_external_event(client, token, payload)`,
+  which signals the workflow; the tool runs in an activity, which can't emit events yet (#7971), so
+  `AskUserRequestedEvent` isn't emitted there; import the agent's module under
+  `workflow.unsafe.imports_passed_through()`, or the answerer is the sandbox's copy); on DBOS/Prefect the engine refuses it with `UserError`
   (an unrecorded wait could diverge from the journal on replay). Works under `run_stream()` too: the
   tool body defers, so streaming doesn't stop on the call.
 - Three required positional parameters receive `(ctx, request, token)` (`TokenAnswerer[DepsT]`): return the

@@ -39,10 +39,11 @@ class RequestInput(AbstractCapability[AgentDepsT]):
     The wait is [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event]. In a
     plain run it happens in this process, and your code resolves the token with
     [`resolve_external_event`][pydantic_ai.external_events.resolve_external_event]. In a durable run on
-    an engine that supports it, currently AWS Lambda durable functions with Pydantic AI Harness's
-    `AWSLambdaDurability`, the engine records the answer and suspends the run while it waits, and the
-    token is resolved through the engine's API. Other durable engines refuse the wait with a
-    [`UserError`][pydantic_ai.exceptions.UserError].
+    an engine that supports it, currently Temporal with
+    [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] and AWS Lambda durable
+    functions with Pydantic AI Harness's `AWSLambdaDurability`, the engine records the answer and
+    suspends the run while it waits, and the token is resolved through the engine's API. Other durable
+    engines refuse the wait with a [`UserError`][pydantic_ai.exceptions.UserError].
 
     See [Request Input](../capabilities/request-input.md).
     """
@@ -78,7 +79,8 @@ class RequestInput(AbstractCapability[AgentDepsT]):
 
     On AWS Lambda, the callback and the step that calls `ask` are named after it
     (`{agent}__external_event.{name}` and `{agent}__external_event.{name}.ask`). Keep it stable across
-    deployments, since a replay matches its history by name.
+    deployments, since a replay matches its history by name. On Temporal, it summarizes the local
+    activity that calls `ask` (`ask: {name}`) and the timer that bounds the wait.
     """
 
     def __post_init__(self) -> None:
