@@ -321,6 +321,8 @@ class Tasks:
         self._starting: dict[str, asyncio.Event] = {}
         self._closes = 0
         """How many times `stop_prompts` ran, so a prompt that was awaiting `allow_resume` meanwhile can tell."""
+        self._settled_usage: dict[tuple[str, int], RunUsage] = {}
+        """Each settled task's usage by ID and generation, counted once from the history its owner keeps on disk."""
         self.sink: Callable[[AgentStreamEvent], Awaitable[None]] | None = None
         self.wake: Callable[[], None] | None = None
 
@@ -528,16 +530,7 @@ class Tasks:
     def info(self, record: DelegationTask) -> TaskInfo:
         """A task as plugins see it."""
         progress = self.progress.get(record.id)
-        usage = RunUsage()
-        for message in record.messages:
-            if isinstance(message, ModelResponse):
-                usage.incr(message.usage)
-                usage.requests += 1
-            else:
-                # As a run counts them: the calls that returned, not those retried or still waiting.
-                usage.tool_calls += sum(
-                    isinstance(part, ToolReturnPart) and part.outcome != 'retried' for part in message.parts
-                )
+        usage = self._usage(record)
         activity = progress.activity if progress is not None else 'starting'
         if record.status == 'running' and self.owner.pending_question(record.id) is not None:
             activity = 'waiting for an answer'
@@ -560,6 +553,22 @@ class Tasks:
             activity=activity,
             usage=usage,
         )
+
+    def _usage(self, record: DelegationTask) -> RunUsage:
+        """What `record`'s runs used, from the history it holds, or for a settled one, the history its owner saved.
+
+        A settled task's usage is kept from when it was told it settled, still holding its history, so it isn't read
+        back from the saved file; only a task saved by an earlier process is.
+        """
+        key = (record.id, record.generation)
+        if record.messages or record.status == 'running':
+            usage = _usage(record.messages)
+            if record.status == 'finished':
+                self._settled_usage[key] = usage
+            return usage
+        if (usage := self._settled_usage.get(key)) is None:
+            usage = self._settled_usage[key] = _usage(self.owner.history(record.id))
+        return usage
 
     def listing(self) -> list[TaskInfo]:
         return [self.info(record) for _, record in task_tree(self.records())]
@@ -697,6 +706,21 @@ class Tasks:
         if len(matches) != 1:
             raise ValueError(f'Task ID {prefix!r} is unknown or ambiguous. Use /tasks.')
         return matches[0]
+
+
+def _usage(messages: Sequence[ModelMessage]) -> RunUsage:
+    """The usage `messages` record, counting tool calls as a run counts them."""
+    usage = RunUsage()
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            usage.incr(message.usage)
+            usage.requests += 1
+        else:
+            # As a run counts them: the calls that returned, not those retried or still waiting.
+            usage.tool_calls += sum(
+                isinstance(part, ToolReturnPart) and part.outcome != 'retried' for part in message.parts
+            )
+    return usage
 
 
 def _display_name(agent_name: str) -> str:

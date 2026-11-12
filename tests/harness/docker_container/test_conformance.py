@@ -1,4 +1,4 @@
-"""Pydantic AI's workspace backend conformance suite, run against `DockerSandboxBackend` over a fake `docker`."""
+"""Pydantic AI's workspace backend conformance suite, run against `DockerContainerBackend` over a fake `docker`."""
 
 from __future__ import annotations
 
@@ -9,11 +9,13 @@ import pytest
 
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-from pydantic_ai_harness.docker_sandbox import DockerSandbox, DockerSandboxBackend
+from pydantic_ai_harness.docker_container import DockerContainer, DockerContainerBackend
 
 from ._fake_docker import install_fake_docker
 
-pytestmark = pytest.mark.skipif(os.name != 'posix', reason='`DockerSandboxBackend` runs `docker` as a POSIX subprocess')
+pytestmark = pytest.mark.skipif(
+    os.name != 'posix', reason='`DockerContainerBackend` runs `docker` as a POSIX subprocess'
+)
 
 
 class TestFakeDocker(WorkspaceBackendSuite):
@@ -35,20 +37,20 @@ class TestFakeDocker(WorkspaceBackendSuite):
 
     @pytest.fixture
     def backend(self, working_dir: str) -> WorkspaceBackend:
-        return DockerSandboxBackend(image='fake-image', working_dir=working_dir)
+        return DockerContainerBackend(image='fake-image', working_dir=working_dir)
 
     @pytest.fixture
     def fresh_backend(self, working_dir: str) -> Callable[[], WorkspaceBackend]:
-        return lambda: DockerSandboxBackend(image='fake-image', working_dir=working_dir)
+        return lambda: DockerContainerBackend(image='fake-image', working_dir=working_dir)
 
     @pytest.fixture
     def attach_backend(self, working_dir: str) -> Callable[[WorkspaceRef], WorkspaceBackend]:
-        return lambda ref: DockerSandboxBackend(ref=ref, working_dir=working_dir)
+        return lambda ref: DockerContainerBackend(ref=ref, working_dir=working_dir)
 
     @pytest.fixture
     def destroy_environment(self) -> Callable[[WorkspaceBackend], Awaitable[None]]:
         async def destroy(backend: WorkspaceBackend) -> None:
             assert backend.ref is not None
-            await DockerSandbox[None]().destroy(backend.ref)
+            await DockerContainer[None]().destroy(backend.ref)
 
         return destroy

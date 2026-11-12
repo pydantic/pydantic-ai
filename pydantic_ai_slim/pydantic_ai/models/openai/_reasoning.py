@@ -38,6 +38,13 @@ def resolve_openai_thinking_effort(
         if thinking == 'max' and supports_max:
             return 'max'
         return OPENAI_REASONING_EFFORT_MAP[thinking]
+    return closest_accepted_reasoning_effort(thinking, supported, supports_max=supports_max)
+
+
+def closest_accepted_reasoning_effort(
+    thinking: ThinkingLevel, supported: frozenset[OpenAIReasoningEffort], *, supports_max: bool
+) -> ReasoningEffort:
+    """Map unified thinking to the closest of the efforts the model accepts, or `None` when it accepts none."""
     accepted: list[OpenAIReasoningEffort] = sorted(
         (effort for effort in supported if effort != 'max' or supports_max), key=_REASONING_EFFORT_ORDER.index
     )
