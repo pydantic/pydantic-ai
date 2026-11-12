@@ -187,7 +187,7 @@ async def main():
 
 A new sandbox runs E2B's `desktop` template: Ubuntu with XFCE, a terminal and Google Chrome. The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. The agent also gets the sandbox's shell and files, so `Coder` and `ComputerUse` can share it.
 
-A custom `template` needs Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid`, plus `startxfce4` for the XFCE desktop. On Debian or Ubuntu, the first use of the display installs any of those that's missing with `apt-get`, if commands run as root or can use `sudo` without a password; that can take a few minutes.
+A custom `template` gets [the programs the display needs](computer-use.md#what-the-display-needs) on first use, if it can. The XFCE desktop also needs `startxfce4`, which isn't installed for you.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 

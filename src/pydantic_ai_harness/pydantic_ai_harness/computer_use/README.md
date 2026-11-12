@@ -53,6 +53,15 @@ To give your own sandbox a screen, see [Giving a workspace a screen](#giving-a-w
 
 On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only-access) workspace the agent can take screenshots but not act.
 
+## What the display needs
+
+Computer use runs five programs inside the sandbox: Xvfb draws the screen, `xdotool` moves the mouse and types,
+`xwininfo` (Debian's `x11-utils`) reads the screen size, `scrot` takes screenshots, and `setsid` keeps the screen
+running after the command that started it ends. If any is missing, the first use of the display installs it with
+`apt-get`, as root or with passwordless `sudo`. That can take a minute; add them to your image to skip it. If they
+can't be installed, because the image has no `apt-get` or no root, the run ends with a `WorkspaceUnavailableError`
+that names what's missing.
+
 ## Models
 
 The model must accept images.

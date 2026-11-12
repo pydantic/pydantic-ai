@@ -305,8 +305,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
     The E2B SDK runs every request on asyncio, so under Trio every operation raises
     `UserError` before it reaches E2B.
 
-    With `desktop`, the sandbox gets a display on first use. A custom template then needs Xvfb,
-    `xdotool`, `scrot` and `setsid`.
+    With `desktop`, the sandbox gets a display on first use. A custom template needs Xvfb, `xdotool`,
+    `xwininfo`, `scrot` and `setsid`, which the first use installs with `apt-get` if it can, and
+    `startxfce4` for the XFCE desktop, which it doesn't.
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
