@@ -52,6 +52,18 @@ def wait_until_ready(ready: str, pid: str, what: str, log: str) -> str:
     )
 
 
+_MAX_REPEAT = 2**31 - 1
+"""The most times xdotool repeats a click or key: it reads `--repeat` into a C `int` with `atoi` (`cmd_click.c`,
+`cmd_key.c`)."""
+
+
+def _repeat(count: int) -> str:
+    """`count` as xdotool's `--repeat`, refused when xdotool can't take it."""
+    if count > _MAX_REPEAT:
+        raise UnsupportedActionError(f'The display can repeat a scroll or key at most {_MAX_REPEAT} times.')
+    return str(count)
+
+
 _BUTTONS: dict[str, str] = {'left': '1', 'middle': '2', 'right': '3', 'back': '8', 'forward': '9'}
 
 _WHEEL_BUTTONS = {'up': '4', 'down': '5', 'left': '6', 'right': '7'}
@@ -383,7 +395,7 @@ class X11Computer:
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
                 wheel = _WHEEL_BUTTONS[direction]
                 await self._xdotool(
-                    [*_move(x, y), 'click', '--repeat', str(amount), '--delay', _SCROLL_TICK_DELAY_MS, wheel],
+                    [*_move(x, y), 'click', '--repeat', _repeat(amount), '--delay', _SCROLL_TICK_DELAY_MS, wheel],
                     hold=modifiers,
                     pauses=amount * _SCROLL_TICK_SECONDS,
                 )
@@ -397,7 +409,7 @@ class X11Computer:
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.
                 release = ['keyup', *reversed(keysyms)]
-                command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--repeat', str(repeat), '--', '+'.join(keysyms)]
+                command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--repeat', _repeat(repeat), '--', '+'.join(keysyms)]
                 await self._input([command], [release], repeat * _KEY_SECONDS)
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys, pauses=seconds)
