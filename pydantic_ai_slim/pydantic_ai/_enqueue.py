@@ -7,7 +7,8 @@ state for the pending message queue, not part of the wire-serializable message h
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
 
@@ -222,6 +223,7 @@ class PendingMessageQueue(list[PendingMessage]):
         self._capability_loads: list[CapabilityLoadRecord] = list(capability_loads)
         self._closed = False
         self._lock = threading.Lock()
+        self._append_listeners: list[Callable[[], object]] = []
         # The request tool-call content was last put into, as `(request it replaced first, current copy)`, and
         # the last part put next to each call's return in it, so a later delivery in the same step puts that
         # call's content after it.
@@ -238,6 +240,20 @@ class PendingMessageQueue(list[PendingMessage]):
             if self._closed:
                 raise UserError('`enqueue` is not available because the agent run has ended.')
             super().append(pending)
+            listeners = tuple(self._append_listeners)
+        for listener in listeners:
+            listener()
+
+    @contextmanager
+    def notifying(self, listener: Callable[[], object]) -> Iterator[None]:
+        """Call `listener` after each message appended while the block runs, on the thread that appended it."""
+        with self._lock:
+            self._append_listeners.append(listener)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._append_listeners.remove(listener)
 
     def pop_priority(self, priority: PendingMessagePriority) -> list[PendingMessage]:
         with self._lock:

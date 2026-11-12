@@ -188,6 +188,36 @@ async def test_ending_with_queued_content_gives_the_model_a_turn_before_waiting(
     assert emitted.phases == ['started', 'draining', 'settled', 'drained']
 
 
+async def test_ending_with_output_gives_the_model_a_turn_once_work_queues_a_result(emitted: _Emitted):
+    """Work that queues a result and keeps running doesn't hold back the model's turn on the result."""
+    seen: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(_user_texts(messages))
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='start', args={})])
+        return ModelResponse(parts=[TextPart(f'done {len(seen)}')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    async def start(ctx: RunContext) -> str:
+        async def work() -> None:
+            await emitted.until('draining')
+            ctx.enqueue('partial')
+            # Still running when the model gets its turn on `partial`, until the run waits again.
+            await emitted.until('draining', 2)
+
+        ctx.in_flight.start(work, kind='test', name='work', id='work')
+        return 'started'
+
+    result = await agent.run('go')
+
+    assert result.output == 'done 3'
+    assert seen == [['go'], ['go'], ['go', 'partial']]
+    assert emitted.phases == ['started', 'draining', 'drained', 'draining', 'settled', 'drained']
+
+
 async def test_deferred_pause_waits_for_all_work_and_records_its_results(emitted: _Emitted):
     """A pause waits for every piece of `'drain'` work, records what it queued after the paused step, and stands."""
     model_calls = 0

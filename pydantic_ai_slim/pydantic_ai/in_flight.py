@@ -44,8 +44,8 @@ InFlightOnEnd: TypeAlias = Literal['drain', 'cancel', 'detach']
 """What happens to live work when the run ends.
 
 - `'drain'`: for work whose result belongs to this run. The run waits for it: when the run ends with output,
-    until some draining work has finished, so the model gets another turn on what it queued; when the run
-    pauses with [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] or a
+    until some draining work has finished or content has been queued, so the model gets another turn on it;
+    when the run pauses with [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] or a
     [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse], until all of it has.
 - `'cancel'`: for best-effort work that is worthless once the run is over. The run cancels it when it ends.
 - `'detach'`: for work that lives in a resource that outlives the run, like a shell job, a process in a
@@ -426,6 +426,10 @@ class InFlightRegistry:
             if error is not None:
                 self._failures.append(error)
         self._emit('settled', (work,))
+        self._notify()
+
+    def _notify(self) -> None:
+        """Wake whoever waits for work to settle or content to be queued, so they check again."""
         self._changed.set()
         self._changed = asyncio.Event()
 
@@ -457,14 +461,20 @@ class InFlightRegistry:
         if not isinstance(result, End) or not (waiting := self._draining()):
             return result
         # A pause hands control back to the caller without another model request, so no later step would take
-        # a result that arrives after it. Ending with output, the model gets another turn on the first result.
+        # a result that arrives after it. Ending with output, the model gets another turn as soon as some work
+        # has settled or content has been queued, which work that keeps running after reporting may do.
         pause = isinstance(result.data.output, (DeferredToolRequests, PendingModelResponse))
         queue = run_queue(ctx)
         if not pause and queue:
             return result
-        with ctx.tracer.start_as_current_span(
-            'in_flight drain',
-            attributes={'in_flight.waiting': len(waiting), 'in_flight.until': 'all' if pause else 'first'},
+        loop = asyncio.get_running_loop()
+        with (
+            ctx.tracer.start_as_current_span(
+                'in_flight drain',
+                attributes={'in_flight.waiting': len(waiting), 'in_flight.until': 'all' if pause else 'first'},
+            ),
+            # `enqueue` may be called from another thread.
+            queue.notifying(lambda: loop.call_soon_threadsafe(self._notify)),
         ):
             self._emit('draining', waiting)
             while self._draining() and (pause or not queue):
