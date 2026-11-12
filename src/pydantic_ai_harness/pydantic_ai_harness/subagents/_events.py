@@ -4,10 +4,10 @@ One delegation is one `delegate_task` call, so its start and end events share
 the `tool_call_id` core stamps on every event a capability tool emits; that is
 how a subscriber pairs them when several delegations run at once.
 
-The text of `DelegationStartEvent` and `DelegationEndEvent` is bounded: `task`
+The text of `DelegationStartedEvent` and `DelegationFinishedEvent` is bounded: `task`
 and `output` are cut at `MAX_EVENT_TEXT_CHARS` with a `truncated` flag, so an
 event stream that is persisted or forwarded to a UI cannot be flooded by one
-verbose delegation. A `SubAgentMessage` is not cut: it is the message itself,
+verbose delegation. A `SubAgentMessageEvent` is not cut: it is the message itself,
 which a transport carries to the other side of the task, so its prompt, question,
 answer, or output arrives whole. Nor is the model's text in `AgentCreatedEvent`.
 A listener that persists or forwards these events bounds them itself.
@@ -18,15 +18,20 @@ As with any capability event, a listener that raises aborts the parent run.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import ClassVar, Literal, TypeAlias
+from typing import Annotated, ClassVar, Literal, TypeAlias
+
+from pydantic import AliasChoices, Field, model_validator
+from typing_extensions import deprecated
 
 from pydantic_ai import AgentStreamEvent, CapabilityEvent
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 SUB_AGENTS_EVENTS = 'sub_agents'
 
 MAX_EVENT_TEXT_CHARS = 4096
-"""Characters kept of `DelegationStartEvent.task` and `DelegationEndEvent.output` before they are cut."""
+"""Characters kept of `DelegationStartedEvent.task` and `DelegationFinishedEvent.output` before they are cut."""
 
 DelegationOutcome = Literal['ok', 'timeout', 'budget', 'failed', 'contained', 'cancelled', 'error']
 """How a delegation ended, mirroring the failure-handling contract of `SubAgent`.
@@ -47,8 +52,12 @@ def bounded_text(text: str) -> tuple[str, bool]:
     return text[:MAX_EVENT_TEXT_CHARS], True
 
 
+_ParentTaskId: TypeAlias = Annotated[str | None, Field(validation_alias=AliasChoices('parent_task_id', 'parent_id'))]
+"""A `parent_task_id` field that also loads from `parent_id`, the key it was serialized under before the rename."""
+
+
 @dataclass(kw_only=True)
-class DelegationStartEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='delegation_start'):
+class DelegationStartedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='delegation_start'):
     """A sub-agent run is about to start for one delegation.
 
     Emitted once the delegation has passed every check that could refuse it (an
@@ -63,13 +72,19 @@ class DelegationStartEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='d
     """The menu key the delegation runs on, or `None` when no option was selected: there is
     no menu, or the delegate allows the whole menu and the parent named no key."""
     task_id: str | None = None
-    parent_id: str | None = None
+    parent_task_id: _ParentTaskId = None
+    """The task whose run started this one, or `None` when the top-level run did."""
     inherits_tools: bool
     """Whether the parent's own tools were passed to the child run (`SubAgents.inherit_tools`)."""
 
+    @property
+    @deprecated('`parent_id` is deprecated, use `parent_task_id` instead.', category=HarnessDeprecationWarning)
+    def parent_id(self) -> str | None:
+        return self.parent_task_id
+
 
 @dataclass(kw_only=True)
-class DelegationEndEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='delegation_end'):
+class DelegationFinishedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='delegation_end'):
     """A delegation settled into what the parent receives.
 
     `output` is what the delegate tool hands back to the parent: the child's
@@ -88,16 +103,43 @@ class DelegationEndEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='del
     """The child's own usage when it has separate accounting (`SubAgent.usage_limits`
     set, or `forward_usage` off); `None` when it accrues into the parent's usage."""
     task_id: str | None = None
-    parent_id: str | None = None
-    duration_seconds: float
-    """Wall-clock seconds from just after the start event was emitted until the delegation settled."""
+    parent_task_id: _ParentTaskId = None
+    """The task whose run started this one, or `None` when the top-level run did."""
+    duration_ms: float
+    """Wall-clock milliseconds from just after the start event was emitted until the delegation settled."""
+
+    @model_validator(mode='before')
+    @classmethod
+    def _load_duration_seconds(cls, data: object) -> object:
+        """Load a payload saved with the former `duration_seconds` field."""
+        if (
+            is_str_dict(data)
+            and 'duration_ms' not in data
+            and isinstance(seconds := data.get('duration_seconds'), float | int)
+        ):
+            return {**data, 'duration_ms': seconds * 1000}
+        return data
+
+    @property
+    @deprecated(
+        '`duration_seconds` is deprecated, use `duration_ms` instead, which is in milliseconds.',
+        category=HarnessDeprecationWarning,
+    )
+    def duration_seconds(self) -> float:
+        """Deprecated: `duration_ms` in seconds."""
+        return self.duration_ms / 1000
+
+    @property
+    @deprecated('`parent_id` is deprecated, use `parent_task_id` instead.', category=HarnessDeprecationWarning)
+    def parent_id(self) -> str | None:
+        return self.parent_task_id
 
 
 @dataclass(kw_only=True)
 class _Vetoable:
     """The veto of an immediately dispatched event: a listener can stop what the event announces.
 
-    Named `veto`, not `cancel` as `FileChangeRequestEvent` has it, as these events sit beside task cancellation.
+    Named `veto`, not `cancel` as `FileChangeRequestedEvent` has it, as these events sit beside task cancellation.
     """
 
     vetoed: bool = False
@@ -117,11 +159,11 @@ Recipient: TypeAlias = Literal['worker', 'task', 'parent']
 
 
 @dataclass(kw_only=True)
-class SubAgentMessage(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, dispatch='immediate', abstract=True):
+class SubAgentMessageEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, dispatch='immediate', abstract=True):
     """A message between a delegating run and one of its tasks, with `SubAgents(task_control=...)`.
 
     Messages are dispatched immediately: listeners run before the message takes effect, so they can
-    rewrite its fields or, for a `ParentMessage`, veto it. A `SubAgentTransport` carries them to and
+    rewrite its fields or, for a `ParentMessageEvent`, veto it. A `SubAgentTransport` carries them to and
     from a `SubAgentWorker` in another process.
     """
 
@@ -157,21 +199,21 @@ def task_mailbox(task_id: str, side: Literal['worker', 'parent']) -> str:
 
 
 @dataclass(kw_only=True)
-class ParentMessage(_Vetoable, SubAgentMessage, abstract=True):
+class ParentMessageEvent(_Vetoable, SubAgentMessageEvent, abstract=True):
     """A message from a delegating run to its task. A listener can veto it, and then it has no effect."""
 
     recipient: ClassVar[Recipient] = 'task'
 
 
 @dataclass(kw_only=True)
-class ChildMessage(SubAgentMessage, abstract=True):
+class ChildMessageEvent(SubAgentMessageEvent, abstract=True):
     """A message from a task to its delegating run."""
 
     recipient: ClassVar[Recipient] = 'parent'
 
 
 @dataclass(kw_only=True)
-class TaskRequestEvent(ParentMessage, abstract=True):
+class TaskRequestEvent(ParentMessageEvent, abstract=True):
     """A request to a worker to start a run of the sub-agent: a new task or a follow-up.
 
     Not to be confused with `TaskStartedEvent`, the worker's reply once the run started.
@@ -202,17 +244,17 @@ class TaskRequestEvent(ParentMessage, abstract=True):
 
 
 @dataclass(kw_only=True)
-class TaskAssignedEvent(TaskRequestEvent, name='task_assigned'):
+class TaskAssignedEvent(TaskRequestEvent):
     """The delegating run assigns a new task to a sub-agent."""
 
 
 @dataclass(kw_only=True)
-class TaskFollowUpEvent(TaskRequestEvent, name='task_follow_up'):
+class TaskResumedEvent(TaskRequestEvent, name='task_follow_up'):
     """The delegating run resumes a finished task's conversation with a new prompt."""
 
 
 @dataclass(kw_only=True)
-class TaskMessageEvent(ParentMessage, name='task_message'):
+class TaskSteeredEvent(ParentMessageEvent, name='task_message'):
     """The delegating run steers a running task, which sees the message at its next model request."""
 
     message: str
@@ -220,28 +262,28 @@ class TaskMessageEvent(ParentMessage, name='task_message'):
 
 
 @dataclass(kw_only=True)
-class TaskAnswerEvent(ParentMessage, name='task_answer'):
+class TaskAnsweredEvent(ParentMessageEvent, name='task_answer'):
     """The delegating run answers the question a task is waiting on."""
 
     question_id: str
-    """The `TaskQuestionEvent.question_id` this answers."""
+    """The `TaskQuestionAskedEvent.question_id` this answers."""
 
     answer: str
     """The answer. A listener can rewrite it."""
 
 
 @dataclass(kw_only=True)
-class TaskCancelRequestEvent(ParentMessage, name='task_cancel_request'):
+class TaskCancelRequestedEvent(ParentMessageEvent, name='task_cancel_request'):
     """The delegating run asks a running task to stop before its next model request."""
 
 
 @dataclass(kw_only=True)
-class TaskForceCancelEvent(ParentMessage, name='task_force_cancel'):
+class TaskForceCancelRequestedEvent(ParentMessageEvent, name='task_force_cancel'):
     """The delegating run stops a running task immediately, interrupting its current model request or tool calls."""
 
 
 @dataclass(kw_only=True)
-class TaskStartedEvent(ChildMessage, name='task_started'):
+class TaskStartedEvent(ChildMessageEvent):
     """A worker picked the task up and its run is starting.
 
     A remote task that no worker picks up within `TaskControl.accept_timeout` fails.
@@ -249,7 +291,7 @@ class TaskStartedEvent(ChildMessage, name='task_started'):
 
 
 @dataclass(kw_only=True)
-class TaskProgressEvent(ChildMessage, name='task_progress', dispatch='stream'):
+class TaskProgressEvent(ChildMessageEvent, dispatch='stream'):
     """An event from the sub-agent's own run, forwarded while the task runs, with `TaskControl.forward_events`.
 
     Dispatched at its stream position, like the event it carries.
@@ -260,8 +302,8 @@ class TaskProgressEvent(ChildMessage, name='task_progress', dispatch='stream'):
 
 
 @dataclass(kw_only=True)
-class TaskQuestionEvent(ChildMessage, name='task_question'):
-    """The task asks its delegating run a question and waits for a `TaskAnswerEvent`.
+class TaskQuestionAskedEvent(ChildMessageEvent, name='task_question'):
+    """The task asks its delegating run a question and waits for a `TaskAnsweredEvent`.
 
     A listener can answer it by setting `answer`, and then the delegating model is not asked.
     """
@@ -277,7 +319,7 @@ class TaskQuestionEvent(ChildMessage, name='task_question'):
 
 
 @dataclass(kw_only=True)
-class TaskRetryEvent(ChildMessage, name='task_retry'):
+class TaskRetriedEvent(ChildMessageEvent, name='task_retry'):
     """A remote task's run failed and its worker is running it again, as `SubAgentWorker.retries` allows."""
 
     attempt: int
@@ -288,7 +330,7 @@ class TaskRetryEvent(ChildMessage, name='task_retry'):
 
 
 @dataclass(kw_only=True)
-class TaskSettledEvent(ChildMessage, abstract=True):
+class TaskSettledEvent(ChildMessageEvent, abstract=True):
     """The task's run ended. This is the task's report to its delegating run."""
 
     usage: RunUsage | None = None
@@ -300,7 +342,7 @@ class TaskSettledEvent(ChildMessage, abstract=True):
 
 
 @dataclass(kw_only=True)
-class TaskCompletedEvent(TaskSettledEvent, name='task_completed'):
+class TaskCompletedEvent(TaskSettledEvent):
     """The task finished with an output."""
 
     output: str
@@ -308,7 +350,7 @@ class TaskCompletedEvent(TaskSettledEvent, name='task_completed'):
 
 
 @dataclass(kw_only=True)
-class TaskFailedEvent(TaskSettledEvent, name='task_failed'):
+class TaskFailedEvent(TaskSettledEvent):
     """The task's run failed, or ended in a way that delivered no output."""
 
     error: str
@@ -316,7 +358,7 @@ class TaskFailedEvent(TaskSettledEvent, name='task_failed'):
 
 
 @dataclass(kw_only=True)
-class TaskCancelledEvent(TaskSettledEvent, name='task_cancelled'):
+class TaskCancelledEvent(TaskSettledEvent):
     """The task stopped because it was cancelled. A resumable task can be followed up on."""
 
     forced: bool
@@ -333,7 +375,7 @@ BackgroundReason: TypeAlias = Literal['requested', 'auto', 'question']
 
 
 @dataclass(kw_only=True)
-class TaskBackgroundedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='task_backgrounded'):
+class TaskBackgroundedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS):
     """A task now runs in the background: the delegation tool returned a receipt, and its report arrives later.
 
     A `requested` task still running when the delegation tool gets its receipt, but settled before this event is
@@ -351,17 +393,18 @@ class TaskBackgroundedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='
 
 
 @dataclass(kw_only=True)
-class AgentCreatedEvent(
-    _Vetoable, CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='agent_created', dispatch='immediate'
-):
+class AgentCreatedEvent(_Vetoable, CapabilityEvent, namespace=SUB_AGENTS_EVENTS, dispatch='immediate'):
     """The model is creating a sub-agent with `create_agent` (`SubAgents.dynamic_agents`).
 
     Dispatched immediately, so a listener can rewrite `description` and `instructions`, or veto the
     creation.
     """
 
-    name: str
-    """The name the model gave the sub-agent, which it delegates to."""
+    agent_name: Annotated[str, Field(validation_alias=AliasChoices('agent_name', 'name'))]
+    """The name the model gave the sub-agent, which it delegates to.
+
+    Also loads from `name`, the key it was serialized under before the rename.
+    """
 
     description: str
     """What the sub-agent is for. It reaches only a custom `DynamicAgents.factory`, as `DynamicAgentSpec.description`;
@@ -372,3 +415,8 @@ class AgentCreatedEvent(
 
     model: str | None
     """The `SubAgents.models` key the sub-agent runs on, or `None` for the delegating run's model."""
+
+    @property
+    @deprecated('`name` is deprecated, use `agent_name` instead.', category=HarnessDeprecationWarning)
+    def name(self) -> str:
+        return self.agent_name

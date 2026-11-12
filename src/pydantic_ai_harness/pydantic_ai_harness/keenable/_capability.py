@@ -41,7 +41,7 @@ class KeenableSearch(AbstractCapability[AgentDepsT]):
     ```
 
     It needs no API key and no extra install: Keenable's public endpoints are
-    keyless, and the capability talks to them over `httpx`, which
+    keyless, and the capability talks to them over `httpx2`, which
     `pydantic-ai-harness` already depends on. Set `KEENABLE_API_KEY` (or pass a
     configured `client`) to raise rate limits.
 

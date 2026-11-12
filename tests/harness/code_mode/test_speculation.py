@@ -43,6 +43,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDen
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.code_mode import (
     CodeMode,
     CodeModeToolset,
@@ -808,7 +809,7 @@ class TestSpeculationEdgeCases:
         launches = [e for e in seen if isinstance(e, SpeculativeCallLaunchedEvent)]
         assert [e.wrapped_tool_name for e in launches] == ['search']
         updates = [e for e in seen if isinstance(e, SpeculativeCodeUpdateEvent)]
-        assert updates[-1].closed_statements == 1
+        assert updates[-1].closed_statement_count == 1
         assert run_capability.speculation_stats.evicted == 1
 
     async def test_watcher_handles_dict_args_odd_indexes_and_caps_launches(self):
@@ -857,12 +858,33 @@ class TestSpeculationEdgeCases:
             # launches at the limit.
             assert run_capability.speculation_stats.launched == 32
             assert toolset.speculation is not None
-            await toolset.speculation.close()
+            await toolset.speculation.aclose()
 
         # Run-end cleanup cancels what no snippet claimed, without eviction events: the stream
         # is closed by then.
         assert run_capability.speculation_stats.evicted == 32
         assert not [e for e in emitted(ctx) if isinstance(e, SpeculativeCallEvictedEvent)]
+
+    async def test_close_is_a_deprecated_alias_of_aclose(self) -> None:
+        def search(query: str) -> str:
+            """Return a canned result."""
+            return f'result:{query}'  # pragma: no cover - the launch is cancelled before the body runs
+
+        part = ToolCallPart(
+            tool_name='run_code', args='{"code": "a = await search(query=\\"alpha\\")"}', tool_call_id='c1'
+        )
+        async with prepared_toolset([Tool(search)], CodeMode[None](speculate=['search'])) as (
+            run_capability,
+            toolset,
+            ctx,
+            _run_code,
+        ):
+            await observe(run_capability, ctx, [PartStartEvent(index=0, part=part), PartEndEvent(index=0, part=part)])
+            assert (run_capability.speculation_stats.launched, run_capability.speculation_stats.evicted) == (1, 0)
+            assert toolset.speculation is not None
+            with pytest.warns(HarnessDeprecationWarning, match=r'`SpeculationCoordinator\.close\(\)` has been renamed'):
+                await toolset.speculation.close()
+            assert run_capability.speculation_stats.evicted == 1
 
     @pytest.mark.parametrize(
         ('padding_lines', 'chunk_size', 'prefetched'),
@@ -1250,11 +1272,11 @@ class TestSpeculationEvents:
         claims = [e for e in events if isinstance(e, SpeculativeCallClaimedEvent)]
         assert len(updates) > 1
         assert updates[-1].code.startswith('a = await search')
-        closed_counts = [e.closed_statements for e in updates]
+        closed_counts = [e.closed_statement_count for e in updates]
         assert closed_counts == sorted(closed_counts)
         assert [e.kind for e in launches] == ['code_mode.speculative_call_launched']
         launch = launches[0]
-        assert launch.sandbox_function == 'search'
+        assert launch.sandbox_function_name == 'search'
         assert launch.wrapped_tool_name == 'search'
         assert launch.arguments == {'query': 'alpha'}
         assert (launch.line_start, launch.line_end) == (1, 1)

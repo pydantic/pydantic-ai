@@ -16,7 +16,7 @@ import httpx2
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._context_size import mark_context_input_tokens
-from .._gateway_cost import fill_gateway_header_cost
+from .._gateway_cost import fill_gateway_header_cost, gateway_reported_cost
 from .._run_context import RunContext
 from ..exceptions import (
     ModelAPIError,
@@ -630,6 +630,10 @@ class GoogleModel(Model[Client]):
     """
 
     unsupported_settings = frozenset({'extra_body', 'logit_bias', 'parallel_tool_calls'})
+    # A tool's files that a tool result can't carry here go on the user channel, framed.
+    _relocates_tool_files = True
+    # The API takes a lookalike note ahead of a request's tool results.
+    _lookalike_notes_precede_tool_results = True
 
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
@@ -1836,6 +1840,10 @@ class GeminiStreamedResponse(StreamedResponse):
             yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
     def _map_part(self, part: Part) -> Iterator[ModelResponseStreamEvent]:
+        # The gateway reports a stream's cost on the final chunk's last part, which can be an empty text part it adds.
+        # `_map_chunk` adds the chunk's usage before mapping its parts, so that usage doesn't replace this cost.
+        if part.part_metadata and (cost := gateway_reported_cost({'usage': part.part_metadata})) is not None:
+            self._usage.cost = cost
         provider_details = _thought_signature_details(part)
         if part.text is not None and len(part.text) == 0 and not provider_details:
             return
