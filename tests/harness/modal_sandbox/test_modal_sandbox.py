@@ -670,12 +670,14 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     definitions = AgentSpec.model_json_schema_with_capabilities([ModalSandbox])['$defs']
     assert sorted(definitions['spec_params_ModalSandbox']['properties']) == [
         'app_name',
+        'authority',
         'create_app_if_missing',
         'description',
         'env',
         'id',
         'idle_timeout',
         'image',
+        'path_authority',
         'sandbox_timeout',
         'warn_if_no_tools',
         'working_dir',

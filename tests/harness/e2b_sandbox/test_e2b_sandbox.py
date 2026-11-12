@@ -130,10 +130,12 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     definitions = AgentSpec.model_json_schema_with_capabilities([E2BSandbox])['$defs']
     assert sorted(definitions['spec_params_E2BSandbox']['properties']) == [
         'allow_internet_access',
+        'authority',
         'defer_loading',
         'description',
         'env',
         'id',
+        'path_authority',
         'sandbox_timeout',
         'template',
         'working_dir',

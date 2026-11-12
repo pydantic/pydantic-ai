@@ -61,10 +61,12 @@ class TestConfiguration:
         definitions = AgentSpec.model_json_schema_with_capabilities([OpenSandbox])['$defs']
         assert sorted(definitions['spec_params_OpenSandbox']['properties']) == [
             'allow_internet_access',
+            'authority',
             'description',
             'env',
             'id',
             'image',
+            'path_authority',
             'resource',
             'sandbox_timeout',
             'secure_access',
