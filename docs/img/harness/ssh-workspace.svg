@@ -64,7 +64,7 @@
 <line x1="231" y1="443" x2="255" y2="443" stroke="#092224" stroke-width="1.6" marker-end="url(#ai)"/>
 <path d="M 520 443 L 538 443 Q 546 443 546 435 L 546 429 Q 546 421 554 421 L 591 421" stroke="#092224" stroke-width="1.6" fill="none" marker-end="url(#ai)"/>
 <path d="M 520 443 L 538 443 Q 546 443 546 451 L 546 457 Q 546 465 554 465 L 591 465" stroke="#E5533D" stroke-width="1.6" fill="none" marker-end="url(#ac)"/>
-<text x="32" y="512" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Neither working_dir nor a FileSystem root jails shell commands. To confine them, wrap the capability in BubblewrapSandbox. Turn on</text>
+<text x="32" y="512" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">Neither working_dir nor a FileSystem root jails shell commands. To confine them, wrap the capability in BubblewrappedWorkspace. Turn on</text>
 <text x="32" y="529.8" font-size="12.5" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">ControlMaster in your SSH configuration to reuse connections.</text>
 <rect x="32" y="552.5" width="14" height="14" rx="7" fill="#092224" stroke="#092224" stroke-width="1.2"/>
 <text x="52" y="563.5" font-size="12" fill="#55726A" text-anchor="start" font-weight="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">model</text>

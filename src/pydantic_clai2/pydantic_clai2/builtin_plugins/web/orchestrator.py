@@ -45,6 +45,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 from pydantic_clai2.builtin_plugins.workspaces import configured
 from pydantic_clai2.config.settings_store import state_dir
 from pydantic_clai2.plugins import TurnOutcome
+from pydantic_clai2.runtime.strict_schemas import NON_STRICT_SCHEMAS
 
 if TYPE_CHECKING:
     from pydantic_clai2.builtin_plugins.web.service import WebService
@@ -194,6 +195,7 @@ class Orchestrator:
                 capabilities=[
                     Capability[None](tools=[*self._tools.tools(), *sessions.tools()]),
                     AskUser[None](answerer=self.answerer),
+                    NON_STRICT_SCHEMAS,
                 ],
             )
         return self._agent

@@ -1267,7 +1267,8 @@ tagged `coder-task-control`, so a CLAI build without it ignores a saved value
 instead of failing to load `coder`.
 
 `delegate_models` is an optional mapping from tool-facing keys to objects with `model`, optional
-`description`, and optional `settings` (the fields of `ModelSettingsForm`). For example,
+`description`, and optional `settings` (the fields of `ModelSettingsForm`, except `base_url`, which is
+set in `/model settings`). For example,
 `{"custom": {"model": "chain:my-chain"}}` offers a user-defined `custom` menu option.
 Models, accounts, saved chains, and saved settings
 resolve through the session's model services. An empty mapping preserves inheritance and the
