@@ -8,7 +8,7 @@ but emits a `HarnessDeprecationWarning`. Import from `pydantic_ai_harness.docker
 
 from pydantic_ai_harness._warn import warn_module_renamed
 from pydantic_ai_harness.docker_container import DockerContainerBackend
-from pydantic_ai_harness.docker_container._deprecated import DockerSandbox
+from pydantic_ai_harness.docker_container._deprecated import DockerSandbox  # pyright: ignore[reportDeprecated]
 
 DockerSandboxBackend = DockerContainerBackend
 

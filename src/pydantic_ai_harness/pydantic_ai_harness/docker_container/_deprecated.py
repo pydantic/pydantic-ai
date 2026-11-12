@@ -4,10 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from typing_extensions import deprecated
+
 from pydantic_ai.tools import AgentDepsT
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.docker_container._capability import DockerContainer
 
 
+@deprecated(
+    '`DockerSandbox` is now `DockerContainer`: the old name implied a security sandbox, but a container shares the '
+    'host kernel. In a spec, rename the `DockerSandbox` block to `DockerContainer`; the options are unchanged.',
+    category=HarnessDeprecationWarning,
+)
 @dataclass(init=False)
 class DockerSandbox(DockerContainer[AgentDepsT]):
     """Deprecated name for `DockerContainer`.

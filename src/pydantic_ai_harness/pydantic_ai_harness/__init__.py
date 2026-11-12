@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from .docker_container import DockerContainer, DockerContainerBackend
 
     # Deprecated names: the redundant aliases type them for users; at runtime they resolve lazily, with a warning.
-    from .docker_sandbox import DockerSandbox as DockerSandbox, DockerSandboxBackend as DockerSandboxBackend
+    from .docker_sandbox import DockerSandbox as DockerSandbox, DockerSandboxBackend as DockerSandboxBackend  # pyright: ignore[reportDeprecated]
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch

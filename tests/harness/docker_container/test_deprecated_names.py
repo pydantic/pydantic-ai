@@ -29,26 +29,47 @@ def test_shim_warns_and_aliases_old_names() -> None:
     assert shim.DockerSandboxBackend is DockerContainerBackend
 
 
+def _import_old_class() -> type[DockerContainer[None]]:
+    """The shim warns once on import; these tests assert the class's own warnings instead."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        from pydantic_ai_harness.docker_sandbox import DockerSandbox  # pyright: ignore[reportDeprecated]
+
+    return DockerSandbox  # pyright: ignore[reportDeprecated]
+
+
+_CLASS_WARNING = r'`DockerSandbox` is now `DockerContainer`.*rename the `DockerSandbox` block to `DockerContainer`'
+
+
 def test_root_old_names_resolve_to_shim() -> None:
     import pydantic_ai_harness
 
+    old = _import_old_class()
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        from pydantic_ai_harness.docker_sandbox import DockerSandbox
-
-        assert pydantic_ai_harness.DockerSandbox is DockerSandbox
+        assert pydantic_ai_harness.DockerSandbox is old  # pyright: ignore[reportDeprecated]
         assert pydantic_ai_harness.DockerSandboxBackend is DockerContainerBackend
 
 
-def test_subclass_of_old_name_keeps_its_own_spec_name() -> None:
-    """As before the rename, a subclass's spec block name is its own class name."""
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        from pydantic_ai_harness.docker_sandbox import DockerSandbox
+def test_constructing_old_class_warns() -> None:
+    """Every construction warns, not only the first import, so a long-running process that loads old specs sees it."""
+    old = _import_old_class()
+    with pytest.warns(HarnessDeprecationWarning, match=_CLASS_WARNING):
+        capability = old(image='python:3.13-slim')
+    assert isinstance(capability, DockerContainer)
 
-    @dataclass(init=False)
-    class MyDocker(DockerSandbox[None]):
-        pass
+
+def test_subclass_of_old_name_warns_once_and_keeps_its_own_spec_name() -> None:
+    """Defining a subclass warns, since its base class has to migrate; creating one doesn't warn again.
+
+    As before the rename, the subclass's spec block name is its own class name.
+    """
+    old = _import_old_class()
+    with pytest.warns(HarnessDeprecationWarning, match=_CLASS_WARNING):
+
+        @dataclass(init=False)
+        class MyDocker(old):
+            pass
 
     assert MyDocker.get_serialization_name() == 'MyDocker'
     agent = Agent.from_spec(
@@ -59,14 +80,12 @@ def test_subclass_of_old_name_keeps_its_own_spec_name() -> None:
 
 
 def test_old_spec_block_name_loads() -> None:
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        from pydantic_ai_harness.docker_sandbox import DockerSandbox
-
-    agent = Agent.from_spec(
-        {'model': 'test', 'capabilities': [{'DockerSandbox': {'image': 'python:3.13-slim'}}]},
-        custom_capability_types=[DockerSandbox],
-    )
+    old = _import_old_class()
+    with pytest.warns(HarnessDeprecationWarning, match=_CLASS_WARNING):
+        agent = Agent.from_spec(
+            {'model': 'test', 'capabilities': [{'DockerSandbox': {'image': 'python:3.13-slim'}}]},
+            custom_capability_types=[old],
+        )
 
     assert [c.image for c in agent.root_capability.capabilities if isinstance(c, DockerContainer)] == [
         'python:3.13-slim'
