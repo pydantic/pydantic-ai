@@ -168,8 +168,10 @@ async def test_no_workspace_fails_the_run_naming_coder() -> None:
 async def test_coder_read_file_returns_a_large_image_as_a_file(tmp_path: Path) -> None:
     image = b'\x89PNG\r\n\x1a\n' + b'x' * 100_000
     (tmp_path / 'large.png').write_bytes(image)
+    requests: list[list[ModelMessage]] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        requests.append(messages.copy())
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart(tool_name='read_file', args={'path': 'large.png'})])
         return ModelResponse(parts=[TextPart(content='done')])
@@ -179,12 +181,14 @@ async def test_coder_read_file_returns_a_large_image_as_a_file(tmp_path: Path) -
     )
     result = await agent.run('read large.png')
 
-    tool_return = result.all_messages()[2].parts[0]
-    assert isinstance(tool_return, ToolReturnPart)
-    assert tool_return.content == [
-        '[large.png | image/png | 100008 bytes]\n',
-        BinaryContent(data=image, media_type='image/png'),
-    ]
+    # The follow-up request is what the model receives; history is what later requests replay.
+    for messages in (requests[1], result.all_messages()):
+        tool_return = messages[2].parts[0]
+        assert isinstance(tool_return, ToolReturnPart)
+        assert tool_return.content == [
+            '[large.png | image/png | 100008 bytes]\n',
+            BinaryContent(data=image, media_type='image/png'),
+        ]
 
 
 CONTROL_TOOLS = {'list_tasks', 'message_task', 'answer_task', 'cancel_task'}
