@@ -24,7 +24,7 @@ from pgtask import Task, get_current_task
 
 from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.exceptions import ModelRetry, RunCancelled, ToolFailed, UserError
+from pydantic_ai.exceptions import ModelHTTPError, ModelRateLimitError, ModelRetry, RunCancelled, ToolFailed, UserError
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -43,7 +43,10 @@ from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolset, FunctionToolset
 from pydantic_ai_harness.pgtask import CheckpointDecodeError, PGTaskDurability
-from pydantic_ai_harness.pgtask._context import _occurrences  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness.pgtask._context import (
+    TaskSteps,
+    _occurrences,  # pyright: ignore[reportPrivateUsage]
+)
 from tests.durable_exec.counting_mcp import counting_mcp_server
 
 from ...conftest import try_import
@@ -889,3 +892,45 @@ class TestCodeMode:
 
         await run_in_task(pgtask_db, body, attempts=2)
         assert calls['calls'] == 1
+
+
+def _rate_limited_once(counter: dict[str, int], retry_after: float) -> FunctionModel:
+    """A model that fails with a rate limit asking to wait `retry_after` seconds, then answers."""
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        counter['calls'] += 1
+        if counter['calls'] == 1:
+            raise ModelHTTPError.for_category(
+                ModelRateLimitError, status_code=429, model_name='fn', retry_after=retry_after
+            )
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    return FunctionModel(fn, model_name='fn')
+
+
+class TestRetryAfter:
+    async def test_model_step_waits_retry_after_and_runs_again(
+        self, pgtask_db: PGTaskDatabase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The failed attempt is checkpointed, the task sleeps the wait, and the model step runs again; a replay
+        serves both from the checkpoints."""
+        counter = {'calls': 0}
+        agent = Agent(_rate_limited_once(counter, 5.0), name='limited', capabilities=[PGTaskDurability()])
+        slept: list[tuple[str, float]] = []
+
+        # A real sleep suspends the task until the wait is over, which this test doesn't wait out.
+        async def sleep_for(self: TaskSteps, name: str, seconds: float) -> None:
+            slept.append((name, seconds))
+
+        monkeypatch.setattr(TaskSteps, 'sleep_for', sleep_for)
+
+        async def body(attempt: int) -> None:
+            assert (await agent.run('hi')).output == 'ok'
+
+        task_id = await run_in_task(pgtask_db, body, attempts=2)
+
+        assert counter['calls'] == 2
+        assert slept == [('limited__model.request.retry_after', 5.0)] * 2
+        stored = await checkpoints(pgtask_db, task_id)
+        assert stored[('limited__model.request', 0)] == {'__pydantic_ai_harness_retry_after__': 5.0}
+        assert ('limited__model.request', 1) in stored

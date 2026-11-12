@@ -112,6 +112,14 @@ These are not checkpointed and run again on replay:
   steps, but the waits between checks are plain sleeps: the task has to keep running for as long as
   the batch takes, within its claim timeout, and a recovered run sleeps again through the waits it
   already did.
+- A model request that fails with a model error that has a `retry_after` (read from a provider's
+  `Retry-After` header, for example) is checkpointed as a failed attempt. The task then sleeps that
+  long with Absurd's durable `sleep_for`, which suspends it until then, and the request runs again as
+  the step `{name}__model.request#2`. The wait is capped at the task's `RetryStrategy`
+  `max_seconds`, or at a minute without one. Each wait counts against the task's remaining attempts:
+  once they are used up, the model error fails the run and Absurd's own retry applies. The
+  suspension leaves `agent.run` as Absurd's `SuspendTask`, so an `on_model_request_error` hook that
+  handles every exception has to re-raise it.
 
 ## Parallel execution
 

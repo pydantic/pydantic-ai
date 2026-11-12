@@ -19,6 +19,7 @@ pytest.importorskip('fastmcp')
 from absurd_sdk import (
     AsyncAbsurd,
     JsonValue,
+    SuspendTask,
     TaskContext,
     _current_task_context,  # pyright: ignore[reportPrivateUsage]
 )
@@ -29,7 +30,7 @@ from pydantic import TypeAdapter
 from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.durable_exec._toolset import CallToolResult
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelHTTPError, ModelRateLimitError, ModelRetry, UserError
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -815,3 +816,51 @@ class TestCodeMode:
         # The `run_code` body re-runs on replay, but its `search` call is served from the checkpoint.
         assert first.output == second.output == 'done: results for x'
         assert calls['calls'] == 1
+
+
+def _rate_limited_once(counter: dict[str, int], retry_after: float) -> FunctionModel:
+    """A model that fails with a rate limit asking to wait `retry_after` seconds, then answers."""
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        counter['calls'] += 1
+        if counter['calls'] == 1:
+            raise ModelHTTPError.for_category(
+                ModelRateLimitError, status_code=429, model_name='fn', retry_after=retry_after
+            )
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    return FunctionModel(fn, model_name='fn')
+
+
+class TestRetryAfter:
+    async def test_model_step_waits_retry_after_and_runs_again(self, absurd: AsyncAbsurd) -> None:
+        """The failed attempt is checkpointed, the task sleeps the wait, and the model step runs again; a replay
+        serves both from the checkpoints."""
+        counter = {'calls': 0}
+        # A wait that has already passed, so the sleep doesn't suspend the task.
+        agent = Agent(_rate_limited_once(counter, 0.0), name='limited', capabilities=[AbsurdDurability()])
+
+        async with running_task_context(absurd, 'limited') as ctx:
+            assert (await agent.run('hi')).output == 'ok'
+        stored = await checkpoints(absurd, ctx.task_id)
+        assert list(stored) == [
+            'limited__model.request',
+            'limited__model.request.retry_after',
+            'limited__model.request#2',
+        ]
+        assert stored['limited__model.request'] == {'__pydantic_ai_harness_retry_after__': 0.0}
+
+        async with reenter_running_task(absurd, ctx.task_id):
+            assert (await agent.run('hi')).output == 'ok'
+        assert counter['calls'] == 2
+
+    async def test_model_step_wait_suspends_the_task(self, absurd: AsyncAbsurd) -> None:
+        counter = {'calls': 0}
+        agent = Agent(_rate_limited_once(counter, 30.0), name='suspended', capabilities=[AbsurdDurability()])
+
+        async with running_task_context(absurd, 'suspended') as ctx:
+            with pytest.raises(SuspendTask):
+                await agent.run('hi')
+        stored = await checkpoints(absurd, ctx.task_id)
+        assert list(stored) == ['suspended__model.request', 'suspended__model.request.retry_after']
+        assert counter['calls'] == 1

@@ -10,9 +10,13 @@ from pydantic_ai.durable_exec import (
     DurabilityCodec,
     DurableOperationId,
     JournalCallableOperationBackend,
+    ModelCancelSuspendedResponseId,
+    ModelCompactMessagesId,
+    ModelRequestId,
     RoleBasedOperationConfig,
 )
 
+from .._retry_after import MINIMUM_RETRY_AFTER_CAP, step_waiting_retry_after
 from ._context import current_task_steps
 
 # pgtask steps take no per-operation options.
@@ -56,7 +60,18 @@ class PGTaskOperationBackend(JournalCallableOperationBackend[None]):
         cache_key: tuple[object, ...],
         config: None,
     ) -> object:
-        del operation_id, cache_key, config
+        del cache_key, config
         steps = current_task_steps()
         assert steps is not None
+        if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId | ModelCancelSuspendedResponseId):
+            # The task's `retry_delay` is set where its handler is registered, out of reach here, so a wait is
+            # capped at a minute. Each wait counts against the task's remaining attempts.
+            return await step_waiting_retry_after(
+                name,
+                body,
+                step=steps.step,
+                sleep=steps.sleep_for,
+                max_waits=steps.task.max_attempts - steps.task.attempt,
+                maximum=MINIMUM_RETRY_AFTER_CAP,
+            )
         return await steps.step(name, body)

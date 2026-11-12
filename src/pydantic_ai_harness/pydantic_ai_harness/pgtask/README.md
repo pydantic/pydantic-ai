@@ -136,6 +136,14 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   saved steps, but the waits between checks are plain sleeps: the task has to keep running for as
   long as the batch takes, within its timeout, and a recovered run sleeps again through the waits
   it already did.
+- A model request that fails with a model error that has a `retry_after` (read from a provider's
+  `Retry-After` header, for example) is saved as a failed attempt. The task then sleeps that long
+  with pgtask's durable `sleep_for`, which suspends it until then, and the request runs again as the
+  next occurrence of its step. The task's `retry_delay` is set where its handler is registered and
+  isn't available to the run, so the wait is capped at a minute. Each wait counts against the
+  task's remaining attempts: once they are used up, the model error fails the attempt and pgtask's
+  own retry applies. The suspension leaves `agent.run` as pgtask's own signal, so an
+  `on_model_request_error` hook that handles every exception has to re-raise it.
 
 ## Running tools at the same time
 
