@@ -7,6 +7,8 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from hypothesis import given, settings, strategies as st
+from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import NativeTool
@@ -464,7 +466,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
             {'start_coordinate': [1, 2], 'coordinate': [3, 4]},
             {'type': 'drag', 'path': [{'x': 1, 'y': 2}, {'x': 3, 'y': 4}], 'modifiers': []},
         ),
-        ('left_click_drag', {'coordinate': [3, 4]}, {'type': 'drag', 'path': [{'x': 3, 'y': 4}], 'modifiers': []}),
+        ('left_click_drag', {'coordinate': [3, 4]}, {'type': 'drag', 'unsupported_fields': ['start_coordinate']}),
         # A field that is missing though required, or has the wrong type, is refused rather than filled in.
         ('left_click', {'coordinate': [5]}, {'type': 'click', 'unsupported_fields': ['coordinate']}),
         ('left_click', {'coordinate': ['1', '2']}, {'type': 'click', 'unsupported_fields': ['coordinate']}),
@@ -847,8 +849,10 @@ async def test_a_result_answers_each_member_call(
         'computer_tool': 'computer_toolset_20260801',
         'computer_action_counts': counts,
     }
+    # One action per count, as the call was mapped; what they are doesn't matter to how the result is split.
+    actions = [{'type': 'screenshot'}] * sum(counts)
     call = ComputerCallPart(
-        'computer', {'actions': []}, tool_call_id='toolu_1', provider_name='anthropic', provider_details=details
+        'computer', {'actions': actions}, tool_call_id='toolu_1', provider_name='anthropic', provider_details=details
     )
     history: list[ModelMessage] = [
         ModelRequest.user_text_prompt('Go.'),
@@ -871,6 +875,62 @@ async def test_a_result_answers_each_member_call(
     sent = body['messages'][-1]['content']
     assert [r['tool_use_id'] for r in sent] == [block['id'] for block in blocks]
     assert [[b['text'] if b['type'] == 'text' else b['type'] for b in r['content']] for r in sent] == results
+
+
+@pytest.mark.parametrize(
+    'counts, actions',
+    [
+        # A call that failed on its first action would read as having run its first member call.
+        pytest.param([0, 2], 2, id='a-zero-count'),
+        pytest.param([1, 1], 3, id='counts-short-of-the-actions'),
+        pytest.param([2, 2], 3, id='counts-past-the-actions'),
+    ],
+)
+async def test_kept_counts_that_do_not_match_the_actions_send_the_call_back_plain(
+    allow_model_requests: None, counts: list[int], actions: int
+) -> None:
+    """Each member call becomes at least one action, and the result counts actions, so other counts came from elsewhere."""
+    client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    blocks = [
+        {'id': 'toolu_1', 'name': 'left_click', 'input': {'coordinate': [1, 2]}},
+        {'id': 'toolu_2', 'name': 'type', 'input': {'text': 'hi'}},
+    ]
+    details: dict[str, Any] = {
+        'computer_blocks': blocks,
+        'computer_tool': 'computer_toolset_20260801',
+        'computer_action_counts': counts,
+    }
+    call = ComputerCallPart(
+        'computer',
+        {'actions': [{'type': 'screenshot'}] * actions},
+        tool_call_id='toolu_1',
+        provider_name='anthropic',
+        provider_details=details,
+    )
+    result = ToolReturnPart(
+        'computer',
+        ['Action 1 of 2 (click) failed: busy.', _PNG],
+        tool_call_id='toolu_1',
+        metadata={'performed': 0, 'error': 'busy'},
+        tool_kind=COMPUTER_KIND.id,
+    )
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Go.'),
+        ModelResponse(parts=[call], provider_name='anthropic'),
+        ModelRequest(parts=[result]),
+    ]
+    await model.request(
+        history,
+        None,
+        ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
+
+    (body,) = get_mock_chat_completion_kwargs(client)
+    sent = body['messages'][-1]['content']
+    # One plain result for the one plain call: no member call is told `OK`.
+    assert [r['tool_use_id'] for r in sent] == ['toolu_1']
+    assert all(b.get('text') != 'OK' for r in sent for b in r['content'])
 
 
 async def test_a_stored_call_whose_actions_do_not_validate_still_replays_as_its_member_calls(
@@ -1027,3 +1087,42 @@ async def test_a_batch_split_by_another_tool_call_is_refused(allow_model_request
     assert [call.tool_name for call in calls] == ['computer', 'focus']
     assert calls[0].args_as_dict()['actions'][1] == {'type': 'type', 'after_tool_calls': ['focus']}
     assert isinstance(calls[0], ComputerCallPart) and calls[0].actions is None
+
+
+_JSON = st.recursive(
+    st.none() | st.booleans() | st.integers() | st.floats(allow_nan=False) | st.text(max_size=8),
+    lambda children: st.lists(children, max_size=4) | st.dictionaries(st.text(max_size=8), children, max_size=3),
+    max_leaves=8,
+)
+_MEMBER_NAMES = [
+    *('left_click', 'right_click', 'middle_click', 'double_click', 'triple_click'),
+    *('mouse_move', 'left_click_drag', 'left_mouse_down', 'left_mouse_up', 'scroll', 'type', 'key'),
+    *('hold_key', 'wait', 'zoom', 'screenshot', 'cursor_position', 'teleport'),
+]
+_POINT = st.lists(st.integers(0, 4000), min_size=2, max_size=2)
+# Close to a member's input: each documented field either of its documented type or anything.
+_NEAR_INPUT = st.fixed_dictionaries(
+    {},
+    optional={
+        'coordinate': _POINT | _JSON,
+        'start_coordinate': _POINT | _JSON,
+        'text': st.text(max_size=8) | _JSON,
+        'scroll_direction': st.sampled_from(['up', 'down', 'left', 'right']) | _JSON,
+        'scroll_amount': st.integers(0, 20) | _JSON,
+        'repeat': st.integers(0, 5) | _JSON,
+        'duration': st.floats(0, 10) | _JSON,
+        'region': st.lists(st.integers(0, 4000), min_size=4, max_size=4) | _JSON,
+        'extra': _JSON,
+    },
+)
+_TOOL_ACTION: TypeAdapter[ComputerToolAction] = TypeAdapter(ComputerToolAction)
+
+
+@settings(max_examples=500, deadline=None)
+@given(st.sampled_from(_MEMBER_NAMES), _NEAR_INPUT | st.dictionaries(st.text(max_size=8), _JSON, max_size=3))
+def test_any_member_input_maps_without_raising_and_a_refusal_is_rejected(name: str, input: dict[str, Any]) -> None:
+    """The tool checks every action before running any, so one it rejects means none of the call runs."""
+    for action in map_computer_member(name, input):
+        if 'unsupported_fields' in action:
+            with pytest.raises(ValidationError):
+                _TOOL_ACTION.validate_python(action)

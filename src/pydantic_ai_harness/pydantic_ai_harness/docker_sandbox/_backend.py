@@ -243,8 +243,8 @@ _DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode
 
 
 _START_DESKTOP = (
-    start_x_server(f'{_PID_DIR}/xvfb.log', then='setsid tint2 >/dev/null 2>&1 &')
-    + 'setsid fluxbox >/dev/null 2>&1 & wm=$!; i=0; '
+    start_x_server(f'{_PID_DIR}/xvfb.log', then='setsid tint2 >/dev/null 2>&1 9>&- &')
+    + 'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done'
 )

@@ -32,8 +32,24 @@ DISPLAY = ':1'
 DISPLAY_NUMBER = DISPLAY[1:]
 
 START_LOCK = f'exec 9>/tmp/.pydantic-ai-display-{DISPLAY_NUMBER}.lock; ! command -v flock >/dev/null || flock 9; '
-"""Waits for another start of the same display to finish, so two don't both find no X server and start two.
-What starts in the background while it is held must close it with `9>&-`, or it holds it as long as it runs."""
+"""Starts a start script: waits for another start of the same display to finish, so two don't both find nothing
+running and start two. The script holds it until it exits; what it starts in the background must close it with
+`9>&-`, or that holds it as long as it runs."""
+
+
+def wait_until_ready(ready: str, pid: str, what: str, log: str) -> str:
+    """A shell fragment that waits until the command `ready` succeeds, for a program just started in the background.
+
+    It gives up as soon as the process `pid` exits, or after 10 seconds, saying `what` didn't start, with the end of
+    `log` as the reason.
+    """
+    return (
+        f'i=0; until {ready}; do '
+        f'if ! kill -0 {pid} 2>/dev/null || [ $i -ge 100 ]; then '
+        f"echo '{what} did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "
+        'sleep 0.1; i=$((i+1)); done; '
+    )
+
 
 _BUTTONS: dict[str, str] = {'left': '1', 'middle': '2', 'right': '3', 'back': '8', 'forward': '9'}
 
@@ -212,8 +228,9 @@ def start_x_server(log: str, *, then: str = '') -> str:
     It gives up as soon as the X server exits, or after 10 seconds, with the end of `log` as the reason. `then` runs
     once a new X server answers, such as to start a panel.
 
-    It holds `START_LOCK` while it checks for and starts the X server, so a second start of the display waits and
-    finds the first one's.
+    It takes `START_LOCK`, so a second start of the display waits and finds the first one's X server. The script it
+    begins holds the lock until it exits, so what follows it, such as starting a desktop, is under the lock too; what
+    `then` or the rest of the script starts in the background must close it with `9>&-`.
     """
     return (
         f'{START_LOCK}if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
@@ -221,12 +238,9 @@ def start_x_server(log: str, *, then: str = '') -> str:
         # belongs to another process. A running X server's lock stays, whichever server it is, such as `Xvnc`.
         f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
         f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
-        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{log} 9>&- & xvfb=$!; i=0; '
-        'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
-        'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
-        f"echo 'the X server did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "
-        # Let go of the lock before starting anything else, which would otherwise hold it as long as it runs.
-        f'sleep 0.1; i=$((i+1)); done; exec 9>&-; {then} fi; exec 9>&-; '
+        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{log} 9>&- & '
+        + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
+        + f'{then} fi; '
     )
 
 
