@@ -131,7 +131,10 @@ class InFlightWork(Generic[T]):
         self.on_end: InFlightOnEnd = on_end
         """What happens to the work when the run ends."""
         self.durable = durable
-        """Whether a durable execution engine records the work's result on its own, as an activity, step or task."""
+        """Whether a durable execution engine records the work's result on its own, as an activity, step or task.
+
+        Recorded on the handle and in events; the run doesn't act on it yet.
+        """
         self._state: InFlightWorkState = 'running'
         self._task = task
         self._cancel = cancel
@@ -148,7 +151,11 @@ class InFlightWork(Generic[T]):
         return self._state
 
     async def wait(self) -> None:
-        """Wait until the work has settled: finished, failed or been cancelled. Never raises the work's error."""
+        """Wait until the work has settled: finished, failed or been cancelled. Never raises the work's error.
+
+        Work started with [`start()`][pydantic_ai.in_flight.InFlightRegistry.start] that waits for itself never
+        returns.
+        """
         await self._done.wait()
 
     async def result(self) -> T:
@@ -281,7 +288,7 @@ class InFlightRegistry:
                 Work that should outlive the run isn't the run's to own: run it yourself and
                 [`register()`][pydantic_ai.in_flight.InFlightRegistry.register] it, which detaches it by default.
             durable: Whether a durable execution engine records the work's result on its own, as an activity,
-                step or task.
+                step or task. The run doesn't act on it yet.
 
         Returns:
             A handle on the work.
@@ -339,7 +346,7 @@ class InFlightRegistry:
             on_end: What happens to the work when the run ends: by default nothing, as it's `'detach'`. See
                 [`InFlightOnEnd`][pydantic_ai.in_flight.InFlightOnEnd].
             durable: Whether a durable execution engine records the work's result on its own, as an activity,
-                step or task.
+                step or task. The run doesn't act on it yet.
             cancel: Stops the work, when the run or a call to
                 [`InFlightWork.cancel()`][pydantic_ai.in_flight.InFlightWork.cancel] cancels it. Without one,
                 cancelling the work only stops tracking it.
@@ -400,6 +407,9 @@ class InFlightRegistry:
 
     async def wait_idle(self, *, kind: str | None = None) -> None:
         """Wait until all live work, except `'detach'` work, has settled. Never raises the work's errors.
+
+        Called from work started with [`start()`][pydantic_ai.in_flight.InFlightRegistry.start] that this would
+        wait for, it waits for itself and never returns: pass a `kind` that excludes it.
 
         Args:
             kind: Only wait for work of this kind.

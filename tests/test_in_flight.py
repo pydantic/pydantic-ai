@@ -253,6 +253,29 @@ async def test_work_settling_without_queuing_doesnt_end_the_wait(emitted: _Emitt
     assert emitted.phases == ['started', 'started', 'draining', 'settled', 'settled', 'drained']
 
 
+async def test_run_stream_waits_for_work_but_doesnt_deliver_its_result(emitted: _Emitted):
+    """`run_stream()` waits once its output has been consumed, but the output was already streamed, so the result goes nowhere."""
+    handles: dict[str, InFlightWork[Any]] = {}
+    # `TestModel` calls the tool, then streams its answer.
+    agent = Agent(TestModel(custom_output_text='final answer'))
+
+    @agent.tool
+    async def start(ctx: RunContext) -> str:
+        async def work() -> None:
+            await emitted.until('draining')
+            ctx.enqueue('late result')
+
+        handles['work'] = ctx.in_flight.start(work, kind='test', name='work', id='work')
+        return 'started'
+
+    async with agent.run_stream('go') as result:
+        assert await result.get_output() == 'final answer'
+
+    assert handles['work'].state == 'succeeded'
+    assert 'late result' not in _user_texts(result.all_messages())
+    assert emitted.phases == ['started', 'draining', 'settled', 'drained']
+
+
 async def test_deferred_pause_waits_for_all_work_and_records_its_results(emitted: _Emitted):
     """A pause waits for every piece of `'drain'` work, records what it queued after the paused step, and stands."""
     model_calls = 0
