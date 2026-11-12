@@ -4019,9 +4019,9 @@ def test_each_decision_exports_one_span_with_both_accounts_quota(
     assert decision.account == 'backup'
     [(path, authorization, body)] = received
     assert (path, authorization) == ('/v1/traces', 'logfire fixture-token')
-    resets = {
-        'interval_reset_at': {'stringValue': '2026-10-03T07:35:26Z'},
+    windows = {
         'weekly_remaining_percent': {'doubleValue': 84.0},
+        'interval_reset_at': {'stringValue': '2026-10-03T07:35:26Z'},
         'weekly_reset_at': {'stringValue': '2026-10-08T14:54:29Z'},
     }
     attributes = {
@@ -4038,12 +4038,12 @@ def test_each_decision_exports_one_span_with_both_accounts_quota(
         'provider_health.primary.quota.status': {'stringValue': 'exhausted'},
         'provider_health.primary.quota.reset_at': {'stringValue': '2026-10-03T07:35:26Z'},
         'provider_health.primary.quota.interval_remaining_percent': {'doubleValue': 0.0},
-        **{f'provider_health.primary.quota.{name}': value for name, value in resets.items()},
+        **{f'provider_health.primary.quota.{name}': value for name, value in windows.items()},
         'provider_health.backup.ready': {'boolValue': True},
         'provider_health.backup.reason': {'stringValue': 'Provider health check passed'},
         'provider_health.backup.quota.status': {'stringValue': 'healthy'},
         'provider_health.backup.quota.interval_remaining_percent': {'doubleValue': 99.0},
-        **{f'provider_health.backup.quota.{name}': value for name, value in resets.items()},
+        **{f'provider_health.backup.quota.{name}': value for name, value in windows.items()},
     }
     resource = {
         'service.name': {'stringValue': 'gh-aw.pydantic-ai-pr-review'},

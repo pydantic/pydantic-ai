@@ -1444,10 +1444,12 @@ def _export_decision_span(health: Health, started_ns: int) -> None:
     try:
         with _no_redirect_opener().open(request, timeout=10):
             pass
+    except urllib.error.HTTPError as error:
+        error.close()
+        print(f'::warning::Could not export the provider health span: HTTP {error.code}')
     except (OSError, ValueError, http.client.HTTPException) as error:
         # An invalid header value's error message would repeat the token.
-        detail = f'HTTP {error.code}' if isinstance(error, urllib.error.HTTPError) else type(error).__name__
-        print(f'::warning::Could not export the provider health span: {detail}')
+        print(f'::warning::Could not export the provider health span: {type(error).__name__}')
 
 
 def _check_command(args: argparse.Namespace) -> int:
