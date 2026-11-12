@@ -854,15 +854,26 @@ class TestRetryAfter:
             assert (await agent.run('hi')).output == 'ok'
         assert counter['calls'] == 2
 
-    async def test_model_step_wait_suspends_the_task(self, absurd: AsyncAbsurd) -> None:
+    @pytest.mark.parametrize(
+        ('retry_after', 'wait'),
+        [
+            pytest.param(30.0, 30.0, id='retry-after'),
+            # Without a `RetryStrategy` `max_seconds`, the wait is capped at a minute.
+            pytest.param(120.0, 60.0, id='capped-at-a-minute'),
+        ],
+    )
+    async def test_model_step_wait_suspends_the_task(
+        self, absurd: AsyncAbsurd, retry_after: float, wait: float
+    ) -> None:
         counter = {'calls': 0}
-        agent = Agent(_rate_limited_once(counter, 30.0), name='suspended', capabilities=[AbsurdDurability()])
+        agent = Agent(_rate_limited_once(counter, retry_after), name='suspended', capabilities=[AbsurdDurability()])
 
         async with running_task_context(absurd, 'suspended') as ctx:
             with pytest.raises(SuspendTask):
                 await agent.run('hi')
         stored = await checkpoints(absurd, ctx.task_id)
         assert list(stored) == ['suspended__model.request', 'suspended__model.request.retry_after']
+        assert stored['suspended__model.request'] == {'__pydantic_ai_harness_retry_after__': wait}
         assert counter['calls'] == 1
 
     async def test_model_step_wait_is_capped_at_the_retry_strategy_maximum(self, absurd: AsyncAbsurd) -> None:
