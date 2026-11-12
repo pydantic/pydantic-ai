@@ -17,6 +17,7 @@ from pydantic_ai.durable_exec import (
     ToolsetCallToolId,
     ToolsetValidateToolArgumentsId,
 )
+from pydantic_ai.durable_exec._toolset import durable_metadata_opts_out
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai_harness._typeguards import is_object_dict
@@ -44,6 +45,8 @@ from ._protocol import (
 
 if TYPE_CHECKING:
     from ._capability import RenderWorkflows
+
+TOOL_CONFIG_KEY = 'render_workflows'
 
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT')
@@ -264,6 +267,9 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
         if toolset is None:
             return
         for tool_name, tool in toolset.tools.items():
+            # A tool with `{'durable': False}` runs in the calling task run, so no task options apply to it.
+            if durable_metadata_opts_out(tool.metadata, tool_name, engine_key=TOOL_CONFIG_KEY):
+                continue
             resolved = self.config_for_tool(operation, tool=tool, tool_name=tool_name)
             if resolved is not False and resolved != config:
                 raise UserError(

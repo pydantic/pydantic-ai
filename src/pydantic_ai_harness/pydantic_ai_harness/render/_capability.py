@@ -41,7 +41,7 @@ from ._compat import (
     function_tool_original_name,
 )
 from ._context import activate_task_context, current_task_context
-from ._operation_backend import RenderOperationBackend
+from ._operation_backend import TOOL_CONFIG_KEY, RenderOperationBackend
 from ._transports import RenderParameterTransports
 
 P = ParamSpec('P')
@@ -92,7 +92,7 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
         journal_discovery=True,
         sequential_tools_in_durable_context=False,
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
-        tool_config_key='render_workflows',
+        tool_config_key=TOOL_CONFIG_KEY,
     )
 
     def __init__(

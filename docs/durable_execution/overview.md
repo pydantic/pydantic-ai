@@ -89,6 +89,6 @@ An engine's own metadata key wins when a tool sets it, so `metadata={'temporal':
 | [Azure Durable Task](../harness/azure-durable-task.md) | orchestrator code | `'azure_durable_task'` |
 | [Absurd](../harness/absurd.md) | task handler code, outside any step | none |
 | [pgtask](../harness/pgtask.md) | task code, outside any step | none |
-| [Render Workflows](../harness/render-workflows.md) | the parent task run | none; `resolve_tool_options` can return `False` |
+| [Render Workflows](../harness/render-workflows.md) | the parent task run | `'render_workflows'`, whose `False` only lets a per-run toolset through; per tool, `resolve_tool_options` can return `False` |
 
 Restate and Apache Airflow ship their own integrations; see their pages for how they wrap tools.
