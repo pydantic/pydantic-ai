@@ -110,6 +110,11 @@ parent step each read the level their parent set.
 """
 
 
+def delegation_depth() -> int:
+    """How deep in a delegation tree the current run is, counting the top-level run as 1."""
+    return _depth.get()
+
+
 @contextmanager
 def delegation_level(level: int) -> Generator[None]:
     """Run what this block starts at `level` of a delegation tree, as a worker does for a remote task."""

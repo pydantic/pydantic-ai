@@ -16,7 +16,29 @@ Run your agent's commands in a Linux [bubblewrap](https://github.com/containers/
 
     Do **not** set the working directory to your home directory (or a directory containing it): files there such as shell startup files, or configuration under a non-default `$XDG_CONFIG_HOME`, can be changed by the agent and run later outside the wrapper (only the default startup locations listed below are mounted read-only).
 
-![The model calls Coder, Shell or FileSystem tools such as run_command and edit_file. BubblewrappedWorkspace wraps another workspace capability, here SSHWorkspace, and its get_workspace hook runs every command and file operation on that host inside a bwrap wrapper. In the wrapper the working directory is writable, the rest of the host's files are read-only, /tmp is private, /run is empty, and a seccomp filter blocks every socket. The wrapper does not stop commands from reading files the host user can read, signalling the host user's processes, or writing files such as git hooks that run outside the wrapper later.](../img/harness/bubblewrap-sandbox.svg)
+```mermaid
+flowchart TB
+    accTitle: Bubblewrapped Workspace: confine your agent's commands on the host they run on
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command. Their ctx.workspace is BubblewrappedWorkspace, which wraps SSHWorkspace and runs commands over ssh -T in a bwrap wrapper on dev@build-box with private /tmp and empty /run. In it, working_dir /srv/app is writable, the host's other files are read-only, and seccomp blocks the network, every socket.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        bwrap["BubblewrappedWorkspace()<br/>wraps SSHWorkspace"]:::capability
+    end
+    sandbox["bwrap wrapper<br/>on dev@build-box<br/>private /tmp, empty /run"]:::external
+    workdir["working_dir<br/>/srv/app"]:::external
+    files["the host's<br/>other files"]:::external
+    sockets["network:<br/>every socket"]:::blocked
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| bwrap
+    bwrap <-->|"commands over ssh -T"| sandbox
+    sandbox -->|"writable"| workdir
+    sandbox -->|"read-only"| files
+    sandbox -.-x|"seccomp blocks"| sockets
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Install
 
