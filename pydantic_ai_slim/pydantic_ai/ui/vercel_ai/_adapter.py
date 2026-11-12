@@ -582,13 +582,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         )
                     elif isinstance(part, ReasoningUIPart):
                         provider_meta = load_provider_metadata(part.provider_metadata)
+                        provider_details = provider_meta.get('provider_details')
                         builder.add(
                             ThinkingPart(
                                 content=part.text,
                                 id=provider_meta.get('id'),
                                 signature=None if part.state == 'streaming' else provider_meta.get('signature'),
                                 provider_name=provider_meta.get('provider_name'),
-                                provider_details=provider_meta.get('provider_details'),
+                                # Client-supplied and unconstrained; drop anything that isn't a
+                                # string-keyed dict so a malformed value can't crash request building.
+                                provider_details=provider_details if _is_str_dict(provider_details) else None,
                             )
                         )
                         restore_canonical_system(

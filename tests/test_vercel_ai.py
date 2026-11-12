@@ -2086,6 +2086,35 @@ def test_load_invalid_citations():
     )
 
 
+def test_load_messages_drops_non_dict_reasoning_provider_details():
+    """Client-supplied provider_details that isn't a string-keyed dict is dropped (#12885).
+
+    Thinking models read provider_details as a dict; a malformed client value used to reach
+    ThinkingPart unchanged and crash later with AttributeError. Mirror the vendor_metadata check.
+    """
+    ui_messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                ReasoningUIPart(
+                    text='thinking',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'provider_name': 'openai',
+                            'provider_details': 'not a dict',
+                        }
+                    },
+                ),
+            ],
+        )
+    ]
+
+    [thinking] = VercelAIAdapter.load_messages(ui_messages)[0].parts
+    assert isinstance(thinking, ThinkingPart)
+    assert thinking.provider_details is None
+
+
 def test_load_citations_outside_text():
     """Citations whose anchor doesn't fit in the text part are dropped, and the others still load.
 
