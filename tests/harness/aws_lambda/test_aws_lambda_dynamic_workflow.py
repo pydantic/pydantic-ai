@@ -9,7 +9,7 @@ from __future__ import annotations
 import base64
 import itertools
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pytest
@@ -284,10 +284,15 @@ def test_a_callback_in_a_branch_suspends_the_invocation_and_resumes_its_branch()
             return ModelResponse(parts=[ToolCallPart('delete', {'path': 'a.txt'}, tool_call_id='call-1')])
         return ModelResponse(parts=[TextPart('cleaned up')])
 
-    def ask(ctx: RunContext[Any], requests: DeferredToolRequests, token: str) -> None:
+    def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
         asked.append(token)
 
-    cleaner = Agent(FunctionModel(clean_up), name='clean', capabilities=[AWSLambdaDurability(), RequestInput(ask)])
+    cleaner = Agent(
+        FunctionModel(clean_up),
+        name='clean',
+        deps_type=type(None),
+        capabilities=[AWSLambdaDurability[None](), RequestInput[None](ask)],
+    )
 
     @cleaner.tool_plain(requires_approval=True)
     def delete(path: str) -> str:
@@ -304,7 +309,8 @@ def test_a_callback_in_a_branch_suspends_the_invocation_and_resumes_its_branch()
     orchestrator = Agent(
         orchestrator_model(script),
         name='orchestrator',
-        capabilities=[DynamicWorkflow(agents=[cleaner, summarize]), AWSLambdaDurability()],
+        deps_type=type(None),
+        capabilities=[DynamicWorkflow[None](agents=[cleaner, summarize]), AWSLambdaDurability[None]()],
     )
     service = _Service()
     service.suspend(orchestrator)
@@ -328,9 +334,14 @@ def test_a_callback_in_a_branch_suspends_the_invocation_and_resumes_its_branch()
     assert sorted(calls) == ['beta 1', 'beta 3', 'clean 1', 'clean 3']
 
 
-def test_sub_agents_sharing_a_serializer_share_a_parallel_operation() -> None:
+@dataclass
+class _UnhashableSealed(_Sealed):
+    """A dataclass with `eq=True` sets `__hash__` to `None`."""
+
+
+@pytest.mark.parametrize('sealed', [_Sealed(), _UnhashableSealed()], ids=['hashable', 'unhashable'])
+def test_sub_agents_sharing_a_serializer_share_a_parallel_operation(sealed: SerDes[Any]) -> None:
     calls: list[str] = []
-    sealed = _Sealed()
     model = summarize_model(calls)
     alpha, beta = (
         Agent(model, name=name, tools=[noop], capabilities=[AWSLambdaDurability(step_config={'serdes': sealed})])

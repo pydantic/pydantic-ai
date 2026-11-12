@@ -275,7 +275,7 @@ class MontyExecutor:
       scheduled as `asyncio.Task`s. Resolved at `FutureSnapshot` via `asyncio.gather`.
     - **Per-call sequential** (`def`, name in `sequential_names`): resolved inline at
       `FunctionSnapshot`. Any pending parallel tasks are awaited first (barrier).
-    - **Global sequential** (when selected by the run context): all calls deferred but
+    - **Global sequential** (selected by the caller): all calls deferred but
       stored as bare coroutines and awaited one-at-a-time to prevent interleaving.
     """
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import functools
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import fields
 from typing import Any, Literal
@@ -108,13 +107,17 @@ class AWSLambdaOperationBackend(JournalCallableOperationBackend[StepConfig | Non
 
 def _parallel_config(config: StepConfig | None) -> ParallelConfig | None:
     serdes: SerDes[Any] | None = config.serdes if config is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    return None if serdes is None else _serdes_parallel_config(serdes)
+    if serdes is None:
+        return None
+    # One config per serializer, so sub-agents that share one share a `parallel` operation. Keyed by
+    # identity, since a serializer need not be hashable, and holding it keeps its `id` from being reused.
+    _, parallel = _PARALLEL_CONFIGS.setdefault(
+        id(serdes), (serdes, ParallelConfig(serdes=_BatchResultSerDes(serdes), item_serdes=serdes))
+    )
+    return parallel
 
 
-@functools.cache
-def _serdes_parallel_config(serdes: SerDes[Any]) -> ParallelConfig:
-    # One config per serializer, so sub-agents that share one share a `parallel` operation.
-    return ParallelConfig(serdes=_BatchResultSerDes(serdes), item_serdes=serdes)
+_PARALLEL_CONFIGS: dict[int, tuple[SerDes[Any], ParallelConfig]] = {}
 
 
 class _BatchResultSerDes(SerDes[BatchResult[Any]]):
