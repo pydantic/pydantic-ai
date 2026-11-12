@@ -1890,7 +1890,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if self._messages_use_anthropic_uploaded_file(messages):
             betas.add(_ANTHROPIC_FILES_API_BETA)
-        if (native_computer := self._native_computer(model_request_parameters)) and (
+        if (native_computer := self._sent_computer(model_settings, model_request_parameters)) and (
             beta := COMPUTER_TOOL_BETAS.get(native_computer.version)
         ):
             betas.add(beta)
@@ -2247,7 +2247,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if isinstance(item, BetaWebFetchToolResultBlock) and (page := fetched_page(item))
             ),
         ]
-        native_computer = self._native_computer(model_request_parameters)
+        native_computer = self._sent_computer(model_settings, model_request_parameters)
         computer_blocks: list[dict[str, Any]] = []
         computer_index = 0
         # The other tools called between the batch's calls, which would run out of order if the batch ran as one.
@@ -2423,7 +2423,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _provider_url=self._provider.base_url,
             _enabled_server_tool_names=self._get_enabled_server_tool_names(model_request_parameters, model_settings),
             _history_fetched_pages=history_fetched_pages,
-            _native_computer=self._native_computer(model_request_parameters),
+            _native_computer=self._sent_computer(model_settings, model_request_parameters),
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         return streamed_response
@@ -3819,6 +3819,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return None
         name = model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
         return NativeComputer(name, version, computer.display_size) if name is not None else None
+
+    def _sent_computer(
+        self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> NativeComputer | None:
+        """The Anthropic computer use tool, when this request sends it.
+
+        It isn't sent when `tool_choice` leaves out the `computer` tool, and a call named `computer` is then a function
+        tool's.
+        """
+        native_computer = self._native_computer(model_request_parameters)
+        if native_computer is None:
+            return None
+        declared = self._tool_choice_declarations(model_settings, model_request_parameters)[0]
+        return native_computer if native_computer.name in declared else None
 
     async def _map_computer_results(
         self, part: ToolReturnPart, replay: ComputerReplay, map_context: _MapMessagesContext
