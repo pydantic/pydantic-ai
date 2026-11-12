@@ -169,10 +169,11 @@ def _google_warnings_as_admonitions(doc: str) -> tuple[str, list[str]]:
 
 
 def _google_section_blocks(doc: str, header: re.Pattern[str]) -> list[tuple[int, str, str]]:
-    """The line index (in the cleaned docstring), written header line and dedented text of each Google-style section whose header matches `header`.
+    """Find the Google-style sections whose header matches `header`.
 
-    Griffe's parsed entries can't always be joined back into the written text: e.g. before the first colon of a
-    returns entry, it strips parentheses and normalizes the text as a type expression. Sections are found the way
+    Each is returned as a `(line index, written header, dedented text)` tuple, with the line index into the cleaned
+    docstring. Griffe's parsed entries can't always be joined back into the written text: e.g. before the first colon
+    of a returns entry, it strips parentheses and normalizes the text as a type expression. Sections are found the way
     griffe's Google parser finds them: a header line outside a code fence, after a blank line, with an indented line
     below. A section's indented block is skipped as a whole, so a code fence inside it doesn't carry past it.
     """
