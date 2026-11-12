@@ -70,6 +70,25 @@ def test_unknown_memory_attribute_raises() -> None:
         memory.MissingStore
 
 
+@pytest.fixture(scope='module')
+def pixeltable_catalog() -> None:
+    """Start Pixeltable's catalog, an embedded Postgres server, once per process before the tests that use it.
+
+    The first Pixeltable call in a process starts it, which takes seconds and more on a loaded runner. Started here, it
+    isn't charged to whichever test happens to run first against the per-test time budget.
+    """
+    import pixeltable as pxt
+
+    pxt.list_tables()  # Its first call in a process starts the catalog.
+
+
+@pytest.fixture(autouse=True)
+def _start_pixeltable_before_its_store(request: pytest.FixtureRequest) -> None:
+    """Have `pixeltable_catalog` start Pixeltable before a test that `_local_store` gives the Pixeltable store."""
+    if 'index' in request.fixturenames and request.getfixturevalue('index') == 3:
+        request.getfixturevalue('pixeltable_catalog')
+
+
 _PIXELTABLE = pytest.param(3, marks=pytest.mark.skipif(find_spec('pixeltable') is None, reason='pixeltable extra'))
 _STORE_INDEXES = (0, 1, 2, _PIXELTABLE)
 _VERSION_INDEXES = (0, 2, _PIXELTABLE)
