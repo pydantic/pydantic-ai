@@ -276,6 +276,18 @@ async def test_after_tool_fills_placeholders_as_argv_and_never_blocks(tmp_path: 
     assert 'after_tool hook failed: sh -c cat > after.json; exit 2: exit code 2' in output.getvalue()
 
 
+async def test_after_tool_runs_only_the_commands_whose_tools_name_the_call(tmp_path: Path) -> None:
+    settings: dict[str, JsonValue] = {
+        'after_tool': [
+            {'command': ['sh', '-c', 'echo other >> after.txt'], 'tools': ['other_tool']},
+            {'command': ['sh', '-c', 'echo note >> after.txt'], 'tools': ['write_note']},
+        ]
+    }
+    plugin = hooks_plugin(tmp_path, settings, io.StringIO())
+    await note_agent(plugin, []).run('write')
+    assert (tmp_path / 'after.txt').read_text() == 'note\n'
+
+
 async def test_a_string_command_runs_through_the_shell_without_placeholders(tmp_path: Path) -> None:
     plugin = hooks_plugin(tmp_path, {'after_tool': [{'command': 'echo $((1 + 1)) {path} > shell.txt'}]}, io.StringIO())
     await note_agent(plugin, []).run('write')
