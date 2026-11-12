@@ -20,9 +20,9 @@ from urllib.parse import quote
 
 from douwebot_opencode_result import final_text, rejection_reason
 from douwebot_opencode_run import check_symlinks, run_with_fallback
+from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
 from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
-from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
 
 PROMPTS = Path('.github/pr-review-checks/prompts')
 REVIEW_CONTEXT = Path('.github/.review-context')
@@ -365,7 +365,11 @@ def main() -> None:
         agent='reviewer',
         output=stream,
         steps=check.max_steps,
-        extra_env=telemetry,
+        # Configured instructions follow the builtin system prompt without replacing its tool/security guidance.
+        extra_env={
+            **telemetry,
+            'OPENCODE_CONFIG_CONTENT': json.dumps({'instructions': [str(workspace / PROMPTS / 'final-answer.md')]}),
+        },
     )
     changed = {change.path: change.positions for change in changes}
     result, private_report = check_result(check, files, stream, usage, changed=changed)
