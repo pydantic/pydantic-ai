@@ -6,6 +6,7 @@ See [Work that outlives a step](../capabilities/custom.md#in-flight-work).
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -438,6 +439,14 @@ class InFlightRegistry:
         self._emit('settled', (work,))
         self._notify()
 
+    def _notify_from(self, loop: asyncio.AbstractEventLoop, loop_thread: int) -> None:
+        """`_notify` from the thread content was queued on, as `enqueue` may be called from another thread."""
+        if threading.get_ident() == loop_thread:
+            # Directly, since not every event loop has `call_soon_threadsafe`: Temporal's workflow loop doesn't.
+            self._notify()
+        else:
+            loop.call_soon_threadsafe(self._notify)
+
     def _notify(self) -> None:
         """Wake whoever waits for work to settle or content to be queued, so they check again."""
         self._changed.set()
@@ -479,13 +488,13 @@ class InFlightRegistry:
         if not pause and queue:
             return result
         loop = asyncio.get_running_loop()
+        loop_thread = threading.get_ident()
         with (
             ctx.tracer.start_as_current_span(
                 'in_flight drain',
                 attributes={'in_flight.waiting': len(waiting), 'in_flight.until': 'all' if pause else 'queued'},
             ),
-            # `enqueue` may be called from another thread.
-            queue.notifying(lambda: loop.call_soon_threadsafe(self._notify)),
+            queue.notifying(lambda: self._notify_from(loop, loop_thread)),
         ):
             self._emit('draining', waiting)
             while self._draining() and (pause or not queue):

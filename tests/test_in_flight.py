@@ -204,7 +204,8 @@ async def test_ending_with_output_gives_the_model_a_turn_once_work_queues_a_resu
     async def start(ctx: RunContext) -> str:
         async def work() -> None:
             await emitted.until('draining')
-            ctx.enqueue('partial')
+            # From another thread, as a callback reporting progress might.
+            await anyio.to_thread.run_sync(ctx.enqueue, 'partial')
             # Still running when the model gets its turn on `partial`, until the run waits again.
             await emitted.until('draining', 2)
 
