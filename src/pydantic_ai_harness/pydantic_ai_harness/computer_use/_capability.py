@@ -413,20 +413,32 @@ def _last_screenshot_size(messages: list[ModelMessage]) -> tuple[int, int] | Non
     return None
 
 
-def _the_call(ctx: RunContext[Any]) -> tuple[int, ToolCallPart] | None:
-    """Where in the messages the response that made this call is, and the call as the model made it."""
+def _the_call(ctx: RunContext[Any]) -> tuple[int, ComputerCallPart] | None:
+    """Where in the messages the response that made this call is, and the call as the model made it.
+
+    A call whose arguments don't validate, such as one a hook corrected, is a plain `ToolCallPart` that still keeps
+    what the agent recorded on it: it's read as a `ComputerCallPart` too, whose `actions` are then `None`.
+    """
     for index in range(len(ctx.messages) - 1, -1, -1):
         message = ctx.messages[index]
         if isinstance(message, ModelResponse):
             for part in message.parts:
-                if isinstance(part, ToolCallPart) and part.tool_call_id == ctx.tool_call_id:
+                if isinstance(part, ComputerCallPart) and part.tool_call_id == ctx.tool_call_id:
                     return index, part
+                if isinstance(part, ToolCallPart) and part.tool_call_id == ctx.tool_call_id:
+                    return index, ComputerCallPart(
+                        part.tool_name,
+                        part.args_as_json_str(),
+                        tool_call_id=part.tool_call_id,
+                        provider_name=part.provider_name,
+                        provider_details=part.provider_details,
+                    )
     return None
 
 
-def _changed(call: ToolCallPart, actions: list[ComputerToolAction]) -> bool:
+def _changed(call: ComputerCallPart, actions: list[ComputerToolAction]) -> bool:
     """Whether `actions` differ from the ones the model asked for, such as after an approval changed them."""
-    return not isinstance(call, ComputerCallPart) or call.actions != actions
+    return call.actions != actions
 
 
 def _display(ctx: RunContext[Any]) -> Display | None:
@@ -570,9 +582,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         made = _the_call(ctx)
         call = made[1] if made else None
         # The agent records on the call the grid and screenshot limit of the model that made it, if it has them.
-        grid, made_limit = (
-            (call.coordinate_grid, _call_limit(call)) if isinstance(call, ComputerCallPart) else (None, None)
-        )
+        grid, made_limit = (call.coordinate_grid, _call_limit(call)) if call else (None, None)
         plan = _Plan(
             grid=grid,
             # The model pointed on the latest screenshot before its call.
