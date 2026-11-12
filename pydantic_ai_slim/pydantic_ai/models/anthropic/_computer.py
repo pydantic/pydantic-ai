@@ -146,8 +146,11 @@ def computer_member(block: dict[str, Any], version: AnthropicComputerToolVersion
     """A call's member and input: the earlier tools name the member in the input's `action`."""
     if version == 'computer_toolset_20260801':
         return block['name'], block['input']
+    action = block['input'].get('action', '')
+    if not isinstance(action, str):
+        return '', dict(block['input'])  # names the `action` among the fields that don't map
     args = {key: value for key, value in block['input'].items() if key != 'action'}
-    return block['input'].get('action', ''), args
+    return action, args
 
 
 RETURNS_OUTPUT = frozenset({'zoom', 'cursor_position'})

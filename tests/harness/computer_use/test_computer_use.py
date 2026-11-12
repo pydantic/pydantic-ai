@@ -905,6 +905,18 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         # The closing screenshot could never be taken, so the click didn't run either.
         assert provider.actions == []
 
+    async def test_a_screen_larger_than_a_fallback_model_takes_ends_the_run_before_its_call_acts(self) -> None:
+        # The run's own model takes any screen, but the call is the fallback's, which the agent labels with its limit.
+        provider = ScreenProvider()
+        fallback = _answering('small', _SMALL, [], [{'type': 'click', 'x': 1, 'y': 1}])
+        agent = Agent(
+            _unavailable('primary', ModelProfile()),
+            capabilities=[provider.capability(), ComputerUse(), ModelFallback(fallback)],
+        )
+        with pytest.raises(UserError, match=r'The screen is 1280x800, larger than .* Start the display at 1000x625'):
+            await agent.run('Click.')
+        assert provider.actions == []
+
     @pytest.mark.parametrize('shared', ['display-object', 'display-object-from-two-environments', 'ref'])
     async def test_agents_on_one_screen_take_turns_a_whole_call_at_a_time(self, shared: str) -> None:
         """However the runs reach the screen: one display object, with or without refs of their own, or one ref."""
