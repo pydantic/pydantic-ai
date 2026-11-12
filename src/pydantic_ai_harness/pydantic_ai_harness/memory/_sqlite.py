@@ -58,6 +58,9 @@ _DECODERS: dict[str, _Decoder] = {
     'UTF-16le': codecs.utf_16_le_decode,
     'UTF-16be': codecs.utf_16_be_decode,
 }
+# SQLite text slicing stops at NUL. Four bytes per code point bounds the prefix in UTF-8 and UTF-16,
+# including one extra character to detect truncation; the decoder leaves an incomplete tail unread.
+_BOUNDED_CONTENT_BLOB_SQL = 'substr(CAST(content AS BLOB), 1, 4 * (? + 1))'
 
 
 def _create_schema(connection: sqlite3.Connection) -> _Decoder:
@@ -174,6 +177,7 @@ class SqliteMemoryStore:
         return int(row[0])
 
     def _decode_prefix(self, blob: bytes | None, max_chars: int) -> tuple[str, bool]:
+        # SQLite substr() on a zero-length BLOB returns NULL (None in sqlite3).
         content = self._decode(blob or b'', 'strict', False)[0]
         return content[:max_chars], len(content) > max_chars
 
@@ -183,10 +187,8 @@ class SqliteMemoryStore:
             raise ValueError('max_chars must be positive')
 
         def op(connection: sqlite3.Connection) -> MemoryFile | None:
-            # SQLite text slicing stops at NUL. Four bytes per code point bounds the prefix in UTF-8 and UTF-16,
-            # including one extra character to detect truncation; the decoder leaves an incomplete tail unread.
             row = connection.execute(
-                'SELECT substr(CAST(content AS BLOB), 1, 4 * (? + 1)), version, last_operation_id, write_metadata '
+                f'SELECT {_BOUNDED_CONTENT_BLOB_SQL}, version, last_operation_id, write_metadata '
                 'FROM memory_files WHERE path = ?',
                 (max_chars, path),
             ).fetchone()
@@ -354,7 +356,7 @@ class SqliteMemoryStore:
         def op(connection: sqlite3.Connection) -> list[tuple[str, str, bool]]:
             # Paths in a deeper scope nested under `prefix` belong to another namespace or agent.
             rows = connection.execute(
-                'SELECT path, substr(CAST(content AS BLOB), 1, 4 * (? + 1)) FROM memory_files '
+                f'SELECT path, {_BOUNDED_CONTENT_BLOB_SQL} FROM memory_files '
                 'WHERE path >= ? AND path < ? AND instr(substr(path, length(?) + 1), ?) = 0 '
                 'ORDER BY path LIMIT ?',
                 (max_file_chars, prefix, _prefix_end(prefix), prefix, '/', max_files + 1),
