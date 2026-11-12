@@ -35,7 +35,6 @@ __all__ = (
     'DisplayAction',
     'SupportsCursorPosition',
     'SupportsDisplay',
-    'SupportsScaledScreenshot',
     'SupportsZoom',
     'UnsupportedActionError',
 )
@@ -60,8 +59,7 @@ class Display(Protocol):
     """A screen: screenshots, mouse and keyboard.
 
     Coordinates are pixels of the screenshot, with the origin at the top left. A display may start on its first call.
-    It can also implement [`SupportsZoom`][pydantic_ai_harness.computer_use.SupportsZoom],
-    [`SupportsScaledScreenshot`][pydantic_ai_harness.computer_use.SupportsScaledScreenshot] and
+    It can also implement [`SupportsZoom`][pydantic_ai_harness.computer_use.SupportsZoom] and
     [`SupportsCursorPosition`][pydantic_ai_harness.computer_use.SupportsCursorPosition].
     """
 
@@ -105,24 +103,7 @@ class SupportsZoom(Protocol):
     async def zoom(self, region: Region) -> bytes:
         """Capture the region as PNG bytes, at the screen's full resolution.
 
-        The region is in screenshot pixels. On a display whose screenshots are scaled down, the capture shows detail
-        the screenshot lost.
-        """
-        ...
-
-
-@runtime_checkable
-class SupportsScaledScreenshot(Protocol):
-    """Optional on a [`Display`][pydantic_ai_harness.computer_use.Display]: the whole screen, scaled down.
-
-    For a model that takes smaller screenshots than the screen; actions stay in `display_size` pixels.
-    """
-
-    async def scaled_screenshot(self, width: int, height: int) -> bytes:
-        """Capture the whole screen as PNG bytes of at most `width` by `height` pixels.
-
-        A display that scales by a ratio may round down, by at most one pixel on each side; callers read the size
-        from the PNG.
+        The region is in screenshot pixels.
         """
         ...
 
