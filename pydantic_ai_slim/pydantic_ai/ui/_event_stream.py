@@ -574,7 +574,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 # Import the modules defining your events in the process that serves the frontend.
                 if event.ui and not isinstance(event, UnknownCustomEvent):
                     return self.handle_custom_event(event)
-                return None
             case CapabilityEvent():
                 return self.handle_capability_event(event)
             case AgentRunResultEvent():
@@ -593,9 +592,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 # This spells out `RealtimeSessionEvent`: class patterns cannot reference a union alias,
                 # and a guarded `isinstance` arm prevents pyright from proving this match exhaustive.
                 # Realtime session events don't flow through UI event streams.
-                return None
+                pass
             case _:
-                return None
+                pass
+        return None
 
     async def handle_part_start(self, event: PartStartEvent) -> AsyncIterator[EventT]:  # noqa: C901
         """Handle a `PartStartEvent`.
