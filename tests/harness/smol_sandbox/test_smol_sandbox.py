@@ -157,7 +157,7 @@ async def test_env_reaches_the_program_unchanged_by_the_launcher(
 ) -> None:
     """The launcher script runs in the command's environment, so a variable it assigned would replace the caller's.
 
-    A program named like an option takes the script's other path, which resolves the name first.
+    A program named like an option takes the script's other paths, which resolve the name first.
     """
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
@@ -167,6 +167,9 @@ async def test_env_reaches_the_program_unchanged_by_the_launcher(
     env = {'p': 'first', 'q': 'second'}
     assert (await backend.run(['sh', '-c', 'printf "%s %s" "$p" "$q"'], env=env)).stdout == 'first second'
     assert (await backend.run(['-show'], env=env)).stdout == 'first second'
+    await backend.run(['mkdir', '--', '-d'])
+    await backend.run(['cp', '--', str(bin_dir / '-show'), '-d/show'])
+    assert (await backend.run(['-d/show'], env=env)).stdout == 'first second'
 
 
 async def test_no_working_dir_uses_the_vms_own(fake_smol: FakeSmol) -> None:
