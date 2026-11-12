@@ -612,6 +612,35 @@ def test_json_schema_number_uses_strictest_bounds():
     assert _JsonSchemaTestData(json_schema).generate() == snapshot({'lower': 0.75, 'upper': 0.0})
 
 
+@pytest.mark.parametrize('seed', range(3))
+def test_mixed_integer_bounds_output(seed: int):
+    """TestModel must generate valid output when inclusive and exclusive bounds coexist."""
+
+    class Output(BaseModel):
+        lower: Annotated[int, Field(ge=0, gt=5)]
+        upper: Annotated[int, Field(le=10, lt=-5)]
+        interval: Annotated[int, Field(ge=0, gt=5, le=10, lt=9)]
+
+    output = Agent(TestModel(seed=seed), output_type=Output).run_sync('Return a valid value').output
+    assert output.lower > 5
+    assert output.upper < -5
+    assert 5 < output.interval < 9
+
+
+def test_mixed_integer_bounds_tool_args():
+    """The same bounds must produce valid arguments for agent tools."""
+    agent = Agent(TestModel())
+    calls: list[tuple[int, int]] = []
+
+    @agent.tool_plain
+    def bounded(lower: Annotated[int, Field(ge=0, gt=5)], upper: Annotated[int, Field(le=10, lt=-5)]) -> str:
+        calls.append((lower, upper))
+        return 'ok'
+
+    agent.run_sync('Call the tool')
+    assert calls == [(6, -6)]
+
+
 def test_narrow_exclusive_bounds_tool_args():
     """An agent tool with `Field(ge=0, lt=1)`-style parameters runs without errors."""
 
@@ -834,7 +863,7 @@ def test_int_inclusive_upper_bound_reachable():
             output.number,
         )
         for output in outputs
-    ] == snapshot([(2, 2, 2, 2, 2.0), (3, 3, 3, 3, 3.0), (4, 4, 4, 4, 4.0), (5, 5, 2, 2, 2.0)])
+    ] == snapshot([(2, 2, 2, 2, 2.0), (3, 3, 3, 3, 3.0), (4, 4, 4, 2, 4.0), (5, 5, 2, 3, 2.0)])
 
     def generated_values(minimum: float, maximum: float, seeds: list[int]) -> list[Any]:
         schema = {

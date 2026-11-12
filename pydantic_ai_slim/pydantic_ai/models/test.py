@@ -602,11 +602,11 @@ class _JsonSchemaTestData:
         if minimum is not None and maximum == minimum:
             return minimum
 
-        if maximum is None and (exc_max := schema.get('exclusiveMaximum')) is not None:
-            maximum = exc_max - 1
+        if (exc_max := schema.get('exclusiveMaximum')) is not None:
+            maximum = min(schema.get('maximum', exc_max - 1), exc_max - 1)
 
-        if minimum is None and (exc_min := schema.get('exclusiveMinimum')) is not None:
-            minimum = exc_min + 1
+        if (exc_min := schema.get('exclusiveMinimum')) is not None:
+            minimum = max(schema.get('minimum', exc_min + 1), exc_min + 1)
 
         if minimum is not None and maximum is not None:
             span = maximum - minimum
