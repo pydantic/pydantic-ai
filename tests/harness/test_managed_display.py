@@ -15,7 +15,6 @@ from pydantic_ai_harness.computer_use import (
     Display,
     DisplayAction,
     SupportsCursorPosition,
-    SupportsScaledScreenshot,
     SupportsZoom,
     UnsupportedActionError,
 )
@@ -50,10 +49,6 @@ class FakeDriver:
         self._maybe_fail()
         return FAKE_SCREENSHOT
 
-    async def scaled_screenshot(self, width: int, height: int) -> bytes:
-        self._maybe_fail()
-        return FAKE_SCREENSHOT
-
     async def act(self, action: DisplayAction) -> None:
         self._maybe_fail()
         if self._refuse is not None and isinstance(action, self._refuse):
@@ -81,7 +76,7 @@ async def test_concurrent_first_uses_start_one_display() -> None:
 async def test_every_call_reaches_the_started_display() -> None:
     driver = FakeDriver()
     display = ManagedDisplay(driver.start)
-    assert await display.scaled_screenshot(640, 400) == FAKE_SCREENSHOT
+    assert await display.screenshot() == FAKE_SCREENSHOT
     assert await display.zoom(Region(left=0, top=0, right=10, bottom=10)) == FAKE_SCREENSHOT
     assert await display.cursor_position() == Point(x=0, y=0)
     assert driver.starts == 1
@@ -142,10 +137,7 @@ async def test_an_action_does_not_run_on_a_display_that_started_since_the_last_s
 
 def test_it_is_a_display_with_every_optional_ability() -> None:
     display = ManagedDisplay(FakeDriver().start)
-    assert all(
-        isinstance(display, protocol)
-        for protocol in (Display, SupportsZoom, SupportsScaledScreenshot, SupportsCursorPosition)
-    )
+    assert all(isinstance(display, protocol) for protocol in (Display, SupportsZoom, SupportsCursorPosition))
 
 
 async def test_a_refused_action_keeps_the_display() -> None:
