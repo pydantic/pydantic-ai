@@ -344,15 +344,14 @@ def _has_safety_checks(call: ToolCallPart) -> bool:
 def _require_safety_approval(validated: ValidatedToolCall[AgentDepsT]) -> ValidatedToolCall[AgentDepsT]:
     """Make a `computer` call carrying a provider's safety checks wait for a person's approval.
 
-    This runs once arguments are accepted, whichever route accepted them (the schema, a hook's corrected
-    arguments, or `SkipToolValidation`), so no route runs the call unseen. The model's adapter tells the provider
-    the checks were acknowledged once the call has a result.
+    Runs however the arguments were accepted (the schema, a hook's corrected arguments, or `SkipToolValidation`), so
+    no route runs the call unseen. The model adapter acknowledges the checks once the call has a result.
     """
     if validated.ctx.tool_call_approved or not _has_safety_checks(validated.call):
         return validated
     tool = validated.tool
     if isinstance(validated.deferral, CallDeferred) or (tool is not None and tool.tool_def.kind == 'external'):
-        # Approving a call leads to running it here, which an external or deferred call can't do yet.
+        # An approved call runs here, which an external or deferred call can't.
         raise UserError(
             f'The {validated.call.tool_name!r} call carries safety checks from the provider, which need a person'
             ' to approve it before it runs, but it is handed to an external or deferred executor that approval'

@@ -107,10 +107,8 @@ class AbstractNativeTool(ABC):
     executed_by: ClassVar[frozenset[ToolKind]] = frozenset()
     """The kinds of the local tools that run this native tool's calls; empty when the provider runs them.
 
-    A model adapter turns the provider's calls into calls of these tools, and their results back into the provider's
-    format. The native tool is only sent when the request has a tool of each kind that isn't deferred: otherwise it is
-    left out when it is [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional], and the request is
-    refused when it isn't.
+    The native tool is only sent when the request has a non-deferred tool of each kind. Otherwise it is left out when
+    it is [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional], and the request is refused when it isn't.
     """
 
     @property
@@ -634,11 +632,10 @@ class MemoryTool(AbstractNativeTool):
 
 @dataclass(kw_only=True)
 class ComputerTool(AbstractNativeTool):
-    """A provider's native computer use tool, whose calls a local `computer` tool runs.
+    """A provider's native computer use tool, whose calls the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool runs.
 
-    That is the request's tool of the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind. Pydantic AI
-    Harness's `ComputerUse` adds it with the display size of each step. A model adapter sends it in place of that
-    tool, turns the provider's calls into [`ComputerArgs`][pydantic_ai.computer_use.ComputerArgs], and turns the
+    Pydantic AI Harness's `ComputerUse` adds it with each step's display size. A model adapter sends it in place of
+    that tool, turns the provider's calls into [`ComputerArgs`][pydantic_ai.computer_use.ComputerArgs], and turns the
     results back into the provider's format. See [Computer Tool](../native-tools.md#computer-tool).
 
     Supported by:

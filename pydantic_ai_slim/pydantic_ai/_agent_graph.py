@@ -3301,7 +3301,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters = _keep_default_output_mode(
             ctx.state, model, model_settings, request_context.model_request_parameters
         )
-        # Per attempt too, since whether positions are on a grid depends on the model serving it.
+        # Per attempt, since the grid depends on the model serving it.
         model_request_parameters = _computer_labels.add_grid_hint(model, model_request_parameters)
         request_context.model_request_parameters = model_request_parameters
 
