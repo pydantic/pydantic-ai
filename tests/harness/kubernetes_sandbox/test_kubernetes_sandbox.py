@@ -242,6 +242,28 @@ async def test_commands_start_in_working_dir(cluster: FakeCluster) -> None:
         await each.aclose()
 
 
+async def test_a_new_claim_creates_its_working_dir(cluster: FakeCluster) -> None:
+    """A new claim creates `working_dir`, as other sandboxes create it on a new sandbox; an attached one does not."""
+    probe = KubernetesSandboxBackend(warm_pool='pool')
+    root = await probe.working_dir()
+    await probe.aclose()
+    backend = KubernetesSandboxBackend(warm_pool='pool', working_dir=f'{root}/project/src')
+    assert await backend.working_dir() == f'{root}/project/src'
+    assert (await backend.run(['pwd'])).stdout == f'{root}/project/src\n'
+    attached = KubernetesSandboxBackend(ref=backend.ref, working_dir=f'{root}/project/docs')
+    with pytest.raises(WorkspaceError, match=f"working_dir '{root}/project/docs' does not exist"):
+        await attached.run(['true'])
+    for each in (backend, attached):
+        await each.aclose()
+
+
+async def test_a_working_dir_a_new_claim_cannot_create(cluster: FakeCluster) -> None:
+    backend = KubernetesSandboxBackend(warm_pool='pool', working_dir='/dev/null/project')
+    with pytest.raises(WorkspaceError, match="Could not create working_dir '/dev/null/project'"):
+        await backend.run(['true'])
+    await backend.aclose()
+
+
 async def test_a_working_dir_whose_name_ends_in_a_newline(cluster: FakeCluster) -> None:
     probe = KubernetesSandboxBackend(warm_pool='pool')
     named = f'{await probe.working_dir()}/task\n'

@@ -74,7 +74,8 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
 
     working_dir: str | None = None
     """Absolute directory commands start in and relative paths resolve against; `None` is sandboxd's
-    root directory (its `--root-dir`, `/workspace` by default). It must already exist."""
+    root directory (its `--root-dir`, `/workspace` by default). Created on a new claim; an attached claim must
+    already have it."""
 
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, on top of the container's own; a command's `env` is layered on top."""

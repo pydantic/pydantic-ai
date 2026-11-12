@@ -242,6 +242,9 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         # the protocol reports a canonical path, and a configured one may go through a symlink.
         self._resolved_working_dir: str | None = None
         self._missing_cwd_marker = f'pydantic-ai-missing-working-dir-{uuid.uuid4().hex}'
+        # Set on a new claim, as other sandboxes do: commands create `working_dir` until one has entered it.
+        # An attached claim must already have it.
+        self._working_dir_pending = False
         self._env = dict(env or {})
         self._client: AsyncSandboxClient[AsyncSandbox] | None = None
         self._session: _Session | None = None
@@ -298,13 +301,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         # `Start` leaves stdin open, where the protocol wants it at EOF, so the exec script redirects
         # it. sandboxd also moves a `cwd` outside its root under the root instead of refusing it, so
         # another directory is entered from the shell. Not tracked upstream yet.
-        if self._working_dir is None:
-            arguments, enter = argv, ''
-        else:
-            # A missing `working_dir` exits 125 with only the marker on stderr, before the command runs.
-            arguments = [self._working_dir, *argv]
-            enter = f'cd -- "$1" 2>/dev/null || {{ printf %s {self._missing_cwd_marker} >&2; exit 125; }}\nshift\n'
-        script = _ARGUMENTS_SCRIPT.format(count=len(arguments)) + enter + EXEC_SCRIPT
+        arguments = argv if self._working_dir is None else [self._working_dir, *argv]
         command_env = {
             **self._env,
             **(env or {}),
@@ -313,6 +310,8 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         async with self._operation():
             async with self._lock:
                 session = await self._acquire()
+            creating = self._working_dir_pending
+            script = _ARGUMENTS_SCRIPT.format(count=len(arguments)) + self._enter_script(creating) + EXEC_SCRIPT
             try:
                 result = await self._exec(session, script, command_env, timeout)
             except (WorkspaceTimeoutError, WorkspaceOutputLimitError):
@@ -321,16 +320,32 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
                 await self._raise_if_gone(session, error)
                 raise
             if result.exit_code == 125 and not result.stdout and result.stderr == self._missing_cwd_marker:
+                if creating:
+                    raise WorkspaceError(
+                        f'Could not create working_dir {self._working_dir!r} in Kubernetes sandbox '
+                        f'{session.ref.id!r}: the sandbox user cannot create or enter it.'
+                    )
                 raise WorkspaceError(
                     f'working_dir {self._working_dir!r} does not exist in Kubernetes sandbox {session.ref.id!r}. '
                     'Create it there, or pass a working_dir that exists.'
                 )
+            self._working_dir_pending = False
             if result.exit_code > 128 or result.exit_code < 0:
                 # Deleting a sandbox stops its pod with SIGTERM, and sandboxd reports the command it
                 # interrupted as an ordinary exit, 143. A command killed by a signal may be one of those.
                 # sandboxd before v1.0.7 reports a signal death as -1, as `ProcessExitEvent` still documents.
                 await self._raise_if_gone(session, None)
             return result
+
+    def _enter_script(self, creating: bool) -> str:
+        """Shell that enters `working_dir`, the script's first argument, creating it first when `creating`.
+
+        A `working_dir` it cannot enter exits 125 with only the marker on stderr, before the command runs.
+        """
+        if self._working_dir is None:
+            return ''
+        make = 'mkdir -p -- "$1" 2>/dev/null; ' if creating else ''
+        return f'{make}cd -- "$1" 2>/dev/null || {{ printf %s {self._missing_cwd_marker} >&2; exit 125; }}\nshift\n'
 
     async def _exec(self, session: _Session, script: str, env: dict[str, str], timeout: float | None) -> CommandResult:
         """Run `script` with the SDK's streaming `commands.start()`, returning its complete output.
@@ -429,6 +444,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         else:
             ref, sandbox = await self._claim(client)
             self._ref = ref
+            self._working_dir_pending = self._working_dir is not None
         commands = sandbox.commands
         assert commands is not None  # The SDK clears a handle's executor only when the handle is closed.
         self._session = _Session(ref=ref, sandbox=sandbox, commands=commands)

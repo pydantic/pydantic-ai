@@ -148,7 +148,7 @@ later = agent.run_sync('Which capability would you add next, and where would it 
 
 The ref is `<namespace>/<claim name>`. It holds no credentials, so the process that reattaches needs its own access to the cluster. `KubernetesSandbox` reattaches only to claims it made in its `namespace`; see [Security model](#security-model). Pass `workspace='new'` to claim a fresh sandbox even when the message history names one.
 
-`warm_pool`, `namespace` and `sandbox_timeout` only shape a new claim; `connection`, `working_dir` and `env` apply to every command, including after you reattach.
+`warm_pool`, `namespace` and `sandbox_timeout` only shape a new claim; `connection`, `working_dir` and `env` apply to every command, including after you reattach. A new claim gets `working_dir` created for it; on an attached claim it must already exist, or commands fail with `WorkspaceError`.
 
 `KubernetesSandbox(...).backend(ref)` returns a backend for a stored ref that connects on first use. A run leaves a backend you built open: close it with `await backend.aclose()`, which closes the connection (and any `kubectl port-forward`) but not the sandbox.
 
@@ -235,7 +235,7 @@ Everything else is set by your cluster, not by this capability: the pod's isolat
 | `namespace` | Namespace of the warm pool and the claims. Default: `'default'`. |
 | `connection` | `'port-forward'` (default), `'in-cluster-pod-ip'` or `'in-cluster-service'`; or the SDK's `SandboxdPodTunnelConnectionConfig` or `SandboxdInClusterConnectionConfig`, for other ports and timeouts. |
 | `sandbox_timeout` | Seconds after which a newly claimed sandbox is deleted. Default: `86_400` (24 hours); `None` keeps it until `destroy(ref)`. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, sandboxd's root directory. It must already exist. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, sandboxd's root directory. Created on a new claim; on an attached claim it must already exist. |
 | `env` | Environment variables every command gets, on top of the container's own. Default: `None`. |
 
 ## Durable execution
