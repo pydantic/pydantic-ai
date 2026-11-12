@@ -73,7 +73,7 @@ call. Step names are built from the agent's `name` and each toolset's `id`:
 |---|---|
 | `{name}__model.request` | one model request segment |
 | `{name}__model.request_stream` | one streamed model request segment |
-| `{name}__model.request.retry_after` | the wait a model error's `retry_after` asked for, before the request runs again |
+| `{name}__model.request.retry_after`, `{name}__model.request_stream.retry_after` | the wait a model error's `retry_after` asked for, before the request runs again |
 | `{name}__model.compact_messages` | one model message-compaction operation |
 | `{name}__model.cancel_suspended_response` | tearing down a suspended response |
 | `{name}__capability__{capability_id}.{operation}` | an operation contributed by another capability |
