@@ -443,7 +443,9 @@ class ModelProfile(TypedDict, total=False):
     from its response's [`provider_response_id`][pydantic_ai.messages.ModelResponse.provider_response_id], or from its
     [`timestamp`][pydantic_ai.messages.ModelResponse.timestamp] when it has none, such as `call_0_k3ZcR9aQ`. The suffix
     is the same every time the response is replayed, and keeps the ID within the `[a-zA-Z0-9_-]` characters that
-    Anthropic and Bedrock require. IDs Pydantic AI generates itself are already unique and are left alone.
+    Anthropic and Bedrock require. IDs Pydantic AI generates itself are already unique and are left alone, and so
+    is a call an `OpenAIResponsesModel` stream receives before the response's ID, which a request continuing that
+    response with `previous_response_id` couldn't restore from the timestamp.
 
     When the history is sent back to the same provider and endpoint, the suffix is removed again, so the provider gets
     the IDs it sent. Other providers and endpoints get the stored IDs.
