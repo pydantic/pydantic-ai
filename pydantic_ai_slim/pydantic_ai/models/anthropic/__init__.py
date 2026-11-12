@@ -1023,7 +1023,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     compaction_requires_encrypted_content = False
     compaction_retains_standing_prompt = False
     _honors_compaction_boundaries = True
-    _classifies_schema_too_complex = True
     # The Messages API has no audio or video block, and its document block takes a PDF or plain text.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
     _supported_document_media_types = frozenset({'application/pdf', 'text/plain'})
@@ -1269,6 +1268,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 ),
             )
         return profile
+
+    def _classifies_schema_too_complex(self) -> bool:
+        return True
 
     @property
     def tool_addition_mode(self) -> Literal['by_reference'] | None:

@@ -6817,7 +6817,8 @@ class _Survey(BaseModel):
 class _CompilingModel(FunctionModel):
     """A `FunctionModel` that, like `AnthropicModel`, raises `ModelSchemaTooComplexError` for a schema that's too complex."""
 
-    _classifies_schema_too_complex = True
+    def _classifies_schema_too_complex(self) -> bool:
+        return True
 
 
 @pytest.mark.moves_cache_prefix(

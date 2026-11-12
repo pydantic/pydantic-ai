@@ -475,7 +475,8 @@ def _schema_too_complex_fn(messages: list[ModelMessage], info: AgentInfo) -> Mod
 class _CompilingModel(FunctionModel):
     """A `FunctionModel` that, like `AnthropicModel`, raises `ModelSchemaTooComplexError` for a schema that's too complex."""
 
-    _classifies_schema_too_complex = True
+    def _classifies_schema_too_complex(self) -> bool:
+        return True
 
 
 schema_too_complex_durable_agent = Agent(

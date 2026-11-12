@@ -1658,7 +1658,7 @@ def _can_switch_to_tool_output(
     That's when the attempt sends Native Output that the model inferred, now or on the run's first request to it, to
     a model that raises `ModelSchemaTooComplexError` for such a rejection (see `_switch_to_tool_output`).
     """
-    if inferred_params is None or not _unwrap_model(request_context.model)._classifies_schema_too_complex:  # pyright: ignore[reportPrivateUsage]
+    if inferred_params is None or not _unwrap_model(request_context.model)._classifies_schema_too_complex():  # pyright: ignore[reportPrivateUsage]
         return False
     params = request_context.model_request_parameters
     if params.output_mode == 'auto':

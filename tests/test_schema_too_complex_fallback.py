@@ -36,7 +36,8 @@ class Survey(BaseModel):
 class CompilingModel(FunctionModel):
     """A `FunctionModel` that, like `AnthropicModel`, raises `ModelSchemaTooComplexError` for a schema that's too complex."""
 
-    _classifies_schema_too_complex = True
+    def _classifies_schema_too_complex(self) -> bool:
+        return True
 
 
 def too_complex(model_name: str = 'compiler') -> ModelAPIError:

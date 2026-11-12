@@ -864,8 +864,6 @@ class BedrockConverseModel(Model[BaseClient]):
 
     # The Converse API has no audio content block.
     _unsupported_file_inputs = frozenset({'audio'})
-    # For Claude, whose 400 for a schema that's too complex it raises as `ModelSchemaTooComplexError`.
-    _classifies_schema_too_complex = True
     # A tool's files that a tool result can't carry here go on the user channel, framed.
     _relocates_tool_files = True
 
@@ -976,6 +974,11 @@ class BedrockConverseModel(Model[BaseClient]):
         if self.profile.get('bedrock_thinking_variant') == 'anthropic':
             return 'anthropic'
         return super().canonical_system
+
+    def _classifies_schema_too_complex(self) -> bool:
+        # Only a model that compiles strict schemas with Anthropic's limits, i.e. Claude, gets its 400 for a schema
+        # that's too complex classified as `ModelSchemaTooComplexError`.
+        return self.profile.get('anthropic_enforces_strict_schema_limits', False)
 
     def _has_provider_cache_settings(self, merged_settings: ModelSettings) -> bool:
         return any(key in merged_settings for key in _CACHE_SETTINGS_KEYS)
@@ -1568,7 +1571,7 @@ class BedrockConverseModel(Model[BaseClient]):
         with _map_api_errors(
             self.model_name,
             self._provider.model_id_namespace,
-            strict_schema_limits=self.profile.get('anthropic_enforces_strict_schema_limits', False),
+            strict_schema_limits=self._classifies_schema_too_complex(),
         ):
             if stream:
                 model_response = await _call_bedrock(
