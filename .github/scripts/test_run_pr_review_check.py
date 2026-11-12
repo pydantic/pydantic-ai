@@ -401,8 +401,8 @@ def test_rejected_answer_under_the_budget_fails_with_its_reason(
         ),
     ],
 )
-def test_answer_ending_in_a_code_fence_is_unwrapped(tmp_path: Path, text: str) -> None:
-    """A model that ends its answer with the JSON object in a Markdown code fence still completes the review."""
+def test_accepted_answer_completes_the_review(tmp_path: Path, text: str) -> None:
+    """An answer that is the JSON object, or that ends with it in a Markdown code fence, completes the review."""
     result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=2), changed=CHANGED)
     assert (result.outcome, [finding.path for finding in result.findings]) == ('COMPLETE', ['a.py'])
 
