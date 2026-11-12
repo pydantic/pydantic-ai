@@ -3760,6 +3760,71 @@ class TestCompactionSpan:
         assert len(spans) == 1
         assert spans[0]['attributes']['compaction.strategy'] == 'TieredCompaction'
 
+    async def test_tiered_reports_a_target_its_tiers_cannot_reach(
+        self, capfire: CaptureLogfire, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # #12335: the window keeps the first user message and the request being answered, and the
+        # summarizer may summarize neither, so it makes no call and the history stays over target.
+        summarized: list[list[ModelMessage]] = []
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            summarized.append(messages)  # pragma: no cover
+            return ModelResponse(parts=[TextPart('Summary.')])  # pragma: no cover
+
+        comp: TieredCompaction[None] = TieredCompaction(
+            tiers=[
+                SlidingWindowCompaction(max_tokens=1, keep_tokens=5),
+                SummarizingCompaction(model=FunctionModel(summarize), max_tokens=1, keep_tokens=5),
+            ],
+            target_tokens=5,
+        )
+        messages: list[ModelMessage] = [_user(f'm{i} ' + 'x' * 396) for i in range(5)]
+        result = await comp.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
+
+        assert result.messages == [messages[0], messages[-1]]
+        assert summarized == []
+        attributes = _compact_spans(capfire)[0]['attributes']
+        assert attributes['compaction.target_unreached'] is True
+        assert attributes['compaction.target_tokens'] == 5
+        assert attributes['compaction.estimate'] == 199
+        assert caplog.messages == snapshot(
+            [
+                '`TieredCompaction` ran every tier and left the history at an estimated 199 tokens, above its target of 5. The messages its tiers keep cost more than the target.'
+            ]
+        )
+
+    async def test_nested_tiered_target_does_not_leak_into_a_successful_outer_chain(
+        self, capfire: CaptureLogfire, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        calls: list[str] = []
+        comp: TieredCompaction[None] = TieredCompaction(
+            tiers=[
+                TieredCompaction(tiers=[_RecordingTier('inner', calls, drop=1)], target_tokens=5),
+                _RecordingTier('outer', calls, drop=3),
+            ],
+            target_tokens=15,
+        )
+        messages: list[ModelMessage] = [_user('x' * 40) for _ in range(5)]
+
+        result = await comp.before_model_request(_make_ctx_with_tracer(messages), _make_request_context(messages))
+
+        assert calls == ['inner', 'outer']
+        assert result.messages == messages[-1:]
+        assert 'compaction.target_unreached' not in _compact_spans(capfire)[0]['attributes']
+        assert caplog.messages == []
+
+    async def test_direct_tiered_compact_logs_an_unreachable_target_without_a_span_scope(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        calls: list[str] = []
+        comp: TieredCompaction[None] = TieredCompaction(tiers=[_RecordingTier('only', calls)], target_tokens=1)
+        messages: list[ModelMessage] = [_user('x' * 40)]
+
+        assert await comp.compact(messages, _make_ctx(messages)) == messages
+        assert calls == ['only']
+        assert len(caplog.messages) == 1
+        assert 'estimated 10 tokens' in caplog.messages[0]
+
     async def test_no_span_when_compaction_is_noop(self, capfire: CaptureLogfire) -> None:
         # DeduplicateFileReads has no threshold, so its trigger always fires, but with no
         # superseded reads `compact` returns the history unchanged and no span should be emitted.
@@ -4364,9 +4429,9 @@ class TestKeepUserMessages:
         )
         cache_point = CachePoint()
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart(content=['a' * 100, cache_point, TextContent(content='b' * 100)])]),
-            _assistant('a'),
             _user('b'),
+            _assistant('a'),
+            ModelRequest(parts=[UserPromptPart(content=['a' * 100, cache_point, TextContent(content='b' * 100)])]),
             _assistant('recent'),
         ]
         rc = _make_request_context(messages)
@@ -4403,14 +4468,14 @@ class TestKeepUserMessages:
         short = StructuredContent({'a': 1})
         long = StructuredContent({'b': 'b' * 100}, metadata={'m': 1})
         messages: list[ModelMessage] = [
+            _user('b'),
+            _assistant('a'),
             ModelRequest(
                 parts=[
                     UserPromptPart(content=[short, long]),
                     UserPromptPart(content=[TextContent('c' * 100, metadata={'m': 2})]),
                 ]
             ),
-            _assistant('a'),
-            _user('b'),
             _assistant('recent'),
         ]
         rc = _make_request_context(messages)
@@ -4440,7 +4505,7 @@ class TestKeepUserMessages:
         comp = SummarizingCompaction(
             model='test:m',
             max_messages=3,
-            keep_messages=2,
+            keep_messages=3,
             keep_user_messages=True,
             bridge_prefix=False,
         )
@@ -4450,7 +4515,16 @@ class TestKeepUserMessages:
             conversation_id='conversation-1',
             metadata={'source': 'caller'},
         )
-        messages: list[ModelMessage] = [original, _assistant('a'), _user('second'), _assistant('b')]
+        messages: list[ModelMessage] = [
+            _user('zero'),
+            _assistant('z'),
+            _user('older'),
+            _assistant('o'),
+            original,
+            _assistant('a'),
+            _user('second'),
+            _assistant('b'),
+        ]
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S1')):
             first = await comp.compact(messages, _make_ctx())
         retained = next(message for message in first if isinstance(message, ModelRequest) and message.run_id == 'run-1')
@@ -4467,7 +4541,7 @@ class TestKeepUserMessages:
             model=_recording_summarizer(prompts), max_messages=3, keep_messages=2, keep_user_messages=True
         )
         tagged = ModelRequest(parts=[UserPromptPart([TextContent('KEPT TURN', metadata={'source': 'caller'})])])
-        messages: list[ModelMessage] = [tagged, _assistant('a'), _user('second'), _assistant('b')]
+        messages: list[ModelMessage] = [_user('first'), _assistant('z'), tagged, _assistant('a')]
         first = await comp.compact(messages, _make_ctx(messages))
         continued = repair_messages([*first, _user('third'), _assistant('c'), _user('fourth')])
 
@@ -4492,7 +4566,7 @@ class TestKeepUserMessages:
         comp = SummarizingCompaction(
             model=_recording_summarizer(prompts), max_messages=3, keep_messages=2, keep_user_messages=True
         )
-        messages: list[ModelMessage] = [_user('KEPT TURN'), _assistant('a'), _user('second'), _assistant('b')]
+        messages: list[ModelMessage] = [_user('first'), _assistant('z'), _user('KEPT TURN'), _assistant('a')]
         first = await comp.compact(messages, _make_ctx(messages))
         # The next run merges the retained copy with the request after it, as core's history cleanup does.
         continued = repair_messages([*first, _user('third'), _assistant('c'), _user('fourth')])
@@ -4640,6 +4714,33 @@ class TestKeepUserMessages:
             result = await comp.compact(messages, _make_ctx())
         assert _user_texts(result) == ['turn 1', 'turn 2', 'turn 3']
         assert result[-1] == messages[-1]
+
+    async def test_tail_messages_displaced_by_retained_copies_are_summarized(self):
+        """#11804: messages the copies push out of the `keep_messages` tail go to the summary, not nowhere.
+
+        The copies are the newest user turns of the prefix that is summarized, as many as fit the budget.
+        """
+        prompts: list[str] = []
+        comp = SummarizingCompaction(
+            model=_recording_summarizer(prompts),
+            max_messages=1,
+            keep_messages=4,
+            keep_user_messages=True,
+            preserve_first_user_message=False,
+            bridge_prefix=False,
+        )
+        messages: list[ModelMessage] = []
+        for i in range(1, 11):
+            messages += [_user(f'U{i}'), _assistant(f'A{i}')]
+        messages.append(_user('U11'))
+
+        result = await comp.compact(messages, _make_ctx(messages))
+
+        [prompt] = prompts
+        for text in ('A9', 'U10', 'A10'):
+            assert text in prompt
+        assert _user_texts(result) == ['U7', 'U8', 'U9', 'U10', 'U11']
+        assert result[-1] is messages[-1]
 
     async def test_retained_user_turns_exhausting_single_tail_slot_preserve_current_request(self):
         comp = SummarizingCompaction(

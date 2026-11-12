@@ -181,9 +181,9 @@ def _model_name(model: str | AbstractModel | None) -> str | None:
 
 def _history_model_name(messages: Sequence[ModelMessage]) -> str | None:
     """Return the most recent response's `model_name` -- the family that produced the history."""
-    for msg in reversed(messages):
-        if isinstance(msg, ModelResponse) and msg.model_name:
-            return msg.model_name
+    for message in reversed(messages):
+        if isinstance(message, ModelResponse) and message.model_name:
+            return message.model_name
     return None
 
 
@@ -261,11 +261,13 @@ def format_transcript(
     records, which a compaction records again after the summary, never by the summary.
     """
     elements: list[str] = []
-    for msg in messages:
-        if isinstance(msg, ModelRequest):
-            rendered = [_request_part_element(part, skip_previous_summary, tool_return_max_chars) for part in msg.parts]
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            rendered = [
+                _request_part_element(part, skip_previous_summary, tool_return_max_chars) for part in message.parts
+            ]
         else:
-            rendered = [_response_part_element(part) for part in msg.parts]
+            rendered = [_response_part_element(part) for part in message.parts]
         elements.extend(element for element in rendered if element is not None)
     return '\n'.join(elements)
 
@@ -382,10 +384,10 @@ def _harness_data_element(origin: str, content: str, max_chars: int | None) -> s
 def _extract_system_prompts(messages: list[ModelMessage]) -> list[SystemPromptPart]:
     """Extract leading system-prompt parts from the conversation."""
     parts: list[SystemPromptPart] = []
-    for msg in messages:
-        if not isinstance(msg, ModelRequest):
+    for message in messages:
+        if not isinstance(message, ModelRequest):
             break
-        for part in msg.parts:
+        for part in message.parts:
             if isinstance(part, SystemPromptPart) and not is_legacy_summary(part):
                 parts.append(part)
             elif is_pinned(part) or is_receipt_part(part):
@@ -462,12 +464,12 @@ def extract_previous_summary(messages: list[ModelMessage]) -> str | None:
     opening with `SUMMARY_PREFIX`, and each pass put its own ahead of the older ones, so there the
     first one is the newest.
     """
-    for msg in reversed(messages):
-        for part in reversed(msg.parts):
+    for message in reversed(messages):
+        for part in reversed(message.parts):
             if is_summary_part(part) and part.content:
                 return _without_bridge_prefix(part.content)
-    for msg in messages:
-        for part in msg.parts:
+    for message in messages:
+        for part in message.parts:
             # A request-scoped prompt (such as a `SystemReminders` reminder) is never a summary, whatever its text.
             if is_legacy_summary(part) and part.scope != 'request':
                 return _without_bridge_prefix(part.content[len(SUMMARY_PREFIX) :])
@@ -852,14 +854,14 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
         extra: list[ModelMessage] = []
         if self.keep_user_messages:
-            extra, preserved = self._retain_user_turns(to_summarize, preserved)
+            to_summarize, extra, preserved = self._retain_user_turns(split, to_summarize, preserved)
         elif (
             self.preserve_first_user_message
-            and (first_user_msg := _first_user_message(split)) is not None
-            and split.index(first_user_msg) < cutoff
-            and first_user_msg not in preserved
+            and (first_user_message := _first_user_message(split)) is not None
+            and split.index(first_user_message) < cutoff
+            and first_user_message not in preserved
         ):
-            extra = [_kept_first_user_message(first_user_msg, system_parts)]
+            extra = [_kept_first_user_message(first_user_message, system_parts)]
 
         if self.keep_tokens and all(_adds_nothing_to_summarize(message, extra) for message in to_summarize):
             # A large message can keep the retained token floor and the summary above the trigger;
@@ -902,9 +904,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         return result
 
     def _retain_user_turns(
-        self, to_summarize: list[ModelMessage], preserved: list[ModelMessage]
-    ) -> tuple[list[ModelMessage], list[ModelMessage]]:
-        """The user-turn copies `keep_user_messages` keeps, and the tail they leave room for."""
+        self, split: list[ModelMessage], to_summarize: list[ModelMessage], preserved: list[ModelMessage]
+    ) -> tuple[list[ModelMessage], list[ModelMessage], list[ModelMessage]]:
+        """The prefix to summarize, the user-turn copies `keep_user_messages` keeps, and the tail they leave room for."""
         extra = self._kept_user_messages(to_summarize)
         extra = extra[-self.keep_messages :] if self.keep_messages else []
         if self.keep_tokens == 0:
@@ -921,19 +923,25 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             preserved = preserved[find_safe_cutoff(preserved, 1) :]
         elif self.keep_tokens is None:
             retained_tail_slots = max(1, self.keep_messages - len(extra))
-            if len(preserved) > retained_tail_slots:
-                preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]
-        return extra, preserved
+            displaced = find_safe_cutoff(preserved, retained_tail_slots)
+            if displaced:
+                # The copies took tail slots, so the messages they displaced go to the summary too, and the
+                # copies are re-picked as the newest user turns of that larger prefix, as many as before.
+                preserved = preserved[displaced:]
+                to_summarize = split[: len(split) - len(preserved)]
+                newest = self._kept_user_messages(to_summarize)
+                extra = newest[len(newest) - len(extra) :]
+        return to_summarize, extra, preserved
 
     def _kept_user_messages(self, to_summarize: list[ModelMessage]) -> list[ModelMessage]:
         """Rebuild each summarized user turn as a preserved, size-bounded user message."""
         out: list[ModelMessage] = []
-        for msg in to_summarize:
-            if not isinstance(msg, ModelRequest):
+        for message in to_summarize:
+            if not isinstance(message, ModelRequest):
                 continue
             user_parts = [
                 part
-                for part in msg.parts
+                for part in message.parts
                 if isinstance(part, UserPromptPart)
                 and not is_pinned(part)
                 and not is_receipt_part(part)
@@ -941,12 +949,12 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             ]
             if not user_parts:
                 continue
-            if len(user_parts) == len(msg.parts) and all(_is_kept_user_part(part) for part in user_parts):
+            if len(user_parts) == len(message.parts) and all(_is_kept_user_part(part) for part in user_parts):
                 # An earlier retained copy, as it was stored: kept as the same message, which tells the `keep_tokens`
                 # early exit there's nothing new to summarize.
-                out.append(msg)
+                out.append(message)
             else:
-                out.append(replace(msg, parts=[self._kept_user_part(part) for part in user_parts]))
+                out.append(replace(message, parts=[self._kept_user_part(part) for part in user_parts]))
         return out
 
     def _kept_user_part(self, part: UserPromptPart) -> ModelRequestPart:
@@ -1001,7 +1009,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     ) -> list[ModelMessage]:
         """Insert a receipt after the summary, de-accumulating only outside the protected tail."""
         prefix_end = len(result) - protected_tail
-        deduped = [msg for msg in result[:prefix_end] if not is_receipt_message(msg)]
+        deduped = [message for message in result[:prefix_end] if not is_receipt_message(message)]
         deduped.extend(result[prefix_end:])
         dropped_tokens = estimate_token_count(to_summarize, self.tokenizer)
         handle = discover_transcript_handle(ctx)
@@ -1117,7 +1125,9 @@ async def write_summary(
         tool_return_max_chars=summarizer.tool_return_max_chars,
     )
     prompt = summarizer.summary_prompt.format(messages=formatted)
-    if any(is_harness_data(part) for msg in messages if isinstance(msg, ModelRequest) for part in msg.parts):
+    if any(
+        is_harness_data(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts
+    ):
         prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
 
     if previous_summary is not None:
