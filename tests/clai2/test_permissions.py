@@ -20,6 +20,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse
 from pydantic_ai_harness.deny_unanswered import DEFAULT_MESSAGE, DenyUnanswered
 from pydantic_ai_harness.permissions import (
+    Approver,
     PermissionDecision,
     PermissionMode as HarnessPermissionMode,
     PermissionRequest,
@@ -80,6 +81,16 @@ def removing_agent(folder: Path, ran: list[str]) -> Agent[None, str]:
     return Agent(streamed(respond), deps_type=type(None), tools=[tool])
 
 
+def recording_approver(asked: list[PermissionRequest]) -> Approver:
+    """An approver that approves every call `Permissions` holds, recording each request in `asked`."""
+
+    async def approve(held: PermissionRequest) -> PermissionDecision:
+        asked.append(held)
+        return PermissionDecision(approved=True)
+
+    return approve
+
+
 def runtime(
     tmp_path: Path, agent: Agent[None, str], plugins: Sequence[AgentCapability[None]] = ()
 ) -> tuple[SessionRuntime[None, str], io.StringIO]:
@@ -131,16 +142,9 @@ async def test_only_a_session_no_one_can_be_asked_in_denies_other_approvals(tmp_
             return ModelResponse(parts=[TextPart(f'Tool said: {returned[0].content}')])
         return ModelResponse(parts=[ToolCallPart('publish', {})])
 
-    def publish() -> str:
-        ran.append('publish')
-        return 'published'
-
-    async def approve(held: PermissionRequest) -> PermissionDecision:
-        asked.append(held)
-        return PermissionDecision(approved=True)
-
-    agent = Agent(streamed(respond), deps_type=type(None), tools=[Tool(publish, requires_approval=True)])
-    shell, output = runtime(tmp_path, agent, plugins=(approval_handler(approve),) if attended else ())
+    publish = Tool(lambda: ran.append('publish') or 'published', name='publish', requires_approval=True)
+    agent = Agent(streamed(respond), deps_type=type(None), tools=[publish])
+    shell, output = runtime(tmp_path, agent, plugins=(approval_handler(recording_approver(asked)),) if attended else ())
     shell.send_input('publish it')
     shell.send_input('/exit')
     assert await shell.run() == 'exit'
@@ -312,10 +316,7 @@ def test_the_status_names_the_mode(saved: dict[str, object], shown: str | None) 
 async def test_approval_handler_answers_held_calls_and_backstop_denies_the_rest(tmp_path: Path) -> None:
     ran: list[str] = []
     asked: list[PermissionRequest] = []
-
-    async def approve(held: PermissionRequest) -> PermissionDecision:
-        asked.append(held)
-        return PermissionDecision(approved=True)
+    approve = recording_approver(asked)
 
     agent = removing_agent(tmp_path, ran)
     result = await agent.run('go', capabilities=[*session_permissions(lambda: 'auto'), approval_handler(approve)])
