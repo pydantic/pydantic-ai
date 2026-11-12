@@ -109,7 +109,7 @@ _LOGIN_PATHS = (
 """Paths under `$HOME` that the host reads or runs when the next SSH connection logs in, before the command.
 
 `sshd` runs `~/.ssh/rc` and reads `~/.ssh/environment` and `~/.pam_environment`; the login shell runs the
-command with `-c`, which makes bash run `~/.bashrc` (and default `.bashrc` templates source `~/.bashrc.d/*`,
+command with `-c`, which makes bash run `~/.bashrc` (which on common setups sources `~/.bashrc.d/*`,
 `~/.cargo/env`, and `~/.local/bin/env`), zsh `~/.zshenv`, csh and tcsh `~/.cshrc` or `~/.tcshrc`,
 and fish its `~/.config/fish`. A trailing `/` marks a directory.
 """
