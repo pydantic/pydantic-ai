@@ -627,9 +627,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
     if supports_tool_search:
         profile['tool_deferral_mode'] = 'standalone'
-    # The largest screenshot each model takes: the toolset refuses a larger one (at most 2576 px on the longer side
-    # and 4784 tiles of 28 px, kept below with room for rounding), and the earlier tools send it scaled down while
-    # Claude answers in the smaller image's pixels. Opus 4.7 takes the larger size on `computer_20251124`.
+    # The largest screenshot each model takes. The toolset refuses a larger one: at most 2576 px on the longer side and
+    # 4784 tiles of 28 px, so 3.6 MP leaves room for rounding. The earlier tools scale it down, and Claude answers in
+    # the smaller image's pixels. Opus 4.7 takes the larger size on `computer_20251124`.
     if model_name.startswith((*_COMPUTER_TOOLSET_MODELS, 'claude-opus-4-7')):
         profile['computer_use_screenshot_max_side'] = 2576
         profile['computer_use_screenshot_max_pixels'] = 3_600_000

@@ -430,11 +430,9 @@ class ModelRequestParameters:
         """The name of the function tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that isn't deferred, or `None` if there is none.
 
         A model adapter uses it to find the tool that runs a native tool's calls, through
-        [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by], whatever the tool is called. It
-        leaves out deferred tools, as the check that decides whether a native tool is sent does; that check also
-        refuses a request with more than one, so a native tool's calls never depend on the order of the tools.
-        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind] keeps them, because it
-        names a tool for instructions and tool results.
+        [`executed_by`][pydantic_ai.native_tools.AbstractNativeTool.executed_by]. Unlike
+        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind], it leaves out deferred
+        tools, as the check that decides whether a native tool is sent does.
 
         Args:
             kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
@@ -3165,7 +3163,7 @@ def _supported_native_tools(
     unsupported_natives: list[AbstractNativeTool] = []
     unapplied_settings: dict[str, frozenset[str]] = {}
     for native_tool in params.native_tools:
-        # A tool that falls back from this native tool leaves the request when it is sent, so it can't run its calls.
+        # A tool dropped when this native tool is sent can't run its calls.
         executor_kinds = Counter(
             t.tool_kind
             for t in params.function_tools

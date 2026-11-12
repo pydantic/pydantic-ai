@@ -208,10 +208,8 @@ async def _file_entry(backend: ModalSandboxBackend, entry: modal.types.FileInfo,
 
 
 _DESKTOP_PACKAGES = ('xvfb', 'xdotool', 'scrot', 'x11-utils')
-"""Added to the default image with `desktop`, so a new sandbox's display starts without installing them.
-
-`x11-utils` brings `xwininfo`, which reads the whole screen's size.
-"""
+"""Added to the default image with `desktop`, so the display starts without installing anything. `x11-utils` has
+`xwininfo`."""
 
 
 class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay):
@@ -227,8 +225,8 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
     The protocol is structural, but subclassing it here makes a signature drift fail the type
     check on this class instead of at a distant `WorkspaceBackend` call.
 
-    With `desktop` the sandbox has a display, started on first use and driven with `xdotool` and `scrot`, and the
-    default image includes them. Another Debian or Ubuntu image gets them installed on first use.
+    With `desktop`, the sandbox gets a display on first use. The default image has the programs it needs; another
+    image gets them installed on first use, if it can.
 
     Args:
         sandbox: A live `modal.Sandbox` you already have. Whoever created it owns terminating it.

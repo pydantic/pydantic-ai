@@ -1,24 +1,22 @@
 """`DaytonaDesktop`: display control for a Daytona sandbox, through Daytona's computer-use API.
 
-Behavior verified 2026-10-24 against Daytona's default snapshot (daemon behind `daytona` 0.223.1), with `xev`
-on the sandbox's display. Re-check these before changing the mapping, by running the live display tests in
-`tests/harness/daytona_sandbox/test_daytona_live.py`:
+How Daytona's default snapshot behaves. Re-run the live display tests in
+`tests/harness/daytona_sandbox/test_daytona_live.py` before changing the mapping:
 
-- `computer_use.start()` returns once the display answers, and starting a running desktop is harmless.
-- `VNC_RESOLUTION` set on a new sandbox, such as `1280x800`, is the display's size; without it, or with a smaller size such as `640x400`, 1024x768 (checked 2026-10-29).
+- `computer_use.start()` returns once the display answers; starting a running desktop is harmless.
+- `VNC_RESOLUTION` on a new sandbox sets the display size; without it, or below 1024x768, the size is 1024x768.
 - Screenshots are PNGs at the display's size; a region screenshot is the region at full resolution.
-- `mouse.scroll`'s amount is wheel clicks, and `left`/`right` send X buttons 6 and 7.
+- `mouse.scroll`'s amount is wheel clicks; `left` and `right` send X buttons 6 and 7.
 - Modifiers given to `click`, `scroll` and `press` are held around the event; `cmd` is `Super_L`.
 - `keyboard.down` and `keyboard.up` take letters and named keys, not only modifiers.
-- `keyboard.type` types Unicode text up to U+FFFF, newlines as Enter; it drops emoji and anything else beyond.
-- `keyboard.press` refuses a shifted symbol such as `!`, and names outside its own list: X keysyms such as `KP_Enter`,
-  and print screen, pause, scroll lock and media keys, which it has no name for.
-- Its names for the numpad are `num0` to `num9`, `num_enter`, `num_plus`, `num_minus`, `num_asterisk`, `num_slash`,
-  `num_decimal` and `num_lock` (checked 2026-10-28); `menu` is refused by the display.
-- Pressing `f13` to `f24` crashes the sandbox's computer-use process for good: nothing restarts it.
-- After the sandbox stops and starts, `computer_use.get_status()` says `inactive` and `start()` brings the desktop
-  back; an input request before that start answers 500 and breaks the desktop for good: every later request answers
-  503 until the sandbox stops and starts again (checked 2026-10-28).
+- `keyboard.type` types Unicode up to U+FFFF, newlines as Enter, and drops emoji and anything beyond.
+- `keyboard.press` refuses shifted symbols such as `!`, X keysyms such as `KP_Enter`, and print screen, pause,
+  scroll lock and media keys.
+- Its numpad names are `num0` to `num9`, `num_enter`, `num_plus`, `num_minus`, `num_asterisk`, `num_slash`,
+  `num_decimal` and `num_lock`; the display refuses `menu`.
+- Pressing `f13` to `f24` crashes the computer-use process for good.
+- After the sandbox stops and starts, `get_status()` says `inactive` until `start()`. Input sent before that start
+  breaks the desktop: every request answers 503 until the sandbox stops and starts again.
 """
 
 from __future__ import annotations as _annotations
@@ -61,10 +59,10 @@ _TYPE_TIMEOUT = 120
 """Maximum time for one typing request, of at most `_TYPED_PER_REQUEST` characters."""
 
 _TYPED_PER_REQUEST = 2_000
-"""Characters typed by one request: 2,000 took about 11 s, and 30,000 in one request ran past `_TYPE_TIMEOUT`."""
+"""Characters typed by one request, well inside `_TYPE_TIMEOUT`: 2,000 take about 11 seconds."""
 
 _SCROLLED_PER_REQUEST = 500
-"""Wheel clicks scrolled by one request: 1,000 took about 21 s, near `_REQUEST_TIMEOUT`."""
+"""Wheel clicks scrolled by one request, well inside `_REQUEST_TIMEOUT`: 1,000 take about 21 seconds."""
 
 _BUTTONS = frozenset({'left', 'middle', 'right'})
 
@@ -137,8 +135,8 @@ def _keys(keys: Sequence[str]) -> list[str]:
 class DaytonaDesktop:
     """Controls a Daytona sandbox's desktop, which must already be started, with its computer-use API.
 
-    `computer_use` returns the API of the sandbox the backend has attached, read on every call: the backend attaches
-    again with a new client after closing its old one.
+    `computer_use` returns the attached sandbox's API. It is read on every call, since the backend attaches again
+    with a new client after closing the old one.
     """
 
     def __init__(self, computer_use: Callable[[], AsyncComputerUse]):
@@ -151,8 +149,7 @@ class DaytonaDesktop:
     async def _check_running(self) -> None:
         """Refuse an action on a desktop that stopped, before sending it any input.
 
-        The sandbox may stop and start between any two calls, such as while the model thinks, and input sent to its
-        desktop before the desktop starts again breaks it for good.
+        The sandbox may stop and start between calls, and input sent before its desktop starts again breaks it.
         """
         status = await self._computer_use.get_status(request_timeout=_REQUEST_TIMEOUT)
         if status.status != 'active':
@@ -191,7 +188,7 @@ class DaytonaDesktop:
 
     @asynccontextmanager
     async def _holding(self, keys: Sequence[str]) -> AsyncGenerator[None]:
-        """Hold Daytona's `keys` down, in order; whatever fails or is cancelled, even letting go, lets go of them all."""
+        """Hold Daytona's `keys` down, in order; on any failure or cancel, even while letting go, let go of them all."""
         keyboard = self._computer_use.keyboard
         pressed: list[str] = []
         try:
