@@ -121,8 +121,8 @@ jobs:
       # Docker has no extra: it drives the `docker` CLI that GitHub's Ubuntu runners ship with.
       #
       # Kubernetes upgrades its SDK past the lock: agent-sandbox ships breaking changes in patch
-      # releases, and users get them with `<2`. The upgrade still honours `exclude-newer`, because
-      # the test step below holds every provider's secrets.
+      # releases, and users get them with `<2`. The upgrade still honours `exclude-newer`, and the
+      # test step below gives the Kubernetes leg none of the cloud providers' secrets.
       - run: |
           provider_extra=(--extra "$PROVIDER")
           [ "$PROVIDER" != docker ] || provider_extra=()
@@ -155,13 +155,14 @@ jobs:
           uv run --no-sync pytest -p no:cacheprovider -m "${PROVIDER}_live" "tests/harness/${PROVIDER}_sandbox" -q
         env:
           PROVIDER: ${{ matrix.provider }}
-          # Scoped to this step so checkout and setup never see the secrets.
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
-          SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
-          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-          BOXD_API_KEY: ${{ secrets.BOXD_API_KEY }}
+          # Scoped to this step so checkout and setup never see the secrets. The Kubernetes leg needs
+          # none and runs an SDK newer than the lock, so it gets none.
+          MODAL_TOKEN_ID: ${{ matrix.provider != 'kubernetes' && secrets.MODAL_TOKEN_ID || '' }}
+          MODAL_TOKEN_SECRET: ${{ matrix.provider != 'kubernetes' && secrets.MODAL_TOKEN_SECRET || '' }}
+          E2B_API_KEY: ${{ matrix.provider != 'kubernetes' && secrets.E2B_API_KEY || '' }}
+          SPRITE_TOKEN: ${{ matrix.provider != 'kubernetes' && secrets.SPRITE_TOKEN || '' }}
+          DAYTONA_API_KEY: ${{ matrix.provider != 'kubernetes' && secrets.DAYTONA_API_KEY || '' }}
+          BOXD_API_KEY: ${{ matrix.provider != 'kubernetes' && secrets.BOXD_API_KEY || '' }}
           # The server the OpenSandbox step started; other providers ignore it.
           OPEN_SANDBOX_DOMAIN: 127.0.0.1:8080
 
