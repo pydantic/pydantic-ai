@@ -3267,8 +3267,11 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
-# Uses no `assert`, which `-O` strips from this script too.
-_ARGS_AS_DICT_UNDER_OPTIMIZATION = """
+@pytest.mark.subprocess(reason='`-O` strips `assert` statements only when it starts the interpreter')
+def test_args_as_dict_rejects_non_dict_json_under_optimization():
+    """Non-object JSON stays invalid when `python -O` strips `assert` statements."""
+    # Uses no `assert`, which `-O` strips from this script too.
+    script = """
 import json
 import sys
 
@@ -3285,13 +3288,8 @@ for raw in ['[1, 2, 3]', '"text"', '1', 'null']:
     results[raw] = {'args_as_dict': part.args_as_dict(), 'raise_if_invalid': raised}
 print(json.dumps({'optimize': sys.flags.optimize, 'results': results}))
 """
-
-
-@pytest.mark.subprocess(reason='`-O` strips `assert` statements only when it starts the interpreter')
-def test_args_as_dict_rejects_non_dict_json_under_optimization():
-    """Non-object JSON stays invalid when `python -O` strips `assert` statements."""
     result = subprocess.run(
-        [sys.executable, '-O', '-c', _ARGS_AS_DICT_UNDER_OPTIMIZATION],
+        [sys.executable, '-O', '-c', script],
         capture_output=True,
         text=True,
         env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
