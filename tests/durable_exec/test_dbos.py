@@ -4682,6 +4682,40 @@ class _ReturnToRunModelCapability(AbstractCapability[str]):
 
 
 @dataclass
+class _ClearFallbackModelIdCapability(AbstractCapability[str]):
+    """Clears a fallback attempt's `model_id` in `prepare_model_request`, keeping its model."""
+
+    async def prepare_model_request(
+        self, ctx: RunContext[str], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if request_context.attempt > 1:
+            request_context.model_id = None
+        return request_context
+
+
+async def test_dbos_durability_fallback_alias_cleared_by_hook_is_rejected(dbos: DBOS) -> None:
+    """A fallback candidate whose `model_id` a hook cleared is rejected, not rebuilt as the agent's default model."""
+    agent = Agent(
+        FunctionModel(_dbos_failing_primary, model_name='primary'),
+        name='durability_fallback_alias_cleared',
+        deps_type=str,
+        capabilities=[
+            ModelFallback('tenant-model'),
+            _ClearFallbackModelIdCapability(),
+            ResolveModelId(_dbos_tenant_resolver),
+            DBOSDurability(),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', deps='acme')).output
+
+    with pytest.raises(UserError, match="The model instance 'function:tenant-model' was not registered"):
+        await run_agent()
+
+
+@dataclass
 class _RetryOnAliasCapability(AbstractCapability[str]):
     """Moves a failed request to the 'tenant-model' alias, as a fallback does."""
 

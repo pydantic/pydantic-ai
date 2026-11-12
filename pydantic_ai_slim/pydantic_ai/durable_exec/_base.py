@@ -2070,7 +2070,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         request_model = unwrap_model(request_context.model)
         # Set when `provenance` is a `RetryModelRequest`'s string, to the model that string was resolved to.
         resolved_to = request_context._model_id_resolved_to  # pyright: ignore[reportPrivateUsage]
-        if resolved_to is not None and request_model is unwrap_model(resolved_to):
+        if provenance is not None and resolved_to is not None and request_model is unwrap_model(resolved_to):
             return provenance
         # A hook may move a retried attempt back to the run's model: the run's own string names it then.
         run_provenance = provenance if resolved_to is None else ctx.model_id
