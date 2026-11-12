@@ -229,7 +229,14 @@ for attempt in result.response.failed_attempts or []:
     #> primary error
 ```
 
-The model raises the warning as the attempt's error instead of emitting it, before anything is sent, so it's recorded in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] as an `error` and costs nothing. When every model would ignore a setting, the run ends with a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] of the warnings. Settings on the agent or run reach every candidate, so a guarantee setting only some candidates should honor, like `max_retries` with a Bedrock or xAI model in the chain, belongs on those candidates' own `settings`; otherwise every request skips the others. A nested `FallbackModel` whose own `fallback_on` doesn't name the warning is moved on from as a whole, even if a later model in it honors the setting. Only `UnsupportedSettingWarning` itself turns this on: a supertype like `Exception` doesn't, and a subclass raises a `UserError`. [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] takes it the same way. Under [durable execution](#durable-execution), the warning reaches `ModelFallback` from the model's durable unit as itself, and Temporal doesn't retry the activity, since the same model would raise it again.
+A few things to know about falling back on settings a model would ignore:
+
+- **Nothing is sent.** The model raises the warning as the attempt's error instead of emitting it, before the request goes out, so it's recorded in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] as an `error` and costs nothing.
+- **When every model would ignore a setting, the run raises** a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] of the warnings.
+- **Put a setting only some candidates honor on their own `settings`.** Settings on the agent or run reach every candidate, so a guarantee setting like `max_retries` with a Bedrock or xAI model in the chain makes every request skip that model. On the other candidates' own `settings`, it only goes where it's honored.
+- **A nested `FallbackModel` is moved on from as a whole** when its own `fallback_on` doesn't name the warning, even if a later model in it honors the setting.
+- **Only `UnsupportedSettingWarning` itself turns this on.** A supertype like `Exception` doesn't, and a subclass raises a `UserError`. [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] takes it the same way.
+- **Under [durable execution](#durable-execution)**, the warning reaches `ModelFallback` from the model's durable unit as itself, and Temporal doesn't retry the activity, since the same model would raise it again.
 
 ## In agent specs {#agent-specs}
 
