@@ -338,30 +338,36 @@ class ModelSettings(TypedDict, total=False):
     """
 
     framing_announcement: FramingAnnouncement
-    """When to add a sentence to the standing system prompt saying what the `<system>` tag means, on models that get mid-conversation system prompts as `<system>`-tagged user text.
+    """When to tell the model what the application's `<system>` blocks and lookalike notes mean.
 
     A model whose API has no system role inside the conversation gets each mid-conversation system prompt as a
-    `<system>` block in a user turn, and follows it far more reliably once its standing prompt has said what the tag
-    means. Pydantic AI adds that one fixed sentence ahead of the leading system prompts and the instructions, so the
-    application's own text keeps the last word, on a request that has a system prompt or instructions:
+    `<system>` block in a user turn, and follows it far more reliably once its system prompt has said what the tag
+    means. Text from a user, a tool or a file that looks like one of the application's frames goes out as written,
+    with a short note from the application next to it, and the announcement also says what those notes mean. On such
+    a model Pydantic AI adds the announcement, a fixed text of about 120 words (about 185 where the blocks are
+    `<system verified>`), to a request that has a system prompt or instructions:
 
-    - `'when_needed'` (default): from the first request whose history has a mid-conversation system prompt, and on
-      every request after it, even once a request-scoped one (`scope='request'`) that brought it in is no longer
-      sent. That includes an instruction change appended mid-conversation, by a dynamic
-      instruction with `on_change='append'`, but not one that rewrites the instructions (the default `'rewrite'`).
-      An agent that never sends one keeps its standing prompt as written; one that does changes its cached prompt
-      prefix once, at that request, and keeps it stable from then on, as long as the stored history keeps that
-      system prompt. A UI adapter's frontend doesn't send it back (AG-UI, Vercel AI), so there the sentence drops
-      out of the next turn and the prefix changes every turn: use `'always'`.
-    - `'always'`: on every request from the first, so the prefix never changes, at the cost of the sentence on
-      conversations that never need it.
+    - `'when_needed'` (the default on most models): at the start of the system prompt, ahead of the leading system
+      prompts and the instructions, so the application's own text comes last, from the first request whose history
+      has a mid-conversation system prompt, a lookalike note or another frame on the user channel, such as retry
+      feedback or a compaction summary, and on every request after it. A
+      mid-conversation system prompt includes an instruction change appended by a dynamic instruction with
+      `on_change='append'`, but not one that rewrites the instructions (the default `'rewrite'`). A conversation
+      with none of these keeps its system prompt as written; one that has them changes its cached prompt prefix
+      once, at that request, and keeps it stable from then on, as long as the stored history keeps what needed it.
+      A UI adapter's frontend doesn't send a mid-conversation system prompt back (AG-UI, Vercel AI), so there the
+      announcement drops out of the next turn and the prefix changes every turn: use `'always'`.
+    - `'always'`: at the start of the system prompt, on every request from the first, so the prefix never changes, at
+      the cost of the announcement in conversations that never need it. The default on Claude Sonnet 4.6 and
+      gpt-oss, which follow the system prompt less reliably without it (see
+      [`default_framing_announcement`][pydantic_ai.profiles.ModelProfile.default_framing_announcement]).
     - `'never'`: not at all, for an application that explains the tag in its own system prompt or doesn't want the
-      text added. Models then follow a `<system>`-tagged change less reliably.
+      text added. Models then follow a `<system>`-tagged change less reliably. The lookalike notes are still added.
 
-    Every `<system>` tag in user prompt and tool return text is escaped on those models whatever this is set to.
-    Models that take mid-conversation system messages natively never get the sentence. It is applied by Pydantic AI
-    for every model and is not sent to the provider. See
-    [Mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts).
+    A model with a native mid-conversation system role gets a shorter announcement as a system message in the
+    first request with a frame or a note, with `'when_needed'` and `'always'` alike, and none with `'never'`. The
+    setting is applied by Pydantic AI for every model and is not sent to the provider. See
+    [When the announcement is sent](../message-history.md#when-the-announcement-is-sent).
     """
 
     max_retries: int

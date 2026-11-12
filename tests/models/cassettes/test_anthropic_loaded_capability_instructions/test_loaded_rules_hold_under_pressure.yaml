@@ -32,11 +32,11 @@ interactions:
           text: You are an assistant for a software workspace.
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - file_housekeeping: Deleting, moving and cleaning up workspace files.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -192,10 +192,10 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:file_housekeeping">
+              <pyai:context id="capability:file_housekeeping">
               1. End every reply with the line `-- housekeeping`.
               2. Never call `delete_file`. Use `trash_file` instead, which moves the file to the trash where it can be restored.
-              </context>
+              </pyai:context>
             type: text
           - type: tool_addition
             tool:
@@ -212,11 +212,11 @@ interactions:
           text: You are an assistant for a software workspace.
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - file_housekeeping: Deleting, moving and cleaning up workspace files.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -372,10 +372,10 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:file_housekeeping">
+              <pyai:context id="capability:file_housekeeping">
               1. End every reply with the line `-- housekeeping`.
               2. Never call `delete_file`. Use `trash_file` instead, which moves the file to the trash where it can be restored.
-              </context>
+              </pyai:context>
             type: text
           - type: tool_addition
             tool:
@@ -407,11 +407,11 @@ interactions:
           text: You are an assistant for a software workspace.
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - file_housekeeping: Deleting, moving and cleaning up workspace files.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -600,10 +600,10 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:file_housekeeping">
+              <pyai:context id="capability:file_housekeeping">
               1. End every reply with the line `-- housekeeping`.
               2. Never call `delete_file`. Use `trash_file` instead, which moves the file to the trash where it can be restored.
-              </context>
+              </pyai:context>
             type: text
           - type: tool_addition
             tool:
@@ -646,11 +646,11 @@ interactions:
           text: You are an assistant for a software workspace.
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - file_housekeeping: Deleting, moving and cleaning up workspace files.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -926,10 +926,10 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:file_housekeeping">
+              <pyai:context id="capability:file_housekeeping">
               1. End every reply with the line `-- housekeeping`.
               2. Never call `delete_file`. Use `trash_file` instead, which moves the file to the trash where it can be restored.
-              </context>
+              </pyai:context>
             type: text
           - type: tool_addition
             tool:
@@ -994,11 +994,11 @@ interactions:
           text: You are an assistant for a software workspace.
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - file_housekeeping: Deleting, moving and cleaning up workspace files.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -1256,10 +1256,10 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:file_housekeeping">
+              <pyai:context id="capability:file_housekeeping">
               1. End every reply with the line `-- housekeeping`.
               2. Never call `delete_file`. Use `trash_file` instead, which moves the file to the trash where it can be restored.
-              </context>
+              </pyai:context>
             type: text
           - type: tool_addition
             tool:
@@ -1348,11 +1348,11 @@ interactions:
           text: You are an assistant for a software workspace.
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - file_housekeeping: Deleting, moving and cleaning up workspace files.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -1520,10 +1520,10 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:file_housekeeping">
+              <pyai:context id="capability:file_housekeeping">
               1. End every reply with the line `-- housekeeping`.
               2. Never call `delete_file`. Use `trash_file` instead, which moves the file to the trash where it can be restored.
-              </context>
+              </pyai:context>
             type: text
           - type: tool_addition
             tool:
@@ -1630,11 +1630,11 @@ interactions:
           text: You are an assistant for a software workspace.
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - file_housekeeping: Deleting, moving and cleaning up workspace files.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -1976,10 +1976,10 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:file_housekeeping">
+              <pyai:context id="capability:file_housekeeping">
               1. End every reply with the line `-- housekeeping`.
               2. Never call `delete_file`. Use `trash_file` instead, which moves the file to the trash where it can be restored.
-              </context>
+              </pyai:context>
             type: text
           - type: tool_addition
             tool:
@@ -2111,11 +2111,11 @@ interactions:
           text: You are an assistant for a software workspace.
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - file_housekeeping: Deleting, moving and cleaning up workspace files.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
@@ -2259,10 +2259,10 @@ interactions:
         - role: system
           content:
           - text: |-
-              <context id="capability:file_housekeeping">
+              <pyai:context id="capability:file_housekeeping">
               1. End every reply with the line `-- housekeeping`.
               2. Never call `delete_file`. Use `trash_file` instead, which moves the file to the trash where it can be restored.
-              </context>
+              </pyai:context>
             type: text
           - type: tool_addition
             tool:
@@ -2413,11 +2413,11 @@ interactions:
           text: You are an assistant for a software workspace.
         - type: text
           text: |-
-            <context id="capability:deferred_capabilities">
+            <pyai:context id="capability:deferred_capabilities">
             The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
             - file_housekeeping: Deleting, moving and cleaning up workspace files.
-            </context>
-            A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+            </pyai:context>
+            A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         tool_choice:
           type: auto
         tools:
