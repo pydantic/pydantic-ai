@@ -5009,6 +5009,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.unsupported_native_tool_settings"
       ]
     },
+    "ModelRequestContext._model_id_resolved_to": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_id_for_request"
+      ]
+    },
     "ModelRequestContext.attempt": {
       "engines": [
         "durable_exec"

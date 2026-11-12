@@ -4604,6 +4604,68 @@ async def test_dbos_durability_per_step_model_selector_alias_resolved_by_capabil
     assert await run_agent() == 'tenant:acme'
 
 
+def _dbos_failing_primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelAPIError(model_name='primary', message='boom')
+
+
+async def test_dbos_durability_fallback_to_alias_resolved_by_capability(dbos: DBOS) -> None:
+    """A `ModelFallback` candidate only a `ResolveModelId` capability can resolve crosses the step boundary.
+
+    The candidate isn't the run's model, so it isn't recovered from `ctx.model`, and it isn't in `models=`:
+    the string the attempt was resolved from must be what the step re-resolves, with the run's deps.
+    """
+    agent = Agent(
+        FunctionModel(_dbos_failing_primary, model_name='primary'),
+        name='durability_fallback_capability_alias',
+        deps_type=str,
+        capabilities=[ModelFallback('tenant-model'), ResolveModelId(_dbos_tenant_resolver), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', deps='acme')).output
+
+    assert await run_agent() == 'tenant:acme'
+
+
+@dataclass
+class _SwapFallbackModelCapability(AbstractCapability[str]):
+    """Moves a fallback attempt to an unregistered model in `prepare_model_request`, keeping its `model_id`."""
+
+    async def prepare_model_request(
+        self, ctx: RunContext[str], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if request_context.attempt > 1:
+            request_context.model = FunctionModel(_dbos_failing_primary, model_name='swapped')
+        return request_context
+
+
+async def test_dbos_durability_fallback_alias_swapped_by_hook_is_rejected(dbos: DBOS) -> None:
+    """A hook that moves a fallback attempt to another model invalidates the string the candidate was resolved from.
+
+    Rebuilding the candidate from it would send the request to a model the hook didn't choose, so the
+    unregistered model the hook chose is rejected instead.
+    """
+    agent = Agent(
+        FunctionModel(_dbos_failing_primary, model_name='primary'),
+        name='durability_fallback_alias_swapped',
+        deps_type=str,
+        capabilities=[
+            ModelFallback('tenant-model'),
+            _SwapFallbackModelCapability(),
+            ResolveModelId(_dbos_tenant_resolver),
+            DBOSDurability(),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', deps='acme')).output
+
+    with pytest.raises(UserError, match="The model instance 'function:swapped' was not registered"):
+        await run_agent()
+
+
 @dataclass
 class _WrapRequestModelCapability(AbstractCapability[str]):
     """Swaps a transparent `WrapperModel` around the request's model in `before_model_request`."""

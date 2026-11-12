@@ -607,8 +607,9 @@ class ModelRequestContext:
 
     Durable-execution capabilities carry this across the activity/step/task boundary in preference
     to the resolved model's own `model_id`, so an aliased model round-trips as the original string
-    the worker-side resolution chain can re-resolve. Only meaningful while `model` is still the run's
-    resolved model — a model swapped in by a hook invalidates it.
+    the worker-side resolution chain can re-resolve. Only meaningful while `model` is still the model
+    it was resolved to — the run's, or the one a `RetryModelRequest` named by a string — a model swapped
+    in by a hook invalidates it.
     """
 
     streaming: bool = False
@@ -643,6 +644,10 @@ class ModelRequestContext:
     _usage_response_ledger: _ModelRequestUsageLedger = field(
         default_factory=_ModelRequestUsageLedger, repr=False, compare=False
     )
+    _model_id_resolved_to: Model | None = field(default=None, repr=False, compare=False)
+    """The model `model_id` was resolved to for an attempt on another model than the run's: one a
+    [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] named by a string. While `model` is
+    still that model, `model_id` is its selection token as it is for the run's model."""
     _serving_wrapper: tuple[Model, Model] | None = field(default=None, repr=False, compare=False)
     """The model a capability's `get_wrapper_model` returned to serve the request, which is entered around it, and
     the model it wraps, whose lifecycle its owner manages."""
