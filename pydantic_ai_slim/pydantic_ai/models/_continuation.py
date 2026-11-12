@@ -316,21 +316,22 @@ def mark_run_suspended(error: BaseException) -> None:
     setattr(error, _RUN_SUSPENDED, True)
 
 
-async def cancel_abandoned_job(model: Model, response: ModelResponse, error: BaseException) -> None:
+async def cancel_abandoned_job(model: Model, response: ModelResponse, error: BaseException) -> bool:
     """Cancel the job of the suspended response `error` made a continuation loop give up on, unless already done.
 
-    A job is left running when `error` suspends a durable run that continues it later, see `mark_run_suspended`.
+    Returns whether the job is cancelled now: `False` when it's left running because `error` suspends a durable run
+    that continues it later, see `mark_run_suspended`.
 
     The marker only reaches the loop when the model raises it there directly. So the job may still be cancelled
     twice when the model that cancelled it ran in a durable unit, whose error the workflow rebuilds without the
     marker, or when what it cancelled was a rejected response that was still suspended, rather than the response
     being continued, though that is usually the same job.
     """
-    if (
-        getattr(error, _SUSPENDED_JOB_CANCELLED, False) is not True
-        and getattr(error, _RUN_SUSPENDED, False) is not True
-    ):
+    if getattr(error, _RUN_SUSPENDED, False) is True:
+        return False
+    if getattr(error, _SUSPENDED_JOB_CANCELLED, False) is not True:
         await cancel_suspended_job(model, response)
+    return True
 
 
 async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:
@@ -544,8 +545,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
             except BaseException as error:
                 # Nothing will continue the job now, so cancel it, as a failure to open the segment does, unless the
                 # wait suspended a durable run that continues it later.
-                await cancel_abandoned_job(self.model, seed, error)
-                self._job_cancelled = True
+                self._job_cancelled = await cancel_abandoned_job(self.model, seed, error)
                 raise
             messages = [*self.base_messages, seed]
         stack = AsyncExitStack()
@@ -564,8 +564,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 )
         except BaseException as error:
             if seed is not None:
-                await cancel_abandoned_job(self.model, seed, error)
-                self._job_cancelled = True
+                self._job_cancelled = await cancel_abandoned_job(self.model, seed, error)
             raise
         self._primed_segment = (stack, sub)
         # The segment is in flight from here, so a `cancel()` before iteration starts reaches its server-side
@@ -742,8 +741,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                 and response.state == 'suspended'
                 and not (self._cancelled or self._stopped or self._detached)
             ):
-                await cancel_abandoned_job(self.model, response, error)
-                self._job_cancelled = True
+                self._job_cancelled = await cancel_abandoned_job(self.model, response, error)
             raise
         finally:
             # Finalize an interrupted segment only after its generator has unwound, as teardown can stamp
