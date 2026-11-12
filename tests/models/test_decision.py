@@ -10,7 +10,7 @@ from typing import Annotated, Any, ClassVar, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, WithJsonSchema, field_validator
+from pydantic import BaseModel, Field, JsonValue, WithJsonSchema, field_validator
 
 from pydantic_ai import Agent, BinaryContent, BoolCriteria, DocumentUrl, ModelRetry, RunContext, Tool, ToolOutput
 from pydantic_ai.capabilities import FileUnderstanding, Instrumentation
@@ -58,6 +58,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsStr, legacy_retry_prompt_part, try_import
+from .conftest import items_serialized_differently_inside_a_list
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
@@ -255,17 +256,9 @@ async def test_decision_model_keeps_structured_tool_return_items_beside_an_image
     )
 
 
-class InfAsString(BaseModel):
-    model_config = ConfigDict(ser_json_inf_nan='strings')
-    value: float
-
-
 async def test_decision_model_serializes_tool_return_items_beside_an_image_as_alone(allow_model_requests: None):
     """Each item beside an image is serialized as it is alone: own settings, keys as dumped, no extra nesting level."""
-    deep: object = {'leaf': 1}
-    for _ in range(253):
-        deep = {'child': deep}
-    items: list[object] = [InfAsString(value=float('inf')), {1: 'a', '1': 'b'}, deep]
+    items = items_serialized_differently_inside_a_list()
     alone = ','.join(ToolReturnPart('t', item, tool_call_id='x').model_response_str() for item in items)
     image = BinaryContent(b'tool', media_type='image/png')
     history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Check the readings.')])]

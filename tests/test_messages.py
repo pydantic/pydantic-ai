@@ -14,7 +14,7 @@ from types import FrameType
 from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
 
 from pydantic_ai import (
@@ -98,6 +98,7 @@ from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
+from .models.conftest import items_serialized_differently_inside_a_list
 
 with try_import() as openai_import_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -3151,11 +3152,6 @@ def test_tool_return_part_response_methods_with_files():
     assert p_multi.model_response_object() == snapshot({'return_value': ['a', 'b']})
 
 
-class InfAsString(BaseModel):
-    model_config = ConfigDict(ser_json_inf_nan='strings')
-    value: float
-
-
 def test_tool_return_part_model_response_str_and_user_content():
     img = ImageUrl(url='https://example.com/img.png')
 
@@ -3236,10 +3232,7 @@ def test_tool_return_part_model_response_str_and_user_content():
 
     # Each item beside a file is serialized as it is alone: with its own settings, its keys as it dumps them, and no
     # extra nesting level against the serializer's depth limit.
-    deep: object = {'leaf': 1}
-    for _ in range(253):
-        deep = {'child': deep}
-    for item in [InfAsString(value=float('inf')), {1: 'a', '1': 'b'}, deep]:
+    for item in items_serialized_differently_inside_a_list():
         alone = ToolReturnPart(tool_name='t', content=item, tool_call_id='c8').model_response_str()
         text, _ = ToolReturnPart(
             tool_name='t', content=[item, img], tool_call_id='c8'

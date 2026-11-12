@@ -21,7 +21,7 @@ import httpx2
 import pytest
 from cassetter import Cassette
 from dirty_equals import IsJson
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, WithJsonSchema
+from pydantic import BaseModel, Field, JsonValue, ValidationError, WithJsonSchema
 from pydantic.json_schema import JsonSchemaValue
 
 from pydantic_ai import (
@@ -89,6 +89,7 @@ from ..conftest import (
     legacy_retry_prompt_part,
     try_import,
 )
+from .conftest import items_serialized_differently_inside_a_list
 from .mock_openai import with_history_digests
 from .test_system_one import Captured, Frustration, Handler, Ticket
 
@@ -1602,11 +1603,6 @@ async def test_failed_tool_return_keeps_a_structured_item_beside_an_image(allow_
     )
 
 
-class InfAsString(BaseModel):
-    model_config = ConfigDict(ser_json_inf_nan='strings')
-    value: float
-
-
 @pytest.mark.parametrize('outcome', ['failed', 'retried'])
 async def test_failed_tool_return_serializes_items_beside_an_image_as_alone(
     allow_model_requests: None, outcome: Literal['failed', 'retried']
@@ -1615,10 +1611,7 @@ async def test_failed_tool_return_serializes_items_beside_an_image_as_alone(
 
     Mocks the transport: the cassette matchers ignore the request body, so a recording would not pin it.
     """
-    deep: object = {'leaf': 1}
-    for _ in range(253):
-        deep = {'child': deep}
-    items: list[object] = [InfAsString(value=float('inf')), {1: 'a', '1': 'b'}, deep]
+    items = items_serialized_differently_inside_a_list()
     alone = ','.join(ToolReturnPart('t', item, tool_call_id='x').model_response_str() for item in items)
     image = BinaryContent(b'tool-image', media_type='image/png')
     history: list[ModelMessage] = [
