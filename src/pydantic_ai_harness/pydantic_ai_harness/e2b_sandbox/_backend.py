@@ -18,9 +18,8 @@ which is not. envd types only a missing path; its other path failures arrive as 
 (`InvalidArgumentException`) or a 500 (`SandboxException`) whose message carries envd's wording
 or Go's errno text, which `_path_error` reads.
 
-The `desktop` template verified 2026-10-24 against a live sandbox: Ubuntu 22.04 with Xvfb, XFCE
-(`startxfce4`), `xdotool`, `scrot` 1.7, `setsid` and `google-chrome`, and no X server running at boot; the
-`e2b-desktop` package starts Xvfb and XFCE itself after creating it.
+The `desktop` template has Xvfb, XFCE (`startxfce4`), `xdotool`, `scrot`, `setsid` and
+`google-chrome`, but runs no X server at boot: the `e2b-desktop` package starts its own.
 """
 
 from __future__ import annotations
@@ -136,13 +135,13 @@ _START_VIEWER = (
     '[ -s "$d/password" ] || tr -dc A-Za-z0-9 </dev/urandom | head -c 8 > "$d/password"; '
     'if ! pgrep -x x11vnc >/dev/null; then '
     'x11vnc -storepasswd "$(cat "$d/password")" "$d/passwd" >/dev/null 2>&1; '
-    # Each log is emptied before its program starts: the redirect runs in the background child, so a check could
-    # otherwise read the line an earlier run left, before the child empties it.
+    # Empty each log before its program starts: the redirect runs in the background child, so the check could read
+    # an earlier run's line first.
     ': >"$d/x11vnc.log"; '
     f'setsid x11vnc -display {DISPLAY} -forever -shared -localhost -noipv6 -rfbport 5900 -rfbauth "$d/passwd" '
     '>"$d/x11vnc.log" 2>&1 9>&- & '
-    # It writes its port once it listens, and exits without one, such as when the port is taken. On IPv4 only, where
-    # the viewer connects: with the IPv4 port taken it would otherwise listen on IPv6 alone and still write it.
+    # x11vnc writes its port once it listens, and exits without one if the port is taken. `-noipv6`: with the IPv4
+    # port taken it would listen on IPv6 alone, where the viewer can't connect, and still write the port.
     + wait_until_ready('grep -q "^PORT=5900" "$d/x11vnc.log" 2>/dev/null', '$!', 'the VNC server', '"$d/x11vnc.log"')
     + "fi; if ! pgrep -f '[w]ebsockify' >/dev/null; then "
     ': >"$d/novnc.log"; '
@@ -152,8 +151,8 @@ _START_VIEWER = (
     )
     + 'fi; cat "$d/password"'
 )
-"""Starts the template's VNC server and noVNC viewer behind a password, unless they are running, and prints the
-password. Both run until the sandbox stops, so they close the lock, which is released when the script exits."""
+"""Starts the template's VNC server and noVNC viewer behind a password, unless they run, and prints the password.
+Both outlive the script, so they close the lock."""
 
 _XFCE_ON_DISPLAY = (
     '(for p in $(pgrep -x xfce4-session); do '
@@ -168,12 +167,11 @@ _START_DESKTOP = start_x_server(_XVFB_LOG) + (
     'until xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1 || [ $i -ge 100 ]; do '
     'sleep 0.1; i=$((i+1)); done; fi'
 )
-"""Starts an X display of the size `$1` names, such as `1280x800`, unless one is running, and the XFCE desktop.
+"""Starts an X display of the size `$1` names, such as `1280x800`, unless one runs, and the XFCE desktop.
 
-XFCE starts unless its session is running on the display, so starting it every time recovers one that died, and the script waits up
-to 10 seconds for its desktop window, so the first screenshot isn't black; a template without XFCE gets a display with
-no window manager. Output goes to files, not the command's stream, which E2B keeps open while a background child holds
-it.
+XFCE starts unless its session runs on the display, which recovers one that died. The script then waits up to 10
+seconds for the desktop window, so the first screenshot isn't black. A template without XFCE gets a display with no
+window manager. Output goes to files, since E2B keeps a command open while a background child holds its output.
 """
 
 
@@ -307,8 +305,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
     The E2B SDK runs every request on asyncio, so under Trio every operation raises
     `UserError` before it reaches E2B.
 
-    With `desktop` the sandbox has a display, started on first use and driven with `xdotool` and
-    `scrot`, so a custom template needs Xvfb, `xdotool`, `scrot` and `setsid`.
+    With `desktop`, the sandbox gets a display on first use. A custom template then needs Xvfb,
+    `xdotool`, `scrot` and `setsid`.
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
@@ -837,10 +835,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         return self._display
 
     async def live_view_url(self) -> str:
-        """A link to watch the desktop, and use it, in a browser, through the template's noVNC viewer.
+        """A link to watch and use the desktop in a browser, through the template's noVNC viewer.
 
-        The link carries the viewer's password: anyone with it can see and use the desktop while the sandbox runs.
-        The password is after the `#`, which the browser keeps and doesn't send to E2B's servers.
+        The link carries the viewer's password, so anyone with it can see and use the desktop while the sandbox
+        runs. The password is after the `#`, which the browser doesn't send to E2B's servers.
         """
         if self._display is None:
             raise UserError('This E2B sandbox has no display: create it with `desktop=True`.')

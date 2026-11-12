@@ -2333,9 +2333,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
 
         if native_computer and computer_blocks:
-            # A response's toolset member calls are one batch, run in order and stopped at the first failure, so they
-            # become one `computer` call where the first of them was. Text may sit between them; another tool call
-            # can't, as it would then run after calls Claude made after it.
+            # A response's toolset member calls are one batch, run in order until one fails, so they become one
+            # `computer` call at the first one's place. Text may sit between them; another tool call can't, since it
+            # would then run after calls Claude made after it.
             items.insert(computer_index, native_computer.call_part(computer_blocks, self.system, split=split))
 
         finish_reason: FinishReason | None = None
@@ -3853,11 +3853,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
         """One result per toolset member call, as the toolset requires.
 
-        The calls that ran get `OK` and what their actions returned, such as a zoom's image, and the last of
-        them the screenshot, since an error result can hold only text; the failed call gets its error and the rest
-        Anthropic's not-executed text. When the first call failed, it carries the screenshot instead, so it says it
-        failed in its text rather than as an error. A failed or denied result doesn't say which calls ran, and nor
-        does one without its outcome, such as one a UI rebuilt, so each call gets its text.
+        The calls that ran get `OK` and what their actions returned, such as a zoom's image, and the last of them the
+        screenshot, since an error result can hold only text. The failed call gets its error, and the rest Anthropic's
+        not-executed text. When the first call failed, it carries the screenshot, so it states the failure in text
+        rather than as an error. A failed, denied or UI-rebuilt result doesn't say which calls ran, so each call gets
+        its text.
         """
 
         def result(block: ComputerBlock, is_error: bool, *content: beta_tool_result_block_param.Content):
@@ -3878,16 +3878,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         counts = replay['computer_action_counts']
         ends = list(itertools.accumulate(counts))
         metadata = part.result if isinstance(part, ComputerReturnPart) else None
-        # The content is a summary, what each action that returns something returned, then the screen (or the note
-        # that replaced it in this request). Read as validated, content stored as a JSON string reads as its list.
+        # A summary, what each action returned, then the screen (or the note that replaced it in this request). Read
+        # as validated, so content stored as a JSON string still reads as a list.
         typed = part.typed_content if isinstance(part, ComputerReturnPart) else None
         content: list[Any] = list(typed) if typed is not None else part.content_items(mode='str')
         outputs = list(content[1:-1])
         screen = content[-1] if len(content) > 1 else None
         if metadata is None or metadata.get('changed'):
-            # Not an outcome of these calls, such as text a guardrail returned instead, or a call changed before it
-            # ran: each call gets the summary rather than `OK`, and the last one the rest.
-            # A hook may have left no content at all: each call still gets a result.
+            # Not an outcome of these calls, such as a guardrail's text or a call changed before it ran: each call gets
+            # the summary instead of `OK`, and the last one the rest. With no content at all, each still gets a result.
             mapped = [await self._map_tool_result_item(item, map_context) for item in content]
             return [
                 result(block, False, *(mapped if index == len(blocks) - 1 else mapped[:1]))
@@ -4169,8 +4168,7 @@ class _MapMessagesContext:
     system_prompt_parts: list[str] = field(default_factory=list[str])
     anthropic_messages: list[BetaMessageParam] = field(default_factory=list[BetaMessageParam])
     rendered_tool_additions: set[str] = field(default_factory=set[str])
-    # The `provider_details` of computer calls sent back as toolset member calls, by call ID: their results must be one
-    # per member call.
+    # The `provider_details` of calls sent back as toolset member calls, by call ID, since each member needs a result.
     computer_calls: dict[str, ComputerReplay] = field(default_factory=dict[str, ComputerReplay])
 
 
