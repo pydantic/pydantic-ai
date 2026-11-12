@@ -206,7 +206,15 @@ async def test_the_run_waits_for_the_decision_and_a_new_worker_resumes_it_withou
 ) -> None:
     client = env.client
     task_queue = f'approvals-{uuid.uuid4()}'
-    async with _worker(client, task_queue, ApprovalsWorkflow, _approvals_agent):
+    # Caching nothing keeps the workflow off this worker's sticky queue, so the next worker picks it up right away.
+    async with Worker(
+        client,
+        task_queue=task_queue,
+        workflows=[ApprovalsWorkflow],
+        plugins=[AgentPlugin(_approvals_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        max_cached_workflows=0,
+    ):
         handle = await _start(client, task_queue)
         token = await _until_asked(handle, records)
     assert token.startswith(f'{handle.id}:'), 'the token names the workflow'
@@ -290,7 +298,8 @@ async def test_answers_from_ask_are_recorded_and_the_run_continues_without_waiti
 
     history = await handle.fetch_history()
     # One local activity per wait called `ask`, and nothing was signalled.
-    assert len([event for event in history.events if event.HasField('marker_recorded_event_attributes')]) == 2
+    markers = [event.marker_recorded_event_attributes.marker_name for event in history.events]
+    assert markers.count('core_local_activity') == 2
     assert not any(event.HasField('workflow_execution_signaled_event_attributes') for event in history.events)
     assert records.deleted == ['a.txt', 'b.txt']
 

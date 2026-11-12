@@ -9,6 +9,7 @@ from pydantic_ai.framing import close_tag, neutralize_tags, open_tag, register_t
 from pydantic_ai.messages import TextContent, ToolReturn, UserContent
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness.ask_user._events import AskUserRequestedEvent
 from pydantic_ai_harness.ask_user._types import (
     TOOL_NAME,
@@ -112,7 +113,10 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
             request = AskUserRequest(questions=tuple(questions))
         else:
             request = AskUserRequest(questions=tuple(questions), id=ctx.tool_call_id or '')
-        await ctx.emit(AskUserRequestedEvent(request=request))
+        # Under Temporal the tool runs in an activity, which can't emit events yet, so the question is
+        # still deferred and answered, without the event.
+        if (events := event_ctx(ctx, 'AskUser')) is not None:
+            await events.emit(AskUserRequestedEvent(request=request))
         # The questions as the tool received them, so `AskUser` asks those even when a hook such as an
         # argument guard rewrote the call's arguments, and the request's ID, journaled with the deferral
         # in a durable run so a replay asks under the same ID.
