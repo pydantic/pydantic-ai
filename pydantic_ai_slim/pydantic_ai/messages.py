@@ -10,7 +10,7 @@ import os
 import sys
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import KW_ONLY, InitVar, dataclass, field, replace
@@ -1739,6 +1739,16 @@ def _tool_return_text(value: Any) -> str:
     return dumped.decode()
 
 
+def _tool_return_items_json(items: Iterable[object]) -> str:
+    """A JSON array of `items`, each serialized as it is when it is a tool's whole return value.
+
+    Each item's own JSON text is joined into the array rather than the list dumped whole: that would serialize
+    every item one level deeper, so a value nested just under the serializer's depth limit would fail in the array
+    though it serializes alone.
+    """
+    return f'[{",".join(tool_return_ta.dump_json(item, by_alias=True).decode() for item in items)}]'
+
+
 class _StrPassthrough:
     """The `str` arm of `ToolReturnContent`, matched entirely in Rust in both validation modes.
 
@@ -2666,8 +2676,7 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
         tool_content_parts: list[object] = []
         file_content: list[UserContent] = []
 
-        # `jsonable`, not `str`: an item rendered to its JSON text here would be JSON-encoded again by the dump below.
-        for item in self.content_items(mode='jsonable', wrap_if_error=False):
+        for item in self.content_items():
             if is_multi_modal_content(item):
                 tool_content_parts.append(f'See file {item.identifier}.')
                 open_tag, close_tag = _tool_result_provenance_tags(self.tool_name, self.tool_call_id, item.identifier)
@@ -2681,7 +2690,7 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
             file_references = [f'See file {file.identifier}.' for file in files]
             return tool_return_ta.dump_json([error, *file_references]).decode(), file_content
         if was_list:
-            return tool_return_ta.dump_json(tool_content_parts).decode(), file_content
+            return _tool_return_items_json(tool_content_parts), file_content
         # Content that isn't a list but has a file is that one file, so its 'See file ...' reference is the whole text.
         [reference] = tool_content_parts
         assert isinstance(reference, str)

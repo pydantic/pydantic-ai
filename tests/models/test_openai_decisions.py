@@ -21,7 +21,7 @@ import httpx2
 import pytest
 from cassetter import Cassette
 from dirty_equals import IsJson
-from pydantic import BaseModel, Field, JsonValue, ValidationError, WithJsonSchema
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, WithJsonSchema
 from pydantic.json_schema import JsonSchemaValue
 
 from pydantic_ai import (
@@ -1597,6 +1597,42 @@ async def test_failed_tool_return_keeps_a_structured_item_beside_an_image(allow_
             {'role': 'user', 'content': 'Is it warm?'},
         ]
     )
+
+
+class InfAsString(BaseModel):
+    model_config = ConfigDict(ser_json_inf_nan='strings')
+    value: float
+
+
+@pytest.mark.parametrize('outcome', ['failed', 'retried'])
+async def test_failed_tool_return_serializes_items_beside_an_image_as_alone(
+    allow_model_requests: None, outcome: Literal['failed', 'retried']
+):
+    """Each item beside an image is serialized as it is alone: own settings, keys as dumped, no extra nesting level."""
+    deep: object = {'leaf': 1}
+    for _ in range(253):
+        deep = {'child': deep}
+    items: list[object] = [InfAsString(value=float('inf')), {1: 'a', '1': 'b'}, deep]
+    alone = ','.join(ToolReturnPart('t', item, tool_call_id='x').model_response_str() for item in items)
+    image = BinaryContent(b'tool-image', media_type='image/png')
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Check the readings.'),
+        ModelResponse(parts=[ToolCallPart('read', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('read', [*items, image], tool_call_id='tool-1', outcome=outcome)]),
+    ]
+    captured = Captured(boolean_answers)
+
+    await Agent(mock_model(captured), output_type=bool, instructions='Are they valid?').run(
+        'Are they valid?', message_history=history
+    )
+
+    request_body: JsonValue = json.loads(captured.requests[0].content)
+    assert isinstance(request_body, dict) and isinstance(request_body['input'], list)
+    [output] = [item['output'] for item in request_body['input'] if isinstance(item, dict) and 'output' in item]
+    assert isinstance(output, list) and isinstance(output[0], dict)
+    labelled = f'[{alone},"<image 1>"]'
+    error = labelled if outcome == 'retried' else json.dumps(labelled)
+    assert output[0]['text'] == f'{{"error":{error}}}'
 
 
 def pick_first_route(body: DecisionCreateParams) -> httpx2.Response | None:

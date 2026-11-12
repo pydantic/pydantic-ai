@@ -10,7 +10,7 @@ from typing import Annotated, Any, ClassVar, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field, JsonValue, WithJsonSchema, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, WithJsonSchema, field_validator
 
 from pydantic_ai import Agent, BinaryContent, BoolCriteria, DocumentUrl, ModelRetry, RunContext, Tool, ToolOutput
 from pydantic_ai.capabilities import FileUnderstanding, Instrumentation
@@ -253,6 +253,43 @@ async def test_decision_model_keeps_structured_tool_return_items_beside_an_image
             'text': 'Decide.',
         }
     )
+
+
+class InfAsString(BaseModel):
+    model_config = ConfigDict(ser_json_inf_nan='strings')
+    value: float
+
+
+async def test_decision_model_serializes_tool_return_items_beside_an_image_as_alone(allow_model_requests: None):
+    """Each item beside an image is serialized as it is alone: own settings, keys as dumped, no extra nesting level."""
+    deep: object = {'leaf': 1}
+    for _ in range(253):
+        deep = {'child': deep}
+    items: list[object] = [InfAsString(value=float('inf')), {1: 'a', '1': 'b'}, deep]
+    alone = ','.join(ToolReturnPart('t', item, tool_call_id='x').model_response_str() for item in items)
+    image = BinaryContent(b'tool', media_type='image/png')
+    history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Check the readings.')])]
+    for index, outcome in enumerate(('success', 'failed', 'retried'), start=1):
+        history.append(ModelResponse(parts=[ToolCallPart('read', {}, tool_call_id=f'tool-{index}')]))
+        history.append(
+            ModelRequest(parts=[ToolReturnPart('read', [*items, image], tool_call_id=f'tool-{index}', outcome=outcome)])
+        )
+    model = ImageEnabledDecisionModel()
+
+    await Agent(model, output_type=bool, instructions='Are they valid?').run('Decide.', message_history=history)
+
+    [request] = model.requests
+    assert isinstance(request.state, dict) and isinstance(request.state['history'], list)
+    assert [entry for entry in request.state['history'] if isinstance(entry, dict) and 'tool_return' in entry] == [
+        {'tool_return': {'name': 'read', 'content': f'[{alone},"<image 1>"]'}},
+        {
+            'tool_return': {
+                'name': 'read',
+                'content': json.dumps({'error': f'[{alone},"<image 2>"]'}, separators=(',', ':')),
+            }
+        },
+        {'tool_return': {'name': 'read', 'content': f'{{"error":[{alone},"<image 3>"]}}'}},
+    ]
 
 
 class Release(BaseModel):

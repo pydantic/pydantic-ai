@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import dataclasses
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -71,6 +70,7 @@ from .decision import (
     NoulQuestion,
     ScoreAnswer,
     ScoreQuestion,
+    _labelled_tool_return_text,  # pyright: ignore[reportPrivateUsage]
     _probability_bounds,  # pyright: ignore[reportPrivateUsage]
     _score_fits,  # pyright: ignore[reportPrivateUsage]
     _text,  # pyright: ignore[reportPrivateUsage]
@@ -405,7 +405,7 @@ class _Conversation:
         if part.outcome in ERROR_OUTCOMES:
             labelled: list[object] = []
             images: ResponseFunctionCallOutputItemListParam = []
-            for item in part.content_items(mode='jsonable', wrap_if_error=False):
+            for item in part.content_items():
                 if not is_multi_modal_content(item):
                     labelled.append(item)
                 else:
@@ -415,7 +415,7 @@ class _Conversation:
                     images.append(
                         ResponseInputImageContentParam(type='input_image', image_url=image.data_uri, detail=detail)
                     )
-            text = dataclasses.replace(part, content=labelled).model_response_str()
+            text = _labelled_tool_return_text(part, labelled)
             return [ResponseInputTextContentParam(type='input_text', text=text), *images]
         for item in part.content_items(mode='str'):
             if isinstance(item, str):
