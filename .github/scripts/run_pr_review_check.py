@@ -34,8 +34,9 @@ _TSV_ESCAPES: dict[str, str] = {'\\': '\\', 't': '\t', 'n': '\n', 'r': '\r'}
 # Slack reads `<url|label>`, `<!channel>` and entities in webhook text as formatting, so model text arrives escaped.
 _SLACK_ESCAPES = str.maketrans({'&': '&amp;', '<': '&lt;', '>': '&gt;'})
 PRIVATE_REPORT_LIMIT = 3000
-# Some models wrap the requested JSON object in one Markdown code fence despite the prompt. Text around it still fails.
-_FENCE = re.compile(r'\A\s*```[\w+-]*[ \t]*\n(.*)\n[ \t]*```\s*\Z', re.DOTALL)
+# Some models write prose, then the requested JSON object in a Markdown code fence, despite the prompt.
+# The last fenced block is the answer when it ends the text; text after it still fails.
+_FENCE = re.compile(r'\A(?:.*\n)?[ \t]*```[\w+-]*[ \t]*\n(.*?)\n[ \t]*```\s*\Z', re.DOTALL)
 
 _EVENT = TypeAdapter(dict[str, object])
 _TOKENS = TypeAdapter(dict[str, float | dict[str, float]])
