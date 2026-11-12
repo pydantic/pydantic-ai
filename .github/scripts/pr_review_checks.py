@@ -86,10 +86,11 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
     SpecialistCheck(
         name='ui',
         title='UI adapters and local web UI',
-        scope="the UI adapters' client/server trust boundary and CLAI 2's local web control UI",
+        scope="the UI adapters' client/server trust boundary, CLAI 2's local web control UI and its live-session socket",
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/ui/.*'
             r'|src/pydantic_clai2/(web-ui/.*|pydantic_clai2/builtin_plugins/web/.*|pydantic_clai2/cli/web\.py'
+            r'|pydantic_clai2/runtime/live_registry\.py'
             r'|clai2_web_README\.md|scripts/check_web_assets\.py)'
             r'|docs/(ui/.*|input\.md|web\.md|harness/clai2\.md)'
             r'|tests/(test_vercel_ai|test_ag_ui|test_ui|test_ui_web)\.py|tests/clai2/(test_web[^/]*\.py|browser/.*)'
@@ -116,7 +117,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         scope='sandboxes, workspaces, shells and Code Mode execution boundaries',
         paths=re.compile(
             r'src/pydantic_ai_harness/pydantic_ai_harness/'
-            r'([^/]*_sandbox|code_mode|ipython_code_mode|ssh_workspace|shell)/.*'
+            r'([^/]*_sandbox|docker_container|code_mode|ipython_code_mode|ssh_workspace|shell)/.*'
         ),
     ),
     SpecialistCheck(

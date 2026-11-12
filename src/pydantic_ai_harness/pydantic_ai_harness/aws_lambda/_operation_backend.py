@@ -42,6 +42,8 @@ _STEP_CONFIG_VALUE_ADAPTERS = {
 class AWSLambdaOperationConfig(RoleBasedOperationConfig[StepConfig | None]):
     def __init__(self, base: Mapping[str, Any] | None) -> None:
         base_config = _parse_step_config(base)
+        self.base_step_config = base_config
+        """The `StepConfig` every step gets unless a tool's metadata overrides it."""
         self.parallel_config = _parallel_config(base_config)
         """Checkpoints a `parallel` operation's results with the configured `serdes`, as steps are."""
 

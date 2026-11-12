@@ -183,22 +183,35 @@ def map_chat_content(
         message.content or '', profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
     )
     if message.annotations:
-        text_parts = [part for part in content_parts if isinstance(part, TextPart)]
-        if len(content_parts) == 1 and text_parts:
-            if citations := map_chat_citations(message.annotations, text_parts[0].content):
-                text_parts[0].citations = citations
-                text_parts[0].provider_name = provider_name
-                text_parts[0].provider_details = chat_citations_provider_details(message.annotations)
-        # Annotation positions count into OpenAI's original text, so they can't be used once thinking tags are removed
-        # from it. `openai_include_raw_annotations` still keeps them.
-        if include_raw_annotations and text_parts:
-            text_parts[-1].provider_name = provider_name
-            text_parts[-1].provider_details = {
-                **(text_parts[-1].provider_details or {}),
-                # Dumped one by one, so OpenRouter's own annotation types keep their fields.
-                'annotations': [annotation.model_dump(mode='json') for annotation in message.annotations],
-            }
+        attach_chat_annotations(
+            content_parts, message.annotations, provider_name, include_raw_annotations=include_raw_annotations
+        )
     return [
         replace(part, id='content', provider_name=provider_name) if isinstance(part, ThinkingPart) else part
         for part in content_parts
     ]
+
+
+def attach_chat_annotations(
+    content_parts: Sequence[TextPart | ThinkingPart],
+    annotations: Sequence[BaseModel],
+    provider_name: str,
+    *,
+    include_raw_annotations: bool,
+) -> None:
+    """Attach a Chat Completions message's annotations to the text parts its content was split into."""
+    text_parts = [part for part in content_parts if isinstance(part, TextPart)]
+    if len(content_parts) == 1 and text_parts:
+        if citations := map_chat_citations(annotations, text_parts[0].content):
+            text_parts[0].citations = citations
+            text_parts[0].provider_name = provider_name
+            text_parts[0].provider_details = chat_citations_provider_details(annotations)
+    # Annotation positions count into OpenAI's original text, so they can't be used once thinking tags are removed
+    # from it. `openai_include_raw_annotations` still keeps them.
+    if include_raw_annotations and text_parts:
+        text_parts[-1].provider_name = provider_name
+        text_parts[-1].provider_details = {
+            **(text_parts[-1].provider_details or {}),
+            # Dumped one by one, so OpenRouter's own annotation types keep their fields.
+            'annotations': [annotation.model_dump(mode='json') for annotation in annotations],
+        }
