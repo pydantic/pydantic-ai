@@ -890,6 +890,9 @@ async def test_exchange_code_from_callback_survives_malformed_request_line(monke
     """
     mock = TokenEndpointMock(TOKEN_RESPONSE)
     monkeypatch.setattr('pydantic_ai.providers.openai_codex._post_token_request', mock)
+    # The server drops a connection that sends nothing for this long; a stalled runner can take that long between
+    # opening a connection and sending its request, so keep it beyond any stall.
+    monkeypatch.setattr('pydantic_ai.providers._oauth._CALLBACK_READ_TIMEOUT', 3600)
     port = free_port()
     url = f'http://127.0.0.1:{port}/auth/callback'
     flow = OpenAICodexOAuthFlow(redirect_uri=url)
