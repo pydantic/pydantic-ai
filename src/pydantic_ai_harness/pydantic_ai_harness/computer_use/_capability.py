@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
 
 import anyio
 import anyio.lowlevel
-from pydantic import Field, TypeAdapter
+from pydantic import ConfigDict, Field, TypeAdapter
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.computer_use import (
@@ -24,14 +25,17 @@ from pydantic_ai.computer_use import (
     ComputerToolAction,
     CursorPosition,
     Drag,
+    HoldKeys,
     MouseButton,
     MouseDown,
     MouseUp,
     MoveMouse,
     Point,
+    PressKeys,
     Region,
     Screenshot,
     Scroll,
+    TypeText,
     Wait,
     Zoom,
 )
@@ -338,6 +342,37 @@ def _unbalanced(actions: list[ComputerToolAction]) -> str | None:
     return None
 
 
+def _amount(value: float) -> str:
+    """`2,000` for a count, `1.5` for seconds."""
+    return f'{value:,}' if isinstance(value, int) else f'{value:g}'
+
+
+def _over_limit(actions: list[ComputerToolAction], limits: ComputerUseActionLimits) -> str | None:
+    """Why a call that asks one action for more than `limits` allow is refused, if it does."""
+    for index, action in enumerate(actions, 1):
+        match action:
+            case Wait():
+                asked, most, unit, name = action.seconds, limits.max_wait_seconds, 'seconds', 'max_wait_seconds'
+            case HoldKeys():
+                asked, most, unit, name = action.seconds, limits.max_hold_seconds, 'seconds', 'max_hold_seconds'
+            case TypeText():
+                asked, most, unit, name = len(action.text), limits.max_typed_chars, 'characters', 'max_typed_chars'
+            case PressKeys():
+                asked, most, unit, name = action.repeat, limits.max_key_repeat, 'repeats', 'max_key_repeat'
+            case Scroll():
+                asked, most, unit, name = action.amount, limits.max_scroll_amount, 'scroll clicks', 'max_scroll_amount'
+            case Drag():
+                asked, most, unit, name = len(action.path), limits.max_drag_points, 'points', 'max_drag_points'
+            case _:
+                continue
+        if most is not None and asked > most:
+            return (
+                f'Action {index} ({action.type}) asks for {_amount(asked)} {unit}, more than the {_amount(most)} this '
+                f'agent allows (`{name}`), so no action ran.'
+            )
+    return None
+
+
 async def _perform(
     display: Display,
     actions: list[ComputerToolAction],
@@ -472,6 +507,37 @@ def _plural(count: int, noun: str) -> str:
     return f'{count} {noun}' if count == 1 else f'{count} {noun}s'
 
 
+@pydantic_dataclass(frozen=True, kw_only=True, config=ConfigDict(extra='forbid'))
+class ComputerUseActionLimits:
+    """The most one action in a `computer` call may ask for. Every limit is off by default.
+
+    A call that asks for more than a limit is refused before any of its actions run, and the model is told which limit
+    it went over. Under durable execution a call runs as one activity, so allow for the longest call when you set the
+    activity's timeout.
+    """
+
+    max_wait_seconds: Annotated[float, Field(gt=0)] | None = None
+    """Seconds one `wait` may pause for."""
+
+    max_hold_seconds: Annotated[float, Field(gt=0)] | None = None
+    """Seconds one `hold_key` may hold its keys for."""
+
+    max_typed_chars: Annotated[int, Field(gt=0)] | None = None
+    """Characters one `type` may type."""
+
+    max_key_repeat: Annotated[int, Field(gt=0)] | None = None
+    """Times one `keypress` may press its keys."""
+
+    max_scroll_amount: Annotated[int, Field(gt=0)] | None = None
+    """Mouse-wheel clicks one `scroll` may turn."""
+
+    max_drag_points: Annotated[int, Field(gt=0)] | None = None
+    """Points one `drag` may pass through, its start and end included."""
+
+
+_ACTION_LIMITS = TypeAdapter(ComputerUseActionLimits)
+
+
 @dataclass
 class ComputerUse(AbstractCapability[AgentDepsT]):
     """Lets the agent see and control the display of its workspace with one `computer` tool.
@@ -488,6 +554,9 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     """Pause after acting before the next zoom or the closing screenshot. Off by default: set it when screenshots show
     pages still loading or animating. A `wait` the model asks for comes on top of it."""
 
+    action_limits: ComputerUseActionLimits = ComputerUseActionLimits()
+    """The most one action may ask for, such as the seconds of a `wait`. Off by default."""
+
     native: bool = True
     """Send the tool as the model's own computer use tool where it has one, such as Claude's or OpenAI's.
 
@@ -501,8 +570,10 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     _toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        if not 0 <= self.settle_seconds <= 30:
-            raise UserError('`settle_seconds` must be from 0 to 30.')
+        if self.settle_seconds < 0:
+            raise UserError('`settle_seconds` must not be negative.')
+        # An agent spec passes the limits as a mapping.
+        self.action_limits = _ACTION_LIMITS.validate_python(self.action_limits)
         tool = Tool[AgentDepsT](
             self._computer,
             name='computer',
@@ -531,7 +602,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         acts = any(action.type not in _OBSERVING_ACTIONS for action in actions)
         if acts and ctx.workspace.read_only:
             raise ToolFailed(_READ_ONLY)
-        if refused := _unbalanced(actions):
+        if refused := _unbalanced(actions) or _over_limit(actions, self.action_limits):
             raise ToolFailed(refused)
         made = _the_call(ctx)
         call = made[1] if made else None
