@@ -24,7 +24,7 @@ from pgtask import Task, get_current_task
 
 from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
-from pydantic_ai.exceptions import ModelHTTPError, ModelRateLimitError, ModelRetry, RunCancelled, ToolFailed, UserError
+from pydantic_ai.exceptions import ModelRetry, RunCancelled, ToolFailed, UserError
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -45,6 +45,7 @@ from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolse
 from pydantic_ai_harness.pgtask import CheckpointDecodeError, PGTaskDurability
 from pydantic_ai_harness.pgtask._context import _occurrences  # pyright: ignore[reportPrivateUsage]
 from tests.durable_exec.counting_mcp import counting_mcp_server
+from tests.harness._rate_limited_model import rate_limited_once
 
 from ...conftest import try_import
 from ._task import PGTaskDatabase, checkpoints, run_in_task
@@ -891,27 +892,13 @@ class TestCodeMode:
         assert calls['calls'] == 1
 
 
-def _rate_limited_once(counter: dict[str, int], retry_after: float) -> FunctionModel:
-    """A model that fails with a rate limit asking to wait `retry_after` seconds, then answers."""
-
-    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        counter['calls'] += 1
-        if counter['calls'] == 1:
-            raise ModelHTTPError.for_category(
-                ModelRateLimitError, status_code=429, model_name='fn', retry_after=retry_after
-            )
-        return ModelResponse(parts=[TextPart(content='ok')])
-
-    return FunctionModel(fn, model_name='fn')
-
-
 class TestRetryAfter:
     async def test_model_step_waits_retry_after_and_runs_again(self, pgtask_db: PGTaskDatabase) -> None:
         """The failed attempt is saved, the task sleeps the wait, and the model step runs again; a replay serves
         both from the saved steps."""
         counter = {'calls': 0}
         # A wait that has already passed.
-        agent = Agent(_rate_limited_once(counter, 0.0), name='limited', capabilities=[PGTaskDurability()])
+        agent = Agent(rate_limited_once(counter, 0.0), name='limited', capabilities=[PGTaskDurability()])
 
         async def body(attempt: int) -> None:
             assert (await agent.run('hi')).output == 'ok'
@@ -929,7 +916,7 @@ class TestRetryAfter:
         """On the task's last attempt there is no attempt left to run the request again in, so the model error fails
         the run rather than waiting."""
         counter = {'calls': 0}
-        agent = Agent(_rate_limited_once(counter, 5.0), name='last', capabilities=[PGTaskDurability()])
+        agent = Agent(rate_limited_once(counter, 5.0), name='last', capabilities=[PGTaskDurability()])
 
         async def body(attempt: int) -> None:
             # pgtask raises a step's failure as a `RuntimeError` naming the error.

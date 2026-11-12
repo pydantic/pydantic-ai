@@ -52,6 +52,7 @@ from pydantic_ai_harness.absurd._operation_backend import (
     _CONTROL_FLOW_KINDS,  # pyright: ignore[reportPrivateUsage]
     _RAW_RESULT_KINDS,  # pyright: ignore[reportPrivateUsage]
 )
+from tests.harness._rate_limited_model import rate_limited_once
 
 from ._task import checkpoints, reenter_running_task, running_task_context
 
@@ -818,27 +819,13 @@ class TestCodeMode:
         assert calls['calls'] == 1
 
 
-def _rate_limited_once(counter: dict[str, int], retry_after: float) -> FunctionModel:
-    """A model that fails with a rate limit asking to wait `retry_after` seconds, then answers."""
-
-    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        counter['calls'] += 1
-        if counter['calls'] == 1:
-            raise ModelHTTPError.for_category(
-                ModelRateLimitError, status_code=429, model_name='fn', retry_after=retry_after
-            )
-        return ModelResponse(parts=[TextPart(content='ok')])
-
-    return FunctionModel(fn, model_name='fn')
-
-
 class TestRetryAfter:
     async def test_model_step_waits_retry_after_and_runs_again(self, absurd: AsyncAbsurd) -> None:
         """The failed attempt is checkpointed, the task sleeps the wait, and the model step runs again; a replay
         serves both from the checkpoints."""
         counter = {'calls': 0}
         # A wait that has already passed, so the sleep doesn't suspend the task.
-        agent = Agent(_rate_limited_once(counter, 0.0), name='limited', capabilities=[AbsurdDurability()])
+        agent = Agent(rate_limited_once(counter, 0.0), name='limited', capabilities=[AbsurdDurability()])
 
         async with running_task_context(absurd, 'limited') as ctx:
             assert (await agent.run('hi')).output == 'ok'
@@ -866,7 +853,7 @@ class TestRetryAfter:
         self, absurd: AsyncAbsurd, retry_after: float, wait: float
     ) -> None:
         counter = {'calls': 0}
-        agent = Agent(_rate_limited_once(counter, retry_after), name='suspended', capabilities=[AbsurdDurability()])
+        agent = Agent(rate_limited_once(counter, retry_after), name='suspended', capabilities=[AbsurdDurability()])
 
         async with running_task_context(absurd, 'suspended') as ctx:
             with pytest.raises(SuspendTask):
@@ -878,7 +865,7 @@ class TestRetryAfter:
 
     async def test_model_step_wait_is_capped_at_the_retry_strategy_maximum(self, absurd: AsyncAbsurd) -> None:
         counter = {'calls': 0}
-        agent = Agent(_rate_limited_once(counter, 30.0), name='capped', capabilities=[AbsurdDurability()])
+        agent = Agent(rate_limited_once(counter, 30.0), name='capped', capabilities=[AbsurdDurability()])
 
         async with running_task_context(
             absurd, 'capped', retry_strategy={'kind': 'fixed', 'base_seconds': 1, 'max_seconds': 2}

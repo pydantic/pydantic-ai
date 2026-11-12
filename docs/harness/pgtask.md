@@ -90,7 +90,7 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
 |---|---|
 | `{name}__model.request` | a model request |
 | `{name}__model.request_stream` | a streamed model request |
-| `{name}__model.request.retry_after`, `{name}__model.request_stream.retry_after` | the wait a model error's `retry_after` asked for, before the request runs again |
+| `{name}__model.request.retry_after`, `{name}__model.request_stream.retry_after`, `{name}__model.compact_messages.retry_after`, `{name}__model.cancel_suspended_response.retry_after` | the wait a model error's `retry_after` asked for, before that model operation runs again |
 | `{name}__model.compact_messages` | a request asking the model to shorten the message history |
 | `{name}__model.cancel_suspended_response` | cancelling a response the model provider is still working on in the background |
 | `{name}__capability__{capability_id}.{operation}` | work added by another capability |
