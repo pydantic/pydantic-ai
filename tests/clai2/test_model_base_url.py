@@ -168,7 +168,7 @@ def test_every_provider_is_built_with_the_base_url(provider: str, missing_extras
         assert httpx.URL(built.base_url).host == 'gateway.example'
 
 
-def test_xai_takes_the_base_url_as_its_api_host() -> None:
+def test_xai_takes_the_base_url_as_its_api_host() -> None:  # pragma: lax no cover -- skipped without the `xai` extra
     pytest.importorskip('xai_sdk', reason='needs the `xai` extra')
     from pydantic_ai.providers.xai import XaiProvider
 
