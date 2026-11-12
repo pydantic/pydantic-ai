@@ -2068,11 +2068,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # (typed as the wider `AbstractModel`) is a `Model` here; the guard narrows it for `unwrap_model`.
         run_model = ctx.model
         if provenance is not None:
-            request_model = unwrap_model(request_context.model)
+            # The model the string was resolved to: a `RetryModelRequest`'s, or else the run's.
             resolved_to = request_context._model_id_resolved_to  # pyright: ignore[reportPrivateUsage]
-            if isinstance(run_model, Model) and request_model is unwrap_model(cast('Model[Any]', run_model)):
-                return provenance
-            if resolved_to is not None and request_model is unwrap_model(resolved_to):
+            if resolved_to is None and isinstance(run_model, Model):
+                resolved_to = cast('Model[Any]', run_model)
+            if resolved_to is not None and unwrap_model(request_context.model) is unwrap_model(resolved_to):
                 return provenance
         resolved = self._resolved_request_model(request_context.model)
         if resolved is not None:

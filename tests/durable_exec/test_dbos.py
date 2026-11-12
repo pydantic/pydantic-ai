@@ -80,6 +80,7 @@ from pydantic_ai.exceptions import (
     ModelHTTPError,
     ModelRequestTimeout,
     ModelRetry,
+    RetryModelRequest,
     RunCancelled,
     RunTimedOut,
     ToolFailed,
@@ -4664,6 +4665,64 @@ async def test_dbos_durability_fallback_alias_swapped_by_hook_is_rejected(dbos: 
 
     with pytest.raises(UserError, match="The model instance 'function:swapped' was not registered"):
         await run_agent()
+
+
+@dataclass
+class _ReturnToRunModelCapability(AbstractCapability[str]):
+    """Moves a retry attempt back to the run's model in `prepare_model_request`, keeping the alias's `model_id`."""
+
+    async def prepare_model_request(
+        self, ctx: RunContext[str], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if request_context.attempt > 1:
+            run_model = ctx.model
+            assert isinstance(run_model, FunctionModel)
+            request_context.model = run_model
+        return request_context
+
+
+@dataclass
+class _RetryOnAliasCapability(AbstractCapability[str]):
+    """Moves a failed request to the 'tenant-model' alias, as a fallback does."""
+
+    async def on_model_request_error(
+        self, ctx: RunContext[str], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        raise RetryModelRequest('tenant-model')
+
+
+async def test_dbos_durability_retry_moved_back_to_run_model_keeps_run_model(dbos: DBOS) -> None:
+    """A hook that moves a retry attempt back to the run's model is served by the run's model.
+
+    The alias the retry named no longer names the request's model, so it must not cross the step boundary,
+    where it would rebuild the alias's model that the hook moved away from.
+    """
+    calls: list[str] = []
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('primary')
+        if len(calls) == 1:
+            raise ModelAPIError(model_name='primary', message='boom')
+        return ModelResponse(parts=[TextPart('from primary')])
+
+    agent = Agent(
+        FunctionModel(primary, model_name='primary'),
+        name='durability_retry_moved_back',
+        deps_type=str,
+        capabilities=[
+            _RetryOnAliasCapability(),
+            _ReturnToRunModelCapability(),
+            ResolveModelId(_dbos_tenant_resolver),
+            DBOSDurability(),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', deps='acme')).output
+
+    assert await run_agent() == 'from primary'
+    assert calls == ['primary', 'primary']
 
 
 @dataclass
