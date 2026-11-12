@@ -3270,6 +3270,7 @@
     },
     "ModelAPIError": {
       "engines": [
+        "durable_exec",
         "temporal"
       ],
       "kinds": [
@@ -3277,6 +3278,7 @@
         "import"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_retry_after.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_operation_backend.py::<module>"
@@ -3291,6 +3293,17 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::_encode"
+      ]
+    },
+    "ModelAPIError.retry_after": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_retry_after.py::model_error_retry_after"
       ]
     },
     "ModelConnectionError": {

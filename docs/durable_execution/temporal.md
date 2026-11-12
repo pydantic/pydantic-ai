@@ -1027,7 +1027,7 @@ with a `UserError`.
 
 ## Activity Retries
 
-On top of the automatic retries for request failures that Temporal will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, with improper `Retry-After` handling.
+On top of the automatic retries for request failures that Temporal will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, and a retry inside the activity waits out the provider's `Retry-After` there, holding the worker, rather than as Temporal's retry delay described below.
 
 When using Temporal, it's recommended to not use [transport retries](../retries.md#transport-retries) and to turn off your provider API client's own retry logic, by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0`, so the engine is the [one retry owner](../retries.md#choosing-one-retry-owner).
 

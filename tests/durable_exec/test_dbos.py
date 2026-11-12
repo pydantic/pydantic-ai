@@ -78,6 +78,7 @@ from pydantic_ai.exceptions import (
     CallDeferred,
     ModelAPIError,
     ModelHTTPError,
+    ModelRateLimitError,
     ModelRequestTimeout,
     ModelRetry,
     RunCancelled,
@@ -119,7 +120,7 @@ from ..realtime_connections import InferredConnection
 pytest.importorskip('dbos')
 
 from dbos import DBOS, DBOSConfig, SetWorkflowID
-from dbos._error import DBOSAwaitedWorkflowCancelledError
+from dbos._error import DBOSAwaitedWorkflowCancelledError, DBOSMaxStepRetriesExceeded
 
 from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
 from pydantic_ai.durable_exec.dbos import (
@@ -2841,6 +2842,91 @@ async def test_dbos_durability_model_error_reaches_workflow_with_its_type(dbos: 
         return (await agent.run('Hello DBOS')).output
 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
+
+
+def _retry_after_model(*errors: ModelHTTPError | None) -> tuple[FunctionModel, list[float]]:
+    """A model that raises `errors` in turn, then answers, recording when each attempt started."""
+    attempts: list[float] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        attempts.append(time.monotonic())
+        if len(attempts) <= len(errors) and (error := errors[len(attempts) - 1]) is not None:
+            raise error
+        return ModelResponse(parts=[TextPart('answered')])
+
+    return FunctionModel(respond), attempts
+
+
+def _rate_limited(retry_after: float | None) -> ModelHTTPError:
+    return ModelHTTPError.for_category(
+        ModelRateLimitError, status_code=429, model_name='test-model', retry_after=retry_after
+    )
+
+
+async def test_dbos_durability_model_error_retry_after_waits_durably(dbos: DBOS) -> None:
+    """A model step that fails with a `retry_after` is attempted again after a durable `DBOS.sleep` that long,
+    instead of DBOS's in-process backoff, and the wait and the failed attempt are recorded as steps."""
+    model, attempts = _retry_after_model(_rate_limited(0.01))
+    agent = Agent(
+        model,
+        name='durability_retry_after',
+        capabilities=[
+            # DBOS's own backoff would wait a minute before the second attempt.
+            DBOSDurability(model_step_config=StepConfig(retries_allowed=True, max_attempts=3, interval_seconds=60))
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello DBOS')).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        assert await run_durable_agent() == 'answered'
+
+    assert len(attempts) == 2
+    assert attempts[1] - attempts[0] < 30
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [
+        step['function_name'] for step in steps if 'model' in step['function_name'] or 'sleep' in step['function_name']
+    ] == [
+        'durability_retry_after__model.request',
+        'DBOS.sleep',
+        'durability_retry_after__model.request',
+    ]
+
+
+async def test_dbos_durability_model_error_retry_after_counts_every_attempt(dbos: DBOS) -> None:
+    """A model step's attempts before and after a `retry_after` wait add up to its `max_attempts`, and an error with
+    no `retry_after` gets DBOS's own backoff."""
+    model, attempts = _retry_after_model(_rate_limited(None), _rate_limited(0.01), _rate_limited(0.01))
+    agent = Agent(
+        model,
+        name='durability_retry_after_attempts',
+        capabilities=[
+            DBOSDurability(model_step_config=StepConfig(retries_allowed=True, max_attempts=3, interval_seconds=0.01))
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello DBOS')).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid), pytest.raises(DBOSMaxStepRetriesExceeded):
+        await run_durable_agent()
+
+    # The first step attempted twice, DBOS's backoff between them, and waited the second error's `retry_after`;
+    # the next step had one attempt left, and failed with the third error.
+    assert len(attempts) == 3
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [
+        step['function_name'] for step in steps if 'model' in step['function_name'] or 'sleep' in step['function_name']
+    ] == [
+        'durability_retry_after_attempts__model.request',
+        'DBOS.sleep',
+        'durability_retry_after_attempts__model.request',
+    ]
 
 
 async def test_dbos_durability_sticky_fallback_goes_straight_to_the_candidate(dbos: DBOS) -> None:

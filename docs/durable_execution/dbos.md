@@ -357,11 +357,13 @@ For custom tools, you can annotate them directly with [`@DBOS.step`](https://doc
 
 ## Step Retries
 
-On top of the automatic retries for request failures that DBOS will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, with improper `Retry-After` handling.
+On top of the automatic retries for request failures that DBOS will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, and a retry inside the step waits out the provider's `Retry-After` there, rather than as the durable wait described below.
 
 When using DBOS, it's recommended to not use [transport retries](../retries.md#transport-retries) and to turn off your provider API client's own retry logic, by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0`, so the engine is the [one retry owner](../retries.md#choosing-one-retry-owner).
 
 You can customize DBOS's retry policy using [step configuration](#step-configuration).
+
+DBOS retries a step inside the step, after sleeping its backoff in the process that runs it. A model request step is different when the model error says how long to wait before trying again, in its [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] (read from a `Retry-After` or `retry-after-ms` header, for example), and `model_step_config` allows another attempt: the step records the failed attempt, the workflow waits that long with a durable [`DBOS.sleep`](https://docs.dbos.dev/python/reference/contexts#sleep), which a recovered workflow doesn't sleep again, and the request runs again in a new step with the attempts the step had left. The step's journal then shows the model request step, a `DBOS.sleep` step, and the model request step again. The wait is capped at DBOS's own backoff for that attempt or a minute, whichever is longer, so a provider asking for hours doesn't park the workflow for hours. A model error without a `retry_after` gets DBOS's own backoff, as before, and the deprecated `DBOSAgent` doesn't wait `retry_after`.
 
 DBOS has no selective non-retryable-exception support, so if you enable step retries (`retries_allowed`), framework misconfiguration errors like `UserError` are retried along with everything else. The Temporal and Prefect integrations mark those non-retryable; on DBOS, expect a misconfigured agent to burn its full retry budget before failing.
 
