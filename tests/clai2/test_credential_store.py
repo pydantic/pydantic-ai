@@ -9,7 +9,8 @@ from uuid import UUID
 
 import keyring
 import pytest
-from keyring.errors import InitError, KeyringLocked, NoKeyringError
+from keyring.backends import kwallet
+from keyring.errors import InitError, KeyringLocked, NoKeyringError, PasswordSetError
 from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
@@ -258,7 +259,7 @@ def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None, caplog:
     assert_plaintext_fallback_round_trip(fallback, caplog)
 
 
-@pytest.mark.parametrize('error', [NoKeyringError, RuntimeError, None])
+@pytest.mark.parametrize('error', [NoKeyringError, RuntimeError, PasswordSetError, None])
 def test_file_fallback_when_set_password_has_no_keyring(
     vault: Vault,
     fallback: Path,
@@ -279,6 +280,39 @@ def test_file_fallback_when_set_password_has_no_keyring(
         assert load_codex_credentials(fallback=fallback) == '{"access_token":"migrated"}'
     assert LEGACY not in vault
     assert list(fallback.parent.glob('credentials.*')) == [fallback]
+
+
+def test_file_fallback_with_kwallet_like_backend(
+    fallback: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """KWallet backends fall back to the 0600 file whether writes are discarded or the wallet fails to open."""
+
+    class NonRetainingKWalletBackend(kwallet.DBusKeyring):
+        def get_password(self, service: str, username: str) -> str | None:
+            return None
+
+        def set_password(self, service: str, username: str, password: str) -> None:
+            pass
+
+        def delete_password(self, service: str, username: str) -> None:
+            pass
+
+    monkeypatch.setattr(keyring, 'get_password', keyring.core.get_password)
+    monkeypatch.setattr(keyring, 'set_password', keyring.core.set_password)
+    monkeypatch.setattr(keyring, 'delete_password', keyring.core.delete_password)
+    monkeypatch.setattr(keyring.core, '_keyring_backend', NonRetainingKWalletBackend())
+    assert_plaintext_fallback_round_trip(fallback, caplog)
+
+    fallback.unlink()
+    caplog.clear()
+    new_session()
+
+    class UnopenableKWalletBackend(kwallet.DBusKeyring):
+        def connected(self, service: str) -> bool:
+            return False
+
+    monkeypatch.setattr(keyring.core, '_keyring_backend', UnopenableKWalletBackend())
+    assert_plaintext_fallback_round_trip(fallback, caplog)
 
 
 def test_planted_staging_symlink_is_not_followed(

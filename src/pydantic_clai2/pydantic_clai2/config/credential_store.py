@@ -15,8 +15,10 @@ from functools import cache
 from pathlib import Path
 
 import keyring
+import keyring.backend
 from cryptography.fernet import Fernet, InvalidToken
-from keyring.errors import InitError, KeyringError, NoKeyringError, PasswordDeleteError
+from keyring.backends import kwallet
+from keyring.errors import InitError, KeyringError, KeyringLocked, NoKeyringError, PasswordDeleteError, PasswordSetError
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.private_files import write_private as _write_private
@@ -27,17 +29,30 @@ _KEY_ACCOUNT = 'encryption-key'
 _PREFIX = 'clai-chunks-v1:'
 _SLASH = '%2F'
 """How `/` is written in a credential file name; no account name CLAI stores otherwise contains `%`."""
-# A locked or failing keyring is not "no keyring": only these mean nothing is configured.
-# `SecretService` and `kwallet` raise plain `RuntimeError` during backend priority/init when D-Bus or
-# Secret Service is missing; `_get_password` and `_set_password` wrap keyring calls so `UserError` (a
+# A locked keyring is not "no keyring", except `kwallet.DBusKeyring`, which raises `KeyringLocked`
+# whenever `connected()` returns `False` (`handle < 0`, e.g. when KWallet is disabled, unconfigured, or
+# cannot open a wallet on KDE / Steam Deck) and cannot distinguish that from a user-cancelled unlock.
+# `SecretService` and `kwallet` also raise plain `RuntimeError` during backend priority/init when D-Bus or
+# Secret Service is missing, and `kwallet.DBusKeyring.set_password` raises `PasswordSetError` when the
+# wallet cannot be opened; `_get_password` and `_set_password` wrap keyring calls so `UserError` (a
 # `RuntimeError` subclass raised by `_decrypt` and `_chunk_services`) is never caught as `_NO_KEYRING`.
-_NO_KEYRING = (NoKeyringError, InitError)
+_NO_KEYRING = (NoKeyringError, InitError, PasswordSetError)
 _logger = logging.getLogger(__name__)
+
+
+def _is_kwallet(backend: keyring.backend.KeyringBackend) -> bool:
+    return isinstance(backend, kwallet.DBusKeyring) or any(
+        isinstance(child, kwallet.DBusKeyring) for child in getattr(backend, 'backends', ())
+    )
 
 
 def _get_password(*, service: str, account: str) -> str | None:
     try:
         return keyring.get_password(service, account)
+    except KeyringLocked as exc:
+        if _is_kwallet(keyring.get_keyring()):
+            raise NoKeyringError(str(exc)) from exc
+        raise
     except RuntimeError as exc:
         raise NoKeyringError(str(exc)) from exc
 
