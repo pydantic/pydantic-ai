@@ -1662,7 +1662,11 @@ class TestWalkUpAuthority:
 
     @staticmethod
     async def _run(
-        tmp_path: Path, workspace: Workspace, message_history: list[ModelMessage] | None = None
+        tmp_path: Path,
+        workspace: Workspace,
+        message_history: list[ModelMessage] | None = None,
+        *,
+        nested_traversal: bool = False,
     ) -> tuple[str, list[ContextFilePart], AgentRunResult[str]]:
         """The instructions the model was sent, the `ContextFilePart`s the run recorded, and the run's result."""
         instructions: list[str | None] = []
@@ -1676,7 +1680,7 @@ class TestWalkUpAuthority:
 
         result = await Agent(
             FunctionModel(stream_function=stream),
-            capabilities=[RepoContext(home_dir=str(tmp_path), nested_traversal=False)],
+            capabilities=[RepoContext(home_dir=str(tmp_path), nested_traversal=nested_traversal)],
         ).run('go', workspace=workspace, message_history=message_history)
         parts = [
             part
@@ -1712,6 +1716,31 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
         assert _repo_notes(result.new_messages()) == snapshot(
             ['<context_file path="../../AGENTS.md">repo rules</context_file>']
         )
+
+    @pytest.mark.parametrize('authority', ['operator', 'none'])
+    async def test_the_precedence_sentence_only_ranks_operator_files(self, tmp_path: Path, authority: str) -> None:
+        # In operator voice, "the more deeply nested one takes precedence" would rank the repository's files over
+        # the operator's, so it's left out once the run reads any instruction file below `'operator'`.
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(working_dir)),
+            authority='none' if authority == 'none' else 'operator',
+            path_authority={str(tmp_path / 'AGENTS.md'): 'operator'},
+        )
+        instructions, _, _ = await self._run(tmp_path, workspace, nested_traversal=True)
+        if authority == 'operator':
+            assert 'takes precedence' in instructions
+        else:
+            assert instructions == snapshot("""\
+<pyai:context id="capability:repo_context">
+<context-file path="../../AGENTS.md">
+repo rules
+</context-file>
+
+This directory has an instruction file that is not loaded here, because the operator does not control this workspace's files: `AGENTS.md`. Read it with your file tools if it is relevant to your task.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
 
     async def test_an_ancestor_covered_by_path_authority_keeps_its_level(self, tmp_path: Path) -> None:
         working_dir = self._repo(tmp_path)

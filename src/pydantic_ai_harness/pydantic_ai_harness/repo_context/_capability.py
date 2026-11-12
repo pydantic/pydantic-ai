@@ -264,6 +264,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     _ancestors_sent: bool = field(default=False, init=False, repr=False, compare=False)
     """Whether this run has enqueued `_ancestor_parts`."""
 
+    _lowered: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether this run reads instruction files below `'operator'` authority, which leaves out `_NESTED_PRECEDENCE`."""
+
     _pending_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
     """Directories whose Strategy 3 note is enqueued but not yet in history."""
 
@@ -321,6 +324,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         run._window_chars = 0
         run._latest_compaction = None
         run._cached_working_dir = None
+        # Known before `get_instructions`, which runs before `before_run`: files in a working directory below
+        # `'operator'` mustn't be ranked over the operator's by the precedence sentence.
+        workspace = ctx.workspace
+        run._lowered = workspace.attached and await workspace.authority_of(await workspace.working_dir()) != 'operator'
         return run
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -357,7 +364,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
                 self._context_files.append(context_file)
             elif context_file.directory == working_dir:
                 self._unloaded_file = context_file
+                self._lowered = True
             else:
+                self._lowered = True
                 self._ancestor_parts.append(
                     ContextFilePart(
                         content=context_file_part_content(context_file),
@@ -405,7 +414,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         parts: list[str] = []
         if self.expose_inventory_tool:
             parts.append(self._inventory_hint())
-        if self.nested_traversal:
+        if self.nested_traversal and not self._lowered:
+            # In operator voice, it would rank repository files nested deeper over the operator's own.
             parts.append(_NESTED_PRECEDENCE.format(names=', '.join(f'`{name}`' for name in self.filenames)))
         return parts
 
