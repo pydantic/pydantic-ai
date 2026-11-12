@@ -173,7 +173,7 @@ the same weight as the instructions you write yourself. That is what the strateg
 is for, and it means the working directory and every directory the walk-up reaches (`home_dir`, the repository root for `walk_up='repo_root'`, or every ancestor for `'all'`) should hold only
 instruction files you would put in your own instructions.
 
-In a workspace with less than `'operator'`
+Whatever the workspace's
 [authority](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority),
 the walk-up reads each file at its own level, `Workspace.authority_of(path)`. A
 file above the working directory gets the level of the `path_authority` entry
@@ -187,8 +187,10 @@ ancestors' files as before. Only files at `'operator'` go in the instructions:
   sent as a `ContextFilePart` with the run's first request: repository data on
   the user channel, with a note saying who wrote it. It's sent again when its
   text changed, and put back on the next request when a compaction drops it.
-- The instructions leave out the sentence on how nested instruction files relate ("the more deeply nested one
-takes precedence"), which would rank repository files over the operator's.
+- When the workspace or any `path_authority` entry puts files below
+  `'operator'`, the instructions leave out the sentence on how nested
+  instruction files relate ("the more deeply nested one takes precedence"),
+  which would rank repository files over the operator's.
 
 Give the operator's own files above an untrusted checkout their level with
 `path_authority`, such as

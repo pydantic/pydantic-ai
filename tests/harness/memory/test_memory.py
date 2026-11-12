@@ -29,7 +29,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._capability_parts import render_capability_parts
-from pydantic_ai.capabilities import AbstractCapability, ToolSearch
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ToolSearch
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -1551,6 +1551,32 @@ class TestInjection:
         assert isinstance(snapshot.source, WorkspaceSource)
         assert (snapshot.source.path, snapshot.source.authority) == ('.memory/main/MEMORY.md', 'none')
         assert 'a planted fact' in _snapshot_text(snapshot)
+
+    async def test_snapshot_source_is_journaled_with_the_read(self, tmp_path: Path) -> None:
+        # Asked inside the durable `load_snapshot`, so a replay reuses the level instead of reading the workspace.
+        untrusted, empty = tmp_path / 'untrusted', tmp_path / 'empty'
+        (untrusted / '.memory' / 'main').mkdir(parents=True)
+        (untrusted / '.memory' / 'main' / 'MEMORY.md').write_text('- a planted fact')
+        empty.mkdir()
+
+        async def run(workspace: LocalWorkspace[object], durability: RecordingDurability) -> MemorySnapshotPart:
+            agent = Agent(
+                TestModel(call_tools=[]),
+                name='memory',
+                capabilities=[workspace, Memory(store=FileStore('.memory')), durability],
+            )
+            [snapshot] = _snapshot_parts((await agent.run('go')).all_messages())
+            return snapshot
+
+        recorded = RecordingDurability()
+        first = await run(LocalWorkspace(untrusted, authority='none'), recorded)
+        assert isinstance(first.source, WorkspaceSource)
+        assert (first.source.path, first.source.authority) == ('.memory/main/MEMORY.md', 'none')
+
+        journal = {name: result for name, result in recorded.results if name.endswith('.load_snapshot')}
+        # Replayed in an operator workspace with no memory file: the source still comes from the journal.
+        replay = await run(LocalWorkspace(empty), RecordingDurability(journal=journal))
+        assert (replay.source, replay.content) == (first.source, first.content)
 
     async def test_snapshot_from_a_store_of_its_own_stays_the_agents(self, tmp_path: Path) -> None:
         # The run's workspace is untrusted, but the store keeps its files in an operator workspace of its own.
