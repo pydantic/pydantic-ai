@@ -860,7 +860,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
     ) -> None:
-        """Reject per-run capabilities that contribute toolsets needing durable wrapping."""
+        """Reject per-run capabilities that need registering when the agent is built.
+
+        That's any capability contributing an executing toolset or `@durable_operation` methods, or choosing the
+        model through `resolve_model_id` or `get_model`.
+        """
         if not self.in_durable_context or not isinstance(
             self.get_durable_operation_backend(), RegisteredOperationBackend
         ):
@@ -879,10 +883,21 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 return True
             return False
 
+        def needs_registration(capability: AbstractCapability[AgentDepsT]) -> bool:
+            # Durable operations are only registered for capabilities bound at construction, and only the
+            # model ID crosses into the model request unit, so a per-run capability that chooses the
+            # model there would be bypassed.
+            return (
+                contributes_executing_toolset(capability)
+                or any(collect_capability_operations(leaf) for leaf in leaf_capabilities(capability))
+                or capability.has_resolve_model_id
+                or any(leaf._can_supply_model for leaf in leaf_capabilities(capability))
+            )
+
         unsafe_capabilities = [
             capability
             for capability in capabilities
-            if not capability._safe_at_runtime and contributes_executing_toolset(capability)
+            if not capability._safe_at_runtime and needs_registration(capability)
         ]
         if not unsafe_capabilities:
             return

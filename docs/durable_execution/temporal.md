@@ -830,7 +830,7 @@ class MultiModelWorkflow(PydanticAIWorkflow):
 
 ### Capabilities at Runtime
 
-A per-run capability that contributes no executing toolsets is allowed inside a workflow. Capabilities that contribute executing toolsets must still be attached at agent construction so Temporal can register their activities. This exemption applies to capabilities, not raw per-run `toolsets=` entries; their existing restrictions are unchanged.
+A per-run capability that only adds hooks, instructions or settings is allowed inside a workflow. Capabilities that contribute executing toolsets or `@durable_operation` methods must still be attached at agent construction so Temporal can register their activities, and so must capabilities that choose the model (`resolve_model_id` or `get_model`), since only the model ID reaches the model request activity. This exemption applies to capabilities, not raw per-run `toolsets=` entries; their existing restrictions are unchanged.
 
 ### Toolsets at Runtime
 

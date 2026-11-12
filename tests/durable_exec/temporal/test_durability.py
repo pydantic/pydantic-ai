@@ -2916,6 +2916,93 @@ async def test_per_run_hooks_only_capability_allowed_inside_workflow():
             await agent.run('hello', capabilities=[extra_factory])
 
 
+@dataclass
+class _SkipEveryModelRequest(AbstractCapability[None]):
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+
+@dataclass
+class _PerRunExternalToolset(AbstractCapability[None]):
+    def get_toolset(self) -> ExternalToolset[None]:
+        return ExternalToolset(tool_defs=[ToolDefinition(name='per_run_external')], id='per_run_external')
+
+
+@dataclass
+class _PerRunDynamicToolset(AbstractCapability[None]):
+    def get_toolset(self) -> Callable[[RunContext[None]], FunctionToolset[None]]:
+        def factory(ctx: RunContext[None]) -> FunctionToolset[None]:  # pragma: no cover
+            return FunctionToolset()
+
+        return factory
+
+
+@dataclass
+class _PerRunDurableOperation(AbstractCapability[None]):
+    id: str | None = 'per_run_operation'
+
+    @durable_operation('fetch')
+    async def fetch(self, ctx: RunContext[None]) -> str:  # pragma: no cover
+        return 'fetched'
+
+
+@dataclass
+class _PerRunModelResolver(AbstractCapability[None]):
+    async def resolve_model_id(
+        self, ctx: ModelResolutionContext[None], *, model_id: str
+    ) -> Model | None:  # pragma: no cover
+        return None
+
+
+@dataclass
+class _PerRunModelSupplier(AbstractCapability[None]):
+    def get_model(self) -> Model:  # pragma: no cover
+        return TestModel()
+
+
+@pytest.mark.parametrize(
+    ('capability', 'allowed'),
+    [
+        pytest.param(_PerRunExternalToolset(), True, id='non-executing-toolset'),
+        pytest.param(_PerRunDynamicToolset(), False, id='dynamic-toolset'),
+        pytest.param(_PerRunDurableOperation(), False, id='durable-operation'),
+        pytest.param(_PerRunModelResolver(), False, id='resolve-model-id'),
+        pytest.param(_PerRunModelSupplier(), False, id='supplies-model'),
+    ],
+)
+async def test_per_run_capability_needing_registration_rejected_inside_workflow(
+    capability: AbstractCapability[None], allowed: bool
+):
+    """A per-run capability is only allowed when nothing it adds needs registering when the agent is built.
+
+    Durable operations are registered for construction-time capabilities only, and only the model ID crosses into
+    the model request activity, so per-run capabilities that choose the model are refused too.
+    """
+    agent = Agent(
+        TestModel(),
+        name='runtime_capability_registration',
+        deps_type=type(None),
+        capabilities=[_SkipEveryModelRequest(), TemporalDurability()],
+    )
+
+    with (
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.patched', return_value=False),
+        patch(
+            'pydantic_ai.durable_exec.temporal._durability.workflow.unsafe.is_replaying_history_events',
+            return_value=False,
+        ),
+    ):
+        if allowed:
+            result = await agent.run('hello', capabilities=[capability])
+            assert result.output == 'skipped'
+        else:
+            with pytest.raises(UserError, match='Capabilities added per-run inside a Temporal workflow'):
+                await agent.run('hello', capabilities=[capability])
+
+
 async def test_override_model_instance_round_trips_inside_workflow():
     """A registered model instance remains selectable through `agent.override` for Temporal agents."""
     from pydantic_ai.models.test import TestModel
