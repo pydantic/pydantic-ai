@@ -41,6 +41,8 @@ class Provider:
     review_engine: ReviewEngine
     handover_errors: frozenset[str]
     """OpenCode error types that hand a run this provider refused to the next provider in the chain."""
+    restart_on_rate_limit: bool = False
+    """Whether a `provider.rate-limit` after the run finished a step hands the run to the next provider anew."""
 
 
 # OpenCode 2.2.5 types a spent OpenCode Go usage window `provider.go-limit`, and a quota it cannot name
@@ -57,7 +59,8 @@ OPENCODE_GO = Provider(
     'opencode',
     frozenset({'provider.go-limit', 'provider.quota'}),
 )
-# Each Coding Plan account hands a run its quota or rate limit refused to the other account.
+# Each Coding Plan account hands a run its quota or rate limit refused to the other account. A rate limit after the
+# run took steps restarts the run on the other account too.
 CODING_PLAN_HANDOVER_ERRORS = frozenset({'provider.quota', 'provider.rate-limit'})
 # The GLM Coding Plan, on its own coding endpoint. OpenCode 2.2.5 reads its key from `ZHIPU_API_KEY` only.
 ZAI = Provider(
@@ -68,6 +71,7 @@ ZAI = Provider(
     'the primary Coding Plan',
     'opencode-zai',
     CODING_PLAN_HANDOVER_ERRORS,
+    restart_on_rate_limit=True,
 )
 ZAI_BACKUP = Provider(
     'zai-coding-plan',
@@ -77,6 +81,7 @@ ZAI_BACKUP = Provider(
     'the backup Coding Plan',
     'opencode-zai',
     CODING_PLAN_HANDOVER_ERRORS,
+    restart_on_rate_limit=True,
 )
 
 
@@ -168,10 +173,11 @@ def run_with_fallback(
     """Launch OpenCode on Go, then on one Z.AI Coding Plan account, then on the other, while each refuses the run.
 
     A provider hands the run to the next one whose key is set only when it refused the run with one of its
-    `handover_errors` before the run finished a step. The workflow's run number plus `matrix_index`, the run's place in
-    its job matrix, picks the account tried first: the primary when the sum is even, the backup when it is odd.
-    `launch` runs the command in the environment it is given and writes the event stream to the stream it is given,
-    which `output` holds after each run. Each run gets a config that allows only its provider,
+    `handover_errors` before the run finished a step, or, with `restart_on_rate_limit`, rate-limited it after. The next
+    provider runs it from scratch, and each provider runs it at most once. The workflow's run number plus
+    `matrix_index`, the run's place in its job matrix, picks the account tried first: the primary when the sum is even,
+    the backup when it is odd. `launch` runs the command in the environment it is given and writes the event stream to
+    the stream it is given, which `output` holds after each run. Each run gets a config that allows only its provider,
     and an environment whose only provider key is that account's. A run whose process fails prints its model, OpenCode
     error type, status and provider code. Each run appends an `Attempt` to `attempts`, so a caller can report a chain
     that raised.
@@ -276,16 +282,23 @@ def run_with_fallback(
         try:
             return run_on(provider, os.environ[provider.secret_variable])
         except subprocess.CalledProcessError:
-            report_failure(attempts[-1])
+            attempt = attempts[-1]
+            report_failure(attempt)
             # OpenCode 2.2.5 does not retry a quota rejection. It writes `step_start`, then an `error` event whose
             # type `toSessionError` sets, and no `step_finish`:
             # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
-            if attempts[-1].finished or attempts[-1].error_type not in provider.handover_errors:
+            if not attempt.finished and attempt.error_type in provider.handover_errors:
+                print(
+                    f'{provider.model} refused the run before its first step; '
+                    f'retrying on {successor.model} on {successor.plan}.'
+                )
+            elif attempt.finished and provider.restart_on_rate_limit and attempt.error_type == 'provider.rate-limit':
+                print(
+                    f'{provider.model} rate-limited the run after it took steps; '
+                    f'restarting the run on {successor.model} on {successor.plan}.'
+                )
+            else:
                 raise
-            print(
-                f'{provider.model} refused the run before its first step; '
-                f'retrying on {successor.model} on {successor.plan}.'
-            )
     try:
         return run_on(chain[-1], os.environ[chain[-1].secret_variable])
     except subprocess.CalledProcessError:

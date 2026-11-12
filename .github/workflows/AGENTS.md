@@ -347,17 +347,22 @@ Every other caller is a single job and passes 0. Replayed on the 12 `PR Review C
 this rule puts 16 of their 33 reviews on the primary first and 17 on the backup. Without `ZAI_BACKUP_API_KEY`, the
 chain is Go, then the primary.
 
-A run moves to the next provider only when all of these hold:
+A run moves to the next provider when OpenCode exited non-zero, the next account's key is set, and one of these holds:
 
-- OpenCode exited non-zero, and its event stream has no `step_finish` event.
-- The stream's last `error` event has a type the refusing provider hands over: `provider.go-limit` or
-  `provider.quota` from Go, and `provider.quota` or `provider.rate-limit` from the first Coding Plan account. OpenCode
-  2.2.5 retries a rate limit within the run before it writes `provider.rate-limit`, and does not retry the other
-  types; see `isRetryable` in
-  [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts) and
+- The provider refused the run before its first step: the event stream has no `step_finish` event, and its last
+  `error` event has a type the refusing provider hands over. That is `provider.go-limit` or `provider.quota` from Go,
+  and `provider.quota` or `provider.rate-limit` from the first Coding Plan account. OpenCode 2.2.5 retries a rate
+  limit within the run before it writes `provider.rate-limit`, and does not retry the other types; see `isRetryable`
+  in [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts) and
   `toSessionError` in
   [`to-session-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts).
-- The next account's key is set. The chain leaves out a Z.AI account without a key.
+- The first Coding Plan account rate-limited the run after it took steps: the stream has a `step_finish` event, and
+  its last `error` event is a `provider.rate-limit`. The job log says that account rate-limited the run after it took
+  steps, and names the account that restarts it.
+
+The next provider runs the whole run again from scratch, as its own `Attempt`. Each provider runs a run at most once,
+so a run restarts at most once. Go never restarts a run. A `provider.quota` after a step fails the job. The chain
+leaves out a Z.AI account without a key.
 
 OpenCode 2.2.5 types any HTTP 402, and a Z.AI HTTP 429 whose message names a plan, quota or balance limit,
 `provider.quota`. Those 429s include the 5-hour, weekly and monthly windows (`1308`, `1310`, `1316` to `1321`), an
@@ -365,12 +370,12 @@ expired plan (`1309`), a plan without the model (`1311`) and an empty balance (`
 other account. OpenCode types every other 429 `provider.rate-limit` and retries it within the run, such as `1302`
 request-rate limits and `1305` overload; see `classify` in
 [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts). A rate
-limit that outlasts those retries hands the run to the other account too.
+limit that outlasts those retries hands the run to the other account too, before or after the run took steps.
 
 Every other failure fails the job, including a rejected key, a provider outage, a time-budget stop, a timeout and an
-invalid answer. A run the other account also refuses fails the job. A fallback run gets
-only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only, so each Z.AI run
-sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
+invalid answer. A run the other account also refuses or rate-limits fails the job. A fallback run, a restart
+included, gets only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only,
+so each Z.AI run sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
 `compaction` and `summary` agents to its model. Its environment holds no provider key but that account's. The job log names the
 model and the plan that served the run. When a run's process fails, the job log names that run's model, its plan, and the
 `type` and `status` of its stream's last `error` event. It also names the provider's `error.code` from that event's
