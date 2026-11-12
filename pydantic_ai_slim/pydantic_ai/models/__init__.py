@@ -882,8 +882,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     Where the profile's `supports_inline_system_prompts` is `False`, the announcement goes in the system prompt (see
     `_framing_announcement`); elsewhere it's a mid-conversation `SystemPromptPart` in the first request that has a
     frame or a lookalike note. `False` for a model with no provider system field the sentence reliably reaches a model
-    in: the test doubles, which have no wire, and `MCPSamplingModel`, whose client picks the model and gets the system
-    prompt parts joined into one string with no separator.
+    in: the test doubles, which have no wire.
     """
     _relocates_tool_files: ClassVar[bool] = False
     """Whether this adapter moves the files a tool returned onto the user channel, framed as `<pyai:tool_result>`.
