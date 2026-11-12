@@ -27,6 +27,7 @@ CURATED = {
     'ask_user',
     'repo_context',
     'compaction',
+    'refinement',
     'persistence',
     'observability',
     'notifications',

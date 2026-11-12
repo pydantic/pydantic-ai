@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
 import secrets
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 import urllib.request
@@ -16,11 +16,11 @@ from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TextIO
 from urllib.parse import quote
 
-from douwebot_opencode_result import final_text
-from douwebot_opencode_run import MODEL, check_symlinks, read_only_config
+from douwebot_opencode_result import final_text, rejection_reason, unfenced
+from douwebot_opencode_run import Attempt, check_symlinks, logfire_endpoint, run_with_fallback
 from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
@@ -30,12 +30,10 @@ REVIEW_CONTEXT = Path('.github/.review-context')
 MAX_FINDINGS = 20
 # The instruction layer an agent could load from the head checkout. Their changes stay reviewable in the diffs.
 INSTRUCTION_NAMES = frozenset({'AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md', 'THREAT_MODEL.md', '.mcp.json'})
-LOGFIRE_URL = 'https://logfire-api.pydantic.dev'
 _TSV_ESCAPES: dict[str, str] = {'\\': '\\', 't': '\t', 'n': '\n', 'r': '\r'}
 # Slack reads `<url|label>`, `<!channel>` and entities in webhook text as formatting, so model text arrives escaped.
 _SLACK_ESCAPES = str.maketrans({'&': '&amp;', '<': '&lt;', '>': '&gt;'})
 PRIVATE_REPORT_LIMIT = 3000
-
 _EVENT = TypeAdapter(dict[str, object])
 _TOKENS = TypeAdapter(dict[str, float | dict[str, float]])
 
@@ -176,9 +174,9 @@ def step_tokens(line: str) -> int | None:
 
 
 def run_opencode(
-    command: list[str], prompt: str, *, cwd: Path, env: dict[str, str], output: Path, minutes: int
+    command: list[str], prompt: str, *, cwd: Path, env: dict[str, str], log: TextIO, seconds: float
 ) -> Usage:
-    """Stream the event log to `output`, counting steps and tokens, and stop the run at its time budget."""
+    """Stream the event log to `log`, counting steps and tokens, and stop the run at its time budget."""
     usage = Usage()
     started = time.monotonic()
     with subprocess.Popen(
@@ -189,20 +187,19 @@ def run_opencode(
             usage.stopped = True
             process.kill()
 
-        timer = threading.Timer(minutes * 60, stop)
+        timer = threading.Timer(seconds, stop)
         timer.start()
         try:
             assert process.stdin is not None and process.stdout is not None
             process.stdin.write(prompt)
             process.stdin.close()
-            with output.open('w', encoding='utf-8') as log:
-                for line in process.stdout:
-                    log.write(line)
-                    tokens = step_tokens(line) if line.strip() else None
-                    if tokens is None:
-                        continue
-                    usage.steps += 1
-                    usage.tokens += tokens
+            for line in process.stdout:
+                log.write(line)
+                tokens = step_tokens(line) if line.strip() else None
+                if tokens is None:
+                    continue
+                usage.steps += 1
+                usage.tokens += tokens
             process.wait()
         finally:
             timer.cancel()
@@ -230,11 +227,11 @@ def check_result(
         coverage = f'Review stopped at its time budget of {check.max_minutes} minutes.'
     else:
         try:
-            result = ModelResult.model_validate_json(final_text(stream))
-        except (ValueError, ValidationError):
+            result = ModelResult.model_validate_json(unfenced(final_text(stream)))
+        except (ValueError, ValidationError) as error:
             if not at_step_budget:
                 # The error would repeat the answer, private report included, into the public job log.
-                raise ValueError('The review answer does not match its schema') from None
+                raise ValueError(f'The review answer was rejected: {rejection_reason(error)}') from None
             coverage = f'Review stopped at its step budget of {check.max_steps}.'
         else:
             # The result artifact is public, and a finding on a line the pull request did not change can describe a
@@ -278,27 +275,30 @@ def report_privately(webhook: str, check: str, pr_number: int, repository: str, 
         pass
 
 
-def export_span(endpoint: str, token: str, result: CheckResult, attributes: Mapping[str, str], started: int) -> None:
+def export_span(
+    endpoint: str, token: str, check: str, attributes: Mapping[str, str | int | bool], started: int, *, failed: bool
+) -> None:
     """Send one span per review to Logfire: OpenCode's own spans carry no model, token or step counts."""
-    values = {
-        **attributes,
-        'pr_review_checks.outcome': result.outcome,
-        'pr_review_checks.findings': len(result.findings),
-        'pr_review_checks.steps': result.steps,
-        'pr_review_checks.tokens': result.tokens,
-        'pr_review_checks.seconds': result.seconds,
-    }
     span = {
         'traceId': secrets.token_hex(16),
         'spanId': secrets.token_hex(8),
-        'name': f'PR Review Check {result.check}',
+        'name': f'PR Review Check {check}',
         'kind': 1,
         'startTimeUnixNano': str(started),
         'endTimeUnixNano': str(time.time_ns()),
         'attributes': [
-            {'key': key, 'value': {'intValue': str(value)} if isinstance(value, int) else {'stringValue': value}}
-            for key, value in values.items()
+            {
+                'key': key,
+                'value': {'boolValue': value}
+                if isinstance(value, bool)
+                else {'intValue': str(value)}
+                if isinstance(value, int)
+                else {'stringValue': value},
+            }
+            for key, value in attributes.items()
         ],
+        # OTLP's `STATUS_CODE_ERROR`.
+        **({'status': {'code': 2}} if failed else {}),
     }
     resource = {'attributes': [{'key': 'service.name', 'value': {'stringValue': 'pr-review-checks'}}]}
     body = {'resourceSpans': [{'resource': resource, 'scopeSpans': [{'scope': {'name': __name__}, 'spans': [span]}]}]}
@@ -310,7 +310,8 @@ def export_span(endpoint: str, token: str, result: CheckResult, attributes: Mapp
     try:
         with urllib.request.urlopen(request, timeout=30):
             pass
-    except OSError as error:
+    # `main` exports while a failed review's own exception propagates, so a failed export must not replace it.
+    except (OSError, ValueError, http.client.HTTPException) as error:
         print(f'::warning::Could not export the review span: {error}')
 
 
@@ -320,61 +321,75 @@ def main() -> None:
     check = check_named(env['CHECK'])
     pr_number = int(env['PR_NUMBER'])
     repository = env['GITHUB_REPOSITORY']
-    workspace = Path(env['GITHUB_WORKSPACE']).resolve(strict=True)
     runner_temp = Path(env['RUNNER_TEMP'])
-    head = workspace / 'pr-head'
-    changes = changed_files(head, env['BASE_SHA'], env['HEAD_SHA'])
-    files = select(changes)[check.name]
-    strip_instructions(head)
-    check_symlinks(workspace, skip_pr_head=True)
-    check_symlinks(head)
-    context = write_context(check.name, files, workspace, base=env['BASE_SHA'], head=env['HEAD_SHA'])
-    prompt = build_prompt(check, context, workspace, pr_number=pr_number, repository=repository)
-    api_key = env['OPENCODE_API_KEY']
-    if not api_key:
-        raise ValueError('OPENCODE_API_KEY is empty')
-    token = env.get('LOGFIRE_TOKEN', '')
-    endpoint = (env.get('LOGFIRE_URL') or LOGFIRE_URL).rstrip('/')
+    # These attributes tie OpenCode's own telemetry, and the runner's span, to this review.
     attributes = {
         'pr_review_checks.check': check.name,
         'github.repository': repository,
         'github.pr_number': str(pr_number),
         'github.head_sha': env['HEAD_SHA'],
         'github.run_id': env['GITHUB_RUN_ID'],
+        'github.run_attempt': env['GITHUB_RUN_ATTEMPT'],
     }
     started = time.time_ns()
-    stream = runner_temp / f'pr-review-checks-{check.name}.ndjson'
-    with tempfile.TemporaryDirectory(dir=runner_temp, prefix='pr-review-checks-opencode-') as temp:
-        temp_root = Path(temp)
-        config_dir = temp_root / 'config' / 'opencode'
-        config_dir.mkdir(parents=True)
-        (config_dir / 'opencode.json').write_text(
-            json.dumps(read_only_config(agent='reviewer', steps=check.max_steps)), encoding='utf-8'
+    attempts: list[Attempt] = []
+    values: dict[str, str | int | bool] = {}
+    try:
+        workspace = Path(env['GITHUB_WORKSPACE']).resolve(strict=True)
+        head = workspace / 'pr-head'
+        changes = changed_files(head, env['BASE_SHA'], env['HEAD_SHA'])
+        selected = select(changes)
+        files = selected[check.name]
+        strip_instructions(head)
+        check_symlinks(workspace, skip_pr_head=True)
+        check_symlinks(head)
+        context = write_context(check.name, files, workspace, base=env['BASE_SHA'], head=env['HEAD_SHA'])
+        prompt = build_prompt(check, context, workspace, pr_number=pr_number, repository=repository)
+        stream = runner_temp / f'pr-review-checks-{check.name}.ndjson'
+        # A run on the fallback provider gets only what is left of the time budget.
+        deadline = time.monotonic() + check.max_minutes * 60
+        usage, _ = run_with_fallback(
+            lambda command, opencode_env, log: run_opencode(
+                command, prompt, cwd=workspace, env=opencode_env, log=log, seconds=deadline - time.monotonic()
+            ),
+            agent='reviewer',
+            output=stream,
+            steps=check.max_steps,
+            attributes=attributes,
+            # The `detect` job builds the matrix in `select` order.
+            matrix_index=list(selected).index(check.name),
+            attempts=attempts,
         )
-        opencode_env = {
-            'HOME': str(temp_root),
-            'PATH': env['PATH'],
-            'XDG_CONFIG_HOME': str(temp_root / 'config'),
-            'XDG_DATA_HOME': str(temp_root / 'data'),
-            'XDG_CACHE_HOME': str(temp_root / 'cache'),
-            'OPENCODE_API_KEY': api_key,
+        values = {
+            'pr_review_checks.steps': usage.steps,
+            'pr_review_checks.tokens': usage.tokens,
+            'pr_review_checks.seconds': usage.seconds,
         }
-        if token:
-            # OpenCode exports its spans and logs over OTLP/HTTP when the endpoint is set. They carry no prompt
-            # or completion text, so these attributes tie them to this review.
-            opencode_env |= {
-                'OTEL_EXPORTER_OTLP_ENDPOINT': endpoint,
-                'OTEL_EXPORTER_OTLP_HEADERS': f'Authorization={token}',
-                'OTEL_RESOURCE_ATTRIBUTES': ','.join(f'{key}={quote(value)}' for key, value in attributes.items()),
+        changed = {change.path: change.positions for change in changes}
+        result, private_report = check_result(check, files, stream, usage, changed=changed)
+        values |= {'pr_review_checks.outcome': result.outcome, 'pr_review_checks.findings': len(result.findings)}
+    # A failed, rejected or cancelled review is exported too, under the exception's class name: its message can
+    # repeat model or provider text.
+    except BaseException as error:
+        values |= {'pr_review_checks.outcome': 'FAILED', 'pr_review_checks.exception': type(error).__name__}
+        raise
+    finally:
+        if attempts:
+            # The plan of the last OpenCode run, which served the review or failed it.
+            last = attempts[-1]
+            failure = {'error_type': last.error_type, 'error_status': last.status, 'error_code': last.code}
+            values |= {
+                'pr_review_checks.provider': last.provider.name,
+                'pr_review_checks.plan': last.provider.plan,
+                'pr_review_checks.attempts': len(attempts),
+                **{f'pr_review_checks.{key}': value for key, value in failure.items() if value is not None},
+                **({} if last.finished is None else {'pr_review_checks.step_finish': last.finished}),
             }
-        command = ['opencode', 'run', '--standalone', '--model', MODEL, '--agent', 'reviewer', '--format', 'json']
-        usage = run_opencode(command, prompt, cwd=workspace, env=opencode_env, output=stream, minutes=check.max_minutes)
-    changed = {change.path: change.positions for change in changes}
-    result, private_report = check_result(check, files, stream, usage, changed=changed)
-    if token:
-        export_span(endpoint, token, result, attributes, started)
-    else:
-        print('::warning::LOGFIRE_TOKEN is empty, so this review exports no telemetry.')
+        if token := env.get('LOGFIRE_TOKEN', ''):
+            failed = 'pr_review_checks.exception' in values
+            export_span(logfire_endpoint(), token, check.name, {**attributes, **values}, started, failed=failed)
+        else:
+            print('::warning::LOGFIRE_TOKEN is empty, so this review exports no telemetry.')
     if private_report:
         if not (webhook := env.get('TRIAGE_WEBHOOK_URL', '')):
             raise ValueError('The review produced a private report, but TRIAGE_WEBHOOK_URL is empty')

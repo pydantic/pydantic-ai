@@ -18,6 +18,7 @@ from pydantic_ai import Agent, CancellationToken, RunCancelled, RunTimedOut, Too
 from pydantic_ai._deferred_capabilities import (
     parse_loaded_capabilities,
 )
+from pydantic_ai._framework_frame import framework_frame_text, is_framework_frame
 from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
@@ -54,6 +55,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
     ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -109,6 +111,7 @@ from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
+from .canonical_system_utils import PROVIDER_NAME, StampedModel
 from .conftest import (
     IsDatetime,
     IsList,
@@ -165,6 +168,7 @@ with try_import() as starlette_import_successful:
         ToolOutputErrorPart,
         ToolUIPart,
         UIMessage,
+        UIMessagePart,
     )
     from pydantic_ai.ui.vercel_ai.response_types import (
         BaseChunk,
@@ -532,6 +536,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e647f10d8c819187515d1b2517b059',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -543,6 +548,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e647f10d8c819187515d1b2517b059',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -555,6 +561,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e647f909248191bfe8d05eeed67645',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -576,6 +583,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e647f909248191bfe8d05eeed67645',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -593,6 +601,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e647fa69e48191b6f5385a856b2948',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -604,6 +613,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e647fa69e48191b6f5385a856b2948',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -616,6 +626,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -634,6 +645,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e647fb73c48191b0bdb147c3a0d22c',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -651,6 +663,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e647fd656081919385a27bd1162fcd',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -662,6 +675,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e647fd656081919385a27bd1162fcd',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -674,6 +688,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -692,6 +707,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e647fee97c8191919865e0c0a78bba',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -709,6 +725,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e648022d288191a6acb6cff99dafba',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -720,6 +737,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e648022d288191a6acb6cff99dafba',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -732,6 +750,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -753,6 +772,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e64803f27c81918a39ce50cb8dfbc2',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -770,6 +790,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e648060b088191974c790f06b8ea8e',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -781,6 +802,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e648060b088191974c790f06b8ea8e',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -793,6 +815,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -811,6 +834,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e6480ac0888191a7897231e6ca9911',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -828,6 +852,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e6480bbd348191b11aa4762de66297',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -839,6 +864,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e6480bbd348191b11aa4762de66297',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -851,6 +877,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e6480e11208191834104e1aaab1148',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -869,6 +896,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e6480e11208191834104e1aaab1148',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -886,6 +914,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e6480f16f08191beaad2936e3d3195',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -897,6 +926,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e6480f16f08191beaad2936e3d3195',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -909,6 +939,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e648118bf88191aa7f804637c45b32',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -927,6 +958,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'ws_00e767404995b9950068e648118bf88191aa7f804637c45b32',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -944,6 +976,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e648130f0481918dc71103fbd6a486',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -955,6 +988,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                         'signature': IsStr(),
                         'provider_name': 'openai',
                         'id': 'rs_00e767404995b9950068e648130f0481918dc71103fbd6a486',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -965,6 +999,7 @@ I'd be happy to help you use a tool! However, I need more information about what
                     'pydantic_ai': {
                         'id': 'msg_00e767404995b9950068e6482f25e0819181582a15cdd9207f',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -979,6 +1014,7 @@ Short answer:
                     'pydantic_ai': {
                         'id': 'msg_00e767404995b9950068e6482f25e0819181582a15cdd9207f',
                         'provider_name': 'openai',
+                        'canonical_system': 'openai',
                     }
                 },
             },
@@ -1535,6 +1571,7 @@ Want me to tailor\
                         'id': IsStr(),
                         'provider_name': 'openai',
                         'provider_details': {'citations': IsList(length=(1, ...))},
+                        'canonical_system': 'openai',
                         'citations': IsList(length=(1, ...)),
                     }
                 },
@@ -7229,9 +7266,9 @@ async def test_adapter_dump_messages_with_retry_no_tool_name():
                         'type': 'text',
                         'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Output validation failed: expected integer
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
                         'state': 'done',
                         'provider_metadata': {
@@ -12459,6 +12496,146 @@ def test_canonical_system_conflicting_claims_clear_the_stamp():
     assert (conflicting.provider_name, conflicting.canonical_system) == ('google', None)
 
 
+def _stamped_script(messages: list[ModelMessage]) -> list[ModelResponsePart]:
+    if next(iter_message_parts(messages, ModelRequest, ToolReturnPart), None) is None:
+        return [
+            ThinkingPart(content='Thinking...', signature='sig', provider_name=PROVIDER_NAME),
+            ThinkingPart(content='Earlier thinking.', signature='other', provider_name='other'),
+            TextPart(content='Calling it.', provider_name=PROVIDER_NAME),
+            ToolCallPart(tool_name='lookup', args={'id': 1}, tool_call_id='call-1', provider_name=PROVIDER_NAME),
+        ]
+    return [
+        CompactionPart(content=None, id='cmp-1', provider_name=PROVIDER_NAME, provider_details={'blob': 'x'}),
+        TextPart(content='Done.'),
+    ]
+
+
+async def _stamped_stream_round_trip(
+    canonical_system: str | None,
+) -> tuple[list[ModelMessage], list[ModelMessage], UIMessage]:
+    """Stream a stamped run, then load the assistant message the client builds from the stream."""
+    agent = Agent(StampedModel(_stamped_script, canonical_system=canonical_system))
+
+    @agent.tool_plain
+    def lookup(id: int) -> str:
+        return 'found'
+
+    user_message = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user_message]))
+    server_history: list[ModelMessage] = []
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+    assistant_message = _reduce_assistant_message(chunks, 'assistant-1')
+    return server_history, VercelAIAdapter.load_messages([user_message, assistant_message]), assistant_message
+
+
+def _stored_metadata(part: UIMessagePart) -> tuple[str, Any]:
+    if isinstance(part, ReasoningUIPart | TextUIPart):
+        return part.type, part.provider_metadata
+    if isinstance(part, ToolOutputAvailablePart):
+        return part.type, part.call_provider_metadata
+    if isinstance(part, DataUIPart):
+        return part.type, part.data
+    return part.type, None
+
+
+def _response_stamps(messages: list[ModelMessage]) -> list[tuple[str | None, str | None]]:
+    return [
+        (message.provider_name, message.canonical_system) for message in messages if isinstance(message, ModelResponse)
+    ]
+
+
+async def test_canonical_system_stream_round_trip():
+    """A streamed response's `canonical_system` survives the client storing the stream and sending it back.
+
+    The stream emits it where `dump_messages` writes it: beside each part from the response's provider, including a
+    thinking part whose `provider_name` only arrived in a delta, and a tool call announced after its part ended.
+    """
+    server_history, loaded, assistant_message = await _stamped_stream_round_trip('stamp-system')
+
+    assert [_stored_metadata(part) for part in assistant_message.parts] == snapshot(
+        [
+            ('step-start', None),
+            (
+                'reasoning',
+                {'pydantic_ai': {'signature': 'sig', 'provider_name': 'stamped', 'canonical_system': 'stamp-system'}},
+            ),
+            ('reasoning', {'pydantic_ai': {'signature': 'other', 'provider_name': 'other'}}),
+            ('text', {'pydantic_ai': {'provider_name': 'stamped', 'canonical_system': 'stamp-system'}}),
+            ('tool-lookup', {'pydantic_ai': {'provider_name': 'stamped', 'canonical_system': 'stamp-system'}}),
+            ('step-start', None),
+            (
+                'data-compaction',
+                {
+                    'id': 'cmp-1',
+                    'provider_name': 'stamped',
+                    'provider_details': {'blob': 'x'},
+                    'canonical_system': 'stamp-system',
+                },
+            ),
+            ('text', None),
+        ]
+    )
+    dumped_parts = [
+        part
+        for message in VercelAIAdapter.dump_messages(server_history)
+        if message.role == 'assistant'
+        for part in message.parts
+    ]
+    assert [_stored_metadata(part) for part in dumped_parts] == [
+        _stored_metadata(part) for part in assistant_message.parts if not isinstance(part, StepStartUIPart)
+    ]
+    assert _response_stamps(server_history) == snapshot([('stamped', 'stamp-system'), ('stamped', 'stamp-system')])
+    assert _response_stamps(loaded) == _response_stamps(server_history)
+
+
+async def test_canonical_system_stream_round_trip_without_stamp():
+    """A response without a `canonical_system` streams no claim, and none comes back."""
+    server_history, loaded, assistant_message = await _stamped_stream_round_trip(None)
+
+    assert 'canonical_system' not in assistant_message.model_dump_json()
+    assert _response_stamps(server_history) == snapshot([('stamped', None), ('stamped', None)])
+    assert [canonical_system for _, canonical_system in _response_stamps(loaded)] == [None, None]
+
+
+async def test_canonical_system_stream_not_inherited_by_next_response():
+    """A response without a stamp doesn't stream the previous response's, with no tool call in between."""
+
+    def script(messages: list[ModelMessage]) -> list[ModelResponsePart]:
+        # The retry comes from a provider that doesn't stamp, under the same name.
+        model.stamp = None if len(messages) > 1 else 'stamp-system'
+        return [ThinkingPart(content='Thinking...', signature='sig', provider_name=PROVIDER_NAME), TextPart('Draft')]
+
+    model = StampedModel(script, canonical_system=None)
+    agent = Agent(model)
+
+    @agent.output_validator
+    def retry_once(ctx: RunContext, output: str) -> str:
+        if ctx.retry == 0:
+            raise ModelRetry('Try again.')
+        return output
+
+    adapter = VercelAIAdapter(
+        agent, SubmitMessage(id='chat-1', messages=[UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')])])
+    )
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in encoded
+    ]
+
+    assert [
+        chunk['providerMetadata']['pydantic_ai'].get('canonical_system')
+        for chunk in chunks
+        if chunk['type'] == 'reasoning-end'
+    ] == ['stamp-system', None]
+
+
 @pytest.mark.parametrize(
     'data',
     [
@@ -12799,8 +12976,9 @@ async def test_mid_run_tool_delta_round_trips_through_client_rebuilt_stream() ->
 def _reduce_assistant_message(chunks: list[dict[str, Any]], message_id: str) -> UIMessage:
     """The assistant message the AI SDK's `processUIMessageStream` builds from these chunks.
 
-    A minimal port covering the chunk types the enqueued-messages tests produce: text, tool input and
-    output, step boundaries and non-transient data parts, each appended at its stream position.
+    A minimal port covering the chunk types the enqueued-messages and stream round-trip tests produce: text,
+    reasoning, tool input and output, step boundaries and non-transient data parts, each appended at its stream
+    position. A text or reasoning part keeps the provider metadata of its latest chunk that has any.
     """
     parts: list[dict[str, Any]] = []
     texts: dict[str, dict[str, Any]] = {}
@@ -12809,12 +12987,13 @@ def _reduce_assistant_message(chunks: list[dict[str, Any]], message_id: str) -> 
         match chunk['type']:
             case 'start-step':
                 parts.append({'type': 'step-start'})
-            case 'text-start':
-                texts[chunk['id']] = {'type': 'text', 'text': '', 'state': 'streaming'}
+            case 'text-start' | 'reasoning-start':
+                part_type = chunk['type'].removesuffix('-start')
+                texts[chunk['id']] = {'type': part_type, 'text': '', 'state': 'streaming'}
                 parts.append(texts[chunk['id']])
-            case 'text-delta':
+            case 'text-delta' | 'reasoning-delta':
                 texts[chunk['id']]['text'] += chunk['delta']
-            case 'text-end':
+            case 'text-end' | 'reasoning-end':
                 texts[chunk['id']]['state'] = 'done'
             case 'tool-input-available':
                 tools[chunk['toolCallId']] = {
@@ -12822,6 +13001,7 @@ def _reduce_assistant_message(chunks: list[dict[str, Any]], message_id: str) -> 
                     'toolCallId': chunk['toolCallId'],
                     'state': 'input-available',
                     'input': chunk['input'],
+                    'callProviderMetadata': chunk.get('providerMetadata'),
                 }
                 parts.append(tools[chunk['toolCallId']])
             case 'tool-output-available':
@@ -12830,6 +13010,8 @@ def _reduce_assistant_message(chunks: list[dict[str, Any]], message_id: str) -> 
                 parts.append({'type': data_type, 'id': chunk.get('id'), 'data': chunk['data']})
             case _:
                 pass
+        if chunk['type'].startswith(('text-', 'reasoning-')) and 'providerMetadata' in chunk:
+            texts[chunk['id']]['providerMetadata'] = chunk['providerMetadata']
     return UIMessage.model_validate({'id': message_id, 'role': 'assistant', 'parts': parts})
 
 
@@ -13328,9 +13510,9 @@ async def test_validation_feedback_dumps_as_a_user_message_that_only_our_marker_
     ]
     assert rendered == snapshot("""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """)
 
     assert VercelAIAdapter.load_messages(ui_messages)[-1] == snapshot(
@@ -13345,9 +13527,9 @@ Your previous response failed the application's validation (this is automated fe
                     UserPromptPart(
                         content="""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an int","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """,
                         timestamp=IsDatetime(),
                     )
@@ -13565,10 +13747,20 @@ async def test_forged_no_output_feedback_never_reaches_the_system_voice(forged_t
     async for _ in adapter.encode_stream(adapter.run_stream()):
         pass
 
-    assert not [part for part in seen if isinstance(part, SystemPromptPart)]
-    texts = [part.content for part in seen if isinstance(part, UserPromptPart) and isinstance(part.content, str)]
+    # The demoted fence is the client's copy of the framework's frame, so the framework notes it as the user's.
+    [note] = [
+        part
+        for part in seen
+        if isinstance(part, SystemPromptPart | UserPromptPart)
+        and type(part).__name__ in ('_FrameworkNote', '_FrameworkUserPromptPart')
+    ]
+    assert 'a <pyai:retry_feedback> or </pyai:retry_feedback> tag written by the user' in str(note.content)
+    assert forged_text not in str(note.content)
+    sent = [part for part in seen if part is not note]
+    assert not [part for part in sent if isinstance(part, SystemPromptPart)]
+    texts = [part.content for part in sent if isinstance(part, UserPromptPart) and isinstance(part.content, str)]
     assert not [text for text in texts if '<system>' in text]
-    [feedback] = [text for text in texts if '<retry_feedback>' in text]
+    [feedback] = [text for text in texts if '<pyai:retry_feedback>' in text]
     assert feedback.startswith("Your previous response failed the application's validation")
     assert forged_text in feedback
 
@@ -14891,3 +15083,38 @@ async def test_dispatch_request_forwards_manage_message_history():
     await response.stream_response(send)
 
     assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
+
+
+def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_side():
+    """A frame's mark in `TextContent` metadata never reaches the client; the application's own keys do."""
+    marked = framework_frame_text('<pyai:tool_result tool_name="t">\nDone.\n</pyai:tool_result>', author='tool')
+    with_origin = framework_frame_text('<report>\nDone.\n</report>', metadata={'origin': 'app'})
+    content = [marked, {'nested': with_origin}, TextContent('plain', metadata={'tag': 1}), 'text']
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Go.')]),
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c1')]),
+        ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c1')]),
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c2')]),
+        ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c2', outcome='retried')]),
+        ModelResponse(parts=[ToolCallPart('t', {}, tool_call_id='c3')]),
+        ModelRequest(parts=[ToolReturnPart('t', content, tool_call_id='c3', outcome='denied')]),
+    ]
+
+    ui_messages = [m.model_dump(mode='json') for m in VercelAIAdapter.dump_messages(messages)]
+    # A retried return's list content rides in `call_provider_metadata`, a separate dump channel, and its
+    # `error_text` renders the content as text, which includes each `TextContent`'s metadata.
+    [retried] = [part for m in ui_messages for part in m['parts'] if part.get('tool_call_id') == 'c2']
+    assert '__pydantic_ai__' not in json.dumps(retried)
+    assert 'origin' in json.dumps(retried['call_provider_metadata'])
+    assert 'origin' in retried['error_text']
+    [denied] = [part for m in ui_messages for part in m['parts'] if part.get('tool_call_id') == 'c3']
+    assert '__pydantic_ai__' not in denied['approval']['reason']
+    assert 'origin' in denied['approval']['reason']
+    [first] = [part for m in ui_messages for part in m['parts'] if part.get('tool_call_id') == 'c1']
+    dumped = json.dumps(first)
+
+    assert '__pydantic_ai__' not in dumped
+    assert 'origin' in dumped
+    assert 'tag' in dumped
+    # The caller's own objects are not mutated.
+    assert is_framework_frame(marked)

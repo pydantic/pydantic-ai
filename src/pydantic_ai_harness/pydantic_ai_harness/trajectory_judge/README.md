@@ -7,7 +7,22 @@ Watch a live agent run with a second model, and steer it back on course mid-run.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/trajectory_judge/)
 
-![TrajectoryJudge starts an evaluation from the after_model_request hook every 20 model requests. The most recent window of the transcript goes to a judge model, which runs alongside the agent instead of blocking it. The judge returns AllGood, and nothing happens, or Steer(message=...), which is enqueued and delivered on the next model request as a framework note plus the message in a judge_feedback element.](https://pydantic.dev/docs/ai/img/harness/trajectory-judge.svg)
+```mermaid
+flowchart TB
+    accTitle: Trajectory Judge: a second model reviews the run while it runs
+    accDescr: Every 20 model requests, TrajectoryJudge(every=20) runs in the after_model_request hook and sends a recent window of the transcript to a judge model, which runs alongside the agent. The judge model returns AllGood, and nothing happens, or Steer(message=...), which is enqueued and delivered to the model on the next request.
+    model(["model"])
+    judge["TrajectoryJudge(every=20)<br/>after_model_request hook"]:::capability
+    reviewer(["judge model<br/>runs alongside<br/>the agent"])
+    steer["Steer(message=...)<br/>enqueued"]:::capability
+    good["AllGood<br/>nothing happens"]
+    model -->|"every 20 model requests"| judge
+    judge -.->|"recent window<br/>of the transcript"| reviewer
+    reviewer --> steer
+    reviewer --> good
+    steer -->|"delivered on<br/>the next request"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The problem
 
@@ -47,7 +62,7 @@ print(result.output)
 
 ## How steering is framed
 
-The judge's message is user-channel data, not a system prompt, because a model wrote it after reading the run's tool results. Any `judge_feedback` tag in it, and any framing tag Pydantic AI writes (`<system>`, `<tool_result>` and the rest), opening or closing, is escaped, so it can't end the element early or imitate the `<system>` text that framework notes become on models without inline system prompts.
+The judge's message is user-channel data, not a system prompt, because a model wrote it after reading the run's tool results. Any `judge_feedback` tag in it, and any framing tag Pydantic AI writes (`<system>`, `<pyai:tool_result>` and the rest), opening or closing, is escaped, so it can't end the element early or imitate the `<system>` text that framework notes become on models without inline system prompts.
 
 The note names its element by a random `ref`, made once when the steer is built and stored with it, so later requests resend both parts unchanged. A `<judge_feedback>` element forged earlier in the run, for example in a tool result, has no ref or a different one, and the note disowns any element whose ref no trajectory judge's note names. Only the first element with a named ref counts, so a later copy by content that saw the ref is disowned too. Naming the element by ref rather than by position works whatever order a provider sends the two parts in (Anthropic sends a request's user content before its system entry).
 
