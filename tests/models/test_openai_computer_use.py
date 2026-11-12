@@ -814,17 +814,21 @@ async def test_a_pixel_scroll_note_reads_the_clicks_by_the_counts_kept_on_the_ca
     )
 
 
+_STORED_SCROLL: dict[str, Any] = {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 340}
+
+
 @pytest.mark.parametrize(
-    'counts, scroll_y',
+    'counts, stored',
     [
         # Each action becomes at least one tool action, so these counts came from somewhere else.
-        pytest.param([3, -1], 340, id='negative-count'),
-        pytest.param([2, 0], 340, id='zero-count'),
-        pytest.param([1, 1], '340', id='pixels-not-a-number'),
+        pytest.param([3, -1], _STORED_SCROLL, id='negative-count'),
+        pytest.param([2, 0], _STORED_SCROLL, id='zero-count'),
+        pytest.param([1, 1], {**_STORED_SCROLL, 'scroll_y': '340'}, id='pixels-not-a-number'),
+        pytest.param([1, 1], None, id='action-not-an-object'),
     ],
 )
 async def test_a_stored_call_no_mapping_could_make_adds_no_scroll_note(
-    allow_model_requests: None, counts: list[int], scroll_y: Any
+    allow_model_requests: None, counts: list[int], stored: Any
 ) -> None:
     client = MockOpenAIResponses.create_mock(_done())
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
@@ -832,7 +836,7 @@ async def test_a_stored_call_no_mapping_could_make_adds_no_scroll_note(
         **_COMPUTER_ITEM,
         'actions': [
             {'type': 'click', 'button': 'left', 'x': 1, 'y': 2},
-            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': scroll_y},
+            stored,
         ],
     }
     click: dict[str, Any] = {'type': 'click', 'x': 1, 'y': 2, 'button': 'left', 'modifiers': []}
