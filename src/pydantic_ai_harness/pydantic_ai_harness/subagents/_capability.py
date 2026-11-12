@@ -570,8 +570,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if self.task_control is not None and (unsupported := _durably_unsupported(self, spec)):
             settings = ', '.join(f'`{name}`' for name in unsupported)
             raise UserError(f'`SubAgents` `task_control` is not supported under durable execution with {settings}.')
-        # Replay rebuilds the roster only if `create_agent` runs in workflow code, as the toolset's `{'durable': False}`
-        # asks. Only an engine that runs function tools there, or Temporal, is tested to replay it (#13204).
+        # Replay rebuilds the roster only if `create_agent` runs in workflow code: an engine that runs function tools
+        # there, or Temporal, which honors the toolset's `{'temporal': False}`.
         in_workflow = 'function' not in spec.wrapped_toolset_kinds or spec.tool_config_key == 'temporal'
         if owner is not None or not in_workflow:
             raise UserError(
