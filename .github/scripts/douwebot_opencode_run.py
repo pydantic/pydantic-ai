@@ -38,9 +38,9 @@ class Provider:
 
 
 # OpenCode 2.2.5 types a spent OpenCode Go usage window `provider.go-limit`, and a quota it cannot name
-# `provider.quota`. It types a Z.AI 429 whose message names a plan or quota limit, such as codes 1308 and 1310,
-# `provider.quota`, and retries any other 429, such as 1302 rate limits and 1305 overload, as
-# `provider.rate-limit`: `classify` in
+# `provider.quota`. It also types any 402, and a Z.AI 429 whose message names a plan, quota or balance limit, such as
+# codes 1308, 1309 and 1310, `provider.quota`. It retries any other 429, such as 1302 rate limits and 1305 overload,
+# as `provider.rate-limit`: `classify` in
 # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts
 OPENCODE_GO = Provider(
     'opencode-go',

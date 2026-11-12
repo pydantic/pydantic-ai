@@ -332,8 +332,10 @@ A run moves to the next provider only when all of these hold:
   [`to-session-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts).
 - The next account's key is set. The chain leaves out a Z.AI account without a key.
 
-OpenCode 2.2.5 types a Z.AI HTTP 429 `provider.quota` when its message names a plan or quota limit, such as codes
-`1308` and `1310`. It types every other 429 `provider.rate-limit` and retries it within the run, such as `1302`
+OpenCode 2.2.5 types any HTTP 402, and a Z.AI HTTP 429 whose message names a plan, quota or balance limit,
+`provider.quota`. Those 429s include the 5-hour, weekly and monthly windows (`1308`, `1310`, `1316` to `1321`), an
+expired plan (`1309`), a plan without the model (`1311`) and an empty balance (`1113`), so each hands the run to the
+backup account. OpenCode types every other 429 `provider.rate-limit` and retries it within the run, such as `1302`
 request-rate limits and `1305` overload; see `classify` in
 [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts). A rate
 limit that outlasts those retries fails the job; the backup account does not serve it.
@@ -529,7 +531,7 @@ first pre-agent step, before any workspace script runs:
   workspace copy: the workspace can hold the PR head or its base branch.
 - It forwards the same environment as the `provider_health` job.
 - It replaces the `provider-health` artifact, so the monitor reconciles the decision the run
-  acted on. The monitor never reads a failure of these steps as a setup failure. A recheck
+  acted on. When that upload fails, the record and the monitor read the gate's decision, account included. The monitor never reads a failure of these steps as a setup failure. A recheck
   that errors opens no incident, like an error in the `provider_health` job.
 - A blocked decision fails the agent job before the engine step. Do not write a `noop`
   instead: `detection` runs on any agent output and would still spend a detection pass.
