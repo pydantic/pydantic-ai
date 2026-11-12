@@ -6,17 +6,19 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import functools
+import http.client
 import json
 import math
 import os
 import re
+import secrets
 import ssl
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
@@ -565,19 +567,24 @@ def _parse_zai_quota(value: object) -> Quota:
     )
 
 
+def _no_redirect_opener() -> urllib.request.OpenerDirector:
+    """An opener without a redirect handler: `urllib` would resend the request's `Authorization` to any host."""
+    opener = urllib.request.OpenerDirector()
+    opener.add_handler(urllib.request.ProxyHandler())
+    opener.add_handler(urllib.request.HTTPHandler())
+    opener.add_handler(urllib.request.HTTPSHandler())
+    opener.add_handler(urllib.request.HTTPDefaultErrorHandler())
+    opener.add_handler(urllib.request.HTTPErrorProcessor())
+    return opener
+
+
 def _fetch_zai_quota(api_key: str) -> Quota:
     if not api_key:
         return _unknown_quota('missing_api_key')
     try:
         headers: dict[str, str] = {'Authorization': api_key, 'Accept': 'application/json'}
         request = urllib.request.Request(ZAI_QUOTA_URL, headers=headers, method='GET')
-        opener = urllib.request.OpenerDirector()
-        opener.add_handler(urllib.request.ProxyHandler())
-        opener.add_handler(urllib.request.HTTPHandler())
-        opener.add_handler(urllib.request.HTTPSHandler())
-        opener.add_handler(urllib.request.HTTPDefaultErrorHandler())
-        opener.add_handler(urllib.request.HTTPErrorProcessor())
-        with opener.open(request, timeout=20) as response:
+        with _no_redirect_opener().open(request, timeout=20) as response:
             status = response.status
             if status != 200:
                 return _unknown_quota('invalid_response_code', _safe_http_status(status))
@@ -1343,7 +1350,106 @@ def _account_quota(account: Account) -> Quota:
     return _fetch_zai_quota(api_key) if api_key else _unknown_quota('missing_api_key')
 
 
+def _otel_pairs(value: str) -> dict[str, str]:
+    """Parse an OTel `key=value,...` environment variable, whose keys and values are percent-encoded."""
+    pairs: dict[str, str] = {}
+    for item in value.split(','):
+        key, separator, raw = item.partition('=')
+        if separator and key.strip():
+            pairs[urllib.parse.unquote(key).strip()] = urllib.parse.unquote(raw).strip()
+    return pairs
+
+
+def _otlp_attributes(values: Mapping[str, object]) -> list[dict[str, object]]:
+    attributes: list[dict[str, object]] = []
+    for key, value in values.items():
+        if isinstance(value, bool):
+            encoded: dict[str, object] = {'boolValue': value}
+        elif isinstance(value, int):
+            encoded = {'intValue': str(value)}
+        elif isinstance(value, float):
+            encoded = {'doubleValue': value}
+        else:
+            encoded = {'stringValue': str(value)}
+        attributes.append({'key': key, 'value': encoded})
+    return attributes
+
+
+def _export_decision_span(health: Health, started_ns: int) -> None:
+    """Send the decision as one span to the OTLP endpoint gh-aw sets in every lock's workflow-level `env:`.
+
+    Without a token, as on fork pull request events, nothing is sent. A failed export only warns: the decision
+    is already in the step outputs and the artifact.
+    """
+    endpoint = os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT', '').rstrip('/')
+    headers = _otel_pairs(os.environ.get('OTEL_EXPORTER_OTLP_HEADERS', ''))
+    if not endpoint or not headers.get('Authorization'):
+        return
+    values: dict[str, object] = {
+        'github.job': os.environ.get('GITHUB_JOB', ''),
+        'provider_health.ready': health.ready,
+        'provider_health.reason': health.reason,
+        'provider_health.workflow': health.workflow,
+        'provider_health.task_key': health.task_key,
+        'provider_health.trigger_event': health.trigger_event,
+        'provider_health.run_attempt': health.run_attempt,
+    }
+    if health.account is not None:
+        values['provider_health.account'] = health.account
+    if health.recovery_issue is not None:
+        values['provider_health.recovery_issue'] = health.recovery_issue
+    # A gate that checked only the primary decided for the primary alone.
+    for item in health.accounts or (AccountHealth('primary', health.ready, health.reason, health.quota),):
+        values[f'provider_health.{item.account}.ready'] = item.ready
+        values[f'provider_health.{item.account}.reason'] = item.reason
+        for name, value in _quota_json(item.quota).items():
+            if value is not None:
+                values[f'provider_health.{item.account}.quota.{name}'] = value
+    # gh-aw's setup step exports its trace in the agent job, so the recheck joins it. The gate job runs before
+    # gh-aw starts the run's trace, and starts its own.
+    trace_id = os.environ.get('GITHUB_AW_OTEL_TRACE_ID', '')
+    parent_span_id = os.environ.get('GITHUB_AW_OTEL_PARENT_SPAN_ID', '')
+    joins_trace = bool(re.fullmatch('[0-9a-f]{32}', trace_id) and re.fullmatch('[0-9a-f]{16}', parent_span_id))
+    span: dict[str, object] = {
+        'traceId': trace_id if joins_trace else secrets.token_hex(16),
+        'spanId': secrets.token_hex(8),
+        'name': 'Z.AI provider health decision',
+        'kind': 1,
+        'startTimeUnixNano': str(started_ns),
+        'endTimeUnixNano': str(time.time_ns()),
+        'attributes': _otlp_attributes(values),
+    }
+    if joins_trace:
+        span['parentSpanId'] = parent_span_id
+    resource = {
+        'service.name': os.environ.get('OTEL_SERVICE_NAME') or 'agent-provider-health',
+        **_otel_pairs(os.environ.get('OTEL_RESOURCE_ATTRIBUTES', '')),
+    }
+    body = {
+        'resourceSpans': [
+            {
+                'resource': {'attributes': _otlp_attributes(resource)},
+                'scopeSpans': [{'scope': {'name': 'agent_provider_health'}, 'spans': [span]}],
+            }
+        ]
+    }
+    request = urllib.request.Request(
+        f'{endpoint}/v1/traces',
+        data=json.dumps(body).encode(),
+        headers={**headers, 'Content-Type': 'application/json'},
+        method='POST',
+    )
+    try:
+        with _no_redirect_opener().open(request, timeout=10):
+            pass
+    except (OSError, ValueError, http.client.HTTPException) as error:
+        # An invalid header value's error message would repeat the token.
+        detail = f'HTTP {error.code}' if isinstance(error, urllib.error.HTTPError) else type(error).__name__
+        print(f'::warning::Could not export the provider health span: {detail}')
+
+
 def _check_command(args: argparse.Namespace) -> int:
+    started_ns = time.time_ns()
     workflow = os.environ.get('GITHUB_WORKFLOW', '')
     task_key = os.environ.get('PYDANTIC_AI_TASK_KEY', '')
     trigger_event = os.environ.get('PYDANTIC_AI_TRIGGER_EVENT', '')
@@ -1425,6 +1531,7 @@ def _check_command(args: argparse.Namespace) -> int:
                 f'### Provider health: {"ready" if health.ready else "blocked"}\n\n{displayed_reason}.{quota_detail}\n'
             )
     print(f'{"ready" if health.ready else "blocked"}: {displayed_reason}')
+    _export_decision_span(health, started_ns)
     return 0
 
 
