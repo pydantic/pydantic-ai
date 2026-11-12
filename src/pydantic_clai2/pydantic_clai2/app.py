@@ -1,9 +1,8 @@
 """The terminal app: `chat`, its stock agent, and `open_stock_agent` for runs from code."""
 
-import logging
 import os
-from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
-from contextlib import asynccontextmanager, contextmanager, nullcontext
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from threading import Thread
 from typing import TypeVar
@@ -19,6 +18,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_clai2 import warm_imports
+from pydantic_clai2.__main__ import quiet_stderr_fallback
 from pydantic_clai2.clai_docs import ClaiDocs
 from pydantic_clai2.cli.self_update import WebHandoff
 from pydantic_clai2.commands import (
@@ -228,7 +228,7 @@ async def chat(
     served: WebHandoff | None = None
     with (
         telemetry_log(shell.context.store.path.with_name('telemetry.log'), console=console),
-        _quiet_credential_store_logs(console=console),
+        quiet_stderr_fallback(credential_store.__name__, enabled=console.is_terminal),
         relay_stderr() if console.is_terminal else nullcontext(),
     ):
         async with agent:
@@ -316,21 +316,6 @@ async def chat(
                     fresh = True
             if (relaunch := last.relaunch(web=served)) is not None:
                 raise relaunch
-
-
-@contextmanager
-def _quiet_credential_store_logs(*, console: Console) -> Generator[None]:
-    """Keep credential store fallback warnings off stderr during interactive terminal sessions (`/login` reports fallback directly)."""
-    if not console.is_terminal:
-        yield
-        return
-    handler = logging.NullHandler()
-    logger = logging.getLogger(credential_store.__name__)
-    logger.addHandler(handler)
-    try:
-        yield
-    finally:
-        logger.removeHandler(handler)
 
 
 def _create_home_shell(

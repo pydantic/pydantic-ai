@@ -5,6 +5,7 @@ import logging
 import os
 import stat
 import sys
+from collections.abc import Sequence
 from io import StringIO
 from pathlib import Path
 from uuid import UUID
@@ -14,11 +15,16 @@ import pytest
 from keyring.errors import InitError, KeyringLocked, NoKeyringError
 from rich.console import Console
 
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials
-from pydantic_clai2.app import _quiet_credential_store_logs  # pyright: ignore[reportPrivateUsage]
+from pydantic_clai2 import chat
 from pydantic_clai2.auth import CodexAuth, CodexCredentials
-from pydantic_clai2.config import credential_store
+from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.commands import Command
+from pydantic_clai2.config import Settings, credential_store
 from pydantic_clai2.config.credential_store import (
     credentials_path,
     delete_credentials,
@@ -26,7 +32,9 @@ from pydantic_clai2.config.credential_store import (
     load_codex_credentials,
     save_codex_credentials,
 )
+from pydantic_clai2.config.settings_store import SettingsStore
 from tests.clai2.conftest import stored_accounts
+from tests.clai2.test_app_edges import inputs
 
 Vault = dict[tuple[str, str], str]
 KEY = ('pydantic-clai2', 'encryption-key')
@@ -38,7 +46,7 @@ def fake_browser(url: str) -> bool:
 
 
 def new_session() -> None:
-    """Forget the key a previous process read, as a restart would."""
+    """Forget the key and fallback warning a previous process cached, as a restart would."""
     credential_store._stored_key.cache_clear()  # pyright: ignore[reportPrivateUsage]
     credential_store._warn_plaintext_fallback.cache_clear()  # pyright: ignore[reportPrivateUsage]
 
@@ -234,8 +242,13 @@ def no_keyring(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) 
 
 
 @pytest.mark.parametrize('no_keyring', [NoKeyringError, InitError], indirect=True)
-def test_file_fallback_when_no_keyring(
-    fallback: Path, no_keyring: None, caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
+async def test_file_fallback_when_no_keyring(
+    tmp_path: Path,
+    fallback: Path,
+    no_keyring: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     with caplog.at_level('WARNING', logger='pydantic_clai2.config.credential_store'):
         assert load_codex_credentials(fallback=fallback) is None
@@ -256,6 +269,16 @@ def test_file_fallback_when_no_keyring(
     if sys.platform != 'win32':  # pragma: no branch
         assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
 
+    class _LoadFallback(AbstractCapability[None]):
+        def get_commands(self, context: CommandContext) -> Sequence[Command]:
+            return [
+                Command(
+                    name='load-cred',
+                    description='Load codex credentials',
+                    handler=lambda args: load_codex_credentials(fallback=fallback) or '',
+                )
+            ]
+
     root = logging.getLogger()
     handlers = root.handlers
     root.handlers = []
@@ -266,17 +289,31 @@ def test_file_fallback_when_no_keyring(
             capsys.readouterr().err
             == 'No OS keyring backend available; falling back to 0600 plaintext credential files.\n'
         )
-        with _quiet_credential_store_logs(console=Console(file=StringIO(), force_terminal=True)):
-            new_session()
-            assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
-            assert capsys.readouterr().err == ''
-        with _quiet_credential_store_logs(console=Console(file=StringIO(), force_terminal=False)):
-            new_session()
-            assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
-            assert (
-                capsys.readouterr().err
-                == 'No OS keyring backend available; falling back to 0600 plaintext credential files.\n'
-            )
+        inputs(monkeypatch, ['/load-cred', '/exit'])
+        new_session()
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            plugins=[_LoadFallback()],
+            settings=Settings(model='test'),
+            console=Console(file=StringIO(), force_terminal=False, width=1000),
+            store=SettingsStore(tmp_path / 'config.db'),
+        )
+        assert (
+            capsys.readouterr().err
+            == 'No OS keyring backend available; falling back to 0600 plaintext credential files.\n'
+        )
+        inputs(monkeypatch, ['/load-cred', '/exit'])
+        new_session()
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            plugins=[_LoadFallback()],
+            settings=Settings(model='test'),
+            console=Console(file=StringIO(), force_terminal=True, width=1000),
+            store=SettingsStore(tmp_path / 'config.db'),
+        )
+        assert capsys.readouterr().err == ''
     finally:
         root.handlers = handlers
 
