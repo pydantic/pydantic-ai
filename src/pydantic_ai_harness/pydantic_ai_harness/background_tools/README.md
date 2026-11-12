@@ -37,7 +37,7 @@ By default, any tool with `metadata={'background': True}` runs in the background
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![The model calls slow_research, a tool marked to run in the background. BackgroundTools answers at once with a started message and a task ID, so the model keeps working on other calls while the tool runs. When the tool finishes, its result arrives as a follow-up user message wrapped in a tool_result tag that names the tool and the call, and the next model request uses it. A normal run waits for its background tools before it ends.](https://pydantic.dev/docs/ai/img/harness/background-tools.svg)
+![The model calls slow_research, a tool marked to run in the background. BackgroundTools answers at once with a started message and a task ID, so the model keeps working on other calls while the tool runs. When the tool finishes, its result arrives as a follow-up user message wrapped in a tool_result tag that names the tool and the call, and the next model request uses it. A run waits for its background tools before it ends, also when it pauses; stopping early cancels them.](https://pydantic.dev/docs/ai/img/harness/background-tools.svg)
 
 ## Selecting which tools run in the background
 
@@ -132,12 +132,25 @@ Running out of retries or raising `CancelledError` also ends the run. The run en
 a model request already in progress finishes first. A tool can call `ctx.cancel()` to stop the run and
 the other background tools.
 
-A normal run waits for its background tools to finish. A pending call counts toward
-`tool_calls_limit`. If the run pauses for deferred tools or stops early, unfinished tools are
-cancelled. Results of tools that finished before a deferred-tool pause are kept in the message
-history, so a resumed run sees them, unless every call in the paused step was deferred. Results
-that have not been delivered when a run stops early are dropped. Async tools must allow
-cancellation; ignoring it can prevent the run from stopping.
+A run waits for its background tools to finish, also when it pauses for deferred tools or ends
+with a [`PendingModelResponse`](https://pydantic.dev/docs/ai/batch/#ending-a-run-while-it-waits).
+A pending call counts toward `tool_calls_limit`. At a deferred-tool pause, `BackgroundTools` adds the results no model request has
+carried yet to the message history, as one request after the paused step. A run that resumes from that
+history sees them, also after a restart, and resuming without `deferred_tool_results` pauses again.
+With `run_stream()`, when the stream itself ends on the deferred calls, the streamed result's
+messages don't include them. At a `PendingModelResponse`
+pause, whose history must end on the pending response, they stay queued on
+`AgentRun.pending_messages` and `BackgroundTools` doesn't queue them again, so pass them to the next
+run yourself. A failed tool still ends the run. A tool's own `timeout` bounds how long the run waits
+for it, and a run's [`timeout`](https://pydantic.dev/docs/ai/timeouts/#bounding-a-whole-run) bounds
+the whole wait.
+
+Because the pause waits, `DeferredToolRequests` reaches the caller only after the slowest background
+tool finishes. To answer approvals while background tools keep running, resolve them inside the run
+with a [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/deferred-tools/#resolving-deferred-calls-with-a-handler)
+handler.
+If the run stops early, unfinished tools are cancelled and results that have not been delivered
+are dropped. Async tools must allow cancellation; ignoring it can prevent the run from stopping.
 
 > [!WARNING]
 > Python cannot stop a synchronous tool before it returns. Cancelling the run will still wait for

@@ -15,14 +15,18 @@ sensitive to request bodies, so a VCR test could pass green without pinning the 
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ApprovalRequired, CallDeferred, RunContext, capture_run_messages
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai._agent_graph import mark_deferred_pause
+from pydantic_ai._utils import now_utc
+from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult, ProcessHistory
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     SYNTHESIZED_TOOL_RETURN_METADATA_KEY,
@@ -43,6 +47,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.usage import RequestUsage
+from pydantic_graph import End
 
 from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, legacy_retry_prompt_part
 
@@ -50,6 +55,28 @@ TS = datetime(2024, 1, 1, tzinfo=UTC)
 
 PAUSE_RECORD = {'__pydantic_ai__': {'deferred_pause': True}}
 """The metadata a run puts on the requests it writes when it pauses for deferred tool calls."""
+
+
+@dataclass
+class _NoteAtPause(AbstractCapability[Any]):
+    """Writes a note into the history when a run pauses for deferred calls, marked as part of the pause.
+
+    `BackgroundTools` writes its finished results this way, so a paused history can end on several marked requests.
+    """
+
+    note: str
+    when: Callable[[], bool] = lambda: True
+
+    async def after_node_run(
+        self, ctx: RunContext[Any], *, node: AgentNode[Any], result: NodeResult[Any]
+    ) -> NodeResult[Any]:
+        if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests) and self.when():
+            request = ModelRequest(
+                [UserPromptPart(self.note)], run_id=ctx.run_id, conversation_id=ctx.conversation_id, timestamp=now_utc()
+            )
+            mark_deferred_pause(request)
+            ctx.messages.append(request)
+        return result
 
 
 def capture_agent() -> tuple[Agent, list[list[ModelMessage]]]:
@@ -866,18 +893,20 @@ async def test_content_queued_at_a_second_pause_keeps_the_pause():
             ]
         )
 
-    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+    agent = Agent(
+        FunctionModel(model_function),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[_NoteAtPause('Noted while waiting again.', when=lambda: create_file_runs == 2)],
+    )
 
     @agent.tool_plain
     def get_data() -> str:
         return 'data'
 
-    @agent.tool
-    def create_file(ctx: RunContext[object], path: str) -> str:
+    @agent.tool_plain
+    def create_file(path: str) -> str:
         nonlocal create_file_runs
         create_file_runs += 1
-        if create_file_runs == 2:
-            ctx.enqueue('Noted while waiting again.')
         raise ApprovalRequired
 
     first = await agent.run('Do it.')
@@ -897,7 +926,7 @@ async def test_content_queued_at_a_second_pause_keeps_the_pause():
 def _mixed_pause_agent(received: list[list[ModelMessage]]) -> Agent[None, str | DeferredToolRequests]:
     """An agent whose first response calls `get_data`, which runs, and `create_file`, which waits for approval.
 
-    `create_file` queues a note, so the pause records a request after the step's results. Later model requests
+    A capability writes a note at the pause, so the history ends on a second marked request after the step's results. Later model requests
     reply with text, except that one with the prompt 'Fail.' fails.
     """
 
@@ -914,7 +943,11 @@ def _mixed_pause_agent(received: list[list[ModelMessage]]) -> Agent[None, str | 
             raise RuntimeError('The model is down.')
         return ModelResponse(parts=[TextPart('All done.')])
 
-    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+    agent = Agent(
+        FunctionModel(model_function),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[_NoteAtPause('Noted while waiting.')],
+    )
 
     @agent.tool_plain
     def get_data() -> str:
@@ -924,7 +957,6 @@ def _mixed_pause_agent(received: list[list[ModelMessage]]) -> Agent[None, str | 
     def create_file(ctx: RunContext[object], path: str) -> str:
         if ctx.tool_call_approved:
             return 'created'  # pragma: no cover
-        ctx.enqueue('Noted while waiting.')
         raise ApprovalRequired
 
     return agent

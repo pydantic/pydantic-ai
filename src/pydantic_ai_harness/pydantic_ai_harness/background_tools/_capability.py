@@ -16,6 +16,9 @@ import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from pydantic import ValidationError
 
+from pydantic_ai._agent_graph import mark_deferred_pause
+from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._utils import now_utc
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentNode,
@@ -35,7 +38,16 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.framing import neutralize_tags
-from pydantic_ai.messages import ModelRequest, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelRequestPart,
+    TextContent,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+    UserContent,
+)
+from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -245,6 +257,10 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     """Tools whose started message core counted as a success since the last node boundary."""
     _unsettled: list[_Completion] = field(default_factory=list[_Completion], init=False, repr=False, compare=False)
     """Delivered calls whose outcome has not been charged to the tool's retry count yet."""
+    _queued: dict[str, _Completion] = field(
+        default_factory=dict[str, _Completion], init=False, repr=False, compare=False
+    )
+    """Delivered calls by the ID `enqueue` returned, so a deferred-tool pause can take back the ones still queued."""
     _prepared_modes: dict[str, Literal['always', 'optional'] | None] = field(
         default_factory=dict[str, Literal['always', 'optional'] | None], init=False, repr=False, compare=False
     )
@@ -418,13 +434,23 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     ) -> NodeResult[AgentDepsT]:
         from pydantic_graph import End
 
-        if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests):
-            # At a deferred-tool pause the end-of-run drain records arrived results in the history when the
-            # step's own request ends it. After a step whose calls all deferred it would turn them into
-            # another model request instead, so finished tasks are left unswept.
-            if isinstance(ctx.messages[-1], ModelRequest):
-                for outcome in self._arrived():
+        if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests | PendingModelResponse):
+            # A pause ends the run without another model request, so no later step would take a result that
+            # arrives after it: wait for every live task here. A task sends its outcome before it stops counting
+            # as live, so several can still be buffered once none is.
+            outcomes = list(self._arrived())
+            while self._live:
+                outcomes.append(await self._outcomes.receive())
+            outcomes.extend(self._arrived())
+            if isinstance(result.data.output, DeferredToolRequests):
+                self._record_at_pause(ctx, outcomes)
+            else:
+                # The history must end on the pending response, so the results stay queued on
+                # `AgentRun.pending_messages`.
+                for outcome in outcomes:
                     self._deliver(ctx, outcome)
+            # No later node will settle them, so a retry that exhausts its budget ends the run here.
+            self._settle(ctx)
             return result
 
         for outcome in self._arrived():
@@ -444,8 +470,38 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     def _deliver(self, ctx: RunContext[AgentDepsT], outcome: _Outcome) -> None:
         if isinstance(outcome, BaseException):
             raise outcome
-        ctx.enqueue(*outcome.content)
+        if (enqueue_id := ctx.enqueue(*outcome.content)) is not None:
+            self._queued[enqueue_id] = outcome
         self._unsettled.append(outcome)
+
+    def _record_at_pause(self, ctx: RunContext[AgentDepsT], outcomes: list[_Outcome]) -> None:
+        """Write the results no request has carried yet into the history of a run pausing for deferred tools.
+
+        Core leaves content queued at a pause undelivered, and a fresh copy of this capability runs each run,
+        so nothing would deliver the results later. In the history the caller saves, they survive a restart
+        before the calls are answered. The request is marked as part of the pause, so resuming without
+        `deferred_tool_results` pauses again instead of sending it to the model.
+        """
+        completions = [completion for enqueue_id, completion in self._queued.items() if ctx.dequeue(enqueue_id)]
+        self._queued.clear()
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                raise outcome
+            completions.append(outcome)
+            self._unsettled.append(outcome)
+        parts: list[ModelRequestPart] = [
+            part
+            for completion in completions
+            if (pending := PendingMessage.from_content(*completion.content)) is not None
+            for message in pending.messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ]
+        if not parts:
+            return
+        request = ModelRequest(parts, run_id=ctx.run_id, conversation_id=ctx.conversation_id, timestamp=now_utc())
+        mark_deferred_pause(request)
+        ctx.messages.append(request)
 
     def _settle(self, ctx: RunContext[AgentDepsT]) -> None:
         """Charge delivered calls to the tool manager whose retry counts the next step carries over.
@@ -491,12 +547,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         with self._send, self._outcomes:
             async with anyio.create_task_group() as self._task_group:
                 result = await handler()
-                # Tasks still live after a deferred-tool pause or `run_stream()` are dropped.
+                # Tasks still live after `run_stream()` are dropped.
                 self._task_group.cancel_scope.cancel()
             # An error from a task that finished after the last node boundary still ends the run.
-            for outcome in self._arrived():
-                if isinstance(outcome, BaseException):
-                    raise outcome
+            errors = [outcome for outcome in self._arrived() if isinstance(outcome, BaseException)]
+            if errors:
+                raise errors[0]
         # `result` is bound: the group re-raises the run's own exception, and no task cancels the group.
         assert result is not None
         return result

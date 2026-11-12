@@ -3178,9 +3178,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             mirrored_messages.detach()
         # The drain capability ran ahead of the other hooks, so `'asap'` content a `before_model_request` hook
         # enqueued would wait for the next request. Delivering it now puts it in this request and in history with
-        # one call, which is what a request-scoped reminder needs. Not when resuming a suspended response: that
-        # request re-sends the history ending in it, so there's nowhere to put new content, and it waits.
-        if self._resume_suspended is None:
+        # one call, which is what a request-scoped reminder needs.
+        if not _enqueue.resumes_suspended_response(processed_context):
             processed_context = _enqueue.deliver_asap_messages(run_context, processed_context)
         # Content enqueued during a tool call replaces the request it went into with a copy. Keep this node on the
         # copy, so what's recorded on its request below, like the instructions sent, lands in history.
