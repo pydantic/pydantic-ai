@@ -1,4 +1,4 @@
-"""Credentials encrypted with one OS keyring key, with a private plaintext file when no keyring exists.
+"""Credentials encrypted with one OS keyring key, with a private plaintext file when no usable keyring exists.
 
 macOS asks before an app reads each keychain item, so one item per account (and per chunk of a large
 bundle) meant one password prompt per credential at startup. The keyring now holds a single key, read at
@@ -45,6 +45,13 @@ def _get_password(service: str, account: str) -> str | None:
 def _set_password(service: str, account: str, value: str) -> None:
     try:
         keyring.set_password(service, account, value)
+    except RuntimeError as exc:
+        raise NoKeyringError(str(exc)) from exc
+
+
+def _delete_password(service: str, account: str) -> None:
+    try:
+        keyring.delete_password(service, account)
     except RuntimeError as exc:
         raise NoKeyringError(str(exc)) from exc
 
@@ -193,7 +200,7 @@ def load_codex_credentials(*, account: str = _ACCOUNT, fallback: Path | None = N
 
 
 def save_codex_credentials(*, value: str, account: str = _ACCOUNT, fallback: Path | None = None) -> None:
-    """Encrypt to a file and drop any other copy; write the plaintext file only when no keyring exists."""
+    """Encrypt to a file and drop any other copy; write the plaintext file only when no usable keyring exists."""
     encrypted, plaintext = _files(account=account, fallback=fallback)
     try:
         cipher = _create_cipher()
@@ -285,6 +292,6 @@ def _delete_entries(*, root: str, account: str) -> None:
         services = []
     for service in [*services, _SERVICE]:
         try:
-            keyring.delete_password(service, account)
+            _delete_password(service, account)
         except PasswordDeleteError:
             pass  # A chunk may already be gone.
