@@ -40,6 +40,7 @@ def detection_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # Detection stays on Go unless a test configures a Coding Plan account.
     monkeypatch.delenv('ZAI_API_KEY', raising=False)
     monkeypatch.delenv('ZAI_BACKUP_API_KEY', raising=False)
+    monkeypatch.setenv('GITHUB_RUN_NUMBER', '3188')
     monkeypatch.setenv('GH_AW_HARNESS_MAX_RETRIES', '3')
     monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
     return directory

@@ -266,10 +266,12 @@ def _resolve_paths(args: argparse.Namespace) -> None:
 
 def _run_command(args: argparse.Namespace, store: 'SettingsStore') -> str:
     """Run `clai2 config` or `clai2 plugins` with its arguments, returning what to print."""
-    from pydantic_clai2.commands import config_command, plugins_command
+    from pydantic_clai2.commands import config_command, plugins_command, refuse_widening
 
-    handler = config_command if args.command == 'config' else plugins_command
-    return handler(store, args.arguments)
+    if args.command == 'plugins':
+        return plugins_command(store, args.arguments)
+    refuse_widening(store, args.arguments)
+    return config_command(store, args.arguments)
 
 
 def _relaunch(args: argparse.Namespace, relaunch: 'Relaunch', *, launched: 'Worktree | None') -> None:
