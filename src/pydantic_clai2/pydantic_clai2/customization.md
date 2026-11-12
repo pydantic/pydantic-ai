@@ -26,7 +26,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   on_session_end, on_turn_start, on_turn_end, on_conversation_changed, or
   on_command_end. Follow delegated tasks with on_task_progress, which fires for every
   stream event of every task, text deltas included, so keep it cheap. It also gets
-  the task's sub_agents events, such as TaskQuestionEvent when a task asks its parent.
+  the task's sub_agents events, such as TaskQuestionAskedEvent when a task asks its parent.
 - Drive the prompt from somewhere other than the keyboard, such as a remote UI:
   host.send_input(text) enters a prompt or /command as if typed, host.interrupt()
   cancels the running turn or command, await host.complete(text) returns what Tab offers, and
@@ -64,8 +64,8 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
 ## User worktree removal commands
 
 Use the user-only `worktrees.remove_commands` setting to replace confirmed
-exit-time cleanup, not a plugin contribution. Automatic removal of unchanged
-worktrees and `/workspaces destroy` stay on Git. See the [worktree removal reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
+exit-time cleanup, not a plugin contribution. Automatic removal
+and `/workspaces destroy` stay on Git. See the [worktree removal reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
 for repository-scoped argv configuration, placeholders, and shell functions.
 The exit picker defaults to keeping the checkout. **No, don't ask again for this
 worktree** saves that choice for this checkout in the settings database; a new
@@ -84,7 +84,7 @@ needs the exa extra installed in CLAI's Python environment and EXA_API_KEY set,
 then one command, no file:
 
 ```text
-/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"max_results": 8}'
 ```
 
 The JSON supplies constructor keyword arguments, so only values JSON can
@@ -114,7 +114,7 @@ from pydantic_clai2.plugins import Plugin
 
 class Search(Plugin):
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        return (ExaSearch(num_results=8, text_summary=True),)
+        return (ExaSearch(max_results=8, text_summary=True),)
 
     def get_commands(self) -> Sequence[Command]:
         return (
@@ -828,9 +828,11 @@ coder sub_agents to false: a delegated task's approval fails the run
 
 ## Managed delegation UI
 
-Interactive stock agents use harness `DelegationTasks`: `/tasks` inspects children,
-Enter opens a full-width live transcript, `b` backgrounds, and `x` stops the selected
-tree. Ctrl+B backgrounds foreground children. `/tasks resume ID` is explicit user
+Interactive stock agents use harness `DelegationTasks`: `/tasks` opens a live view
+of the children: a sidebar selects one, its transcript streams beside it, and a typed
+message steers it while it runs or prompts it once it has finished. There, Ctrl+B
+backgrounds and Ctrl+X stops the selected tree. At the prompt, Ctrl+B backgrounds
+foreground children. `/tasks resume ID` is explicit user
 authorization to resume a general-purpose/custom child with its independent history.
 Explore and Plan are read-only, inherit the selected model, and cannot resume.
 Task reports are automated untrusted evidence, never user instructions or permission

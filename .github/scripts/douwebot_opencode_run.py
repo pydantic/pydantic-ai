@@ -4,13 +4,76 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TextIO, TypeVar
 
-from publish_douwebot_review import ReviewResult
+from publish_douwebot_review import ReviewEngine, ReviewResult
+from pydantic import TypeAdapter
 
-MODEL = 'opencode-go/deepseek-v4.1-flash'
+T = TypeVar('T')
+_EVENT = TypeAdapter(dict[str, object])
+# The shape of every error type OpenCode 2.2.5 sets, such as `provider.auth` or `unknown`.
+ERROR_TYPE = re.compile(r'[a-z][a-z.-]*')
+
+
+@dataclass(frozen=True)
+class Provider:
+    """An OpenCode provider of a review model, the account key it runs with, and its douwebot receipt engine."""
+
+    name: str
+    model: str
+    key_variable: str
+    """The variable OpenCode reads the provider's key from."""
+    secret_variable: str
+    """The workflow variable that holds this account's key."""
+    plan: str
+    """The subscription the job log names for this account."""
+    review_engine: ReviewEngine
+    handover_errors: frozenset[str]
+    """OpenCode error types that hand a run this provider refused to the next provider in the chain."""
+
+
+# OpenCode 2.2.5 types a spent OpenCode Go usage window `provider.go-limit`, and a quota it cannot name
+# `provider.quota`. It also types any 402, and a Z.AI 429 whose message names a plan, quota or balance limit, such as
+# codes 1308, 1309 and 1310, `provider.quota`. It retries any other 429, such as 1302 rate limits and 1305 overload,
+# and types one that outlasts its retries `provider.rate-limit`: `classify` in
+# https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts
+OPENCODE_GO = Provider(
+    'opencode-go',
+    'opencode-go/deepseek-v4.1-flash',
+    'OPENCODE_API_KEY',
+    'OPENCODE_API_KEY',
+    'OpenCode Go',
+    'opencode',
+    frozenset({'provider.go-limit', 'provider.quota'}),
+)
+# Each Coding Plan account hands a run its quota or rate limit refused to the other account.
+CODING_PLAN_HANDOVER_ERRORS = frozenset({'provider.quota', 'provider.rate-limit'})
+# The GLM Coding Plan, on its own coding endpoint. OpenCode 2.2.5 reads its key from `ZHIPU_API_KEY` only.
+ZAI = Provider(
+    'zai-coding-plan',
+    'zai-coding-plan/glm-5.3-flash',
+    'ZHIPU_API_KEY',
+    'ZAI_API_KEY',
+    'the primary Coding Plan',
+    'opencode-zai',
+    CODING_PLAN_HANDOVER_ERRORS,
+)
+ZAI_BACKUP = Provider(
+    'zai-coding-plan',
+    'zai-coding-plan/glm-5.3-flash',
+    'ZHIPU_API_KEY',
+    'ZAI_BACKUP_API_KEY',
+    'the backup Coding Plan',
+    'opencode-zai',
+    CODING_PLAN_HANDOVER_ERRORS,
+)
 
 
 def check_symlinks(root: Path, *, skip_pr_head: bool = False) -> None:
@@ -35,8 +98,8 @@ def check_symlinks(root: Path, *, skip_pr_head: bool = False) -> None:
                 raise ValueError(f'Symlink loops through an ancestor: {path.relative_to(root)}')
 
 
-def read_only_config(*, agent: str, steps: int | None = None) -> dict[str, object]:
-    """Allow only the read, grep and glob tools, and only the OpenCode Go provider."""
+def read_only_config(*, agent: str, provider: Provider, steps: int | None = None) -> dict[str, object]:
+    """Allow only the read, grep and glob tools, and only `provider`."""
     # The wildcard deny covers external_directory for direct outside reads. OpenCode checks paths
     # lexically, so callers run check_symlinks to reject links that could escape `cwd`.
     permissions: list[dict[str, str]] = [
@@ -45,7 +108,7 @@ def read_only_config(*, agent: str, steps: int | None = None) -> dict[str, objec
     ]
     policies: list[dict[str, str]] = [
         {'action': 'provider.use', 'resource': '*', 'effect': 'deny'},
-        {'action': 'provider.use', 'resource': 'opencode-go', 'effect': 'allow'},
+        {'action': 'provider.use', 'resource': provider.name, 'effect': 'allow'},
         {'action': 'plugin.use', 'resource': '*', 'effect': 'deny'},
         {'action': 'mcp.use', 'resource': '*', 'effect': 'deny'},
         {'action': 'tool.use', 'resource': '*', 'effect': 'deny'},
@@ -54,51 +117,148 @@ def read_only_config(*, agent: str, steps: int | None = None) -> dict[str, objec
     agent_config: dict[str, object] = {'mode': 'primary', 'permissions': permissions}
     if steps is not None:
         agent_config['steps'] = steps
-    return {
+    config: dict[str, object] = {
         'plugins': ['-opencode.browser'],
         'snapshots': False,
         'default_agent': agent,
         'permissions': permissions,
         'agents': {
             agent: agent_config,
-            'title': {'model': MODEL},
-            'compaction': {'model': MODEL},
+            'title': {'model': provider.model},
+            'compaction': {'model': provider.model},
+            'summary': {'model': provider.model},
         },
         'policies': policies,
     }
+    return config
 
 
-def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: float | None = None) -> None:
-    """Run OpenCode in `cwd` with read, grep, and glob tools only, saving its event stream to `output`."""
-    api_key = os.environ['OPENCODE_API_KEY']
-    if not api_key:
-        raise ValueError('OPENCODE_API_KEY is empty')
-    runner_temp = Path(os.environ['RUNNER_TEMP'])
+def run_with_fallback(
+    launch: Callable[[list[str], dict[str, str], TextIO], T],
+    *,
+    agent: str,
+    output: Path,
+    steps: int | None = None,
+    extra_env: Mapping[str, str] | None = None,
+    matrix_index: int = 0,
+) -> tuple[T, Provider]:
+    """Launch OpenCode on Go, then on one Z.AI Coding Plan account, then on the other, while each refuses the run.
 
-    with tempfile.TemporaryDirectory(dir=runner_temp, prefix='opencode-') as temp:
-        temp_root = Path(temp)
-        config_dir = temp_root / 'config' / 'opencode'
-        config_dir.mkdir(parents=True)
-        (config_dir / 'opencode.json').write_text(json.dumps(read_only_config(agent=agent)), encoding='utf-8')
-        env = {
-            'HOME': str(temp_root),
-            'PATH': os.environ['PATH'],
-            'XDG_CONFIG_HOME': str(temp_root / 'config'),
-            'XDG_DATA_HOME': str(temp_root / 'data'),
-            'XDG_CACHE_HOME': str(temp_root / 'cache'),
-            'OPENCODE_API_KEY': api_key,
-        }
-        with output.open('w', encoding='utf-8') as stream:
-            subprocess.run(
-                ['opencode', 'run', '--standalone', '--model', MODEL, '--agent', agent, '--format', 'json'],
-                input=prompt,
-                text=True,
-                cwd=cwd,
-                env=env,
-                stdout=stream,
-                check=True,
-                timeout=timeout,
+    A provider hands the run to the next one whose key is set only when it refused the run with one of its
+    `handover_errors` before the run finished a step. The workflow's run number plus `matrix_index`, the run's place in
+    its job matrix, picks the account tried first: the primary when the sum is even, the backup when it is odd.
+    `launch` runs the command in the environment it is given and writes the event stream to the stream it is given,
+    which `output` holds after each run. Each run gets a config that allows only its provider,
+    and an environment that holds only that account's key. A run whose process fails prints its model and OpenCode
+    error type.
+    """
+
+    def run_on(provider: Provider, api_key: str) -> tuple[T, Provider]:
+        with (
+            tempfile.TemporaryDirectory(dir=os.environ['RUNNER_TEMP'], prefix='opencode-') as temp,
+            output.open('w', encoding='utf-8') as stream,
+        ):
+            temp_root = Path(temp)
+            config_dir = temp_root / 'config' / 'opencode'
+            config_dir.mkdir(parents=True)
+            config = read_only_config(agent=agent, provider=provider, steps=steps)
+            (config_dir / 'opencode.json').write_text(json.dumps(config), encoding='utf-8')
+            env = {
+                'HOME': str(temp_root),
+                'PATH': os.environ['PATH'],
+                'XDG_CONFIG_HOME': str(temp_root / 'config'),
+                'XDG_DATA_HOME': str(temp_root / 'data'),
+                'XDG_CACHE_HOME': str(temp_root / 'cache'),
+                provider.key_variable: api_key,
+                **(extra_env or {}),
+            }
+            command = [
+                'opencode',
+                'run',
+                '--standalone',
+                '--model',
+                provider.model,
+                '--agent',
+                agent,
+                '--format',
+                'json',
+            ]
+            result = launch(command, env, stream)
+        print(f'OpenCode run served by {provider.model} on {provider.plan}.')
+        return result, provider
+
+    def report_failure(provider: Provider) -> tuple[str | None, bool]:
+        """Print the failed run's model, error type and status; return that type and whether the run finished a step."""
+        try:
+            # Only LF ends an event, as in `douwebot_opencode_result.final_text`.
+            events = [_EVENT.validate_json(line) for line in output.read_text(encoding='utf-8').split('\n') if line]
+            errors = [_EVENT.validate_python(event.get('error')) for event in events if event.get('type') == 'error']
+        except ValueError:
+            # A malformed or undecodable stream names no error, and the caller re-raises the process failure.
+            # A validation error would copy the stream into the public log.
+            events, errors = [], []
+        error = errors[-1] if errors else {}
+        # Job logs are public, and the error's message and response body can repeat the provider's response.
+        # OpenCode names its own error types; print only a value shaped like one.
+        kind, status = error.get('type'), error.get('status')
+        if not isinstance(kind, str) or not ERROR_TYPE.fullmatch(kind):
+            kind = None
+        described = f'error type {kind}' if kind else 'no error type'
+        if isinstance(status, int):
+            described += f', status {status}'
+        print(f'OpenCode run on {provider.model} on {provider.plan} failed with {described}.')
+        return kind, any(event.get('type') == 'step_finish' for event in events)
+
+    if not os.environ[OPENCODE_GO.secret_variable]:
+        raise ValueError(f'{OPENCODE_GO.secret_variable} is empty')
+    # A Z.AI account without a key is left out, so a run never waits on a provider it cannot reach.
+    plans = [provider for provider in (ZAI, ZAI_BACKUP) if os.environ.get(provider.secret_variable)]
+    # Run numbers count up within a workflow, so a burst of runs, and the checks of one matrix, alternate accounts.
+    if (int(os.environ['GITHUB_RUN_NUMBER']) + matrix_index) % 2:
+        plans.reverse()
+    chain = [OPENCODE_GO, *plans]
+    for provider, successor in zip(chain, chain[1:]):
+        try:
+            return run_on(provider, os.environ[provider.secret_variable])
+        except subprocess.CalledProcessError:
+            kind, finished = report_failure(provider)
+            # OpenCode 2.2.5 does not retry a quota rejection. It writes `step_start`, then an `error` event whose
+            # type `toSessionError` sets, and no `step_finish`:
+            # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
+            if finished or kind not in provider.handover_errors:
+                raise
+            print(
+                f'{provider.model} refused the run before its first step; '
+                f'retrying on {successor.model} on {successor.plan}.'
             )
+    try:
+        return run_on(chain[-1], os.environ[chain[-1].secret_variable])
+    except subprocess.CalledProcessError:
+        report_failure(chain[-1])
+        raise
+
+
+def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: float | None = None) -> Provider:
+    """Run OpenCode in `cwd` with read, grep, and glob tools only, saving its event stream to `output`.
+
+    `timeout` bounds every run of the fallback chain together. Returns the provider that served the run.
+    """
+    deadline = None if timeout is None else time.monotonic() + timeout
+    _, provider = run_with_fallback(
+        lambda command, env, stream: subprocess.run(
+            command,
+            input=prompt,
+            text=True,
+            cwd=cwd,
+            env=env,
+            stdout=stream,
+            check=True,
+            timeout=None if deadline is None else deadline - time.monotonic(),
+        ),
+        agent=agent,
+        output=output,
+    )
+    return provider
 
 
 def main() -> None:
@@ -124,12 +284,14 @@ def main() -> None:
         'Return only one JSON object matching this schema: '
         + json.dumps(ReviewResult.model_json_schema(), separators=(',', ':'))
     )
-    run_read_only(
+    provider = run_read_only(
         prompt,
         cwd=workspace,
         agent='reviewer',
         output=Path(os.environ['RUNNER_TEMP']) / 'douwebot-opencode.ndjson',
     )
+    with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as github_output:
+        github_output.write(f'engine={provider.review_engine}\n')
 
 
 if __name__ == '__main__':

@@ -46,6 +46,7 @@ from pydantic_clai2.plugins import (
     SessionEndReason,
     TaskCatalog,
 )
+from pydantic_clai2.plugins._user_waits import UserWaits
 from pydantic_clai2.plugins.factories import import_file
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.ui.prompt.prompt_queue import NOT_QUEUED
@@ -160,6 +161,7 @@ class LiveRuntime:
         self._forks = forks
         self._changed = changed
         self._watchers = 0
+        self._user_waits = UserWaits(changed=self.changed)
 
     @property
     def id(self) -> str:
@@ -211,6 +213,15 @@ class LiveRuntime:
         """Whether the session handles input now or has input queued."""
         inputs = self._inputs()
         return self.running or self.queued > 0 or (inputs is not None and inputs.handling)
+
+    @property
+    def waiting_for(self) -> str | None:
+        """The most recent active user wait, or `None`."""
+        return self._user_waits.current
+
+    def wait_for_user(self, reason: str, /) -> Callable[[], None]:
+        """Report a nonempty reason until the returned idempotent function ends the wait."""
+        return self._user_waits.start(reason)
 
     def setting(self, key: str, /) -> JsonValue:
         """The effective value of a CLAI setting in the session."""

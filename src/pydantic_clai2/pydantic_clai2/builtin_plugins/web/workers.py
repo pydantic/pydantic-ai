@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai_harness.subagents import DelegationStartedEvent, SubAgentMessage, TaskBackgroundedEvent
+from pydantic_ai_harness.subagents import DelegationStartedEvent, SubAgentMessageEvent, TaskBackgroundedEvent
 from pydantic_clai2.builtin_plugins.web.protocol import (
     EventTranslator,
     Item,
@@ -82,7 +82,7 @@ class Workers:
         # `None` and a task-control event are about the task, not its run, and can come before the run starts
         # or while it waits for an answer: the run's `DelegationStartedEvent`, or its next event, starts it.
         if task.id not in self._live and (
-            event.event is None or isinstance(event.event, (SubAgentMessage, TaskBackgroundedEvent))
+            event.event is None or isinstance(event.event, (SubAgentMessageEvent, TaskBackgroundedEvent))
         ):
             return
         live = self._live.get(task.id) or self._start(task, event)

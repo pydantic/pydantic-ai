@@ -10,8 +10,8 @@ from typing import NoReturn
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import Capability, LocalWorkspace, local_workspace
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.capabilities import LocalWorkspace, local_workspace
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -24,6 +24,7 @@ from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.subagents import SubAgents, TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
+from tests.harness._strict_requests import PROVIDERS, capturing_model, strict_tools
 
 
 def test_coder_agent_is_model_less_and_composed() -> None:
@@ -115,7 +116,7 @@ def test_coder_members_and_parameters() -> None:
     coder = Coder(instructions='Custom instructions')
     assert [type(capability).__name__ for capability in coder.capabilities] == [
         'RequireWorkspace',
-        'Capability',
+        '_CoderGuidance',
         'FileSystem',
         'Shell',
         'RepoContext',
@@ -132,10 +133,8 @@ def test_coder_members_and_parameters() -> None:
     shell = next(item for item in coder.capabilities if isinstance(item, Shell))
     assert (shell.tools, shell.denied_commands, shell.allow_interactive) == (['shell'], [], True)
     assert (shell.env, shell.denied_env_patterns) == (None, [])
-    guidance = next(item for item in coder.capabilities if isinstance(item, Capability))
-    instructions = str(guidance.get_instructions())
-    for text in ('Custom instructions', 'DRY', 'YAGNI', 'Zen of Python', "Match the surrounding code's style"):
-        assert text in instructions
+    guidance = next(item for item in coder.capabilities if type(item).__name__ == '_CoderGuidance')
+    assert guidance.id == 'coder_instructions'
     repo = next(item for item in coder.capabilities if isinstance(item, RepoContext))
     assert repo == RepoContext[object](walk_up='repo_root')
     delegation = next(item for item in coder.capabilities if isinstance(item, SubAgents))
@@ -220,3 +219,20 @@ async def test_coder_strict_reaches_the_delegates_ask_parent(tmp_path: Path, str
 
     assert 'ask_parent' in delegate_tools
     assert set(delegate_tools.values()) == {strict}
+
+
+@pytest.mark.parametrize('provider', PROVIDERS)
+async def test_coder_tools_reach_each_provider_non_strict(
+    tmp_path: Path, provider: str, allow_model_requests: None
+) -> None:
+    bodies: list[dict[str, object]] = []
+    agent = Agent[object](capturing_model(provider, bodies), capabilities=[LocalWorkspace(tmp_path), Coder[object]()])
+
+    with pytest.raises(ModelHTTPError):
+        await agent.run('go')
+
+    assert strict_tools(provider, bodies[0]) == dict.fromkeys(CODER_TOOLS - CONTROL_TOOLS, False)
+
+
+def test_coder_loads_from_agent_spec() -> None:
+    Agent.from_spec({'model': 'test', 'capabilities': ['Coder']}, custom_capability_types=[Coder])

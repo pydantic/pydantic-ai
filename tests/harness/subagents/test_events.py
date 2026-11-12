@@ -7,6 +7,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import pytest
 
@@ -95,7 +96,11 @@ def _pair(listener: Listener) -> tuple[DelegationStartedEvent, DelegationFinishe
 
 
 class TestDelegationEvents:
-    async def test_start_then_end_for_one_delegation(self) -> None:
+    async def test_start_then_end_for_one_delegation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        ticks = iter((10.0, 11.5))
+        monkeypatch.setattr(
+            'pydantic_ai_harness.subagents._toolset.time', SimpleNamespace(perf_counter=lambda: next(ticks))
+        )
         listener, output = await _run(_delegate_once(), SubAgents(agents=[SubAgent(_worker())]))
 
         assert output == 'all done'
@@ -115,7 +120,7 @@ class TestDelegationEvents:
         assert end.output == 'W'
         assert end.truncated is False
         assert end.usage is None  # shared with the parent, so not separable
-        assert end.duration_seconds >= 0
+        assert end.duration_ms == 1500
         assert end.tool_call_id == start.tool_call_id
 
     async def test_inherits_tools_and_menu_key_are_reported(self) -> None:

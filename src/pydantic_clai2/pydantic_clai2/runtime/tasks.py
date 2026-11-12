@@ -47,10 +47,11 @@ from pydantic_ai_harness.subagents import (
     DelegationTasks,
     DelegationWorkspaceRequest,
     SubAgent,
-    TaskQuestionEvent,
+    TaskQuestionAskedEvent,
 )
 from pydantic_clai2.plugins import TaskInfo, TaskProgress
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
+from pydantic_clai2.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_clai2.runtime.task_prompts import is_delegate_tool
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status
@@ -72,7 +73,7 @@ def specialists() -> dict[str, SubAgent[object]]:
                 name=name,
                 description=description,
                 instructions=f'{description} Return evidence with paths and line numbers. Do not modify files.',
-                capabilities=[FileSystem(read_only=True)],
+                capabilities=[FileSystem(read_only=True), NON_STRICT_SCHEMAS],
             ),
             read_only=True,
         )
@@ -141,11 +142,11 @@ def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_mod
         model = f' · {terminal_text(model_name, keep="")}' if show_model and model_name else ''
         row.append(f' [{(event.task_id or "")[:8]}]{model} {prompt}', style=theme.color(theme.MUTED))
         return row
-    if isinstance(event, TaskQuestionEvent):
+    if isinstance(event, TaskQuestionAskedEvent):
         return question_row(event)
     if isinstance(event, DelegationFinishedEvent) and event.outcome != 'ok':
         return Text(
-            f'  └ {event.outcome} · {event.duration_seconds:.1f}s · /tasks to inspect',
+            f'  └ {event.outcome} · {event.duration_ms / 1000:.1f}s · /tasks to inspect',
             style=theme.color(theme.WARNING),
         )
     return None
@@ -153,7 +154,7 @@ def task_row(event: AgentStreamEvent, *, model_name: str | None = None, show_mod
 
 def question_row(event: AgentStreamEvent) -> Text | None:
     """A task's question to its parent, which a run shows even without the task panel."""
-    if not isinstance(event, TaskQuestionEvent):
+    if not isinstance(event, TaskQuestionAskedEvent):
         return None
     name = _display_name(event.agent_name)
     question = ' '.join(terminal_text(event.question).split())
@@ -321,6 +322,8 @@ class Tasks:
         self._starting: dict[str, asyncio.Event] = {}
         self._closes = 0
         """How many times `stop_prompts` ran, so a prompt that was awaiting `allow_resume` meanwhile can tell."""
+        self._settled_usage: dict[tuple[str, int], RunUsage] = {}
+        """Each settled task's usage by ID and generation, counted once from the history its owner keeps on disk."""
         self.sink: Callable[[AgentStreamEvent], Awaitable[None]] | None = None
         self.wake: Callable[[], None] | None = None
 
@@ -378,7 +381,7 @@ class Tasks:
             await self.fire(TaskProgress(task=self.info(record), event=event))
         if record.parent_id is None and self.wake is not None and self._for_main_run(record):
             self.wake()
-        if isinstance(event, TaskQuestionEvent) and event.task_id != record.id:
+        if isinstance(event, TaskQuestionAskedEvent) and event.task_id != record.id:
             # The copy in a parent task's stream: it shows once, as the asking task's own event.
             return
         if isinstance(event, DelegationStartedEvent) and self.show_task_models():
@@ -387,17 +390,17 @@ class Tasks:
             return
         held = self._pending_rows.get(record.id)
         if held is not None and (
-            update.model_name is not None or isinstance(event, (DelegationFinishedEvent, TaskQuestionEvent))
+            update.model_name is not None or isinstance(event, (DelegationFinishedEvent, TaskQuestionAskedEvent))
         ):
             del self._pending_rows[record.id]
             self._row_models[record.id] = update.model_name
             await self._show_row(held)
-        if isinstance(event, (DelegationStartedEvent, DelegationFinishedEvent, TaskQuestionEvent)):
+        if isinstance(event, (DelegationStartedEvent, DelegationFinishedEvent, TaskQuestionAskedEvent)):
             await self._show_row(event)
         if isinstance(event, DelegationFinishedEvent):
             self._row_models.pop(record.id, None)
 
-    async def _show_row(self, event: DelegationStartedEvent | DelegationFinishedEvent | TaskQuestionEvent) -> None:
+    async def _show_row(self, event: DelegationStartedEvent | DelegationFinishedEvent | TaskQuestionAskedEvent) -> None:
         if self.sink is not None:
             await self.sink(event)
         elif (row := self.row(event)) is not None:
@@ -528,16 +531,7 @@ class Tasks:
     def info(self, record: DelegationTask) -> TaskInfo:
         """A task as plugins see it."""
         progress = self.progress.get(record.id)
-        usage = RunUsage()
-        for message in record.messages:
-            if isinstance(message, ModelResponse):
-                usage.incr(message.usage)
-                usage.requests += 1
-            else:
-                # As a run counts them: the calls that returned, not those retried or still waiting.
-                usage.tool_calls += sum(
-                    isinstance(part, ToolReturnPart) and part.outcome != 'retried' for part in message.parts
-                )
+        usage = self._usage(record)
         activity = progress.activity if progress is not None else 'starting'
         if record.status == 'running' and self.owner.pending_question(record.id) is not None:
             activity = 'waiting for an answer'
@@ -560,6 +554,22 @@ class Tasks:
             activity=activity,
             usage=usage,
         )
+
+    def _usage(self, record: DelegationTask) -> RunUsage:
+        """What `record`'s runs used, from the history it holds, or for a settled one, the history its owner saved.
+
+        A settled task's usage is kept from when it was told it settled, still holding its history, so it isn't read
+        back from the saved file; only a task saved by an earlier process is.
+        """
+        key = (record.id, record.generation)
+        if record.messages or record.status == 'running':
+            usage = _usage(record.messages)
+            if record.status == 'finished':
+                self._settled_usage[key] = usage
+            return usage
+        if (usage := self._settled_usage.get(key)) is None:
+            usage = self._settled_usage[key] = _usage(self.owner.history(record.id))
+        return usage
 
     def listing(self) -> list[TaskInfo]:
         return [self.info(record) for _, record in task_tree(self.records())]
@@ -697,6 +707,21 @@ class Tasks:
         if len(matches) != 1:
             raise ValueError(f'Task ID {prefix!r} is unknown or ambiguous. Use /tasks.')
         return matches[0]
+
+
+def _usage(messages: Sequence[ModelMessage]) -> RunUsage:
+    """The usage `messages` record, counting tool calls as a run counts them."""
+    usage = RunUsage()
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            usage.incr(message.usage)
+            usage.requests += 1
+        else:
+            # As a run counts them: the calls that returned, not those retried or still waiting.
+            usage.tool_calls += sum(
+                isinstance(part, ToolReturnPart) and part.outcome != 'retried' for part in message.parts
+            )
+    return usage
 
 
 def _display_name(agent_name: str) -> str:
