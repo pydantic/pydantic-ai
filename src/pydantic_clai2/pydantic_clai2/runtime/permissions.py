@@ -3,7 +3,7 @@
 A held call is put to the user as an `ask_user` question with three choices, so the terminal picker and
 the browser's question card both answer it; a typed answer denies the call with that reason. Whichever
 plugin answers questions binds `approval_handler` with its answerer, a core `RequestInput` asking it through
-harness `permission_ask`. A call no handler answered, as in a session no one can be asked in, is denied by
+harness `approval_ask`. A call no handler answered, as in a session no one can be asked in, is denied by
 `DenyUnanswered`. A `SubAgents` delegation that the session's `Permissions` would not reach is refused
 outside `full` by `KeepDelegatesChecked`.
 """
@@ -34,8 +34,8 @@ from pydantic_ai_harness.permissions import (
     PermissionMode,
     PermissionRequest,
     Permissions,
+    approval_ask,
     denial_message,
-    permission_ask,
     permission_requests,
 )
 from pydantic_ai_harness.subagents import SELF_AGENT_NAME, SubAgents
@@ -137,7 +137,7 @@ class DenyUnanswered(AbstractCapability[AgentDepsT]):
 
 def approval_handler(approve: Approver) -> RequestInput[AgentDepsT]:
     """Answer the calls `Permissions` holds with `approve`, leaving other deferred calls to later handlers."""
-    return RequestInput[AgentDepsT](permission_ask(approve))
+    return RequestInput[AgentDepsT](approval_ask(approve))
 
 
 def approval_question(request: PermissionRequest) -> AskUserRequest:

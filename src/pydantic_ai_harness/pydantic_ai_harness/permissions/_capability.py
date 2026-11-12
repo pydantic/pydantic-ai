@@ -139,7 +139,7 @@ class Permissions(AbstractCapability[AgentDepsT]):
 
     A call the mode asks about raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired], so it
     joins the run's deferred approval flow: a [`RequestInput`][pydantic_ai.capabilities.RequestInput] whose
-    `ask` is `permission_ask(approver)` puts it to a person inside the run, and without a handler the run
+    `ask` is `approval_ask(approver)` puts it to a person inside the run, and without a handler the run
     ends with it in its [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output.
 
     File writes are the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`, recognized by
@@ -313,7 +313,7 @@ async def ask_permissions(requests: DeferredToolRequests, approver: Approver) ->
     """Put each call `Permissions` holds in `requests` to `approver`, one at a time; `None` when it holds none.
 
     Call it from the handler of a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]
-    capability, or use `permission_ask` with [`RequestInput`][pydantic_ai.capabilities.RequestInput]. Approvals
+    capability, or use `approval_ask` with [`RequestInput`][pydantic_ai.capabilities.RequestInput]. Approvals
     other capabilities asked for are left for the next handler.
     """
     asked = permission_requests(requests)
@@ -333,7 +333,7 @@ async def ask_permissions(requests: DeferredToolRequests, approver: Approver) ->
     return DeferredToolResults(approvals=approvals, metadata=metadata)
 
 
-def permission_ask(
+def approval_ask(
     approver: Approver,
 ) -> Callable[[RunContext[AgentDepsT], DeferredToolRequests, str], Awaitable[DeferredToolResults]]:
     """The `ask` of a [`RequestInput`][pydantic_ai.capabilities.RequestInput] that asks `approver` about held calls.

@@ -25,7 +25,7 @@ A coding agent's [`FileSystem`](filesystem.md) and [`Shell`](shell.md) tools run
 | `'auto'` | run | run, unless they match `ask_commands` |
 | `'read-only'` | ask | ask |
 
-A call that asks raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired], so it uses the same [deferred approval flow](../deferred-tools.md#human-in-the-loop-tool-approval) as `requires_approval=True`. Without a handler the run ends with the call in its [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output. To ask a person inside the run instead, add a [`RequestInput`](../capabilities/request-input.md) whose `ask` is `permission_ask` with an approver:
+A call that asks raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired], so it uses the same [deferred approval flow](../deferred-tools.md#human-in-the-loop-tool-approval) as `requires_approval=True`. Without a handler the run ends with the call in its [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output. To ask a person inside the run instead, add a [`RequestInput`](../capabilities/request-input.md) whose `ask` is `approval_ask` with an approver:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -35,7 +35,7 @@ from pydantic_ai_harness.permissions import (
     PermissionDecision,
     PermissionRequest,
     Permissions,
-    permission_ask,
+    approval_ask,
 )
 from pydantic_ai_harness.shell import Shell
 
@@ -52,16 +52,16 @@ agent = Agent(
         FileSystem(),
         Shell(),
         Permissions('auto'),
-        RequestInput(permission_ask(approve)),
+        RequestInput(approval_ask(approve)),
     ],
 )
 ```
 
-`permission_ask` asks the approver about each held call in turn, and returns its answers to `RequestInput` in place. A denied call does not run, and the model gets a tool result saying the user denied it, with the person's `reason` when they gave one. A `PermissionDecision` with `remember=True` also lets later calls of the same tool on the same command or path run without asking, for the rest of the conversation (by the run's `conversation_id`). That memory is the `remembered` set, which you can pass in to own: share it, clear it, or drop it with the conversation. It lives in this process, so inside a durable execution workflow the approval is kept in the message history instead, in the metadata of the approved call's `ToolReturnPart`: it holds when the workflow replays, and in a later run given that history. Since a marker in the history skips asking, only pass in history you trust; compaction that drops the part makes the call ask again.
+`approval_ask` asks the approver about each held call in turn, and returns its answers to `RequestInput` in place. A denied call does not run, and the model gets a tool result saying the user denied it, with the person's `reason` when they gave one. A `PermissionDecision` with `remember=True` also lets later calls of the same tool on the same command or path run without asking, for the rest of the conversation (by the run's `conversation_id`). That memory is the `remembered` set, which you can pass in to own: share it, clear it, or drop it with the conversation. It lives in this process, so inside a durable execution workflow the approval is kept in the message history instead, in the metadata of the approved call's `ToolReturnPart`: it holds when the workflow replays, and in a later run given that history. Since a marker in the history skips asking, only pass in history you trust; compaction that drops the part makes the call ask again.
 
 Approvals that other capabilities ask for, such as a tool registered with `requires_approval=True`, are left for the next handler.
 
-In a [durable](../durable_execution/overview.md) run, `RequestInput` waits through the engine. Only AWS Lambda durable functions with [`AWSLambdaDurability`](aws-lambda.md#approvals) support that so far; other engines refuse the wait with a `UserError` (see [Request Input](../capabilities/request-input.md#engines)), so there call `ask_permissions` from a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler instead: `HandleDeferredToolCalls(handler=lambda ctx, requests: ask_permissions(requests, approve))`. On Lambda, `permission_ask` runs in the step that records its answer, so its approver must answer quickly, and the callback created for the wait stays open: set `RequestInput(timeout=...)` so it expires. To wait for a person there, write an `ask` that hands the token on, and use `permission_requests` to find the held calls in the requests it gets.
+In a [durable](../durable_execution/overview.md) run, `RequestInput` waits through the engine. Only AWS Lambda durable functions with [`AWSLambdaDurability`](aws-lambda.md#approvals) support that so far; other engines refuse the wait with a `UserError` (see [Request Input](../capabilities/request-input.md#engines)), so there call `ask_permissions` from a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler instead: `HandleDeferredToolCalls(handler=lambda ctx, requests: ask_permissions(requests, approve))`. On Lambda, `approval_ask` runs in the step that records its answer, so its approver must answer quickly, and the callback created for the wait stays open: set `RequestInput(timeout=...)` so it expires. To wait for a person there, write an `ask` that hands the token on, and use `permission_requests` to find the held calls in the requests it gets.
 
 ## Which calls are checked
 
