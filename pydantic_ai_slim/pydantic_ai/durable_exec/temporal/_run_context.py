@@ -82,12 +82,11 @@ def deserialize_run_context(
     know about the agent.
     """
     ctx = run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=TEMPORAL_ENGINE_SPEC)
-    if isinstance(ctx, DurableRunContext):
-        _restore_tracer(ctx, agent)
+    _restore_tracer(ctx, agent)
     return ctx
 
 
-def _restore_tracer(ctx: DurableRunContext[Any], agent: AbstractAgent[Any, Any] | None) -> None:
+def _restore_tracer(ctx: RunContext[Any], agent: AbstractAgent[Any, Any] | None) -> None:
     """Give `ctx.tracer` the tracer the worker's agent would trace a run with.
 
     A run always has a tracer, a no-op one when it isn't instrumented, so tools open spans without checking
@@ -99,4 +98,5 @@ def _restore_tracer(ctx: DurableRunContext[Any], agent: AbstractAgent[Any, Any] 
         return
     settings = agent_instrumentation_settings(agent) if agent is not None else None
     ctx.__dict__['tracer'] = settings.tracer if settings is not None else NoOpTracer()
+    assert isinstance(ctx, DurableRunContext)
     ctx._expose_field('tracer')  # pyright: ignore[reportPrivateUsage]
