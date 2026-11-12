@@ -326,8 +326,7 @@ def x11_display(
 _START_DESKTOP = start_x_server('/tmp/pydantic-ai-xvfb.log')
 
 DESKTOP_IMAGE = 'debian:bookworm-slim'
-"""The image a new micro-VM with a desktop and no `image` runs, since the default Alpine image has no `apt-get` to
-install the display programs with."""
+"""The image a new micro-VM with a desktop and no `image` runs, since the default Alpine image has no `apt-get`."""
 
 
 def desktop_display(

@@ -422,10 +422,9 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay)
         box_options: Other keyword arguments for a new box's `boxlite.BoxOptions`, such as `volumes`,
             `ports`, `secrets` or `disk_size_gb`. The ones the arguments above set are refused.
         desktop: Whether the box has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
-            `True` for 1280x800, or its `(width, height)`. It starts on first use, driven with `xdotool` and
-            `scrot`, which the first start installs with `apt-get` when they're missing; that needs
-            `allow_internet_access`, with `allowed_hosts` letting it reach the Debian mirrors. Without an `image`, a
-            new box runs `debian:bookworm-slim`.
+            `True` for 1280x800, or its `(width, height)`. The first start installs the programs it needs, which
+            needs `allow_internet_access`, with `allowed_hosts` reaching the Debian mirrors. Without an `image`, a new
+            box runs `debian:bookworm-slim`.
     """
 
     def __init__(
