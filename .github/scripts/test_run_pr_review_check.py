@@ -38,11 +38,11 @@ WORKSPACE = Path(__file__).parents[2]
 CHANGED = {'a.py': frozenset({('RIGHT', 3)})}
 
 
-def _stream(tmp_path: Path, text: str) -> Path:
+def _stream(tmp_path: Path, text: str, *, finish: str = 'stop') -> Path:
     stream = tmp_path / 'review.ndjson'
     events = [
         {'type': 'text', 'part': {'messageID': 'msg_final', 'text': text}},
-        {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop'}},
+        {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': finish}},
     ]
     stream.write_text('\n'.join(json.dumps(event) for event in events), encoding='utf-8')
     return stream
@@ -228,8 +228,10 @@ def test_time_budget_stops_the_review(tmp_path: Path, expire_budget: list[float]
     assert (result.outcome, result.coverage) == ('INCOMPLETE', 'Review stopped at its time budget of 5 minutes.')
 
 
-def _fake_opencode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, go: str) -> Path:
-    """Put an `opencode` on `PATH` that runs `go` for OpenCode Go and finishes a step on DeepInfra.
+def _fake_opencode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, go: str, deepinfra: str = f'printf "%s\\n" {shlex.quote(_step(10))}'
+) -> Path:
+    """Put an `opencode` on `PATH` that runs `go` for OpenCode Go and `deepinfra`, by default one step, on DeepInfra.
 
     Each launch appends its model and the keys it received to the returned file.
     """
@@ -239,7 +241,7 @@ def _fake_opencode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, go: str) -> 
     script.write_text(
         '#!/bin/sh\n'
         f'echo "$4 ${{OPENCODE_API_KEY:-}} ${{DEEPINFRA_API_KEY:-}}" >> {shlex.quote(str(launches))}\n'
-        f'case "$4" in opencode-go/*) {go} ;; *) printf "%s\\n" {shlex.quote(_step(10))} ;; esac\n'
+        f'case "$4" in opencode-go/*) {go} ;; *) {deepinfra} ;; esac\n'
     )
     script.chmod(0o755)
     runner_temp = tmp_path / 'runner-temp'
@@ -271,6 +273,26 @@ def test_go_refusal_reruns_the_review_on_deepinfra(tmp_path: Path, monkeypatch: 
         'opencode-go/deepseek-v4.1-flash go-key ',
         'deepinfra/deepseek-ai/DeepSeek-V4.1-Flash  deepinfra-key',
     ]
+
+
+def test_deepinfra_failure_names_its_error_type(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A review DeepInfra fails names its error type in the job log, and fails the job."""
+    refused = json.dumps({'type': 'error', 'error': {'type': 'provider.go-limit', 'status': 429}})
+    failed = json.dumps({'type': 'error', 'error': {'type': 'unknown', 'message': 'Model not found'}})
+    launches = _fake_opencode(
+        tmp_path,
+        monkeypatch,
+        f'printf "%s\\n" {shlex.quote(refused)}; exit 1',
+        f'printf "%s\\n" {shlex.quote(failed)}; exit 1',
+    )
+    with pytest.raises(subprocess.CalledProcessError):
+        _review(tmp_path)
+    assert len(launches.read_text().splitlines()) == 2
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        'OpenCode run on deepinfra/deepseek-ai/DeepSeek-V4.1-Flash failed with error type unknown.'
+    )
 
 
 def test_go_failure_after_a_step_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -314,10 +336,53 @@ def test_unparseable_answer_at_the_step_budget_is_incomplete(tmp_path: Path) -> 
     assert (result.outcome, result.findings) == ('INCOMPLETE', [])
 
 
-def test_invalid_answer_under_the_budget_fails(tmp_path: Path) -> None:
-    """A malformed answer is a reviewer error."""
-    with pytest.raises(ValueError):
-        check_result(CHECK, ['a.py'], _stream(tmp_path, 'Still reading.'), Usage(steps=1), changed=CHANGED)
+@pytest.mark.parametrize(
+    ('text', 'finish', 'reason'),
+    [
+        pytest.param('Still reading.', 'stop', 'validation failed: json_invalid', id='not-json'),
+        pytest.param('{"outcome": "COMPLETE"}', 'stop', 'validation failed: missing', id='not-the-schema'),
+        pytest.param(_result('a.py'), 'tool-calls', 'OpenCode review did not stop normally', id='not-stopped'),
+        pytest.param(
+            f"I've read the files.\n```json\n{_result('a.py')}\n```",
+            'stop',
+            'validation failed: json_invalid',
+            id='text-before-the-fence',
+        ),
+        pytest.param(
+            f'```json\n{_result("a.py")}\n```\nDone.', 'stop', 'validation failed: json_invalid', id='text-after-the-fence'
+        ),
+    ],
+)
+def test_rejected_answer_under_the_budget_fails_with_its_reason(
+    tmp_path: Path, text: str, finish: str, reason: str
+) -> None:
+    """A rejected answer is a reviewer error, and the error says why without repeating the answer."""
+    with pytest.raises(ValueError) as error:
+        check_result(CHECK, ['a.py'], _stream(tmp_path, text, finish=finish), Usage(steps=1), changed=CHANGED)
+    assert str(error.value) == f'The review answer was rejected: {reason}'
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        f'```json\n{_result("a.py")}\n```',
+        f'```\n{_result("a.py")}\n```',
+        f'\n  ```json\n{json.dumps(json.loads(_result("a.py")), indent=2)}\n```\n',
+    ],
+)
+def test_answer_in_one_code_fence_is_unwrapped(tmp_path: Path, text: str) -> None:
+    """A model that wraps its whole answer in one Markdown code fence still completes the review."""
+    result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=2), changed=CHANGED)
+    assert (result.outcome, [finding.path for finding in result.findings]) == ('COMPLETE', ['a.py'])
+
+
+def test_undecodable_stream_names_only_its_error_type(tmp_path: Path) -> None:
+    """A decoding error describes the bytes it read, so only its type reaches the job log."""
+    stream = tmp_path / 'review.ndjson'
+    stream.write_bytes(b'\xff pre-existing issue\n')
+    with pytest.raises(ValueError) as error:
+        check_result(CHECK, ['a.py'], stream, Usage(steps=1), changed=CHANGED)
+    assert str(error.value) == 'The review answer was rejected: UnicodeDecodeError'
 
 
 def test_malformed_answer_stays_out_of_the_job_log(tmp_path: Path) -> None:
