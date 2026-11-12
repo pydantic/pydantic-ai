@@ -268,21 +268,20 @@ async def test_x11_computer_releases_what_it_pressed_when_cancelled(action: Disp
     assert recovery(commands.argvs) == stops_then(release)
 
 
-async def test_x11_computer_looks_return_the_png_and_pass_their_size_or_region_as_arguments() -> None:
+async def test_x11_computer_looks_return_the_png_and_pass_a_region_as_an_argument() -> None:
     encoded = base64.encodebytes(FAKE_SCREENSHOT).decode()  # wrapped lines, as `base64` prints
     png = CommandResult(exit_code=0, stdout=encoded, stderr='')
     pointer = CommandResult(exit_code=0, stdout='X=12\nY=34\nSCREEN=0\nWINDOW=65\n', stderr='')
     size = CommandResult(exit_code=0, stdout='  Width: 1280\n  Height: 800\n', stderr='')
-    commands = ScriptedCommands(size, png, png, png, pointer)
+    commands = ScriptedCommands(size, png, png, pointer)
     computer = X11Computer(commands)
 
     assert await computer.display_size() == (1280, 800)
     assert await computer.screenshot() == FAKE_SCREENSHOT
-    assert await computer.scaled_screenshot(640, 400) == FAKE_SCREENSHOT
     assert await computer.zoom(Region(left=10, top=20, right=110, bottom=70)) == FAKE_SCREENSHOT
     assert await computer.cursor_position() == Point(x=12, y=34)
-    # The size and region go in as arguments, never into the script.
-    assert [command[-1] for command in commands.argvs[2:4]] == ['640x400', '10,20,100,50']
+    # The region goes in as an argument, never into the script.
+    assert commands.argvs[2][-1] == '10,20,100,50'
     assert all(env == {'DISPLAY': ':1'} for _, _, env in commands.calls)
 
 
