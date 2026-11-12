@@ -1570,30 +1570,41 @@ async def _with_parent_authority(parent: Workspace, workspace: Workspace, direct
     """`workspace`, rooted at `directory`, with no more [authority][pydantic_ai.messages.Authority] than `parent` gives it.
 
     A delegate's `working_directory` workspace comes from the host's resolver, which knows nothing of the parent's
-    levels, as it knows nothing of its read-only policy. The delegate's files all get one level: the lowest of what the
-    parent gives `directory` (`authority_of`, which accounts for links; the parent's own level for a directory outside
-    its working directory) and of every `path_authority` entry the parent has inside it, where it's written or where
-    it leads. A
-    file the parent gives more keeps less in the delegate, but none gets more. Wrapping only ever lowers, so the
-    resolver's own levels still apply where they're lower.
+    levels, as it knows nothing of its read-only policy. The delegate's files all get one level, the lowest of:
+
+    - what the parent gives `directory`: `authority_of`, which accounts for links, or the parent's own level for a
+      directory outside its working directory;
+    - the parent's own level, which a capability reading above the delegate's directory, such as `RepoContext`'s
+      walk-up, gives the ancestors the parent doesn't list;
+    - every parent `path_authority` entry inside `directory` or containing it, where it's written or where it leads.
+
+    It's conservative: a file the parent gives more can get less in the delegate, but none gets more. Wrapping only
+    ever lowers, so the resolver's own levels still apply where they're lower.
     """
     layers = parent._authority_layers()  # pyright: ignore[reportPrivateUsage]
     if not layers:
         return workspace
     parent_root = await parent.working_dir()
-    inside = directory.casefold().rstrip('/') + '/'
-    # A directory outside the parent's working directory is the host's choice, not the parent's files, so it starts
-    # at the parent's own level rather than at the `'none'` `authority_of` gives a path outside the workspace.
-    in_parent = inside.startswith(parent_root.casefold().rstrip('/') + '/')
-    levels: list[Authority] = [await parent.authority_of(directory) if in_parent else parent.authority]
+    inside = _folded_dir(directory)
+    in_parent = inside.startswith(_folded_dir(parent_root))
+    levels: list[Authority] = [
+        await parent.authority_of(directory) if in_parent else parent.authority,
+        parent.authority,
+    ]
     for _, path_authority in layers:
         for path, level in path_authority.items():
             written = await parent.resolve(path, base=parent_root)
             for location in {written, await parent.realpath(written)}:
-                if (location.casefold().rstrip('/') + '/').startswith(inside):
+                folded = _folded_dir(location)
+                if folded.startswith(inside) or inside.startswith(folded):
                     levels.append(level)
     lowest = min(levels, key=_AUTHORITY_ORDER.index)
     return workspace if lowest == 'operator' else AuthorityWorkspace(workspace, authority=lowest)
+
+
+def _folded_dir(path: str) -> str:
+    """`path` case-folded with one trailing slash, so `a.startswith(b)` says whether `a` is inside or at `b`."""
+    return path.casefold().rstrip('/') + '/'
 
 
 _AUTHORITY_ORDER: tuple[Authority, ...] = ('none', 'user', 'operator')

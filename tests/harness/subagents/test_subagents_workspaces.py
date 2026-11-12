@@ -70,6 +70,10 @@ async def test_directory_schema_is_opt_in(tmp_path: Path, enabled: bool) -> None
         ({'other': 'none'}, 'vendor', 'operator'),
         # An operator entry inside an untrusted parent doesn't raise the rest of the directory.
         ({'vendor/lib': 'operator'}, 'vendor', 'none'),
+        # Nor does an operator entry for the directory itself, whose ancestors stay the parent's.
+        ({'vendor': 'operator'}, 'vendor', 'none'),
+        # A lower entry containing a directory outside the parent's working directory covers it.
+        ({'../uploads': 'none'}, '../uploads/project', 'none'),
     ],
 )
 async def test_selected_directory_keeps_the_parents_authority(
@@ -77,6 +81,7 @@ async def test_selected_directory_keeps_the_parents_authority(
 ) -> None:
     parent_dir = tmp_path / 'parent'
     (parent_dir / 'vendor' / 'lib').mkdir(parents=True)
+    (tmp_path / 'uploads' / 'project').mkdir(parents=True)
     default: Authority = 'none' if 'operator' in path_authority.values() else 'operator'
     workspace = AuthorityWorkspace(
         Workspace(LocalWorkspaceBackend(parent_dir)), authority=default, path_authority=path_authority
