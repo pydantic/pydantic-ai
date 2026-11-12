@@ -383,7 +383,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     ) -> tuple[list[object] | None, str | None, int]:
         """Reduce the data beside the files of a return value, which reach the model as files.
 
-        Like core, a lone data item is measured as itself and several as a list. Core sends that data as text, so
+        A lone data item is measured as itself and several as one JSON list. Core sends that data as text, so
         a lone raw `bytes` item is measured as text too, not as a binary unit that `Truncate` would pass over.
         When reduced, the result goes ahead of the files. Returns `(new_items, handle, data_bytes)`, with
         `new_items` None when nothing was reduced.
