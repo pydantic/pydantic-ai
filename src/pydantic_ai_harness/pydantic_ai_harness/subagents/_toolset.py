@@ -1610,7 +1610,7 @@ async def _with_parent_authority(parent: Workspace, workspace: Workspace, direct
     levels, as it knows nothing of its read-only policy. The delegate's files all get one level, the lowest of:
 
     - what the parent gives `directory`: `authority_of`, which accounts for links, or the parent's own level for a
-      directory outside its working directory;
+      directory outside its working directory, unless a link entry leads there, whose target core caps;
     - the parent's own level, which a capability reading above the delegate's directory, such as `RepoContext`'s
       walk-up, gives the ancestors the parent doesn't list;
     - every parent `path_authority` entry inside `directory` or containing it, where it's written or where it leads.
@@ -1632,13 +1632,30 @@ async def _with_parent_authority(parent: Workspace, workspace: Workspace, direct
     ]
     for _, path_authority in layers:
         for path, level in path_authority.items():
-            written = await parent.resolve(path, base=parent_root)
-            for location in {written, await parent.realpath(written)}:
-                folded = _folded_dir(location)
-                if folded.startswith(inside) or inside.startswith(folded):
-                    levels.append(level)
+            levels.extend(await _entry_levels(parent, path, level, directory, in_parent=in_parent))
     lowest = lowest_authority(levels)
     return workspace if lowest == 'operator' else AuthorityWorkspace(workspace, authority=lowest)
+
+
+async def _entry_levels(
+    parent: Workspace, path: str, level: Authority, directory: str, *, in_parent: bool
+) -> list[Authority]:
+    """The levels a parent `path_authority` entry gives a delegate rooted at `directory`, if it's inside or contains it.
+
+    Checked where the entry is written and where it leads. A link entry leading out of the parent's root also adds
+    the level core caps its target at, which `authority_of` gives.
+    """
+    written = await parent.resolve(path, base=await parent.working_dir())
+    levels: list[Authority] = []
+    inside = _folded_dir(directory)
+    for location in {written, await parent.realpath(written)}:
+        folded = _folded_dir(location)
+        if not (folded.startswith(inside) or inside.startswith(folded)):
+            continue
+        levels.append(level)
+        if location != written and not in_parent:
+            levels.append(await parent.authority_of(directory))
+    return levels
 
 
 def _folded_dir(path: str) -> str:
