@@ -817,22 +817,21 @@ class _BrokenStore:
 # ---------------------------------------------------------------------------
 
 
-_IMAGE = BinaryContent(data=b'\x89PNG\r\n\x1a\n' + b'x' * 100_000, media_type='image/png')
-
-
 class TestFilesInReturnValue:
+    image = BinaryContent(data=b'\x89PNG\r\n\x1a\n' + b'x' * 100_000, media_type='image/png')
+
     async def test_file_alone_passes_through(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
-        assert await _run(cap, _IMAGE) is _IMAGE
+        assert await _run(cap, self.image) is self.image
 
     async def test_short_text_beside_a_file_passes_through(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10_000, action=Truncate(max_chars=95))])
-        value = ['header', _IMAGE]
+        value = ['header', self.image]
         assert await _run(cap, value) is value
 
     async def test_data_beside_files_is_reduced_and_the_files_kept(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
-        assert await _run(cap, ['A' * 300, _IMAGE, 'B' * 300]) == [
+        assert await _run(cap, ['A' * 300, self.image, 'B' * 300]) == [
             snapshot("""\
 ["
 
@@ -840,19 +839,19 @@ class TestFilesInReturnValue:
 
 BB"]\
 """),
-            _IMAGE,
+            self.image,
         ]
 
     async def test_data_beside_a_file_spills(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Spill())], store=store)
-        assert await _run(cap, ToolReturn(return_value=['A' * 300, _IMAGE], metadata={'k': 'v'})) == ToolReturn(
+        assert await _run(cap, ToolReturn(return_value=['A' * 300, self.image], metadata={'k': 'v'})) == ToolReturn(
             return_value=[
                 snapshot("""\
 [Tool output too large (300 chars); stored to handle 'run-1/call-1.0'. Read it with read_tool_result(handle='run-1/call-1.0', offset=0, limit=200, from_end=False, pattern=None).]
 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\
 """),
-                _IMAGE,
+                self.image,
             ],
             metadata=snapshot({'k': 'v', 'overflow_handle': 'run-1/call-1.0', 'overflow_bytes': 300}),
         )
@@ -860,7 +859,7 @@ AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 
     async def test_structured_data_beside_a_file_is_reduced_and_the_file_kept(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
-        assert await _run(cap, [{'rows': list(range(1_000))}, _IMAGE, b'raw bytes']) == [
+        assert await _run(cap, [{'rows': list(range(1_000))}, self.image, b'raw bytes']) == [
             snapshot("""\
 
 
@@ -868,12 +867,12 @@ AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 
 "]\
 """),
-            _IMAGE,
+            self.image,
         ]
 
     async def test_raw_bytes_beside_a_file_are_reduced_as_text(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
-        assert await _run(cap, [b'R' * 5_000, _IMAGE]) == [
+        assert await _run(cap, [b'R' * 5_000, self.image]) == [
             snapshot("""\
 
 
@@ -881,14 +880,14 @@ AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 
 R"\
 """),
-            _IMAGE,
+            self.image,
         ]
 
     async def test_content_beside_a_file_is_still_reduced(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
-        out = await _run(cap, ToolReturn(return_value=['image', _IMAGE], content='C' * 5_000))
+        out = await _run(cap, ToolReturn(return_value=['image', self.image], content='C' * 5_000))
         assert out == ToolReturn(
-            return_value=['image', _IMAGE],
+            return_value=['image', self.image],
             content=snapshot("""\
 
 
