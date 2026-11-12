@@ -667,7 +667,10 @@ def resolve_tool_durable_config(
     metadata_key: str,
     config_type_label: str,
 ) -> ToolConfig:
-    """Resolve a tool's durable config: tool metadata under `metadata_key` first, then `{'durable': False}`, then `fallback_config` by name."""
+    """Resolve a tool's durable config from its metadata, or else from `fallback_config` by name.
+
+    Reads the tool's metadata under `metadata_key` first, then `{'durable': False}`, then `fallback_config`.
+    """
     if tool is not None and tool.tool_def.metadata is not None:
         metadata_config = tool.tool_def.metadata.get(metadata_key)
         if metadata_config is False:

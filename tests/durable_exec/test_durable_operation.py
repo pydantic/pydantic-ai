@@ -416,6 +416,41 @@ async def test_durable_metadata_refuses_tools_that_cannot_leave_the_durable_unit
         await agent.run('Go.')
 
 
+async def test_durable_metadata_refuses_an_mcp_tool_unless_the_engine_key_is_set() -> None:
+    pytest.importorskip('mcp')
+    pytest.importorskip('fastmcp.server')
+    from fastmcp import FastMCP
+
+    from pydantic_ai.mcp import MCPToolset
+
+    class KeyedJournalDurability(JournalDurability):
+        engine_spec = replace(JournalDurability.engine_spec, tool_config_key='journal')
+
+    mcp_toolset = MCPToolset(FastMCP(name='in_process'), id='mcp')
+    durable = KeyedJournalDurability(name='agent')._build_mcp_toolset_after_discovery(  # pyright: ignore[reportPrivateUsage]
+        mcp_toolset,
+        base_config={},
+        get_tools_operation=AsyncMock(return_value={}),
+        get_instructions_operation=AsyncMock(return_value=None),
+        discovery_registrations=[],
+    )
+
+    def tool(metadata: dict[str, Any]) -> ToolsetTool[None]:
+        return ToolsetTool(
+            toolset=mcp_toolset,
+            tool_def=ToolDefinition(name='search', metadata=metadata),
+            max_retries=0,
+            args_validator=TOOL_SCHEMA_VALIDATOR,
+        )
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    with pytest.raises(UserError, match="Tool 'search' has `\\{'durable': False\\}` metadata, but only function tools"):
+        await durable.call_tool('search', {}, ctx, tool({'durable': False}))
+    # The engine's own key wins, so the call stays in its durable unit.
+    resolve = durable._resolve_tool_config  # pyright: ignore[reportPrivateUsage]
+    assert resolve(tool({'journal': {}, 'durable': False}), 'search') == {}
+
+
 async def test_runtime_function_toolset_opted_out_with_durable_metadata_is_allowed() -> None:
     class KeyedJournalDurability(JournalDurability):
         engine_spec = replace(
