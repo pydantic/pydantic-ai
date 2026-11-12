@@ -20,10 +20,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import AbstractModel, Model, ModelRequestParameters
+from pydantic_ai.models import AbstractModel, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionDef, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -508,14 +507,7 @@ class TestAdvisor:
         usage = RunUsage()
 
         @dataclass(init=False)
-        class ConcurrentRequestBeforeFailModel(WrapperModel):
-            def __init__(self, wrapped: Model) -> None:
-                super().__init__(wrapped)
-
-            @property
-            def provider(self) -> None:
-                return None
-
+        class ConcurrentRequestBeforeFailModel(CountingModel):
             async def count_tokens(
                 self,
                 messages: list[ModelMessage],

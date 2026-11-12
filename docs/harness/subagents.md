@@ -555,11 +555,11 @@ model implements `count_tokens`. A child model that does not implement it fails 
 `NotImplementedError` before its first request. The delegation then starts the child
 once more without the up-front count (under a new run ID when the delegation is
 recorded as a task), so those ceilings are checked against each response's usage
-instead. There is no second start once the shared `usage` has counted a request since
-the child started, so a tool that raises `NotImplementedError` does not run twice; a
-sibling's request in that window also rules it out. A per-child `usage_limits` that
-sets `count_tokens_before_request=True` itself is kept, so on such a model the child
-fails as a top-level run would.
+instead. There is no second start once the `usage` the child counts into has counted a
+request since the child started, so a tool that raises `NotImplementedError` does not
+run twice; when `forward_usage=True`, a sibling's request in that window also rules it
+out. A per-child `usage_limits` that sets `count_tokens_before_request=True` itself is
+kept, so on such a model the child fails as a top-level run would.
 
 `agents`, `aliases`, and `instructions` extend the roster and guidance only inside
 the bound scope; they do not add delegation to an agent without `SubAgents`.
