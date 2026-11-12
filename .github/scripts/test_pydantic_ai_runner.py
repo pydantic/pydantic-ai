@@ -436,6 +436,7 @@ def test_launcher_runs_the_staged_runner(tmp_path: Path):
     'prompt_name',
     [
         'pydantic-ai-bug-hunter.md',
+        'pydantic-ai-comparison-drift.md',
         'pydantic-ai-docs-drift.md',
         'pydantic-ai-provider-mapping-sweep.md',
         'pydantic-ai-provider-parity-explore.md',
