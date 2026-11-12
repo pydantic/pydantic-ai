@@ -320,6 +320,41 @@ async def test_deferred_pause_waits_for_all_work_and_records_its_results(emitted
     assert emitted.phases == ['started', 'started', 'draining', 'settled', 'settled', 'drained']
 
 
+async def test_drained_event_lists_work_started_while_waiting(emitted: _Emitted):
+    """Draining work started while the run waits is waited for too, and the `'drained'` event lists it."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='start', args={}), ToolCallPart(tool_name='needs_approval', args={})]
+        )
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    async def start(ctx: RunContext) -> str:
+        async def follow_up() -> None:
+            ctx.enqueue('follow-up result')
+
+        async def work() -> None:
+            await emitted.until('draining')
+            ctx.in_flight.start(follow_up, kind='test', name='b', id='b')
+
+        ctx.in_flight.start(work, kind='test', name='a', id='a')
+        return 'started'
+
+    @agent.tool_plain
+    def needs_approval() -> str:
+        raise ApprovalRequired
+
+    result = await agent.run('go')
+
+    assert isinstance(result.output, DeferredToolRequests)
+    assert 'follow-up result' in _user_texts(result.all_messages())
+    assert emitted.events[-1] == InFlightWorkEvent(
+        phase='drained', work=(_snapshot('a', 'succeeded'), _snapshot('b', 'succeeded')), live=0
+    )
+
+
 async def test_cancelling_the_run_cancels_all_but_detached_work(emitted: _Emitted):
     """Cancelling the run, here while it waits to end, cancels its work, except work built to outlive it."""
     handles: dict[str, InFlightWork[None]] = {}

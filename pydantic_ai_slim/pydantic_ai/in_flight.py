@@ -98,7 +98,11 @@ class InFlightWorkEvent(CapabilityEvent, namespace='in_flight', name='work'):
     phase: InFlightWorkPhase
     """What happened."""
     work: tuple[InFlightWorkSnapshot, ...]
-    """The work it happened to: the piece that started or settled, or the `'drain'` work the run waits for."""
+    """The work it happened to: the piece that started or settled, or the `'drain'` work the run waits for.
+
+    For `'draining'`, the work the run starts waiting for; for `'drained'`, all the work it waited for, including
+    draining work started while it waited.
+    """
     live: int
     """How many pieces of work were live afterwards, of any `on_end`."""
 
@@ -269,6 +273,8 @@ class InFlightRegistry:
         self._failures: list[BaseException] = []
         self._changed = asyncio.Event()
         self._closed = False
+        self._waited: dict[InFlightWork[Any], None] | None = None
+        """While the run waits to end, the draining work it waited for, including work started during the wait."""
 
     def start(
         self,
@@ -448,6 +454,8 @@ class InFlightRegistry:
 
     def _add(self, work: InFlightWork[Any]) -> None:
         self._live[work.id] = work
+        if self._waited is not None and work.on_end == 'drain':
+            self._waited[work] = None
         self._emit('started', (work,))
 
     def _settled(self, work: InFlightWork[Any], error: BaseException | None) -> None:
@@ -519,14 +527,19 @@ class InFlightRegistry:
                 ctx.tracer,
                 'in_flight drain',
                 attributes={'in_flight.waiting': len(waiting), 'in_flight.until': 'all' if pause else 'queued'},
-            ),
+            ) as span,
             queue.notifying(lambda: self._notify_from(loop)),
         ):
             self._emit('draining', waiting)
-            while self._draining() and (pause or not queue):
-                await self._changed.wait()
-                self._raise_failure()
-            self._emit('drained', waiting)
+            self._waited = waited = dict.fromkeys(waiting)
+            try:
+                while self._draining() and (pause or not queue):
+                    await self._changed.wait()
+                    self._raise_failure()
+            finally:
+                self._waited = None
+            span.set_attribute('in_flight.waited', len(waited))
+            self._emit('drained', tuple(waited))
         return result
 
     async def _close_on_exit(self, exc_type: type[BaseException] | None, *_: object) -> None:
