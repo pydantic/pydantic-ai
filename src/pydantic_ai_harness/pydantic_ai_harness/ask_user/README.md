@@ -169,7 +169,7 @@ AskUser(answerer=pick_first, timeout=300)
 Each question is a [deferred tool call](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) marked as a question: the tool raises
 `CallDeferred(kind='question')`, so `DeferredToolRequests.kind()` reports `'question'` for it. `AskUser`
 then answers its own questions in its `handle_deferred_tool_calls` hook, one at a time, by calling the
-answerer through `wait_for_external_event`, the same wait [`RequestInput`](https://pydantic.dev/docs/ai/capabilities/request-input/) uses. That
+answerer through `wait_for_external_event`, the same wait a [`HandleDeferredToolCalls` handler that takes a resume token](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/#a-handler-that-takes-a-token) uses. That
 makes the wait durable on an engine that supports it:
 
 - In a plain run, the answerer is called in process.
@@ -215,9 +215,9 @@ agent = Agent('anthropic:claude-fable-5-2', capabilities=[AskUser(answerer=hand_
 Because the question is a deferred call, it waits until the other tool calls from the same model
 response have finished.
 
-`AskUser` answers its questions before a `HandleDeferredToolCalls` handler or `RequestInput` is asked about what's left, wherever you list them, and its answer passes the tool's `after_tool_execute` hooks, such as result guards, as it did when the tool waited for it.
+`AskUser` answers its questions before a `HandleDeferredToolCalls` handler is asked about what's left, wherever you list them, and its answer passes the tool's `after_tool_execute` hooks, such as result guards, as it did when the tool waited for it.
 To handle every pending call in one place instead, pass `answerer=None` and answer the question in
-`RequestInput`'s `ask` with `ask_user_result`, as the next section shows for a later run.
+a `HandleDeferredToolCalls` handler with `ask_user_result`, as the next section shows for a later run.
 
 ## Pausing the run until the user answers
 

@@ -1,7 +1,7 @@
-"""Tests for waiting on an external event, and for `RequestInput`, which asks for a decision and waits for it.
+"""Tests for waiting on an external event, and for a `HandleDeferredToolCalls` handler that takes a resume token.
 
 Most tests install a recording `ExternalEventWaiter` with `external_event_scope`, the way a durable
-engine does for each durable agent run, and drive `RequestInput` through `Agent.run`. `TestInProcess`
+engine does for each durable agent run, and drive `HandleDeferredToolCalls` through `Agent.run`. `TestInProcess`
 covers the default waiter used without a durable engine, resolved with `resolve_external_event`. The
 AWS Lambda waiter, with suspension and replay, is tested in
 `tests/harness/aws_lambda/test_aws_lambda_approvals.py`.
@@ -22,7 +22,11 @@ from inline_snapshot import snapshot
 from pydantic import JsonValue
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import HandleDeferredToolCalls, RequestInput
+from pydantic_ai.capabilities import (
+    CapabilityOrdering,
+    HandleDeferredToolCalls,
+    RequestInput,  # pyright: ignore[reportDeprecated]
+)
 from pydantic_ai.durable_exec import (
     JSON_CODEC,
     BaseDurabilityCapability,
@@ -32,7 +36,7 @@ from pydantic_ai.durable_exec import (
     RoleBasedOperationConfig,
     durable_unit_scope,
 )
-from pydantic_ai.exceptions import CallDeferred, UserError
+from pydantic_ai.exceptions import CallDeferred, PydanticAIDeprecationWarning, UserError
 from pydantic_ai.external_events import (
     ExternalEventError,
     ExternalEventWaiter,
@@ -93,7 +97,7 @@ def build_agent(
         FunctionModel(delete_and_look_up),
         deps_type=type(None),
         output_type=output_type,
-        capabilities=[RequestInput[None](ask, timeout=timedelta(hours=1)), *capabilities],
+        capabilities=[HandleDeferredToolCalls[None](ask, timeout=timedelta(hours=1)), *capabilities],
     )
 
     @agent.tool_plain(requires_approval=True)
@@ -169,7 +173,7 @@ async def test_decision_metadata_reaches_the_approved_tool() -> None:
     agent = Agent(
         FunctionModel(delete_and_look_up),
         deps_type=type(None),
-        capabilities=[RequestInput[None](lambda ctx, requests, token: None)],
+        capabilities=[HandleDeferredToolCalls[None](lambda ctx, requests, token: None)],
     )
 
     @agent.tool(requires_approval=True)
@@ -253,7 +257,7 @@ async def test_invalid_decision_fails_the_run(payload: JsonValue, error: str) ->
 
 
 async def test_other_handlers_resolve_calls_before_the_wait() -> None:
-    """`RequestInput` is innermost, so a handler listed after it is still asked first."""
+    """A handler that takes a token is innermost, so a handler listed after it is still asked first."""
     deleted: list[str] = []
 
     def resolve_external(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
@@ -291,7 +295,7 @@ async def test_wait_rejects_a_timeout_that_is_not_positive() -> None:
     with pytest.raises(UserError, match=r'`timeout` must be positive, got datetime.timedelta\(0\)'):
         await wait_for_external_event('review', ask=lambda token: None, timeout=timedelta(0))
     with pytest.raises(UserError, match=r'`timeout` must be positive, got datetime.timedelta\(days=-1'):
-        RequestInput[None](lambda ctx, requests, token: None, timeout=timedelta(seconds=-1))
+        HandleDeferredToolCalls[None](lambda ctx, requests, token: None, timeout=timedelta(seconds=-1))
 
 
 async def test_wait_inside_a_durable_unit_is_rejected() -> None:
@@ -305,8 +309,76 @@ async def test_wait_inside_a_durable_unit_is_rejected() -> None:
     assert waiter.waits == []
 
 
-def test_not_spec_serializable() -> None:
-    assert RequestInput.get_serialization_name() is None
+async def test_a_handler_without_a_token_is_called_directly_and_declines_with_none() -> None:
+    """No token was handed out, so nothing could resolve a wait: `None` passes the calls on, without a wait."""
+    deleted: list[str] = []
+    asked: list[list[str]] = []
+
+    def decline(ctx: RunContext[None], requests: DeferredToolRequests, extra: str = 'unused') -> None:
+        asked.append([call.tool_call_id for call in requests.approvals])
+
+    capability = HandleDeferredToolCalls[None](decline)
+    assert capability.get_ordering() is None
+    agent = approval_agent(capability, deleted)
+
+    waiter = RecordingWaiter({'approvals': {'call-1': True}})
+    with external_event_scope(waiter):
+        result = await agent.run('clean up', output_type=[str, DeferredToolRequests])
+
+    assert asked == [['call-1']]
+    assert waiter.waits == []
+    assert isinstance(result.output, DeferredToolRequests)
+    assert deleted == []
+
+
+async def test_a_handler_without_a_signature_takes_no_token() -> None:
+    class Opaque:
+        @property
+        def __signature__(self) -> None:
+            raise ValueError('no signature')
+
+        def __call__(self, ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            return requests.build_results(approve_all=True)
+
+    deleted: list[str] = []
+    agent = approval_agent(HandleDeferredToolCalls[None](Opaque()), deleted)
+
+    assert (await agent.run('clean up')).output == 'done'
+    assert deleted == ['a.txt']
+
+
+@pytest.mark.parametrize(
+    'options',
+    [pytest.param({'timeout': timedelta(hours=1)}, id='timeout'), pytest.param({'name': 'approve'}, id='name')],
+)
+def test_timeout_and_name_need_a_handler_that_takes_a_token(options: dict[str, Any]) -> None:
+    with pytest.raises(UserError, match='`timeout` and `name` configure the wait for an answer'):
+        HandleDeferredToolCalls[None](lambda ctx, requests: None, **options)
+
+
+async def test_request_input_is_a_deprecated_alias_that_always_takes_the_token() -> None:
+    """Its `ask` gets the token even when it declares it with a default, as it did before the alias."""
+    deleted: list[str] = []
+    tokens: list[str] = []
+
+    def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str = '') -> None:
+        tokens.append(token)
+
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match='`RequestInput` is deprecated; use `HandleDeferredToolCalls`'
+    ):
+        capability = RequestInput[None](ask, name='approve_delete')  # pyright: ignore[reportDeprecated]
+
+    assert isinstance(capability, HandleDeferredToolCalls)
+    assert capability.ask is ask
+    assert capability.get_ordering() == CapabilityOrdering(position='innermost')
+    waiter = RecordingWaiter({'approvals': {'call-1': True}})
+    with external_event_scope(waiter):
+        assert (await approval_agent(capability, deleted).run('clean up')).output == 'done'
+
+    assert waiter.waits == [('approve_delete', None)]
+    assert tokens == ['token-1']
+    assert deleted == ['a.txt']
 
 
 class TestInProcess:
@@ -321,7 +393,7 @@ class TestInProcess:
             tokens.append(token)
             asked.set()
 
-        agent = approval_agent(RequestInput[None](ask, timeout=timedelta(hours=1)), deleted)
+        agent = approval_agent(HandleDeferredToolCalls[None](ask, timeout=timedelta(hours=1)), deleted)
         results: list[str] = []
 
         async def run() -> None:
@@ -344,7 +416,7 @@ class TestInProcess:
         def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
             fail_external_event(token, 'The approver rejected the whole batch.')
 
-        result = await approval_agent(RequestInput[None](ask), deleted).run('clean up')
+        result = await approval_agent(HandleDeferredToolCalls[None](ask), deleted).run('clean up')
 
         assert deleted == []
         assert tool_returns(result.all_messages()) == snapshot(
@@ -358,7 +430,7 @@ class TestInProcess:
         async def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
             tokens.append(token)
 
-        agent = approval_agent(RequestInput[None](ask, timeout=timedelta(milliseconds=1)), [])
+        agent = approval_agent(HandleDeferredToolCalls[None](ask, timeout=timedelta(milliseconds=1)), [])
 
         result = await agent.run('clean up')
 
@@ -489,7 +561,7 @@ class TestInProcess:
             tokens.append(token)
             return requests.build_results(approvals={'call-1': True}, answered_by={'call-1': 'terminal'})
 
-        result = await approval_agent(RequestInput[None](ask), deleted).run('clean up')
+        result = await approval_agent(HandleDeferredToolCalls[None](ask), deleted).run('clean up')
 
         assert result.output == 'done'
         assert deleted == ['a.txt']
@@ -505,7 +577,7 @@ class TestInProcess:
             finally:
                 cancelled.set()
 
-        agent = approval_agent(RequestInput[None](ask, timeout=timedelta(milliseconds=1)), [])
+        agent = approval_agent(HandleDeferredToolCalls[None](ask, timeout=timedelta(milliseconds=1)), [])
         result = await agent.run('clean up')
 
         assert cancelled.is_set()
@@ -517,7 +589,7 @@ class TestInProcess:
 
     async def test_a_durable_engine_that_cannot_wait_is_rejected(self) -> None:
         """Waiting in process inside a durable run would not be recorded, so it is refused rather than done unsafely."""
-        agent = approval_agent(RequestInput[None](lambda ctx, requests, token: None), [], durable=True)
+        agent = approval_agent(HandleDeferredToolCalls[None](lambda ctx, requests, token: None), [], durable=True)
 
         with pytest.raises(UserError, match='Immediate does not support waiting for external events yet'):
             await agent.run('clean up')
@@ -564,7 +636,9 @@ def delete_only(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('done')])
 
 
-def approval_agent(capability: RequestInput[None], deleted: list[str], *, durable: bool = False) -> Agent[None, str]:
+def approval_agent(
+    capability: HandleDeferredToolCalls[None], deleted: list[str], *, durable: bool = False
+) -> Agent[None, str]:
     agent = Agent(
         FunctionModel(delete_only),
         name='approver',
@@ -580,14 +654,14 @@ def approval_agent(capability: RequestInput[None], deleted: list[str], *, durabl
     return agent
 
 
-async def test_the_wait_is_named_after_request_input_name() -> None:
+async def test_the_wait_is_named_after_name() -> None:
     deleted: list[str] = []
 
     def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
         pass
 
     waiter = RecordingWaiter({'approvals': {'call-1': True}})
-    agent = approval_agent(RequestInput[None](ask, name='approve_delete'), deleted)
+    agent = approval_agent(HandleDeferredToolCalls[None](ask, name='approve_delete'), deleted)
     with external_event_scope(waiter):
         assert (await agent.run('clean up')).output == 'done'
 
