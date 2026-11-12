@@ -328,10 +328,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         run._window_chars = 0
         run._latest_compaction = None
         run._cached_working_dir = None
-        # Known before `get_instructions`, which runs before `before_run`: in a workspace below `'operator'`, the
-        # precedence sentence mustn't rank its files over the operator's. `before_run` also catches a walk-up file a
-        # `path_authority` entry lowers. The workspace's own level costs no I/O, unlike `authority_of`.
-        run._lowered = ctx.workspace.authority != 'operator'
+        # Known before `get_instructions`, which runs before `before_run`: in a workspace with any file below
+        # `'operator'`, the precedence sentence mustn't rank its files over the operator's. Neither check costs I/O,
+        # unlike `authority_of`.
+        run._lowered = ctx.workspace.authority != 'operator' or _lowers_some_path(ctx.workspace)
         return run
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -657,6 +657,16 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Serialization name for agent-spec support."""
         return 'RepoContext'
+
+
+def _lowers_some_path(workspace: Workspace) -> bool:
+    """Whether a `path_authority` entry on any of the workspace's wrappers puts some path below `'operator'`.
+
+    Core has no public way to ask this without I/O yet, so this reads the wrapper chain's private layers, as
+    `Workspace.authority` does.
+    """
+    layers = workspace._authority_layers()  # pyright: ignore[reportPrivateUsage]
+    return any(level != 'operator' for _, path_authority in layers for level in path_authority.values())
 
 
 def _walk_up_view(

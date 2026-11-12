@@ -400,12 +400,12 @@ class TestUntrustedWorkspaces:
 
         assert tools == ['list_skills', 'load_skill']
         assert requests[0].instructions == snapshot(
-            'This workspace has skills: instructions for particular tasks, listed by `list_skills`. At the start of a task, call `list_skills` to check whether one applies, and `load_skill` to read the one that does.'
+            'Skills, instructions for particular tasks, are listed by `list_skills`. At the start of a task, call `list_skills` to check whether one applies, and `load_skill` to read the one that does.'
         )
         assert _tool_results(requests) == [
             {'alpha': 'Alpha help.'},
             "No skill is named 'hidden'. Call `list_skills` to see the skills.",
-            _loaded(tmp_path / 'skills', 'alpha', 'Alpha directions.'),
+            _loaded(tmp_path.resolve() / 'skills', 'alpha', 'Alpha directions.'),
         ]
         system_voice = [request.instructions or '' for request in requests] + [
             str(part.content) for request in requests for part in request.parts if isinstance(part, SystemPromptPart)
