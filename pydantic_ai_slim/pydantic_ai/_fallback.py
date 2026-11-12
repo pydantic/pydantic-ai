@@ -27,7 +27,14 @@ from opentelemetry.trace import Span, Tracer
 from . import exceptions as _exceptions
 from ._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
 from ._utils import PeekableAsyncStream, await_maybe, get_first_param_type, is_str_dict
-from .exceptions import ContentFilterError, FallbackExceptionGroup, ModelAPIError, UserError
+from .exceptions import (
+    ContentFilterError,
+    FallbackExceptionGroup,
+    IncompleteToolCall,
+    ModelAPIError,
+    OutputTokenLimitExceeded,
+    UserError,
+)
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     ModelMessage,
@@ -122,13 +129,14 @@ SpecModelError = Literal[
     'ModelNotFoundError',
     'ModelRequestTimeout',
     'ContentFilterError',
+    'OutputTokenLimitExceeded',
 ]
 """The exceptions an agent spec can name in `ModelFallback`'s `fallback_on` and `RetryOnModelErrors`' `retry_on`.
 
-Every public `ModelAPIError` class, and `ContentFilterError`.
+Every public `ModelAPIError` class, `ContentFilterError` and `OutputTokenLimitExceeded`.
 """
 
-_SPEC_MODEL_ERRORS: dict[str, type[ModelAPIError | ContentFilterError]] = {
+_SPEC_MODEL_ERRORS: dict[str, type[ModelAPIError | ContentFilterError | OutputTokenLimitExceeded]] = {
     name: getattr(_exceptions, name) for name in get_args(SpecModelError)
 }
 
@@ -145,8 +153,10 @@ def spec_list(value: object, *, owner: str, param: str) -> Sequence[object]:
     raise UserError(f'`{owner}` `{param}` in an agent spec must be a name or a list of names, got {value!r}.')
 
 
-def spec_error_types(value: object, *, owner: str, param: str) -> tuple[type[ModelAPIError | ContentFilterError], ...]:
-    """The `ModelAPIError` classes, or `ContentFilterError`, a spec argument names, one name or a list of them."""
+def spec_error_types(
+    value: object, *, owner: str, param: str
+) -> tuple[type[ModelAPIError | ContentFilterError | OutputTokenLimitExceeded], ...]:
+    """The `ModelAPIError` classes, `ContentFilterError` or `OutputTokenLimitExceeded` a spec argument names."""
     # Spec arguments reach here unvalidated: the annotations are what the published spec schema
     # advertises, not something that rejects other values on the way in.
     given = spec_list(value, owner=owner, param=param)
@@ -156,7 +166,8 @@ def spec_error_types(value: object, *, owner: str, param: str) -> tuple[type[Mod
     if len(error_types) != len(given):
         unknown = [name for name in given if not (isinstance(name, str) and name in _SPEC_MODEL_ERRORS)]
         raise UserError(
-            f'`{owner}` `{param}` in an agent spec takes names of `ModelAPIError` classes and `ContentFilterError`, '
+            f'`{owner}` `{param}` in an agent spec takes names of `ModelAPIError` classes, `ContentFilterError` and '
+            '`OutputTokenLimitExceeded`, '
             f'got {unknown!r}. Valid names: {", ".join(_SPEC_MODEL_ERRORS)}.'
         )
     return error_types
@@ -197,6 +208,14 @@ class FallbackPredicates:
     partial output, which the provider says to discard. Streamed responses skip it without a warning, unlike response
     handlers: a stream's finish reason is only known once it has been streamed, so a streamed refusal is accepted.
     """
+    output_token_limit: bool = False
+    """Whether `fallback_on` names `OutputTokenLimitExceeded`, so a response the output token limit cut off is rejected.
+
+    Like `content_filter`, the exception type stands for any response with `finish_reason='length'`, as the agent only
+    raises the error once a response is accepted: one with no usable output, but also text that was cut off, which is
+    otherwise the run's output, and the rare response with complete output, such as tool calls that all parse, that
+    still reached the limit. Streamed responses skip it without a warning, like refusals.
+    """
 
     @classmethod
     def parse(
@@ -236,9 +255,14 @@ class FallbackPredicates:
 
     def _add_exception_type(self, exception_type: type[Exception]) -> None:
         self.exception_handlers.append(_exception_types_to_handler((exception_type,)))
-        # Only the class itself and its subclasses: `UnexpectedModelBehavior` or `Exception` doesn't name refusals.
+        # Only the class itself and its subclasses: `UnexpectedModelBehavior` or `Exception` doesn't name refusals or
+        # cut-off responses. `IncompleteToolCall` names only a cut-off tool call, not every cut-off response.
         if issubclass(exception_type, ContentFilterError):
             self.content_filter = True
+        elif issubclass(exception_type, OutputTokenLimitExceeded) and not issubclass(
+            exception_type, IncompleteToolCall
+        ):
+            self.output_token_limit = True
 
     def _add_handler(self, handler: Callable[..., Any]) -> None:
         """Add a handler, auto-detecting its type by inspecting type hints."""
@@ -251,7 +275,10 @@ class FallbackPredicates:
 
     async def matches(self, value: Exception | ModelResponse) -> bool:
         """Check if any handler matches `value`, an error or a response."""
-        if self.content_filter and isinstance(value, ModelResponse) and value.finish_reason == 'content_filter':
+        if isinstance(value, ModelResponse) and (
+            (self.content_filter and value.finish_reason == 'content_filter')
+            or (self.output_token_limit and value.finish_reason == 'length')
+        ):
             return True
         handlers = self.exception_handlers if isinstance(value, Exception) else self.response_handlers
         for handler in handlers:

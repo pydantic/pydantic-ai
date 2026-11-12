@@ -867,6 +867,6 @@ async def test_from_spec_with_arguments():
 def test_from_spec_rejects_unknown_error_names():
     with pytest.raises(
         ValueError,
-        match="`RetryOnModelErrors` `retry_on` in an agent spec takes names of `ModelAPIError` classes and `ContentFilterError`, got \\['UserError'\\]",
+        match="`RetryOnModelErrors` `retry_on` in an agent spec takes names of `ModelAPIError` classes, `ContentFilterError` and `OutputTokenLimitExceeded`, got \\['UserError'\\]",
     ):
         Agent.from_spec({'capabilities': [{'RetryOnModelErrors': {'retry_on': ['ModelServerError', 'UserError']}}]})

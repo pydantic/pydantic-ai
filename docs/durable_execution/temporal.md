@@ -265,7 +265,7 @@ Temporal workflow; the [workspace guide](../workspace.md#harness-workspace-capab
 on each engine. Three things are specific to Temporal.
 
 **Live events.** Tools that write files ask for approval and report the write from the workflow, so
-`FileChangeRequestEvent`, `FileWrittenEvent`, `FileEditedEvent` and `DirectoryCreatedEvent` reach your
+`FileChangeRequestedEvent`, `FileWrittenEvent`, `FileEditedEvent` and `DirectoryCreatedEvent` reach your
 listeners as they happen. Other tools run in activities and their events are not delivered: `FileReadEvent`,
 `DirectoryListedEvent` and `FilesSearchedEvent` from the file tools, and `CommandStartedEvent`,
 `CommandOutputEvent` and `CommandFinishedEvent` from `shell`
