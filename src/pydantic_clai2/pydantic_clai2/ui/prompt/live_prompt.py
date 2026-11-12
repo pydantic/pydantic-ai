@@ -229,6 +229,10 @@ class LivePrompt:
         if entry is self._editing:
             self._drop_editing()
         else:
+            if entry is self._editing_after:
+                # The prompt being edited returns after the one before this, not to the front.
+                index = self._submissions.index(entry)
+                self._editing_after = self._submissions[index - 1] if index else None
             self._discard(entry)
         self.paint()
 
@@ -383,9 +387,9 @@ class LivePrompt:
         """Move queued prompts into the draft after an interrupt, as Claude Code and Codex do, so none runs on its own.
 
         Only prompts move, one per line ahead of the draft: a `/command` or `!` shell line would make the lines
-        after it part of the command, so those stay queued, as Claude Code keeps queued shell commands, and so
-        do control signals. A prompt being edited keeps its place with the edit, and the draft set aside to edit
-        it comes last.
+        after it part of the command, so those stay queued, as Claude Code keeps queued shell commands. So do
+        control signals, and a prompt such as a bare `!` that would turn the joined text into a command.
+        A prompt being edited keeps its place with the edit, and the draft set aside to edit it comes last.
         """
         draft = self.buffer.text
         if (editing := self._editing) is not None:
@@ -396,6 +400,9 @@ class LivePrompt:
                 self._put_back(editing)
             self.queue_changed()
         moved = [entry for entry in self.queued_prompts() if input_kind(entry.text) == 'prompt']
+        # A bare `!` is a prompt alone, but would send the lines after it to the shell: it stays queued.
+        while moved and input_kind('\n'.join([*(entry.text for entry in moved), draft])) != 'prompt':
+            moved.pop(0)
         if editing is None and not moved:
             return
         for entry in moved:

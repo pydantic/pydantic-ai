@@ -869,3 +869,25 @@ async def test_turn_drains_accepted_steering_before_finishing(
         assert output.index('> second') < output.index('ValueError: final hook failed')
     monkeypatch.undo()
     assert not shell.steer('after turn')
+
+
+async def test_interrupt_keeps_a_bare_bang_prompt_from_joining_the_lines_after_it() -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, '!', 'printf injected')
+            live.feed('escape')
+        # `!` alone is a prompt, but followed by another line it would send that line to the shell.
+        assert (live.buffer.text, live.queued_messages) == ('printf injected', ('!',))
+
+
+async def test_removing_the_prompt_before_the_one_being_edited_keeps_its_place() -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'a', 'b', 'c')
+            live.feed('up')
+            # As the web UI removes a queued prompt while the terminal edits the one after it.
+            b = live.queued_prompts()[1]
+            live.discard(b)
+            live.feed('escape')
+            assert live.queued_messages == ('a', 'c')
+            live.feed('ctrl-c')
