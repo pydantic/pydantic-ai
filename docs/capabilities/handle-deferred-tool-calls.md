@@ -291,7 +291,7 @@ See [Resolving deferred calls with a handler](../deferred-tools.md#resolving-def
 
 ## Migrating from `RequestInput`
 
-`RequestInput` is deprecated. `RequestInput(ask, timeout=..., name=...)` is `HandleDeferredToolCalls(ask, timeout=..., name=...)`: an `ask` that takes `(ctx, requests, token)` is a handler that takes a token, and works the same. `RequestInput` keeps working, with a deprecation warning, until the next major version.
+`RequestInput` is deprecated. `RequestInput(ask, timeout=..., name=...)` is `HandleDeferredToolCalls(ask, timeout=..., name=...)`: an `ask` that takes `(ctx, requests, token)` is a handler that takes a token, and works the same. `RequestInput` passes the token whatever `ask`'s signature, but `HandleDeferredToolCalls` only passes it to a handler whose third positional parameter is required. If `ask` declares the token with a default or as `*args`, make it a required parameter when you switch, or the handler is called without a token and its `None` declines instead of waiting. `RequestInput` keeps working, with a deprecation warning, until the next major version.
 
 ## Waiting for other external events
 

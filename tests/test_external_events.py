@@ -371,6 +371,8 @@ async def test_request_input_is_a_deprecated_alias_that_always_takes_the_token()
 
     assert isinstance(capability, HandleDeferredToolCalls)
     assert capability.ask is ask
+    capability.ask = ask
+    assert capability.handler is ask
     assert capability.get_ordering() == CapabilityOrdering(position='innermost')
     waiter = RecordingWaiter({'approvals': {'call-1': True}})
     with external_event_scope(waiter):

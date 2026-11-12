@@ -20,8 +20,9 @@ from .deferred_tool_handler import (
 
 
 @deprecated(
-    '`RequestInput` is deprecated; use `HandleDeferredToolCalls`, whose handler gets a resume token when it '
-    'takes a third parameter: `HandleDeferredToolCalls(ask, timeout=..., name=...)`.',
+    '`RequestInput` is deprecated; use `HandleDeferredToolCalls`, whose handler gets a resume token when its '
+    'third positional parameter is required (no default, not `*args`): '
+    '`HandleDeferredToolCalls(ask, timeout=..., name=...)`.',
     category=PydanticAIDeprecationWarning,
 )
 class RequestInput(HandleDeferredToolCalls[AgentDepsT]):
@@ -49,6 +50,10 @@ class RequestInput(HandleDeferredToolCalls[AgentDepsT]):
         handler = self.handler
         assert self._takes_token(handler)
         return handler
+
+    @ask.setter
+    def ask(self, ask: _TokenHandler[AgentDepsT]) -> None:
+        self.handler = ask
 
     def _takes_token(
         self, handler: _Handler[AgentDepsT] | _TokenHandler[AgentDepsT]
