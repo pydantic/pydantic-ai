@@ -128,10 +128,12 @@ The Harness is installed when `agent` names something inside it, and left out ot
 workflow running its own agent doesn't wait for it or resolve its dependencies. An agent of your own
 that uses the Harness installs it through `pip-install`.
 
-Both packages are pinned to the exact versions each release of the action was tested with, so a
-workflow that pins the action to a commit runs the same agent code every time. Set
-`pydantic-ai-version` to pick another release; with the default agent, set `harness-version` to the
-matching Harness release too (`0.67.0` goes with `2.67.0`).
+`pydantic-ai-slim` is pinned to the exact release each version of the action was tested with,
+listed in the [action's README](https://github.com/pydantic/pydantic-ai-action#inputs), so a
+workflow that pins the action to a commit runs the same agent code every time; set
+`pydantic-ai-version` to pick another. Each Harness release requires the exact `pydantic-ai-slim` it
+was released with, and the action installs everything in one `pip` call, so the Harness, including
+a bare `pydantic-ai-harness` in `pip-install`, resolves to the release matching it.
 
 ## Inputs
 
@@ -143,8 +145,8 @@ matching Harness release too (`0.67.0` goes with `2.67.0`).
 | `model` | | A [model](models/overview.md) identifier such as `{{ openai:medium }}`. Overrides the model the agent carries. |
 | `python-version` | `3.12` | The Python the agent runs on, 3.11 or later. |
 | `pip-install` | | Extra space-separated packages, such as the project your agent lives in. |
-| `pydantic-ai-version` | `2.67.0` | The exact `pydantic-ai-slim` version to install. |
-| `harness-version` | `0.67.0` | The exact `pydantic-ai-harness` version, installed when `agent` names the Harness. |
+| `pydantic-ai-version` | The release the action was tested with | The exact `pydantic-ai-slim` version to install. |
+| `harness-version` | The release matching `pydantic-ai-version` | The exact `pydantic-ai-harness` version, installed when `agent` names the Harness. |
 | `working-directory` | `.` | The directory packages are installed from and the agent runs in. |
 
 The action installs `pydantic-ai-slim` with the `openai`, `anthropic` and `spec` extras. Any other
