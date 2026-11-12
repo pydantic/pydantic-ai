@@ -3048,7 +3048,7 @@ def _call_as_sent(part: ToolCallPart) -> ToolCallPart:
     """`part` as the server holds it: a base call, without what the agent graph adds after `request()`.
 
     The digest is taken in `request()`, and the graph then promotes the call to its kind's typed subclass and labels a
-    `computer` call with the grid of the model that made it. None of that is sent, so
+    `computer` call with the grid and screenshot limits of the model that made it. None of that is sent, so
     leaving it in would make a response compared later never match.
     """
     args = part.args if part.args is None or isinstance(part.args, str) else {**part.args}
@@ -8503,21 +8503,31 @@ def _computer_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPar
     }
 
 
-def _scroll_conversions(call: ToolCallPart | None) -> list[str]:
-    """How each pixel scroll in the call ran as wheel clicks, when that differs from what the model asked for."""
+def _scroll_conversions(call: ToolCallPart | None, result: ComputerResult | None) -> list[str]:
+    """How each pixel scroll in the call that ran became wheel clicks, when that differs from what the model asked for.
+
+    Only the `performed` actions ran; a call changed before it ran ran other actions, which its summary describes, and
+    a result without its outcome doesn't say what ran. A call with a result had every action map, so each one does.
+    """
+    if result is None or result.get('changed'):
+        return []
     item: dict[str, Any] = (call.provider_details or {}).get('computer_call', {}) if call else {}
     actions: list[dict[str, Any]] = item.get('actions') or ([item['action']] if item.get('action') else [])
     notes: list[str] = []
+    ran = 0  # the tool actions the ones before this mapped to
     for action in actions:
-        if action.get('type') != 'scroll' or _unsupported_computer_fields(action) is not None:
-            continue
-        for axis in ('scroll_x', 'scroll_y'):
-            pixels: int = action[axis]
-            clicks = min(50, max(1, round(abs(pixels) / _SCROLL_PIXELS_PER_CLICK))) if pixels else 0
-            if clicks * _SCROLL_PIXELS_PER_CLICK != abs(pixels):
-                notes.append(
-                    f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
-                )
+        mapped = _map_computer_action(action)
+        if action['type'] == 'scroll':
+            # Each axis that scrolls is one tool action, in `_map_computer_action`'s order.
+            axes = [axis for axis in ('scroll_x', 'scroll_y') if action[axis]]
+            for index, axis in enumerate(axes, ran):
+                pixels: int = action[axis]
+                clicks = min(50, max(1, round(abs(pixels) / _SCROLL_PIXELS_PER_CLICK)))
+                if index < result['performed'] and clicks * _SCROLL_PIXELS_PER_CLICK != abs(pixels):
+                    notes.append(
+                        f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
+                    )
+        ran += len(mapped)
     return notes
 
 
@@ -8565,7 +8575,7 @@ def _map_computer_call_output(
     # Images before the closing screenshot, such as a zoom, can't go in the output.
     images = [item for item in content if isinstance(item, BinaryImage)]
     others = images[:-1] if image is not None else images
-    conversions = _scroll_conversions(call) if computer_return else []
+    conversions = _scroll_conversions(call, computer_return.result) if computer_return else []
     if image is None or computer_return is None or _needs_summary(computer_return.result) or others or conversions:
         # The output can only carry an image: say what didn't run, or why the image is blank. The note is the tool's
         # result, so it is framed as one on the user channel, as for any tool result that can't go natively.
