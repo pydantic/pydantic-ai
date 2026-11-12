@@ -128,7 +128,7 @@ Commands start in sandboxd's root directory, `/workspace` in the template above,
 
 ### What a timeout stops
 
-A command timeout starts once the sandbox is claimed. A timeout or a cancelled run kills the command's process group, and the sandbox keeps running for other commands. `WorkspaceTimeoutError` carries the output so far. A job that detaches with `setsid` may keep running.
+Claiming or reattaching gives up with `TimeoutError` after 190 seconds: the 180 seconds the SDK waits for a new claim to become Ready, plus one API server request. A claim that times out is deleted. A command timeout starts once the sandbox is claimed. A timeout or a cancelled run kills the command's process group, and the sandbox keeps running for other commands. `WorkspaceTimeoutError` carries the output so far. A job that detaches with `setsid` may keep running.
 
 A background job that keeps the command's output open delays the result by about 5 seconds. A command whose combined output passes 10 MiB is stopped and raises `WorkspaceOutputLimitError`, with the first 64 KiB of each stream in `stdout` and `stderr`. Redirect large or background output to a file instead; `Shell.start_command` manages its own output log.
 

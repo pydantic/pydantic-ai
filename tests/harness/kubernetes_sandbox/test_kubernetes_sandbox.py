@@ -35,7 +35,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai_harness import KubernetesSandbox, KubernetesSandboxBackend
 
-    from .fake_sandboxd import FakeCluster, FakeSandboxd
+    from .fake_sandboxd import FakeCluster, FakeK8sHelper, FakeSandboxd
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='pydantic-ai-harness[kubernetes] not installed')
 
@@ -433,6 +433,74 @@ async def test_attaching_to_a_claim_whose_sandbox_was_deleted_is_unavailable(clu
         await KubernetesSandboxBackend(ref=probe.ref).run(['true'])
     assert isinstance(caught.value.__cause__, SandboxNotFoundError)
     await probe.aclose()
+
+
+async def test_attaching_to_a_claim_deleted_meanwhile_is_unavailable(
+    cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A claim deleted between the existence check and the SDK's lookup is gone, not a lookup to retry."""
+    probe = KubernetesSandboxBackend(warm_pool='pool')
+    await probe.run(['true'])
+    get_sandbox_claim = FakeK8sHelper.get_sandbox_claim
+
+    async def deleted_after_answering(
+        helper: FakeK8sHelper, name: str, namespace: str
+    ) -> dict[str, dict[str, str]] | None:
+        claim = await get_sandbox_claim(helper, name, namespace)
+        if claim is not None:
+            await helper.cluster.delete((namespace, name))
+        return claim
+
+    monkeypatch.setattr(FakeK8sHelper, 'get_sandbox_claim', deleted_after_answering)
+    with pytest.raises(WorkspaceUnavailableError, match='no longer exists') as caught:
+        await KubernetesSandboxBackend(ref=probe.ref).run(['true'])
+    assert isinstance(caught.value.__cause__, SandboxNotFoundError)
+    await probe.aclose()
+
+
+async def test_a_claim_that_stalls_times_out_and_is_deleted(
+    cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The SDK's API client has no timeout, so a claim that never returns is bounded here and rolled back."""
+    monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend._ACQUIRE_TIMEOUT', 0.1)
+    cluster.create_gate = anyio.Event()  # Never set: the claim exists but `create_sandbox` never returns.
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    with pytest.raises(TimeoutError, match=r'did not complete within 0\.1 seconds'):
+        await backend.run(['true'])
+    assert backend.ref is None and cluster.claims == {}
+    [(_, _, kwargs)] = cluster.created
+    assert kwargs['sandbox_ready_timeout'] == 180
+    await backend.aclose()
+
+
+async def test_an_attach_that_stalls_times_out(cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch) -> None:
+    probe = KubernetesSandboxBackend(warm_pool='pool')
+    await probe.run(['true'])
+    monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend._ACQUIRE_TIMEOUT', 0.1)
+    stalled = anyio.Event()
+
+    async def never_answers(helper: FakeK8sHelper, name: str, namespace: str) -> None:
+        await stalled.wait()
+
+    monkeypatch.setattr(FakeK8sHelper, 'get_sandbox_claim', never_answers)
+    attached = KubernetesSandboxBackend(ref=probe.ref)
+    with pytest.raises(TimeoutError, match='did not complete within'):
+        await attached.run(['true'])
+    for each in (probe, attached):
+        await each.aclose()
+
+
+async def test_a_destroy_the_api_server_does_not_answer_times_out(
+    cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    await backend.run(['true'])
+    assert backend.ref is not None
+    monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend._API_SERVER_TIMEOUT', 0.1)
+    cluster.delete_gate = anyio.Event()  # Never set.
+    with pytest.raises(TimeoutError, match='did not delete Kubernetes sandbox'):
+        await KubernetesSandbox(warm_pool='pool').destroy(backend.ref)
+    await backend.aclose()
 
 
 async def test_a_lost_connection_to_a_live_sandbox_propagates(

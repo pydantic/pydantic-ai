@@ -91,8 +91,15 @@ _ASYNCIO_ONLY = (
 )
 
 _API_SERVER_TIMEOUT = 10
-"""Seconds to wait for the API server after a failure: to delete a claim that never became Ready, or
-to say whether a sandbox whose command failed still exists."""
+"""Seconds to wait for one API server request: to delete a claim that never became Ready or that
+`destroy` names, or to say whether a sandbox whose command failed still exists. The SDK's API client
+sets no timeout of its own, so a stalled request would otherwise wait forever."""
+
+_READY_TIMEOUT = 180
+"""Seconds a new claim may take to become Ready, passed to the SDK; its own default."""
+
+_ACQUIRE_TIMEOUT = _READY_TIMEOUT + _API_SERVER_TIMEOUT
+"""Seconds claiming or attaching may take: a claim's readiness wait plus the request that creates it."""
 
 _SETUP_TIMEOUT = 60.0
 """Seconds `working_dir()` waits for `pwd -P`, so a wedged pod or stalled tunnel fails instead of hanging."""
@@ -437,18 +444,27 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             # and a backend never destroys its environment; whoever holds the ref does. This also skips the
             # SDK's exit hook that stops `kubectl port-forward` processes, so `aclose()` is what stops them.
             self._client = AsyncSandboxClient(connection_config=self._connection_config, cleanup=False)
-        client = self._client
-        if self._ref is not None:
-            ref = self._ref
-            sandbox = await self._attach(client, ref)
-        else:
-            ref, sandbox = await self._claim(client)
-            self._ref = ref
-            self._working_dir_pending = self._working_dir is not None
+        acquired: tuple[WorkspaceRef, AsyncSandbox] | None = None
+        # A cancelled claim is still deleted: `_claim` rolls back under its own shield.
+        with anyio.move_on_after(_ACQUIRE_TIMEOUT):
+            acquired = await self._claim_or_attach(self._client)
+        if acquired is None:
+            raise TimeoutError(
+                f'Claiming or attaching to a Kubernetes sandbox did not complete within {_ACQUIRE_TIMEOUT} seconds.'
+            )
+        ref, sandbox = acquired
         commands = sandbox.commands
         assert commands is not None  # The SDK clears a handle's executor only when the handle is closed.
         self._session = _Session(ref=ref, sandbox=sandbox, commands=commands)
         return self._session
+
+    async def _claim_or_attach(self, client: AsyncSandboxClient[AsyncSandbox]) -> tuple[WorkspaceRef, AsyncSandbox]:
+        if self._ref is not None:
+            return self._ref, await self._attach(client, self._ref)
+        ref, sandbox = await self._claim(client)
+        self._ref = ref
+        self._working_dir_pending = self._working_dir is not None
+        return ref, sandbox
 
     async def _attach(self, client: AsyncSandboxClient[AsyncSandbox], ref: WorkspaceRef) -> AsyncSandbox:
         """Attach to the claim `ref` names; raise `WorkspaceUnavailableError` only when the API server says it is gone."""
@@ -462,8 +478,10 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         try:
             return await client.get_sandbox(claim_name, namespace=namespace)
         except SandboxNotFoundError as error:
-            # The claim exists, so ask about the Sandbox it binds: only its 404 means gone for good,
-            # as in `_raise_if_gone`.
+            # The claim may have been deleted since the check above; otherwise ask about the Sandbox it
+            # binds. Only a 404 means gone for good, as in `_raise_if_gone`.
+            if await client.k8s_helper.get_sandbox_claim(claim_name, namespace) is None:
+                raise WorkspaceUnavailableError(f'Kubernetes sandbox {ref.id!r} no longer exists') from error
             sandbox_id = await client.k8s_helper.resolve_sandbox_name(
                 claim_name, namespace, timeout=_API_SERVER_TIMEOUT
             )
@@ -487,6 +505,7 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
                 namespace=self._namespace,
                 claim_name=claim_name,
                 shutdown_after_seconds=self._sandbox_timeout,
+                sandbox_ready_timeout=_READY_TIMEOUT,
             )
         except BaseException as error:
 
@@ -556,6 +575,11 @@ async def destroy_sandbox(ref: WorkspaceRef) -> None:
         # Workaround: `AsyncSandboxClient.delete_sandbox` logs and swallows every error, so a failed
         # delete would look like success. The SDK's Kubernetes helper ignores only a 404. Use
         # `delete_sandbox` once it raises (https://github.com/kubernetes-sigs/agent-sandbox/pull/1856).
-        await client.k8s_helper.delete_sandbox_claim(claim_name, namespace)
+        with anyio.move_on_after(_API_SERVER_TIMEOUT) as deadline:
+            await client.k8s_helper.delete_sandbox_claim(claim_name, namespace)
+        if deadline.cancelled_caught:
+            raise TimeoutError(
+                f'The API server did not delete Kubernetes sandbox {ref.id!r} within {_API_SERVER_TIMEOUT} seconds.'
+            )
     finally:
         await run_to_completion(client.close)
