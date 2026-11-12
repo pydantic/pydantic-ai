@@ -259,6 +259,11 @@ jobs:
     name: quality checks
     needs: classify
     if: needs.classify.outputs.content_only != 'true'
+    # DIAGNOSTIC, reverted next commit: eight samples of the pyright-rs and fallback timings.
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
     # `pull-requests: read` is for the lock-regeneration guard's PR file listing. Reading
     # it works today on `contents: read` alone only because this repo is public; declaring
@@ -472,7 +477,7 @@ jobs:
           # (https://github.com/dsfaccini/pyright-rs/actions/runs/43305070216). A run 1.5x that
           # fails 50, and a failure only hands the check to pyright and its own budget below, so a
           # slowdown fails the pull request only when pyright shows it too.
-          PYRIGHT_TIME_BUDGET: "50"
+          PYRIGHT_TIME_BUDGET: "1"
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
