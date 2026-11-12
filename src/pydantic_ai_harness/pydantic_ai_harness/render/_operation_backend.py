@@ -17,7 +17,6 @@ from pydantic_ai.durable_exec import (
     ToolsetCallToolId,
     ToolsetValidateToolArgumentsId,
 )
-from pydantic_ai.durable_exec._toolset import durable_metadata_opts_out
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai_harness._typeguards import is_object_dict
@@ -35,6 +34,7 @@ from ._protocol import (
     RenderProtocolError,
     apply_effects,
     control_flow_error,
+    durable_metadata_opts_out,
     make_request,
     permanent_error,
     read_outcome,
