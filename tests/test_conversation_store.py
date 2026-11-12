@@ -19,6 +19,7 @@ from pydantic_ai import (
     UserPromptPart,
     messages as _messages,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
 from pydantic_ai.conversation import ConversationTypeAdapter
 from pydantic_ai.conversation_store import (
@@ -629,6 +630,66 @@ def _trimming_agent(model: _LookUp) -> Agent[None, str]:
         return f'fact {n}'
 
     return agent
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+@pytest.mark.parametrize('output_type', [str, int])
+async def test_a_streamed_run_ending_on_its_streamed_response_keeps_what_a_capability_trims(
+    output_type: type[Any],
+) -> None:
+    """`run_stream()` builds the settled result from its own copy of the history, which still gets the full history."""
+    agent = Agent(TestModel(), output_type=output_type, capabilities=[ProcessHistory(lambda messages: messages[-1:])])
+    conversation = (await agent.run('one')).conversation
+    expected = (await agent.run('two', conversation=conversation)).conversation.messages
+
+    async with agent.run_stream('two', conversation=conversation) as stream:
+        await stream.get_output()
+
+    assert len(stream.all_messages()) < len(expected)
+    assert conversation_view(stream.result.conversation.messages) == conversation_view(expected)
+
+
+class _AppendsToTheFirstRequest(AbstractCapability[None]):
+    """Adds a message to history the deprecated way: appending to `request_context.messages` in `before_model_request`."""
+
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if ctx.run_step == 1:
+            request_context.messages.append(ModelRequest(parts=[UserPromptPart('hook marker')]))
+        return request_context
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_message_a_hook_appends_the_deprecated_way_is_kept_when_a_capability_trims_it_later() -> None:
+    model = _LookUp(calls=3)
+    agent = Agent(
+        FunctionModel(model),
+        deps_type=type(None),
+        capabilities=[ProcessHistory(_keep_first_and_last_four), _AppendsToTheFirstRequest()],
+    )
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    with pytest.warns(PydanticAIDeprecationWarning):
+        result = await agent.run('hello')
+
+    assert 'user-prompt: hook marker' not in conversation_view(result.all_messages())
+    assert conversation_view(result.conversation.messages) == snapshot(
+        [
+            'user-prompt: hello',
+            'user-prompt: hook marker',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'call call-3',
+            'return call-3: fact 3',
+            'text: done',
+        ]
+    )
 
 
 @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)

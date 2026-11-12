@@ -42,6 +42,7 @@ from .usage import RunUsage, UsageLimits
 from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
+    from ._appended_messages import AppendedMessages
     from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
 
@@ -616,6 +617,13 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     _run_result: AgentRunResult[OutputDataT] | None = None
 
+    _full_history_from: tuple[AppendedMessages, int] | None = None
+    """The run's record of its messages, and where the messages this result adds to its copy of the history start.
+
+    Set when the stream's own response ends the run, so the settled result's conversation can keep the full history
+    when a capability dropped or rewrote messages, as the run's would.
+    """
+
     is_complete: bool = field(default=False, init=False)
     """Whether the stream has all been received.
 
@@ -686,6 +694,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 stopped before it finished, so the run has no settled output to settle on.
         """
         from ._agent_graph import GraphAgentState
+        from ._appended_messages import AppendedMessages
         from .run import AgentRunResult
 
         if (run_result := self._run_result) is not None:
@@ -702,6 +711,15 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     'until it stopped are still available from `all_messages()`.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
+            appended = AppendedMessages()
+            record, start = self._full_history_from or (appended, 0)
+            if record.full and record.messages is not None:
+                # The run kept its full history when it ended, with the streamed response, which the run commits
+                # itself, but not the request with the tool returns the stream added to its copy after it.
+                added = [
+                    message for message in self._all_messages[start:] if isinstance(message, _messages.ModelRequest)
+                ]
+                appended = AppendedMessages([*record.messages, *added], record.new_message_index, full=True)
             result = AgentRunResult(
                 output=output,
                 _output_tool_name=output_tool_name,
@@ -711,6 +729,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     run_id=self.run_id,
                     conversation_id=self.conversation_id,
                     metadata=self.metadata,
+                    appended_messages=appended,
                 ),
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,

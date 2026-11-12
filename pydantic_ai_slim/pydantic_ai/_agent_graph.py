@@ -101,7 +101,7 @@ from ._deferred_capabilities import (
     registered_loaded_capability_ids,
 )
 from ._genai_prices import best_effort_price, fill_response_cost
-from ._history_mirroring import HistoryMirroringMessages
+from ._history_mirroring import HistoryMirroringMessages, MirroredHistory
 from ._instructions import (
     LoadedInstructionValues,
     instruction_window,
@@ -3078,7 +3078,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         runs per attempt, in `_prepare_attempt`.
         """
         persistent_messages_before_processing = len(ctx.state.message_history)
-        mirrored_messages = HistoryMirroringMessages(request_context.messages, ctx.state.message_history)
+        mirrored_messages = HistoryMirroringMessages(
+            request_context.messages, MirroredHistory(ctx.state.message_history, ctx.state.appended_messages)
+        )
         request_context.messages = mirrored_messages
         try:
             # A load from code in `before_model_request` is recorded on the request being prepared, below.
