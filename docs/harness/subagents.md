@@ -408,7 +408,7 @@ is implemented.
 Use `DelegationReports` on the parent run to deliver settled background reports through core's
 queued-message API. Each report is the child's output in a `UserPromptPart`, framed as
 `<task_output task_id="..." agent_name="...">` data, with `outcome="..."` added when the task
-didn't succeed, like a background tool's `<tool_result>`. The output was written by a model, so it
+didn't succeed, like a background tool's `<pyai:tool_result>`. The output was written by a model, so it
 never enters system voice, and a closing tag inside it can't end the frame early. Nothing precedes
 the frame: the acceptance receipt the parent got at launch already said a report would follow.
 
@@ -492,6 +492,13 @@ show the child's context usage. Managed start/end events carry `task_id` and
 `parent_task_id`. Managed cancellation and uncontained exceptions produce terminal
 outcomes; unmanaged events and exception propagation keep their original contract.
 Metadata and final/interrupted histories are atomically saved under `directory`.
+Once a task settles and is saved, the owner keeps its history in that file only, so a
+directory of long-finished tasks doesn't fill memory: an observer is told a task settled
+with its history, and after that the task in `records` has empty `messages`.
+`history(task_id)` reads its history from the file (from async code, call it in a worker
+thread, as `anyio.to_thread.run_sync(owner.history, task_id)`), and a resume loads it
+back. To copy a settled task with its history, use
+`replace(task, messages=owner.history(task.id))`.
 Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
 child's latest frontier. Loading an interrupted record never executes its tools.
 Inspect possible partial effects before an explicit resume. A resume closes out tool
