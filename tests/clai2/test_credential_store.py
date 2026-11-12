@@ -242,6 +242,7 @@ def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None, caplog:
         assert [record.getMessage() for record in caplog.records] == [expected_warning]
         new_session()
         assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
+        assert [record.getMessage() for record in caplog.records] == [expected_warning, expected_warning]
         save_codex_credentials(fallback=fallback, value='{"access_token":"refreshed"}')
         assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
     assert [record.getMessage() for record in caplog.records] == [expected_warning, expected_warning]

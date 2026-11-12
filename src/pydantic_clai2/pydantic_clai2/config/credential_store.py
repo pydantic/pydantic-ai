@@ -166,13 +166,13 @@ def load_codex_credentials(*, account: str = _ACCOUNT, fallback: Path | None = N
             return _decrypt(encrypted)
         root = keyring.get_password(_SERVICE, account)
     except _NO_KEYRING:
-        root = None
+        if not plaintext.is_file():
+            return None
+        _warn_plaintext_fallback()
+        return plaintext.read_text(encoding='utf-8')
     if root is not None:
         return _migrate(root=root, account=account, encrypted=encrypted)
-    if not plaintext.is_file():
-        return None
-    _warn_plaintext_fallback()
-    return plaintext.read_text(encoding='utf-8')
+    return plaintext.read_text(encoding='utf-8') if plaintext.is_file() else None
 
 
 def save_codex_credentials(*, value: str, account: str = _ACCOUNT, fallback: Path | None = None) -> None:
