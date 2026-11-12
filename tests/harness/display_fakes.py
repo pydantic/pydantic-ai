@@ -17,7 +17,6 @@ from pydantic_ai_harness.computer_use import (
     DisplayAction,
     SupportsCursorPosition,
     SupportsDisplay,
-    SupportsScaledScreenshot,
     SupportsZoom,
     UnsupportedActionError,
 )
@@ -63,7 +62,6 @@ class ScreenBackend(
     ProviderBackend,
     SupportsDisplay,
     SupportsZoom,
-    SupportsScaledScreenshot,
     SupportsCursorPosition,
 ):
     """A provider backend that is its own display, with every optional ability."""
@@ -98,10 +96,6 @@ class ScreenBackend(
         await self._files()
         return png(region.right - region.left, region.bottom - region.top)
 
-    async def scaled_screenshot(self, width: int, height: int) -> bytes:
-        await self._files()
-        return png(width, height)
-
     async def cursor_position(self) -> Point:
         await self._files()
         moves = [action for action in self.screens.actions if isinstance(action, MoveMouse)]
@@ -109,7 +103,7 @@ class ScreenBackend(
 
 
 class DisplayOnlyBackend(FilesystemOnlyWorkspaceBackend, SupportsDisplay):
-    """A screen backend's files and display, without zoom, scaling or the pointer position."""
+    """A screen backend's files and display, without zoom or the pointer position."""
 
     def __init__(self, inner: ScreenBackend) -> None:
         super().__init__(inner)

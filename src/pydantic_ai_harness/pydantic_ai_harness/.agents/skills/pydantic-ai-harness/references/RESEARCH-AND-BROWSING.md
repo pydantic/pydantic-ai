@@ -364,7 +364,7 @@ tool name. Each finished call emits `ActionsPerformedEvent` (`result`, the call'
 `computer_use` namespace.
 
 A workspace backend with a screen implements `SupportsDisplay` (a `display` property returning a `Display` or `None`);
-`Display` and its optional `SupportsZoom`, `SupportsScaledScreenshot` and `SupportsCursorPosition` live in
+`Display` and its optional `SupportsZoom` and `SupportsCursorPosition` live in
 `pydantic_ai_harness.computer_use`, not in core `pydantic_ai.workspaces`.
 
 Gotchas:
