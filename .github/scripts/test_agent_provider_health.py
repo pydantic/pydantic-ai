@@ -4070,17 +4070,24 @@ def test_each_decision_exports_one_span_with_both_accounts_quota(
 
 
 @pytest.mark.parametrize(
-    ('headers', 'status', 'warning'), [('Authorization=', 200, None), ('Authorization=token', 302, 'HTTP 302')]
+    ('headers', 'status', 'sent', 'warning'),
+    [
+        ('Authorization=', 200, False, None),
+        ('Authorization=token', 302, True, 'HTTP 302'),
+        # `http.client` rejects the header with a `ValueError` whose message repeats the header value.
+        ('Authorization=token%0Asecret-fixture', 200, False, 'ValueError'),
+    ],
 )
 def test_decision_span_export_never_changes_the_decision(
     headers: str,
     status: int,
+    sent: bool,
     warning: str | None,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A run without the token sends nothing; a refused export, including a redirect it does not follow, only warns."""
+    """A run without the token sends nothing; a refused or invalid export only warns, without the token."""
     _stub_account_quotas(monkeypatch, health.Quota('healthy'), None)
     received: list[tuple[str, str | None, bytes]] = []
     monkeypatch.setattr(_Collector, 'received', received)
@@ -4093,8 +4100,10 @@ def test_decision_span_export_never_changes_the_decision(
 
     assert decision.ready
     assert outputs == 'ready=true\nreason=Provider health check passed\naccount=primary\n'
-    assert [path for path, _, _ in received] == ([] if warning is None else ['/v1/traces'])
-    warnings = [line for line in capsys.readouterr().out.splitlines() if line.startswith('::warning::')]
+    assert [path for path, _, _ in received] == (['/v1/traces'] if sent else [])
+    out = capsys.readouterr().out
+    assert 'secret-fixture' not in out
+    warnings = [line for line in out.splitlines() if line.startswith('::warning::')]
     assert warnings == ([] if warning is None else [f'::warning::Could not export the provider health span: {warning}'])
 
 

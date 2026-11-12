@@ -1411,8 +1411,8 @@ def _export_decision_span(health: Health, started_ns: int) -> None:
         for name, value in _quota_json(item.quota).items():
             if value is not None:
                 values[f'provider_health.{item.account}.quota.{name}'] = value
-    # gh-aw's setup step exports its trace in the agent job, so the recheck joins it. The gate job runs before
-    # gh-aw starts the run's trace, and starts its own.
+    # gh-aw's `Setup Scripts` step, the agent job's first, writes this pair to `GITHUB_ENV`, so the recheck joins
+    # the agent job's trace. The gate job runs before gh-aw starts the run's trace, and starts its own.
     trace_id = os.environ.get('GITHUB_AW_OTEL_TRACE_ID', '')
     parent_span_id = os.environ.get('GITHUB_AW_OTEL_PARENT_SPAN_ID', '')
     joins_trace = bool(_TRACE_ID_RE.fullmatch(trace_id) and _SPAN_ID_RE.fullmatch(parent_span_id))
