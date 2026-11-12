@@ -8455,7 +8455,8 @@ def _map_computer_action(action: dict[str, Any]) -> list[dict[str, Any]]:
 _ACTION_COUNTS = 'computer_action_counts'
 """The `provider_details` key of how many `computer` tool actions each of a `computer_call`'s actions became."""
 
-_ACTION_COUNTS_TA = TypeAdapter(list[int])
+# Every action becomes at least one tool action.
+_ACTION_COUNTS_TA = TypeAdapter(list[Annotated[int, Field(ge=1)]])
 
 
 def _map_computer_call(
@@ -8531,15 +8532,17 @@ def _scroll_conversions(call: ToolCallPart | None, result: ComputerResult | None
     index = 0  # of the tool action
     for action, count in zip(actions, counts):
         for tool_action in tool_actions[index : index + count]:
-            if index < result['performed'] and tool_action.get('type') == 'scroll':
-                axis = 'scroll_x' if tool_action['direction'] in ('left', 'right') else 'scroll_y'
-                pixels: int = action[axis]
-                clicks: int = tool_action['amount']
-                if clicks * _SCROLL_PIXELS_PER_CLICK != abs(pixels):
-                    notes.append(
-                        f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
-                    )
+            ran = index < result['performed']
             index += 1
+            # Both sides are read from storage, so a pair that isn't a scroll with its fields says nothing.
+            if not (ran and action.get('type') == 'scroll' and tool_action.get('type') == 'scroll'):
+                continue
+            axis = 'scroll_x' if tool_action.get('direction') in ('left', 'right') else 'scroll_y'
+            pixels, clicks = action.get(axis), tool_action.get('amount')
+            if isinstance(pixels, int) and isinstance(clicks, int) and clicks * _SCROLL_PIXELS_PER_CLICK != abs(pixels):
+                notes.append(
+                    f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
+                )
     return notes
 
 
