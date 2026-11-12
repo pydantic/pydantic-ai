@@ -233,13 +233,13 @@ async def test_the_owner_opens_once_for_overlapping_users(tmp_path: Path, monkey
     assert (tmp_path / 'tasks' / f'{record.id}.json').exists()
     async with router.opened(view=first) as reopened:
         assert reopened.records[record.id].outcome == 'cancelled'
-    # Each open of the owner returned the memory its load freed; the second user's open loaded nothing.
+    # Each open of the owner returned the memory its load freed; the second user joined the open owner.
     assert trims == [0, 0]
 
 
-@pytest.mark.parametrize('platform,library', [('linux', object()), ('darwin', None)])
+@pytest.mark.parametrize('platform,library,loads', [('linux', object(), [None]), ('darwin', None, [])])
 async def test_the_owner_opens_where_memory_cannot_be_trimmed(
-    platform: str, library: object, monkeypatch: pytest.MonkeyPatch
+    platform: str, library: object, loads: list[None], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A C library without `malloc_trim` (musl), and a platform that isn't glibc's, open the owner as usual."""
     loaded: list[object] = []
@@ -249,7 +249,7 @@ async def test_the_owner_opens_where_memory_cannot_be_trimmed(
     view = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', router=router)
     async with router.opened(view=view) as owner:
         assert owner is router.owner
-    assert loaded == ([None] if library is not None else [])
+    assert loaded == loads
 
 
 async def test_only_the_signalling_session_installs_the_ctrl_c_handler() -> None:
