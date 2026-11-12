@@ -352,8 +352,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         new_value: object | None
         items: list[object] = return_value if is_object_list(return_value) else [return_value]
         if any(is_multi_modal_content(item) for item in items):
-            # Files reach the model as files, so only the items beside them are reduced.
-            new_value, value_handle, value_bytes = await self._reduce_items_beside_files(ctx, call, bands, items)
+            new_value, value_handle, value_bytes = await self._reduce_data_beside_files(ctx, call, bands, items)
         else:
             value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
             new_value, value_handle = await self._reduce(ctx, call, bands, value_unit)
@@ -375,41 +374,26 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             content_handle=content_handle,
         )
 
-    async def _reduce_items_beside_files(
+    async def _reduce_data_beside_files(
         self,
         ctx: RunContext[AgentDepsT],
         call: ToolCallPart,
         bands: Sequence[Band],
         items: list[object],
     ) -> tuple[list[object] | None, str | None, int]:
-        """Reduce the items of a return value that holds files, keeping every file as it is.
+        """Reduce the data beside the files of a return value, which reach the model as files.
 
-        Every other item, text or structured, is rendered as text, and they are measured and reduced as one unit,
-        which takes the place of the first of them. Returns `(new_items, handle, rendered_bytes)`, with
-        `new_items` None when nothing was reduced.
+        Like core, a lone data item is measured as itself and several as a list. When reduced, the result goes
+        ahead of the files. Returns `(new_items, handle, data_bytes)`, with `new_items` None when nothing was reduced.
         """
-        other_indexes = [index for index, item in enumerate(items) if not is_multi_modal_content(item)]
-        if not other_indexes:
+        data = [item for item in items if not is_multi_modal_content(item)]
+        if not data:
             return None, None, 0
-        rendered = [self._render(items[index], tool_name=call.tool_name) for index in other_indexes]
-        unit = self._make_unit('\n'.join(rendered), tool_name=call.tool_name, suffix='')
+        unit = self._make_unit(data[0] if len(data) == 1 else data, tool_name=call.tool_name, suffix='')
         reduced, handle = await self._reduce(ctx, call, bands, unit)
         if reduced is None:
             return None, None, 0
-        first = other_indexes[0]
-        new_items = [
-            reduced if index == first else item
-            for index, item in enumerate(items)
-            if index == first or is_multi_modal_content(item)
-        ]
-        return new_items, handle, len(unit.data)
-
-    def _render(self, item: object, *, tool_name: str) -> str:
-        """An item beside a file as the text it's measured as."""
-        if isinstance(item, str):
-            return item
-        unit = self._make_unit(item, tool_name=tool_name, suffix='')
-        return unit.text if unit.text is not None else to_text(item)
+        return [reduced, *(item for item in items if is_multi_modal_content(item))], handle, len(unit.data)
 
     def _assemble(
         self,

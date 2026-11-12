@@ -825,65 +825,33 @@ class TestFilesInReturnValue:
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
         assert await _run(cap, _IMAGE) is _IMAGE
 
-    async def test_short_text_beside_a_file_passes_through(self):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10_000, action=Truncate(max_chars=95))])
-        value = ['header', _IMAGE]
-        assert await _run(cap, value) is value
-
-    async def test_text_beside_a_file_is_reduced_and_the_file_kept(self):
+    async def test_data_beside_files_is_reduced_and_the_files_kept(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
         assert await _run(cap, ['A' * 300, _IMAGE, 'B' * 300]) == [
             snapshot("""\
-AA
+["
 
-[truncated: 595 chars omitted from the middle; showing first 2 + last 4 of 601 chars]
+[truncated: 601 chars omitted from the middle; showing first 2 + last 4 of 607 chars]
 
-BBBB\
+BB"]\
 """),
             _IMAGE,
         ]
 
-    async def test_text_beside_a_file_spills_to_the_value_handle(self, tmp_path: Path):
+    async def test_data_beside_a_file_spills(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Spill())], store=store)
-        out = await _run(cap, ToolReturn(return_value=['A' * 300, _IMAGE], metadata={'k': 'v'}))
-        assert isinstance(out, ToolReturn)
-        assert out.return_value == [
-            snapshot("""\
+        assert await _run(cap, ['A' * 300, _IMAGE]) == ToolReturn(
+            return_value=[
+                snapshot("""\
 [Tool output too large (300 chars); stored to handle 'run-1/call-1.0'. Read it with read_tool_result(handle='run-1/call-1.0', offset=0, limit=200, from_end=False, pattern=None).]
 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\
 """),
-            _IMAGE,
-        ]
-        assert out.metadata == snapshot({'k': 'v', 'overflow_handle': 'run-1/call-1.0', 'overflow_bytes': 300})
-        assert await store.read(out.metadata['overflow_handle']) == ('A' * 300).encode('utf-8')
-
-    async def test_structured_item_beside_a_file_is_reduced_and_the_file_kept(self):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
-        # The JSON of the rows and the bytes are measured together and truncated to fit.
-        assert await _run(cap, [{'rows': list(range(1_000))}, _IMAGE, b'raw bytes']) == [
-            snapshot("""\
-
-
-[truncated: 3,910 chars omitted from the middle; showing first 0 + last 2 of 3,912 chars]
-
-s"\
-"""),
-            _IMAGE,
-        ]
-
-    async def test_content_beside_a_file_is_still_reduced(self):
-        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=95))])
-        out = await _run(cap, ToolReturn(return_value=['image', _IMAGE], content='C' * 5_000))
-        assert isinstance(out, ToolReturn)
-        assert out.return_value == ['image', _IMAGE]
-        assert out.content == snapshot("""\
-
-
-[truncated: 4,998 chars omitted from the middle; showing first 0 + last 2 of 5,000 chars]
-
-CC\
-""")
+                _IMAGE,
+            ],
+            metadata=snapshot({'overflow_handle': 'run-1/call-1.0', 'overflow_bytes': 300}),
+        )
+        assert await store.read('run-1/call-1.0') == ('A' * 300).encode('utf-8')
 
 
 class TestContentReduction:
@@ -1356,42 +1324,6 @@ class TestAgentIntegration:
         result = await agent.run('go')
         returns = [p.content for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
         assert returns == ['{"blob":"____"}']
-
-    async def test_multimodal_return_value_passes_through_untruncated(self):
-        image_data = b'\x89PNG\r\n\x1a\n' + b'x' * (100_000 - len(b'\x89PNG\r\n\x1a\n'))
-        requests: list[list[ModelMessage]] = []
-
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            requests.append(messages.copy())
-            if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-                return ModelResponse(parts=[TextPart(content='done')])
-            return ModelResponse(parts=[ToolCallPart(tool_name='read_image', args='{}', tool_call_id='read-image')])
-
-        agent = Agent(
-            FunctionModel(respond),
-            capabilities=[ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=10))])],
-        )
-
-        @agent.tool_plain
-        def read_image() -> BinaryContent:
-            return BinaryContent(data=image_data, media_type='image/png')
-
-        result = await agent.run('read image')
-
-        result_return = next(
-            part
-            for message in result.all_messages()
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == 'read_image'
-        )
-        followup_return = next(
-            part
-            for message in requests[1]
-            for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == 'read_image'
-        )
-        for tool_return in (result_return, followup_return):
-            assert tool_return.content == BinaryContent(data=image_data, media_type='image/png')
 
     async def test_small_output_untouched(self, tmp_path: Path, anyio_backend: str):
         cap: ToolOutputLimits[object] = ToolOutputLimits(

@@ -228,11 +228,11 @@ separate, model-visible part which also persists in history. This capability mea
 reduces both with the same bands, and they spill to distinct handles.
 
 A return value that holds files, such as the `[header, BinaryContent]` that `read_file` returns
-for an image or PDF, reaches the model with its files as they are. Every other item in it, text
-or structured, is rendered as text and measured as one piece. When a band applies, the reduced
-text replaces those items, in the place of the first of them. Text `content` is reduced the same
-way whatever the return value holds. Non-text `content` that overflows is left unreduced with a
-`warnings.warn`.
+for an image or PDF, reaches the model with its files as they are. The data beside them is
+measured the way the model receives it: a lone item as itself, several as a list. When a band
+applies, the reduced text replaces that data, ahead of the files. Text `content` is reduced the
+same way whatever the return value holds. Non-text `content` that overflows is left unreduced
+with a `warnings.warn`.
 
 ### `ToolReturn.metadata` is preserved
 

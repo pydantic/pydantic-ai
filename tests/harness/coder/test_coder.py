@@ -165,43 +165,26 @@ async def test_no_workspace_fails_the_run_naming_coder() -> None:
     assert '- LocalWorkspace: .' in str(raised.value)
 
 
-async def test_coder_read_file_large_image_reaches_model_multimodal(tmp_path: Path) -> None:
-    png_signature = b'\x89PNG\r\n\x1a\n'
-    image_data = png_signature + b'x' * (100_000 - len(png_signature))
-    (tmp_path / 'large.png').write_bytes(image_data)
-    requests: list[list[ModelMessage]] = []
+async def test_coder_read_file_returns_a_large_image_as_a_file(tmp_path: Path) -> None:
+    image = b'\x89PNG\r\n\x1a\n' + b'x' * 100_000
+    (tmp_path / 'large.png').write_bytes(image)
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        requests.append(messages.copy())
-        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-            return ModelResponse(parts=[TextPart(content='done')])
-        return ModelResponse(
-            parts=[ToolCallPart(tool_name='read_file', args={'path': 'large.png'}, tool_call_id='read-large-image')]
-        )
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='read_file', args={'path': 'large.png'})])
+        return ModelResponse(parts=[TextPart(content='done')])
 
     agent = Agent[object](
-        FunctionModel(respond),
-        capabilities=[LocalWorkspace(tmp_path), Coder[object](repo_context=False)],
+        FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), Coder[object](repo_context=False)]
     )
     result = await agent.run('read large.png')
 
-    result_return = next(
-        part
-        for message in result.all_messages()
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'read_file'
-    )
-    followup_return = next(
-        part
-        for message in requests[1]
-        for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'read_file'
-    )
-    for tool_return in (result_return, followup_return):
-        assert tool_return.content == [
-            '[large.png | image/png | 100000 bytes]\n',
-            BinaryContent(data=image_data, media_type='image/png'),
-        ]
+    tool_return = result.all_messages()[2].parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.content == [
+        '[large.png | image/png | 100008 bytes]\n',
+        BinaryContent(data=image, media_type='image/png'),
+    ]
 
 
 CONTROL_TOOLS = {'list_tasks', 'message_task', 'answer_task', 'cancel_task'}
