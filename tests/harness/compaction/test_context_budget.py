@@ -1619,8 +1619,8 @@ class TestInstructionDeltaCounting:
     @pytest.mark.parametrize(
         ('content', 'rendered'),
         [
-            ('New state', '<context id="agent:state">\nNew state\n</context>'),
-            (None, '<context id="agent:state">\nThis context has been withdrawn.\n</context>'),
+            ('New state', '<pyai:context id="agent:state">\nNew state\n</pyai:context>'),
+            (None, '<pyai:context id="agent:state">\nThis context has been withdrawn.\n</pyai:context>'),
         ],
     )
     def test_rendered_updates_count(self, content: str | None, rendered: str) -> None:

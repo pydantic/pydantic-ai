@@ -37,7 +37,7 @@ class MCPSamplingModel(Model):
     _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
     # The sampling request's one system prompt string goes to whichever model the client picks, and
     # `_mcp.map_from_pai_messages` joins the parts of it with no separator.
-    _announces_system_voice = False
+    _announces_lookalike_notes = False
 
     unsupported_settings = frozenset(
         {
