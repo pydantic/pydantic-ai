@@ -674,7 +674,9 @@ def resolve_tool_durable_config(
                     f'(`{config_type_label}`) or `False`, got {type(metadata_config).__name__}.'
                 )
             return cast('DurableConfig', metadata_config)
-    if tool is not None and tool.tool_def.durable is False:
+    if tool is not None and opts_out_of_durable_unit(
+        tool.tool_def.durable, tool.tool_def.metadata, engine_key=metadata_key
+    ):
         return False
     return fallback_config.get(tool_name, {})
 
