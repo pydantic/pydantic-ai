@@ -337,7 +337,8 @@ def _preserved(by_id: dict[str, JsonObject], boundary: JsonObject) -> set[str]:
     segment = obj(obj(boundary.get('compactMetadata')).get('preservedSegment'))
     head = text(segment.get('headUuid'))
     preserved: set[str] = set()
-    node = by_id.get(text(segment.get('tailUuid')))
+    # Without a head nothing was preserved; a line without a `uuid` must not stand in for it.
+    node = by_id.get(text(segment.get('tailUuid'))) if head else None
     while node is not None and (uuid := text(node.get('uuid'))) not in preserved:
         preserved.add(uuid)
         if uuid == head:
