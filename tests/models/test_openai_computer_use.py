@@ -647,6 +647,15 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
             {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': -20},
             {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'up', 'amount': 1, 'modifiers': []},
         ),
+        # Rounded half up, in whole numbers, so any JSON integer maps.
+        (
+            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 250},
+            {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 3, 'modifiers': []},
+        ),
+        (
+            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 10**400},
+            {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 10**398, 'modifiers': []},
+        ),
         # A scroll by nothing only moves the pointer there.
         (
             {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 0},
@@ -854,6 +863,36 @@ async def test_a_pixel_scroll_note_is_read_as_it_was_kept_on_the_call(
     assert texts == (
         [f'<tool_result tool_name="computer" tool_call_id="call_1">Ran 1 action.{notes}</tool_result>'] if notes else []
     )
+
+
+@pytest.mark.parametrize('stored', [['not an object'], 'cu_1', None], ids=['list', 'text', 'null'])
+async def test_a_call_whose_stored_item_is_not_an_object_goes_back_plain(
+    allow_model_requests: None, stored: Any
+) -> None:
+    """A history can come back from storage or a UI; an item that isn't one can't be sent back as it was."""
+    client = MockOpenAIResponses.create_mock(_done())
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    result = ToolReturnPart(
+        'computer',
+        ['Ran 1 action.', _SCREEN],
+        tool_call_id='call_1',
+        metadata={'performed': 1},
+        tool_kind=COMPUTER_KIND.id,
+    )
+    history = _computer_history({'actions': [{'type': 'screenshot'}]}, _COMPUTER_ITEM, result, computer_call=stored)
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    await model.request(
+        history,
+        None,
+        ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
+
+    (request,) = get_mock_responses_kwargs(client)
+    assert [item.get('type') for item in request['input'] if item.get('call_id') == 'call_1'] == [
+        'function_call',
+        'function_call_output',
+    ]
 
 
 @pytest.mark.parametrize('native', [True, False], ids=['native', 'opted-out-since'])
@@ -1107,7 +1146,7 @@ def test_any_call_maps_with_one_scroll_note_slot_per_tool_action(actions: Any) -
 @given(
     stored_item=st.fixed_dictionaries({}, optional={'actions': _JSON, 'pending_safety_checks': _JSON, 'extra': _JSON}),
     details=st.dictionaries(
-        st.sampled_from(['computer_scroll_notes', 'pending_safety_checks', 'other']), _JSON, max_size=3
+        st.sampled_from(['computer_call', 'computer_scroll_notes', 'safety_checks', 'other']), _JSON, max_size=3
     ),
     metadata=_JSON,
     args=st.dictionaries(st.text(max_size=8), _JSON, max_size=3) | st.text(max_size=8),
