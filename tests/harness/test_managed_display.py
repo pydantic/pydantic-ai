@@ -12,8 +12,8 @@ from pydantic_ai.computer_use import Click, Point, PressKeys, Region
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness._display import ManagedDisplay
 from pydantic_ai_harness.computer_use import (
-    ComputerAction,
     Display,
+    DisplayAction,
     SupportsCursorPosition,
     SupportsScaledScreenshot,
     SupportsZoom,
@@ -26,11 +26,11 @@ from .display_fakes import FAKE_SCREENSHOT
 class FakeDriver:
     """A display that counts its starts, can fail its next calls, and refuses one kind of action."""
 
-    def __init__(self, refuse: type[ComputerAction] | None = None) -> None:
+    def __init__(self, refuse: type[DisplayAction] | None = None) -> None:
         self.starts = 0
         self.failures: list[Exception] = []
         """Errors the next calls raise, in order."""
-        self.acted: list[ComputerAction] = []
+        self.acted: list[DisplayAction] = []
         self._refuse = refuse
 
     async def start(self) -> FakeDriver:
@@ -54,7 +54,7 @@ class FakeDriver:
         self._maybe_fail()
         return FAKE_SCREENSHOT
 
-    async def act(self, action: ComputerAction) -> None:
+    async def act(self, action: DisplayAction) -> None:
         self._maybe_fail()
         if self._refuse is not None and isinstance(action, self._refuse):
             raise UnsupportedActionError('the fake display refuses it')

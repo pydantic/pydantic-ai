@@ -24,7 +24,7 @@ from pydantic_ai.computer_use import (
 from pydantic_ai.workspaces import CommandResult, SupportsCommands, WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness._display import ManagedDisplay, png_from_base64
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
-from pydantic_ai_harness.computer_use import ComputerAction, UnsupportedActionError
+from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
 
 DISPLAY = ':1'
 """The X display the desktop runs on, as `DISPLAY` names it."""
@@ -392,7 +392,7 @@ class X11Computer:
         except (KeyError, ValueError):
             raise WorkspaceError(f'Unexpected `xdotool getmouselocation` output: {output.strip()!r}') from None
 
-    async def act(self, action: ComputerAction) -> None:
+    async def act(self, action: DisplayAction) -> None:
         match action:
             case Click(x=x, y=y, button=button, count=count, modifiers=modifiers):
                 await self._xdotool(

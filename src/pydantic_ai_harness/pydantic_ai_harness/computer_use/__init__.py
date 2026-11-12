@@ -3,8 +3,8 @@
 from pydantic_ai_harness.computer_use._capability import ComputerUse
 from pydantic_ai_harness.computer_use._events import COMPUTER_USE_EVENTS, ActionsPerformedEvent
 from pydantic_ai_harness.computer_use._protocol import (
-    ComputerAction,
     Display,
+    DisplayAction,
     SupportsCursorPosition,
     SupportsDisplay,
     SupportsScaledScreenshot,
@@ -15,9 +15,9 @@ from pydantic_ai_harness.computer_use._protocol import (
 __all__ = [
     'COMPUTER_USE_EVENTS',
     'ActionsPerformedEvent',
-    'ComputerAction',
     'ComputerUse',
     'Display',
+    'DisplayAction',
     'SupportsCursorPosition',
     'SupportsDisplay',
     'SupportsScaledScreenshot',
