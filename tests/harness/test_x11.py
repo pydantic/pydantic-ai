@@ -24,7 +24,7 @@ from pydantic_ai.computer_use import (
 )
 from pydantic_ai.workspaces import CommandResult, WorkspaceCommand, WorkspaceError
 from pydantic_ai_harness._x11 import X11Computer
-from pydantic_ai_harness.computer_use import ComputerAction, UnsupportedActionError
+from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
 
 from .display_fakes import FAKE_SCREENSHOT
 
@@ -142,7 +142,7 @@ class BlockingCommands(ScriptedCommands):
         ),
     ],
 )
-async def test_x11_computer_runs_one_xdotool_command_per_action(action: ComputerAction, argv: list[str]) -> None:
+async def test_x11_computer_runs_one_xdotool_command_per_action(action: DisplayAction, argv: list[str]) -> None:
     commands = ScriptedCommands()
     await X11Computer(commands).act(action)
     assert commands.calls == [
@@ -155,7 +155,7 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: Computer
     [TypeText(text='café'), PressKeys(keys=('ctrl', 'é')), HoldKeys(keys=('日',), seconds=1)],
     ids=['type', 'press', 'hold'],
 )
-async def test_x11_computer_refuses_characters_outside_ascii(action: ComputerAction) -> None:
+async def test_x11_computer_refuses_characters_outside_ascii(action: DisplayAction) -> None:
     # `xdotool` types them by remapping a key per keystroke, which Chrome reads too late; nothing is sent.
     commands = ScriptedCommands()
     with pytest.raises(UnsupportedActionError, match='can only type ASCII characters'):
@@ -206,7 +206,7 @@ async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(key
     ],
 )
 async def test_x11_computer_releases_what_a_failed_action_held(
-    action: ComputerAction, releases: list[list[str]]
+    action: DisplayAction, releases: list[list[str]]
 ) -> None:
     commands = ScriptedCommands(CommandResult(exit_code=1, stdout='', stderr='BadValue'))
     with pytest.raises(WorkspaceError, match='BadValue'):
@@ -230,7 +230,7 @@ async def test_x11_computer_tries_every_release_when_one_fails() -> None:
         (TypeText(text='!'), ['xdotool', 'keyup', 'Shift_L', 'ISO_Level3_Shift', 'U0021']),
     ],
 )
-async def test_x11_computer_releases_what_it_pressed_when_cancelled(action: ComputerAction, release: list[str]) -> None:
+async def test_x11_computer_releases_what_it_pressed_when_cancelled(action: DisplayAction, release: list[str]) -> None:
     commands = BlockingCommands()
     async with anyio.create_task_group() as tg:
         tg.start_soon(X11Computer(commands).act, action)
