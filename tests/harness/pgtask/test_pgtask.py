@@ -922,3 +922,20 @@ class TestRetryAfter:
         stored = await checkpoints(pgtask_db, task_id)
         assert stored[('limited__model.request', 0)] == {'__pydantic_ai_harness_retry_after__': 0.0}
         assert ('limited__model.request', 1) in stored
+
+    async def test_model_error_fails_the_attempt_without_a_wait_when_no_attempts_are_left(
+        self, pgtask_db: PGTaskDatabase
+    ) -> None:
+        """On the task's last attempt there is no attempt left to run the request again in, so the model error fails
+        the run rather than waiting."""
+        counter = {'calls': 0}
+        agent = Agent(_rate_limited_once(counter, 5.0), name='last', capabilities=[PGTaskDurability()])
+
+        async def body(attempt: int) -> None:
+            with pytest.raises(ModelRateLimitError):
+                await agent.run('hi')
+
+        task_id = await run_in_task(pgtask_db, body, attempts=1)
+
+        assert counter['calls'] == 1
+        assert await checkpoints(pgtask_db, task_id) == {}

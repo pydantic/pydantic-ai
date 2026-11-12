@@ -37,6 +37,7 @@ from pydantic_ai.durable_exec import (
 )
 from pydantic_ai.exceptions import UserError
 
+from .._retry_after import MINIMUM_RETRY_AFTER_CAP
 from ._bridge import current_loop
 from ._transports import INPUT, JsonTransport
 
@@ -52,8 +53,6 @@ _RESULT_FORMAT: Literal['pydantic-ai-durabletask-result-v1'] = 'pydantic-ai-dura
 _ESCAPED_NAME_CHARACTER = re.compile(r'-|[^a-zA-Z0-9_.`+:-]')
 _DEFAULT_CONFIG = object()
 _MODEL_OPERATION_IDS = (ModelRequestId, ModelCompactMessagesId, ModelCancelSuspendedResponseId)
-_MINIMUM_RETRY_AFTER_CAP = 60.0
-"""The shortest cap on a model error's `retry_after`, when the retry policy sets no `max_retry_interval`."""
 
 
 class _AzureDurableTaskNamer(JournalOperationNamer):
@@ -114,7 +113,7 @@ def _retry_after_cap(policy: task.RetryPolicy, attempts: int) -> float:
     if policy.max_retry_interval is not None:
         return policy.max_retry_interval.total_seconds()
     backoff = policy.first_retry_interval.total_seconds() * (policy.backoff_coefficient or 1.0) ** (attempts - 1)
-    return max(backoff, _MINIMUM_RETRY_AFTER_CAP)
+    return max(backoff, MINIMUM_RETRY_AFTER_CAP)
 
 
 def _continued_policy(policy: task.RetryPolicy, attempts: int, elapsed: timedelta) -> task.RetryPolicy:
