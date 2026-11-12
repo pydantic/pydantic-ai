@@ -102,18 +102,6 @@ jobs:
               ;;
           esac
 
-          # montybot is the Pydantic team's agent: it opens PRs on behalf of a maintainer
-          # who asked for the change, so its PRs skip the guard like that maintainer's own
-          # would. The role lookup above can't grant this, because a GitHub App's
-          # `role_name` on the repo is always empty (#13240 was closed as a duplicate for
-          # that reason). Match the exact login, not a `*[bot]` glob, so no other bot
-          # installed later gets the bypass. pydanty is handled separately below: it acts
-          # on external issue text and must still go through the duplicate checks.
-          if [ "$PR_AUTHOR" = "montybot-pydantic[bot]" ]; then
-            echo "Author is montybot, which opens PRs for maintainers; skipping checks."
-            exit 0
-          fi
-
           # Trusted-actor bypass. AUTHOR_ASSOCIATION above is the PR *author's*
           # relationship to the repo, so without this the guard re-closes a
           # contributor PR every time a maintainer acts on it: reopening it, or
@@ -182,14 +170,27 @@ jobs:
             esac
           done
 
-          # pydanty is the autonomous agent that opens PRs from issues. Its PRs are
-          # never auto-closed for duplication; instead a pydanty PR supersedes a
-          # competing PR opened within WINDOW_SECONDS before it (see the loop below).
-          PYDANTY_LOGIN="pydanty[bot]"
+          # Pydantic's own GitHub Apps that open PRs:
+          #   - pydanty[bot]: the autonomous agent that opens PRs from issues.
+          #   - montybot-pydantic[bot]: the team's agent, opening PRs a maintainer asked for.
+          # A GitHub App's `role_name` on the repo is always empty, so the role bypasses
+          # above never match them (#13240, montybot's, was closed as a duplicate that way).
+          # Their PRs are never auto-closed for duplication; instead a team app's PR
+          # supersedes a competing PR opened within WINDOW_SECONDS before it (see the loop
+          # below). Exact logins, not a `*[bot]` glob, so a bot installed later doesn't
+          # inherit this.
+          TEAM_APP_LOGINS=("pydanty[bot]" "montybot-pydantic[bot]")
+          is_team_app() {
+            local login
+            for login in "${TEAM_APP_LOGINS[@]}"; do
+              [ "$1" = "$login" ] && return 0
+            done
+            return 1
+          }
           WINDOW_SECONDS=600
-          IS_PYDANTY_PR="false"
-          if [ "$PR_AUTHOR" = "$PYDANTY_LOGIN" ]; then
-            IS_PYDANTY_PR="true"
+          IS_TEAM_APP_PR="false"
+          if is_team_app "$PR_AUTHOR"; then
+            IS_TEAM_APP_PR="true"
           fi
           PR_CREATED_EPOCH=$(date -u -d "$GITHUB_EVENT_PULL_REQUEST_CREATED_AT" +%s)
 
@@ -267,7 +268,7 @@ jobs:
             fi
             for actor in $(sort -u <<< "$timeline"); do
               case "$actor" in
-                *"[bot]" | "$PYDANTY_LOGIN" | github-actions)
+                *"[bot]" | github-actions)
                   continue
                   ;;
               esac
@@ -402,13 +403,13 @@ jobs:
             # would close this issue instead of regex-matching PR bodies, so all
             # closing syntaxes (and manually linked PRs) are recognized. Bot
             # logins get their "[bot]" suffix restored to match the REST-style
-            # logins used elsewhere (PYDANTY_LOGIN, ISSUE_AUTHOR).
+            # logins used elsewhere (TEAM_APP_LOGINS, ISSUE_AUTHOR).
             # Only PRs created before this one can block it: two PRs racing each
             # other's guard runs would otherwise both see the other as open and
-            # both get closed, and a newer PR (e.g. pydanty's, deliberately left
+            # both get closed, and a newer PR (e.g. a team app's, deliberately left
             # alongside an older human PR) must not close the older one when an
-            # edit re-triggers the guard. The pydanty supersede logic below is
-            # unaffected: it only ever targets PRs opened before pydanty's.
+            # edit re-triggers the guard. The team-app supersede logic below is
+            # unaffected: it only ever targets PRs opened before the app's.
             echo "Checking for existing PRs targeting issue #${ISSUE_NUM}..."
 
             BLOCKING_PRS=""
@@ -450,12 +451,12 @@ jobs:
                 continue
               fi
 
-              # pydanty's own PR is never closed here. Instead it supersedes a
+              # A team app's own PR is never closed here. Instead it supersedes a
               # competing PR that opened within WINDOW_SECONDS before it, unless
               # that PR belongs to the issue author (who keeps priority).
-              if [ "$IS_PYDANTY_PR" = "true" ]; then
-                if [ "$EXISTING_PR_AUTHOR" = "$PYDANTY_LOGIN" ]; then
-                  echo "PR #${EXISTING_PR_NUM} is also pydanty's; leaving it."
+              if [ "$IS_TEAM_APP_PR" = "true" ]; then
+                if is_team_app "$EXISTING_PR_AUTHOR"; then
+                  echo "PR #${EXISTING_PR_NUM} is also a team app's (${EXISTING_PR_AUTHOR}); leaving it."
                   continue
                 fi
                 if [ "$EXISTING_PR_AUTHOR" = "$ISSUE_AUTHOR" ]; then
@@ -465,14 +466,14 @@ jobs:
                 EXISTING_EPOCH=$(date -u -d "$(echo "$PR_JSON" | jq -r '.created_at')" +%s)
                 DELTA=$(( PR_CREATED_EPOCH - EXISTING_EPOCH ))
                 if [ "$DELTA" -ge 0 ] && [ "$DELTA" -le "$WINDOW_SECONDS" ]; then
-                  echo "pydanty PR #${PR_NUMBER} opened ${DELTA}s after PR #${EXISTING_PR_NUM} (<= ${WINDOW_SECONDS}s); superseding it."
+                  echo "${PR_AUTHOR} PR #${PR_NUMBER} opened ${DELTA}s after PR #${EXISTING_PR_NUM} (<= ${WINDOW_SECONDS}s); superseding it."
                   SUPERSEDE_COMMENT=$(printf '%s\n\n%s' \
-                    "An automated pull request from @${PYDANTY_LOGIN} addressing issue #${ISSUE_NUM} opened within ~10 minutes of this one, so it is taking precedence and this PR has been closed to avoid duplicate effort." \
+                    "An automated pull request from @${PR_AUTHOR} addressing issue #${ISSUE_NUM} opened within ~10 minutes of this one, so it is taking precedence and this PR has been closed to avoid duplicate effort." \
                     "Thanks for contributing — if you'd like to keep working on this, please comment on [issue #${ISSUE_NUM}](https://github.com/${REPO}/issues/${ISSUE_NUM}) and a maintainer can help coordinate.")
                   gh pr comment "$EXISTING_PR_NUM" --repo "$REPO" --body "$SUPERSEDE_COMMENT"
                   gh pr close "$EXISTING_PR_NUM" --repo "$REPO"
                 else
-                  echo "PR #${EXISTING_PR_NUM} opened more than ${WINDOW_SECONDS}s before pydanty's; leaving both open for a maintainer."
+                  echo "PR #${EXISTING_PR_NUM} opened more than ${WINDOW_SECONDS}s before ${PR_AUTHOR}'s; leaving both open for a maintainer."
                 fi
                 continue
               fi
@@ -485,7 +486,7 @@ jobs:
               fi
             done <<< "$MATCHING_PRS"
 
-            if [ "$IS_PYDANTY_PR" != "true" ] && [ -n "$BLOCKING_PRS" ]; then
+            if [ "$IS_TEAM_APP_PR" != "true" ] && [ -n "$BLOCKING_PRS" ]; then
               echo "Closing PR #${PR_NUMBER} — issue #${ISSUE_NUM} already has active PRs: ${BLOCKING_PRS}"
 
               COMMENT=$(printf '%s\n\n%s\n\n%s' \
@@ -511,8 +512,8 @@ jobs:
             exit 0
           fi
 
-          # If we found closed issues but no open ones, close the PR (pydanty PRs are exempt).
-          if [ "$IS_PYDANTY_PR" != "true" ] && [ "$FOUND_CLOSED_ISSUE" = "true" ] && [ "$FOUND_OPEN_ISSUE" = "false" ]; then
+          # If we found closed issues but no open ones, close the PR (team app PRs are exempt).
+          if [ "$IS_TEAM_APP_PR" != "true" ] && [ "$FOUND_CLOSED_ISSUE" = "true" ] && [ "$FOUND_OPEN_ISSUE" = "false" ]; then
             echo "All referenced issues are closed. Closing PR."
             gh pr comment "$PR_NUMBER" --repo "$REPO" --body "All issues referenced by this PR are already closed. If you believe an issue should be reopened, please comment on it first."
             gh pr close "$PR_NUMBER" --repo "$REPO"
