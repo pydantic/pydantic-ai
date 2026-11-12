@@ -2910,6 +2910,46 @@ async def test_dbos_durability_model_error_retry_after_waits_durably(dbos: DBOS)
     assert len(attempts) == 3
 
 
+async def test_dbos_durability_model_error_retry_after_continues_the_backoff(
+    dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each wait is capped at DBOS's backoff for the attempt, or a minute, and a run of the step after a wait carries
+    on DBOS's backoff from the attempts before it rather than starting it over."""
+    model, attempts = _retry_after_model(_rate_limited(1000), _rate_limited(1000))
+    agent = Agent(
+        model,
+        name='durability_retry_after_backoff',
+        capabilities=[
+            DBOSDurability(model_step_config=StepConfig(retries_allowed=True, max_attempts=3, interval_seconds=40))
+        ],
+    )
+    waits: list[float] = []
+    intervals: list[float] = []
+    run_step_async = DBOS.run_step_async
+
+    async def record_wait(seconds: float) -> None:
+        waits.append(seconds)
+
+    async def record_interval(options: Any, func: Any, *args: Any, **kwargs: Any) -> Any:
+        intervals.append(options['interval_seconds'])
+        return await run_step_async(options, func, *args, **kwargs)
+
+    monkeypatch.setattr(DBOS, 'sleep_async', record_wait)
+    monkeypatch.setattr(DBOS, 'run_step_async', record_interval)
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello DBOS')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_durable_agent() == 'answered'
+
+    assert len(attempts) == 3
+    # The backoff is 40 seconds, then 80: the first wait gets the one-minute floor.
+    assert waits == [60.0, 80.0]
+    assert intervals == [80.0, 160.0]
+
+
 def test_dbos_retry_after_uses_dbos_step_defaults() -> None:
     """The step defaults the `retry_after` wait is worked out with are DBOS's own."""
     assert (
