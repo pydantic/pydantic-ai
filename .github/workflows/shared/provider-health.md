@@ -1,6 +1,7 @@
 ---
 # Trusted host-side Z.AI health check. Keep ZAI_API_KEY and ZAI_BACKUP_API_KEY in the provider_health job, the
-# agent-start recheck below and the record step of provider_health_record, never in the agent container.
+# agent-start recheck below, the record step of provider_health_record and the OpenCode threat detection step in
+# shared/engine-zai.md, never in the agent container.
 jobs:
   provider_health:
     name: Check Z.AI provider health

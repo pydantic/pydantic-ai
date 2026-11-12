@@ -11,37 +11,61 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TextIO, TypeVar
+from typing import TextIO, TypeVar
 
 from publish_douwebot_review import ReviewEngine, ReviewResult
 from pydantic import TypeAdapter
 
 T = TypeVar('T')
 _EVENT = TypeAdapter(dict[str, object])
-# `provider.go-limit` is a spent OpenCode Go usage window; `provider.quota` is a quota error OpenCode cannot name.
-QUOTA_ERRORS = frozenset({'provider.go-limit', 'provider.quota'})
 # The shape of every error type OpenCode 2.2.5 sets, such as `provider.auth` or `unknown`.
 ERROR_TYPE = re.compile(r'[a-z][a-z.-]*')
-# The values DeepInfra documents for `reasoning_effort`: https://docs.deepinfra.com/chat/reasoning
-ReasoningEffort = Literal['none', 'low', 'medium', 'high']
 
 
 @dataclass(frozen=True)
 class Provider:
-    """An OpenCode provider of the review model, the variable holding its key, and its douwebot receipt engine."""
+    """An OpenCode provider of a review model, the account key it runs with, and its douwebot receipt engine."""
 
     name: str
     model: str
     key_variable: str
+    """The variable OpenCode reads the provider's key from."""
+    secret_variable: str
+    """The workflow variable that holds this account's key."""
     review_engine: ReviewEngine
-    reasoning_effort: ReasoningEffort | None = None
-    """The model's `reasoningEffort` setting in the OpenCode config; unset leaves the provider's default."""
+    handover_errors: frozenset[str]
+    """OpenCode error types that hand a run this provider refused to the next provider in the chain."""
 
 
-OPENCODE_GO = Provider('opencode-go', 'opencode-go/deepseek-v4.1-flash', 'OPENCODE_API_KEY', 'opencode')
-# Without `reasoning_effort`, DeepInfra returns no reasoning for this model, which can then reason in its answer.
-DEEPINFRA = Provider(
-    'deepinfra', 'deepinfra/deepseek-ai/DeepSeek-V4.1-Flash', 'DEEPINFRA_API_KEY', 'opencode-deepinfra', 'low'
+# OpenCode 2.2.5 types a spent OpenCode Go usage window `provider.go-limit`, and a quota it cannot name
+# `provider.quota`. It types a Z.AI 429 whose message names a plan or quota limit, such as codes 1308 and 1310,
+# `provider.quota`, and retries any other 429, such as 1302 rate limits and 1305 overload, as
+# `provider.rate-limit`: `classify` in
+# https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts
+OPENCODE_GO = Provider(
+    'opencode-go',
+    'opencode-go/deepseek-v4.1-flash',
+    'OPENCODE_API_KEY',
+    'OPENCODE_API_KEY',
+    'opencode',
+    frozenset({'provider.go-limit', 'provider.quota'}),
+)
+# The GLM Coding Plan, on its own coding endpoint. OpenCode 2.2.5 reads its key from `ZHIPU_API_KEY` only.
+ZAI = Provider(
+    'zai-coding-plan',
+    'zai-coding-plan/glm-5.3-flash',
+    'ZHIPU_API_KEY',
+    'ZAI_API_KEY',
+    'opencode-zai',
+    frozenset({'provider.quota'}),
+)
+ZAI_BACKUP = Provider(
+    'zai-coding-plan',
+    'zai-coding-plan/glm-5.3-flash',
+    'ZHIPU_API_KEY',
+    'ZAI_BACKUP_API_KEY',
+    'opencode-zai',
+    frozenset(),
 )
 
 
@@ -99,11 +123,6 @@ def read_only_config(*, agent: str, provider: Provider, steps: int | None = None
         },
         'policies': policies,
     }
-    if provider.reasoning_effort is not None:
-        # OpenCode 2.2.5 sends a model's `reasoningEffort` setting to DeepInfra as `reasoning_effort`.
-        model = provider.model.removeprefix(f'{provider.name}/')
-        settings = {'reasoningEffort': provider.reasoning_effort}
-        config['providers'] = {provider.name: {'models': {model: {'settings': settings}}}}
     return config
 
 
@@ -115,11 +134,13 @@ def run_with_fallback(
     steps: int | None = None,
     extra_env: Mapping[str, str] | None = None,
 ) -> tuple[T, Provider]:
-    """Launch OpenCode on Go, and again on DeepInfra when a Go quota limit refused the run before it finished a step.
+    """Launch OpenCode on Go, then on the Z.AI Coding Plan, then on its backup account, while each refuses the run.
 
-    `launch` runs the command in the environment it is given and writes the event stream to the stream it is given,
-    which `output` holds after each run. Each run gets a config that allows only its provider, and an environment
-    that holds only that provider's key. A run whose process fails prints its model and OpenCode error type.
+    A provider hands the run to the next one whose key is set only when its quota limit refused the run before it
+    finished a step. `launch` runs the command in the environment it is given and writes the event stream to the
+    stream it is given, which `output` holds after each run. Each run gets a config that allows only its provider,
+    and an environment that holds only that account's key. A run whose process fails prints its model and OpenCode
+    error type.
     """
 
     def run_on(provider: Provider, api_key: str) -> tuple[T, Provider]:
@@ -153,7 +174,7 @@ def run_with_fallback(
                 'json',
             ]
             result = launch(command, env, stream)
-        print(f'OpenCode run served by {provider.model}.')
+        print(f'OpenCode run served by {provider.model} with `{provider.secret_variable}`.')
         return result, provider
 
     def report_failure(provider: Provider) -> tuple[str | None, bool]:
@@ -178,31 +199,35 @@ def run_with_fallback(
         print(f'OpenCode run on {provider.model} failed with {described}.')
         return kind, any(event.get('type') == 'step_finish' for event in events)
 
-    go_key = os.environ[OPENCODE_GO.key_variable]
-    if not go_key:
-        raise ValueError(f'{OPENCODE_GO.key_variable} is empty')
+    if not os.environ[OPENCODE_GO.secret_variable]:
+        raise ValueError(f'{OPENCODE_GO.secret_variable} is empty')
+    # A Z.AI account without a key is left out, so a run never waits on a provider it cannot reach.
+    chain = [OPENCODE_GO, *(provider for provider in (ZAI, ZAI_BACKUP) if os.environ.get(provider.secret_variable))]
+    for provider, successor in zip(chain, chain[1:]):
+        try:
+            return run_on(provider, os.environ[provider.secret_variable])
+        except subprocess.CalledProcessError:
+            kind, finished = report_failure(provider)
+            # OpenCode 2.2.5 does not retry a quota rejection. It writes `step_start`, then an `error` event whose
+            # type `toSessionError` sets, and no `step_finish`:
+            # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
+            if finished or kind not in provider.handover_errors:
+                raise
+            print(
+                f'{provider.model} refused the run before its first step; '
+                f'retrying on {successor.model} with `{successor.secret_variable}`.'
+            )
     try:
-        return run_on(OPENCODE_GO, go_key)
+        return run_on(chain[-1], os.environ[chain[-1].secret_variable])
     except subprocess.CalledProcessError:
-        kind, finished = report_failure(OPENCODE_GO)
-        fallback_key = os.environ.get(DEEPINFRA.key_variable, '')
-        # OpenCode 2.2.5 does not retry a quota rejection. It writes `step_start`, then an `error` event whose type
-        # `toSessionError` sets, and no `step_finish`:
-        # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
-        if not fallback_key or finished or kind not in QUOTA_ERRORS:
-            raise
-        print('OpenCode Go refused the run before its first step; retrying on DeepInfra.')
-    try:
-        return run_on(DEEPINFRA, fallback_key)
-    except subprocess.CalledProcessError:
-        report_failure(DEEPINFRA)
+        report_failure(chain[-1])
         raise
 
 
 def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: float | None = None) -> Provider:
     """Run OpenCode in `cwd` with read, grep, and glob tools only, saving its event stream to `output`.
 
-    `timeout` bounds both runs together when Go refuses the first. Returns the provider that served the run.
+    `timeout` bounds every run of the fallback chain together. Returns the provider that served the run.
     """
     deadline = None if timeout is None else time.monotonic() + timeout
     _, provider = run_with_fallback(

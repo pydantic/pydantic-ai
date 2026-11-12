@@ -20,7 +20,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 import run_pr_review_check
-from douwebot_opencode_run import DEEPINFRA, OPENCODE_GO, Provider, run_with_fallback
+from douwebot_opencode_run import OPENCODE_GO, ZAI, Provider, run_with_fallback
 from pr_review_checks import CHECKS, GENERAL, ReviewCheck
 from run_pr_review_check import (
     Usage,
@@ -234,9 +234,9 @@ def _fake_opencode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     go: str,
-    deepinfra: str = f'printf "%s\\n" {shlex.quote(_step(10))}',
+    zai: str = f'printf "%s\\n" {shlex.quote(_step(10))}',
 ) -> Path:
-    """Put an `opencode` on `PATH` that runs `go` for OpenCode Go and `deepinfra`, by default one step, on DeepInfra.
+    """Put an `opencode` on `PATH` that runs `go` for OpenCode Go and `zai`, by default one step, on the Coding Plan.
 
     Each launch appends its model and the keys it received to the returned file.
     """
@@ -245,8 +245,8 @@ def _fake_opencode(
     script.parent.mkdir()
     script.write_text(
         '#!/bin/sh\n'
-        f'echo "$4 ${{OPENCODE_API_KEY:-}} ${{DEEPINFRA_API_KEY:-}}" >> {shlex.quote(str(launches))}\n'
-        f'case "$4" in opencode-go/*) {go} ;; *) {deepinfra} ;; esac\n'
+        f'echo "$4 ${{OPENCODE_API_KEY:-}} ${{ZHIPU_API_KEY:-}}" >> {shlex.quote(str(launches))}\n'
+        f'case "$4" in opencode-go/*) {go} ;; *) {zai} ;; esac\n'
     )
     script.chmod(0o755)
     runner_temp = tmp_path / 'runner-temp'
@@ -254,12 +254,13 @@ def _fake_opencode(
     monkeypatch.setenv('PATH', f'{script.parent}:{os.environ["PATH"]}')
     monkeypatch.setenv('RUNNER_TEMP', str(runner_temp))
     monkeypatch.setenv('OPENCODE_API_KEY', 'go-key')
-    monkeypatch.setenv('DEEPINFRA_API_KEY', 'deepinfra-key')
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.delenv('ZAI_BACKUP_API_KEY', raising=False)
     return launches
 
 
 def _review(tmp_path: Path) -> tuple[Usage, Provider]:
-    """Review the way `main` does: on Go, then on DeepInfra."""
+    """Review the way `main` does: on Go, then on the Coding Plan."""
     return run_with_fallback(
         lambda command, env, log: run_opencode(command, '', cwd=tmp_path, env=env, log=log, seconds=300),
         agent='reviewer',
@@ -268,22 +269,22 @@ def _review(tmp_path: Path) -> tuple[Usage, Provider]:
     )
 
 
-def test_go_refusal_reruns_the_review_on_deepinfra(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A review Go refused before its first step did no work, so DeepInfra reviews with only its own key."""
+def test_go_refusal_reruns_the_review_on_the_coding_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A review Go refused before its first step did no work, so the Coding Plan reviews with only its own key."""
     error = json.dumps({'type': 'error', 'error': {'type': 'provider.go-limit', 'status': 429}})
     launches = _fake_opencode(tmp_path, monkeypatch, f'printf "%s\\n" {shlex.quote(error)}; exit 1')
     usage, provider = _review(tmp_path)
-    assert (provider, usage.steps, usage.tokens, usage.stopped) == (DEEPINFRA, 1, 21, False)
+    assert (provider, usage.steps, usage.tokens, usage.stopped) == (ZAI, 1, 21, False)
     assert launches.read_text().splitlines() == [
         'opencode-go/deepseek-v4.1-flash go-key ',
-        'deepinfra/deepseek-ai/DeepSeek-V4.1-Flash  deepinfra-key',
+        'zai-coding-plan/glm-5.3-flash  zai-key',
     ]
 
 
-def test_deepinfra_failure_names_its_error_type(
+def test_coding_plan_failure_names_its_error_type(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A review DeepInfra fails names its error type in the job log, and fails the job."""
+    """A review the Coding Plan fails names its error type in the job log, and fails the job."""
     refused = json.dumps({'type': 'error', 'error': {'type': 'provider.go-limit', 'status': 429}})
     failed = json.dumps({'type': 'error', 'error': {'type': 'unknown', 'message': 'Model not found'}})
     launches = _fake_opencode(
@@ -296,7 +297,7 @@ def test_deepinfra_failure_names_its_error_type(
         _review(tmp_path)
     assert len(launches.read_text().splitlines()) == 2
     assert capsys.readouterr().out.splitlines()[-1] == (
-        'OpenCode run on deepinfra/deepseek-ai/DeepSeek-V4.1-Flash failed with error type unknown.'
+        'OpenCode run on zai-coding-plan/glm-5.3-flash failed with error type unknown.'
     )
 
 
@@ -311,10 +312,10 @@ def test_go_failure_after_a_step_is_not_retried(tmp_path: Path, monkeypatch: pyt
 def test_time_budget_stop_is_not_retried(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expire_budget: list[float]
 ) -> None:
-    """A review the time budget stopped is incomplete on Go; it never starts again on DeepInfra."""
+    """A review the time budget stopped is incomplete on Go; it never starts again on the Coding Plan."""
     # `exec`, so the kill reaches the process that holds the stream open.
     _fake_opencode(tmp_path, monkeypatch, 'exec sleep 30')
-    # The timer kills Go before its script can record the launch; one budget and Go's usage show DeepInfra never ran.
+    # The timer kills Go before its script can record the launch; one budget and Go's usage show Z.AI never ran.
     usage, provider = _review(tmp_path)
     assert (provider, usage.stopped, expire_budget) == (OPENCODE_GO, True, [300])
 

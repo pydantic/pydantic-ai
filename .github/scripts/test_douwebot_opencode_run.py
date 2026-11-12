@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import category_classify_opencode
 import douwebot_opencode_run
-from douwebot_opencode_run import DEEPINFRA, OPENCODE_GO, Provider, check_symlinks, read_only_config
+from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP, Provider, check_symlinks
 
 # What OpenCode 2.2.5 writes when OpenCode Go's usage limit refuses the first request: a step starts, none finishes.
 LIMIT = 'OpenCode Go weekly usage limit reached. Switch to a free model, or turn on Extra Usage on the Go page.'
@@ -96,7 +96,8 @@ def review_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv('GITHUB_OUTPUT', str(github_output))
     monkeypatch.setenv('REVIEW_PROMPT', prompt)
     monkeypatch.setenv('OPENCODE_API_KEY', 'go-key')
-    monkeypatch.setenv('DEEPINFRA_API_KEY', 'deepinfra-key')
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setenv('ZAI_BACKUP_API_KEY', 'zai-backup-key')
     monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
     return github_output
 
@@ -160,20 +161,12 @@ def assert_runs_on(launch: Launch, provider: Provider) -> None:
         {'action': 'provider.use', 'resource': '*', 'effect': 'deny'},
         {'action': 'provider.use', 'resource': provider.name, 'effect': 'allow'},
     ]
-    keys = {OPENCODE_GO.key_variable: 'go-key', DEEPINFRA.key_variable: 'deepinfra-key'}
-    assert {name: value for name, value in launch.env.items() if name in keys} == {
-        provider.key_variable: keys[provider.key_variable]
+    secrets = {'OPENCODE_API_KEY': 'go-key', 'ZAI_API_KEY': 'zai-key', 'ZAI_BACKUP_API_KEY': 'zai-backup-key'}
+    names = {*secrets, OPENCODE_GO.key_variable, ZAI.key_variable}
+    assert {name: value for name, value in launch.env.items() if name in names} == {
+        provider.key_variable: secrets[provider.secret_variable]
     }
     assert 'GH_TOKEN' not in launch.env
-
-
-def test_only_deepinfra_sets_a_reasoning_effort() -> None:
-    """DeepInfra returns no reasoning for the model unless asked; the Go config stays without a provider override."""
-    settings = {'settings': {'reasoningEffort': 'low'}}
-    assert read_only_config(agent='reviewer', provider=DEEPINFRA)['providers'] == {
-        'deepinfra': {'models': {'deepseek-ai/DeepSeek-V4.1-Flash': settings}}
-    }
-    assert 'providers' not in read_only_config(agent='reviewer', provider=OPENCODE_GO)
 
 
 def test_launcher_sends_shared_review_and_restricts_environment(
@@ -200,14 +193,30 @@ def test_launcher_sends_shared_review_and_restricts_environment(
     assert 'Before returning the structured result, run `gh pr view' not in call.input
     assert 'Use the `gh` CLI only when' not in call.input
     assert review_env.read_text(encoding='utf-8') == 'engine=opencode\n'
-    assert capsys.readouterr().out == 'OpenCode run served by opencode-go/deepseek-v4.1-flash.\n'
+    assert (
+        capsys.readouterr().out == 'OpenCode run served by opencode-go/deepseek-v4.1-flash with `OPENCODE_API_KEY`.\n'
+    )
+
+
+GO_LIMIT_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash failed with error type provider.go-limit, status 429.'
+NO_TYPE_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash failed with no error type.'
+TO_ZAI_LOG = (
+    'opencode-go/deepseek-v4.1-flash refused the run before its first step; '
+    'retrying on zai-coding-plan/glm-5.3-flash with `ZAI_API_KEY`.'
+)
+ZAI_LOG = 'OpenCode run on zai-coding-plan/glm-5.3-flash'
+# What OpenCode 2.2.5 writes when the Coding Plan's quota refuses the first request: Z.AI code 1308 or 1310.
+PLAN_REFUSED: list[dict[str, object]] = [
+    REFUSED[0],
+    {'type': 'error', 'error': {'type': 'provider.quota', 'message': 'Usage limit reached for 5 hour.', 'status': 429}},
+]
 
 
 @pytest.mark.parametrize('kind', ['provider.go-limit', 'provider.quota'])
-def test_go_refusal_reruns_the_review_on_deepinfra(
+def test_go_refusal_reruns_the_review_on_the_coding_plan(
     review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], kind: str
 ) -> None:
-    """A run Go refused before its first step did no work, so DeepInfra reviews instead and the receipt says so."""
+    """A run Go refused before its first step did no work, so the primary Coding Plan reviews and the receipt says so."""
     refused: list[dict[str, object]] = [
         REFUSED[0],
         {'type': 'error', 'error': {'type': kind, 'message': LIMIT, 'status': 429}},
@@ -216,82 +225,149 @@ def test_go_refusal_reruns_the_review_on_deepinfra(
     douwebot_opencode_run.main()
     assert invoked[1].input == invoked[0].input
     assert_runs_on(invoked[0], OPENCODE_GO)
-    assert_runs_on(invoked[1], DEEPINFRA)
-    assert review_env.read_text(encoding='utf-8') == 'engine=opencode-deepinfra\n'
+    assert_runs_on(invoked[1], ZAI)
+    assert review_env.read_text(encoding='utf-8') == 'engine=opencode-zai\n'
     assert capsys.readouterr().out == (
         f'OpenCode run on opencode-go/deepseek-v4.1-flash failed with error type {kind}, status 429.\n'
-        'OpenCode Go refused the run before its first step; retrying on DeepInfra.\n'
-        'OpenCode run served by deepinfra/deepseek-ai/DeepSeek-V4.1-Flash.\n'
+        f'{TO_ZAI_LOG}\n'
+        'OpenCode run served by zai-coding-plan/glm-5.3-flash with `ZAI_API_KEY`.\n'
     )
 
 
-GO_LIMIT_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash failed with error type provider.go-limit, status 429.'
-NO_TYPE_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash failed with no error type.'
+def test_coding_plan_quota_refusal_reruns_the_review_on_the_backup_account(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A primary Coding Plan whose quota refused the run hands it to the backup account's key."""
+    refusal = subprocess.CalledProcessError(1, 'opencode')
+    invoked = fake_opencode(monkeypatch, (REFUSED, refusal), (PLAN_REFUSED, refusal), (FINISHED, None))
+    douwebot_opencode_run.main()
+    assert [launch.input for launch in invoked] == [invoked[0].input] * 3
+    assert_runs_on(invoked[1], ZAI)
+    assert_runs_on(invoked[2], ZAI_BACKUP)
+    assert review_env.read_text(encoding='utf-8') == 'engine=opencode-zai\n'
+    assert capsys.readouterr().out == (
+        f'{GO_LIMIT_LOG}\n{TO_ZAI_LOG}\n'
+        f'{ZAI_LOG} failed with error type provider.quota, status 429.\n'
+        'zai-coding-plan/glm-5.3-flash refused the run before its first step; '
+        'retrying on zai-coding-plan/glm-5.3-flash with `ZAI_BACKUP_API_KEY`.\n'
+        'OpenCode run served by zai-coding-plan/glm-5.3-flash with `ZAI_BACKUP_API_KEY`.\n'
+    )
+
+
+def test_go_refusal_skips_a_coding_plan_account_without_a_key(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The chain leaves out the primary account when only the backup key is set."""
+    monkeypatch.delenv('ZAI_API_KEY')
+    invoked = fake_opencode(monkeypatch, (REFUSED, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
+    douwebot_opencode_run.main()
+    assert_runs_on(invoked[1], ZAI_BACKUP)
 
 
 @pytest.mark.parametrize(
-    ('deepinfra_key', 'events', 'error', 'log'),
+    ('backup_key', 'events', 'described'),
     [
-        pytest.param(None, REFUSED, subprocess.CalledProcessError(1, 'opencode'), GO_LIMIT_LOG, id='no-deepinfra-key'),
-        pytest.param('', REFUSED, subprocess.CalledProcessError(1, 'opencode'), GO_LIMIT_LOG, id='empty-deepinfra-key'),
+        pytest.param(None, PLAN_REFUSED, 'error type provider.quota, status 429', id='no-backup-key'),
+        pytest.param('', PLAN_REFUSED, 'error type provider.quota, status 429', id='empty-backup-key'),
         pytest.param(
-            'deepinfra-key',
+            'zai-backup-key',
+            [*FINISHED, PLAN_REFUSED[1]],
+            'error type provider.quota, status 429',
+            id='quota-after-a-step',
+        ),
+        # Z.AI codes 1302 and 1305: OpenCode retried the 429 within the run before it failed.
+        pytest.param(
+            'zai-backup-key',
+            [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.rate-limit', 'status': 429}}],
+            'error type provider.rate-limit, status 429',
+            id='rate-limit-or-overload',
+        ),
+    ],
+)
+def test_coding_plan_failure_stays_on_the_primary_account(
+    review_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    backup_key: str | None,
+    events: list[dict[str, object]],
+    described: str,
+) -> None:
+    """Only a quota refusal before the first step reaches the backup, and only with its key; the job fails otherwise."""
+    if backup_key is None:
+        monkeypatch.delenv('ZAI_BACKUP_API_KEY')
+    else:
+        monkeypatch.setenv('ZAI_BACKUP_API_KEY', backup_key)
+    refusal = subprocess.CalledProcessError(1, 'opencode')
+    invoked = fake_opencode(monkeypatch, (REFUSED, refusal), (events, refusal))
+    with pytest.raises(subprocess.CalledProcessError):
+        douwebot_opencode_run.main()
+    assert len(invoked) == 2
+    assert review_env.read_text(encoding='utf-8') == ''
+    assert capsys.readouterr().out == f'{GO_LIMIT_LOG}\n{TO_ZAI_LOG}\n{ZAI_LOG} failed with {described}.\n'
+
+
+@pytest.mark.parametrize(
+    ('zai_key', 'events', 'error', 'log'),
+    [
+        pytest.param(None, REFUSED, subprocess.CalledProcessError(1, 'opencode'), GO_LIMIT_LOG, id='no-zai-key'),
+        pytest.param('', REFUSED, subprocess.CalledProcessError(1, 'opencode'), GO_LIMIT_LOG, id='empty-zai-key'),
+        pytest.param(
+            'zai-key',
             [*FINISHED, REFUSED[1]],
             subprocess.CalledProcessError(1, 'opencode'),
             GO_LIMIT_LOG,
             id='after-a-step',
         ),
+        pytest.param('zai-key', [], subprocess.CalledProcessError(1, 'opencode'), NO_TYPE_LOG, id='no-error-event'),
         pytest.param(
-            'deepinfra-key', [], subprocess.CalledProcessError(1, 'opencode'), NO_TYPE_LOG, id='no-error-event'
-        ),
-        pytest.param(
-            'deepinfra-key',
+            'zai-key',
             [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.auth', 'message': 'Invalid', 'status': 401}}],
             subprocess.CalledProcessError(1, 'opencode'),
             'OpenCode run on opencode-go/deepseek-v4.1-flash failed with error type provider.auth, status 401.',
             id='rejected-key',
         ),
         pytest.param(
-            'deepinfra-key',
+            'zai-key',
             [REFUSED[0], {'type': 'error', 'error': {'type': ['provider.go-limit'], 'status': 429}}],
             subprocess.CalledProcessError(1, 'opencode'),
             'OpenCode run on opencode-go/deepseek-v4.1-flash failed with no error type, status 429.',
             id='error-type-not-a-string',
         ),
         pytest.param(
-            'deepinfra-key',
+            'zai-key',
             [REFUSED[0], '{"type": "text", "part"'],
             subprocess.CalledProcessError(1, 'opencode'),
             NO_TYPE_LOG,
             id='cut-off-event',
         ),
         pytest.param(
-            'deepinfra-key',
+            'zai-key',
             [REFUSED[0], b'\xff'],
             subprocess.CalledProcessError(1, 'opencode'),
             NO_TYPE_LOG,
             id='undecodable',
         ),
-        pytest.param('deepinfra-key', REFUSED[:1], subprocess.TimeoutExpired('opencode', 1), None, id='timeout'),
+        pytest.param('zai-key', REFUSED[:1], subprocess.TimeoutExpired('opencode', 1), None, id='timeout'),
     ],
 )
 def test_go_failure_stays_on_go(
     review_env: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    deepinfra_key: str | None,
+    zai_key: str | None,
     events: Sequence[Mapping[str, object] | str | bytes],
     error: BaseException,
     log: str | None,
 ) -> None:
-    """Only a refusal before the first step falls back, and only with a DeepInfra key; the job fails as before.
+    """Only a refusal before the first step falls back, and only with a Coding Plan key; the job fails as before.
 
     A failed process names its error type in the job log. A timeout is not a failed process.
     """
-    if deepinfra_key is None:
-        monkeypatch.delenv('DEEPINFRA_API_KEY')
+    monkeypatch.delenv('ZAI_BACKUP_API_KEY')
+    if zai_key is None:
+        monkeypatch.delenv('ZAI_API_KEY')
     else:
-        monkeypatch.setenv('DEEPINFRA_API_KEY', deepinfra_key)
+        monkeypatch.setenv('ZAI_API_KEY', zai_key)
     invoked = fake_opencode(monkeypatch, (events, error))
     with pytest.raises(type(error)):
         douwebot_opencode_run.main()
@@ -317,14 +393,14 @@ def test_go_failure_stays_on_go(
         ),
     ],
 )
-def test_deepinfra_failure_names_its_error_type(
+def test_coding_plan_failure_names_its_error_type(
     review_env: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     error: dict[str, object],
     described: str,
 ) -> None:
-    """A failed DeepInfra run fails the job and names its error type and status, never its message or body."""
+    """A failed Coding Plan run fails the job and names its error type and status, never its message or body."""
     invoked = fake_opencode(
         monkeypatch,
         (REFUSED, subprocess.CalledProcessError(1, 'opencode')),
@@ -332,13 +408,9 @@ def test_deepinfra_failure_names_its_error_type(
     )
     with pytest.raises(subprocess.CalledProcessError):
         douwebot_opencode_run.main()
-    assert_runs_on(invoked[1], DEEPINFRA)
+    assert_runs_on(invoked[1], ZAI)
     assert review_env.read_text(encoding='utf-8') == ''
-    assert capsys.readouterr().out == (
-        f'{GO_LIMIT_LOG}\n'
-        'OpenCode Go refused the run before its first step; retrying on DeepInfra.\n'
-        f'OpenCode run on deepinfra/deepseek-ai/DeepSeek-V4.1-Flash failed with {described}.\n'
-    )
+    assert capsys.readouterr().out == f'{GO_LIMIT_LOG}\n{TO_ZAI_LOG}\n{ZAI_LOG} failed with {described}.\n'
 
 
 def classifier_answer(text: str) -> list[dict[str, object]]:
@@ -364,7 +436,8 @@ def classify_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         'CLASSIFY_PROMPT', next(step['env']['CLASSIFY_PROMPT'] for step in steps if step.get('id') == 'classify')
     )
     monkeypatch.setenv('OPENCODE_API_KEY', 'go-key')
-    monkeypatch.setenv('DEEPINFRA_API_KEY', 'deepinfra-key')
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setenv('ZAI_BACKUP_API_KEY', 'zai-backup-key')
     monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
     return github_output
 

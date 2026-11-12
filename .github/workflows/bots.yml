@@ -272,7 +272,9 @@ jobs:
           python3 .github/scripts/category_classify_opencode.py
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+          # Serve the classification when OpenCode Go, then the primary Coding Plan, refuse it before its first step.
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           CLASSIFY_PROMPT: *category-prompt
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
 
@@ -334,11 +336,12 @@ jobs:
             | [$reviews[0][][]
                 | select(.user.login == "github-actions[bot]" and .user.type == "Bot" and .commit_id == $head)
                 | (.body // "") as $body
-                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + "( engine=(claude|opencode|opencode-deepinfra))? -->\\z"))
-                | (($body | capture(" engine=(?<engine>claude|opencode|opencode-deepinfra) -->\\z") | .engine) // "") as $engine
-                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40}( engine=(claude|opencode|opencode-deepinfra))? -->\\z"; "")) as $marked
+                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + "( engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\\z"))
+                | (($body | capture(" engine=(?<engine>claude|opencode|opencode-zai|opencode-deepinfra) -->\\z") | .engine) // "") as $engine
+                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40}( engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\\z"; "")) as $marked
                 | (if $engine == "claude" then "\n\nReviewer: Claude Code (claude-opus-5-5)"
                    elif $engine == "opencode" then "\n\nReviewer: OpenCode (opencode-go/deepseek-v4.1-flash)"
+                   elif $engine == "opencode-zai" then "\n\nReviewer: OpenCode (zai-coding-plan/glm-5.3-flash)"
                    elif $engine == "opencode-deepinfra" then "\n\nReviewer: OpenCode (deepinfra/deepseek-ai/DeepSeek-V4.1-Flash)"
                    else "" end) as $attribution
                 | (if $attribution == "" then $marked
@@ -776,8 +779,9 @@ jobs:
           python3 .github/scripts/douwebot_opencode_run.py
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          # Serves the review when OpenCode Go refuses it before its first step.
-          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+          # Serve the review when OpenCode Go, then the primary Coding Plan, refuse it before its first step.
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           REVIEW_PROMPT: *douwebot-prompt
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
 

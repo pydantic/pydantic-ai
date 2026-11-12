@@ -13,7 +13,7 @@ from typing import Any, get_args
 import pytest
 import yaml
 from category_classify_opencode import TOOL_GUIDANCE, Classification
-from douwebot_opencode_run import DEEPINFRA, OPENCODE_GO
+from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP
 from publish_douwebot_review import REVIEW_ENGINES, Finding, ReviewEngine, ReviewResult, publication
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
@@ -301,8 +301,9 @@ def test_workflow_only_publishes_the_successful_review() -> None:
     claude = next(step for step in review['steps'] if step.get('id') == 'review')
     assert '--model claude-opus-5-5[1m]' in claude['with']['claude_args']
     assert 'claude-opus-5-5' in REVIEW_ENGINES['claude']
-    for provider in (OPENCODE_GO, DEEPINFRA):
-        assert opencode['env'][provider.key_variable] == f'${{{{ secrets.{provider.key_variable} }}}}'
+    assert 'DEEPINFRA_API_KEY' not in opencode['env']
+    for provider in (OPENCODE_GO, ZAI, ZAI_BACKUP):
+        assert opencode['env'][provider.secret_variable] == f'${{{{ secrets.{provider.secret_variable} }}}}'
         assert REVIEW_ENGINES[provider.review_engine] == f'Reviewer: OpenCode ({provider.model})'
 
 
@@ -334,8 +335,9 @@ def test_category_classify_falls_back_to_opencode_only_on_a_usage_limit() -> Non
     assert opencode['run'].endswith('python3 .github/scripts/category_classify_opencode.py\n')
     assert opencode['env']['CLASSIFY_PROMPT'] == steps['classify']['with']['prompt']
     assert 'GH_TOKEN' not in opencode['env']
-    for provider in (OPENCODE_GO, DEEPINFRA):
-        assert opencode['env'][provider.key_variable] == f'${{{{ secrets.{provider.key_variable} }}}}'
+    assert 'DEEPINFRA_API_KEY' not in opencode['env']
+    for provider in (OPENCODE_GO, ZAI, ZAI_BACKUP):
+        assert opencode['env'][provider.secret_variable] == f'${{{{ secrets.{provider.secret_variable} }}}}'
 
     assert apply['needs'] == ['category-classify', 'category-classify-opencode']
     assert apply['if'].startswith('!cancelled() && ')
@@ -448,6 +450,14 @@ def _douwebot_review(
             False,
             '',
             id='clean-opencode-deepinfra',
+        ),
+        pytest.param(
+            _douwebot_review(
+                15, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion=''), engine='opencode-zai'
+            ),
+            False,
+            '',
+            id='clean-opencode-zai',
         ),
         pytest.param(
             _douwebot_review(

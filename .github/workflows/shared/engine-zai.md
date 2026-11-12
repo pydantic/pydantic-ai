@@ -165,8 +165,9 @@ safe-outputs:
         timeout-minutes: 15
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          # Serves detection when OpenCode Go refuses it before its first step.
-          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+          # Serve detection when OpenCode Go, then the primary Coding Plan, refuse it before its first step.
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
           # Detection only reads, so a failed OpenCode run is retried. An invalid verdict is not.
           GH_AW_HARNESS_MAX_RETRIES: "3"

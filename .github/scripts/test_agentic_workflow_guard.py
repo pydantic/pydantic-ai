@@ -893,7 +893,9 @@ def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
     )
     assert 'gh_aw_opencode_detect.py' in detector['run']
     assert detector['env']['OPENCODE_API_KEY'] == '${{ secrets.OPENCODE_API_KEY }}'
-    assert detector['env']['DEEPINFRA_API_KEY'] == '${{ secrets.DEEPINFRA_API_KEY }}'
+    assert detector['env']['ZAI_API_KEY'] == '${{ secrets.ZAI_API_KEY }}'
+    assert detector['env']['ZAI_BACKUP_API_KEY'] == '${{ secrets.ZAI_BACKUP_API_KEY }}'
+    assert 'DEEPINFRA_API_KEY' not in detector['env']
     assert detector['continue-on-error'] is True
     reporter = next(
         step

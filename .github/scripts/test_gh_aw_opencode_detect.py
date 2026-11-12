@@ -37,6 +37,9 @@ def detection_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv('GH_AW_PROMPT', str(prompt))
     monkeypatch.setenv('RUNNER_TEMP', str(runner_temp))
     monkeypatch.setenv('OPENCODE_API_KEY', 'fake-key')
+    # Detection stays on Go unless a test configures a Coding Plan account.
+    monkeypatch.delenv('ZAI_API_KEY', raising=False)
+    monkeypatch.delenv('ZAI_BACKUP_API_KEY', raising=False)
     monkeypatch.setenv('GH_AW_HARNESS_MAX_RETRIES', '3')
     monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
     return directory
@@ -190,9 +193,9 @@ def test_retry_recovers_from_an_incomplete_stream(
     assert json.loads((detection_dir / 'detection_result.json').read_text()) == CLEAN
 
 
-def test_go_refusal_runs_detection_on_deepinfra(detection_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Detection that Go refused before its first step runs on DeepInfra within the same attempt and deadline."""
-    monkeypatch.setenv('DEEPINFRA_API_KEY', 'deepinfra-key')
+def test_go_refusal_runs_detection_on_the_coding_plan(detection_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Detection that Go refused before its first step runs on the Coding Plan within the same attempt and deadline."""
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
     # Go takes a minute to refuse, on the clock the launcher reads.
     clock = [1000.0]
     invoked = answer(monkeypatch, 'THREAT_DETECTION_RESULT:' + json.dumps(CLEAN), refused_runs=1, clock=clock)
@@ -200,28 +203,25 @@ def test_go_refusal_runs_detection_on_deepinfra(detection_dir: Path, monkeypatch
 
     gh_aw_opencode_detect.main()
 
-    go, deepinfra = invoked
-    assert isinstance(go['args'], list) and isinstance(deepinfra['args'], list)
-    assert (go['args'][4], deepinfra['args'][4]) == (
-        'opencode-go/deepseek-v4.1-flash',
-        'deepinfra/deepseek-ai/DeepSeek-V4.1-Flash',
-    )
-    env = TypeAdapter(dict[str, str]).validate_python(deepinfra['env'])
-    assert env['DEEPINFRA_API_KEY'] == 'deepinfra-key'
-    assert 'OPENCODE_API_KEY' not in env
-    assert isinstance(go['timeout'], float) and isinstance(deepinfra['timeout'], float)
-    assert deepinfra['timeout'] == pytest.approx(go['timeout'] - 60)
+    go, zai = invoked
+    assert isinstance(go['args'], list) and isinstance(zai['args'], list)
+    assert (go['args'][4], zai['args'][4]) == ('opencode-go/deepseek-v4.1-flash', 'zai-coding-plan/glm-5.3-flash')
+    env = TypeAdapter(dict[str, str]).validate_python(zai['env'])
+    assert env['ZHIPU_API_KEY'] == 'zai-key'
+    assert 'OPENCODE_API_KEY' not in env and 'ZAI_API_KEY' not in env
+    assert isinstance(go['timeout'], float) and isinstance(zai['timeout'], float)
+    assert zai['timeout'] == pytest.approx(go['timeout'] - 60)
     streams = (detection_dir.parent / 'runner-temp').glob('gh-aw-opencode-detector-*.ndjson')
     assert [stream.name for stream in streams] == ['gh-aw-opencode-detector-1.ndjson']
     assert json.loads((detection_dir / 'detection_result.json').read_text()) == CLEAN
     assert status(detection_dir) == 'THREAT_DETECTION_STATUS: reason=result_recorded exit=0'
 
 
-def test_deepinfra_failure_names_its_error_type(
+def test_coding_plan_failure_names_its_error_type(
     detection_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Detection that DeepInfra fails names its error type in the job log, then concludes as an engine error."""
-    monkeypatch.setenv('DEEPINFRA_API_KEY', 'deepinfra-key')
+    """Detection that the Coding Plan fails names its error type in the job log, then concludes as an engine error."""
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
     monkeypatch.setenv('GH_AW_HARNESS_MAX_RETRIES', '0')
 
     def failed_run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -238,7 +238,7 @@ def test_deepinfra_failure_names_its_error_type(
         gh_aw_opencode_detect.main()
 
     assert capsys.readouterr().out.splitlines()[-3:] == [
-        'OpenCode run on deepinfra/deepseek-ai/DeepSeek-V4.1-Flash failed with error type provider.auth, status 401.',
+        'OpenCode run on zai-coding-plan/glm-5.3-flash failed with error type provider.auth, status 401.',
         'OpenCode threat detection attempt 1 failed: CalledProcessError',
         'THREAT_DETECTION_STATUS: reason=engine_error exit=2',
     ]
