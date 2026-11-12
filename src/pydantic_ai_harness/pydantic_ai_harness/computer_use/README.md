@@ -57,7 +57,7 @@ On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only
 The model must accept images.
 
 - Claude 4 and later get Anthropic's own computer use tool; see [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use).
-- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's on the Responses API; see
+- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's own computer tool on the Responses API; see
   [OpenAI](https://pydantic.dev/docs/ai/models/openai/#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
@@ -87,10 +87,12 @@ Gemini 3 points on a 0-999 grid, which `ComputerUse` converts to pixels.
 `ComputerUse` runs every call without asking, except one OpenAI flagged.
 
 OpenAI can attach safety checks to a call, such as `malicious_instructions` when the screen seems to carry instructions
-that could hijack the model. OpenAI's guidance is that a person confirms every flagged call before it runs, so a flagged
-call waits for approval like any [deferred tool](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) call. Its `ComputerCallPart` carries the checks in
-`safety_checks`, each a [`SafetyCheck`](https://pydantic.dev/docs/ai/api/pydantic-ai/computer_use/#pydantic_ai.computer_use.SafetyCheck) with OpenAI's `code` and `message`. Once the call is approved and has
-run, the OpenAI model tells OpenAI the checks were acknowledged. Give the agent a deferred tool handler, or add
+that could hijack the model. OpenAI asks that a person confirm each flagged call, so it waits for approval like any
+[deferred tool](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) call. Its `ComputerCallPart` lists the
+checks in `safety_checks`, each a
+[`SafetyCheck`](https://pydantic.dev/docs/ai/api/pydantic-ai/computer_use/#pydantic_ai.computer_use.SafetyCheck) with
+OpenAI's `code` and `message`. After an approved call runs, the model tells OpenAI the checks were acknowledged. Give
+the agent a deferred tool handler, or add
 `DeferredToolRequests` to its output types to ask a person; without either, a flagged call ends the run with an error.
 
 To decide in code instead, resolve flagged calls with [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#resolving-deferred-calls-with-a-handler):
@@ -148,8 +150,8 @@ Some models only take screenshots up to a size, set by `computer_use_screenshot_
 - Earlier Claude models: 1568 pixels and about 1.15 megapixels.
 - GPT: 2560x1440, or 1920x1200 for GPT-5.5. It clicks less accurately on a larger screen.
 
-A 1280x800 screen fits every model. `ComputerUse` sends screenshots at the screen's size, so on a screen larger
-than the model takes, the run stops with an error naming the largest size that fits.
+`ComputerUse` sends screenshots at the screen's size, so a larger screen stops the run with an error naming the
+largest size that fits. A 1280x800 screen fits every model.
 
 ## When something goes wrong
 
@@ -171,10 +173,9 @@ the `computer_use` namespace, read with `@agent.on_event` or `run_stream_events(
 |---|---|
 | `ActionsPerformedEvent` | `result`, the call's `ComputerResult`, and `tool_call_id` |
 
-They are emitted once per call, also under durable execution. The same facts stay in the history: the `computer`
-tool's results are `ComputerReturnPart`s, whose `result` is the call's `ComputerResult`, and a call OpenAI flagged
-is a `ComputerCallPart` whose `safety_checks` say what the person approving it should check. The events add
-no telemetry spans; core already traces the tool call.
+They are emitted once per call, also under durable execution, and add no telemetry spans, since core already traces
+the tool call. The history keeps the same facts: each result is a `ComputerReturnPart` whose `result` is the call's
+`ComputerResult`.
 
 ## Limitations
 
@@ -185,12 +186,11 @@ no telemetry spans; core already traces the tool call.
   old screenshots, and [`ClearToolResults`](../compaction/) leaves `computer` results alone.
 - Each call is one model request, so long tasks can hit the default [`request_limit`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) of 50.
   Pass higher [`UsageLimits`](https://pydantic.dev/docs/ai/api/pydantic-ai/usage/#pydantic_ai.usage.UsageLimits).
-- Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each call's work on the screen is one durable step, so a finished call isn't
-  run again on replay or recovery. Like any tool with side effects, a call cut off before its step was recorded can
-  run again under the engine's retry settings for capability steps. On Temporal, those are `TemporalDurability`'s
-  `activity_config`, whose default 60-second timeout and unlimited retries apply to every call: raise
-  `start_to_close_timeout` above your longest call, and set `retry_policy=RetryPolicy(maximum_attempts=1)` so a call
-  isn't repeated. When the engine gives up, the model is told some actions may have run. Use `TemporalDurability`,
+- Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each call's screen work is one durable step, so replay or recovery doesn't
+  repeat a finished call. A call cut off before its step was recorded can run again under the engine's retry settings
+  for capability steps. On Temporal those are `TemporalDurability`'s `activity_config`, which defaults to a 60-second
+  timeout and unlimited retries: raise `start_to_close_timeout` above your longest call, and set
+  `retry_policy=RetryPolicy(maximum_attempts=1)` so a call isn't repeated. When the engine gives up, the model is told some actions may have run. Use `TemporalDurability`,
   `PrefectDurability` or `DBOSDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't run it.
 - On Temporal, screenshots pass the 2 MB payload limit after a few steps. Configure
   [external storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads).
@@ -198,8 +198,8 @@ no telemetry spans; core already traces the tool call.
 - [Instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/#excluding-binary-content) records every screenshot. Pass
   `InstrumentationSettings(include_binary_content=False)` to leave them out.
 - [`Advisor(forward_history=True)`](../advisor/) forwards every screenshot; Anthropic refuses one past 600 images.
-- With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/), a model that answers instead is told
-  its own coordinates, pixels or a grid, and screenshots are sized to fit it too. One that can't take images, or would
+- With [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/), a model that takes over is told its
+  own coordinates (pixels or a grid), and screenshots are sized for it too. One that can't take images, or would
   see the latest screenshot scaled down, ends the run with an error before its request. In a
   [`FallbackModel`](https://pydantic.dev/docs/ai/models/overview/#fallback-model), Gemini 3 gets its grid only if every
   model in it does.
@@ -210,9 +210,9 @@ no telemetry spans; core already traces the tool call.
 
 ## Giving a workspace a screen
 
-`ComputerUse` drives the display of the run's workspace backend: a backend with a screen implements
-`SupportsDisplay`, a `display` property that returns a `Display`, or `None` when there's no screen. It must not do
-I/O, and must return the same object every time.
+`ComputerUse` drives the display of the run's workspace backend. A backend with a screen implements
+`SupportsDisplay`: a `display` property that returns a `Display`, or `None` without a screen. It must not do I/O, and
+returns the same object every time.
 
 A `Display` has three methods: `display_size()`, `screenshot()` (PNG bytes), and `act()`, which runs one
 `DisplayAction` such as a click or a key press, in screenshot pixels. A display can also implement:
