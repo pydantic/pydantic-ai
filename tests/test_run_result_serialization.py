@@ -692,8 +692,8 @@ def test_a_run_result_whose_whole_conversation_refers_past_its_messages_fails_va
         )
 
 
-@pytest.mark.parametrize('run_start', [-1, 2])
-def test_a_run_result_whose_whole_conversation_starts_outside_it_fails_validation(run_start: int) -> None:
+@pytest.mark.parametrize('run_start', [-1, 2, 2.0])
+def test_a_run_result_whose_whole_conversation_starts_outside_it_fails_validation(run_start: float) -> None:
     with pytest.raises(
         ValidationError, match=f'`conversation_run_start` is {run_start}, but `conversation_messages` holds 1'
     ):

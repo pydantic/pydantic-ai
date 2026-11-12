@@ -1088,7 +1088,7 @@ def _appended_messages_data(data: dict[str, Any]) -> dict[str, Any]:
             )
         messages_data.append(history[item] if type(item) is int else item)
     run_start = data.get('conversation_run_start', 0)
-    if type(run_start) is int and not 0 <= run_start <= len(messages_data):
+    if type(run_start) is not int or not 0 <= run_start <= len(messages_data):
         raise ValueError(
             f'`conversation_run_start` is {run_start}, but `conversation_messages` holds {len(messages_data)} messages.'
         )
