@@ -381,13 +381,14 @@ never prints model text, because the answer can hold a private report. A Z.AI ru
 run sends Go, fork pull request content included. Start any new CI OpenCode run through `run_with_fallback`.
 
 With `LOGFIRE_TOKEN` set, `run_with_fallback` makes each run export OpenCode's spans and logs to Logfire over OTLP.
-douwebot's OpenCode fallback, `Category Classify`'s OpenCode fallback and `PR Review Checks` set the token. Threat
-detection does not. Each run's resource attributes name the repository, `github.run_id`, `github.run_attempt` and
-`github.job`, then the caller's attributes. They end with the run's plan as `opencode_fallback.plan`, and its place
-in the chain, counting from 1, as `opencode_fallback.attempt`. OpenCode's own spans carry no model or plan attribute,
-and both Coding Plan accounts call the same endpoint, so only `opencode_fallback.plan` tells their runs apart.
-Threat detection writes the provider and plan of its last run as the detector step's `provider` and `plan` outputs,
-which its `gh-aw.detector.result` span reports.
+douwebot's OpenCode fallback, `Category Classify`'s OpenCode fallback and `PR Review Checks` set the token. Each
+run's resource attributes name the repository, `github.run_id`, `github.run_attempt` and `github.job`, then the
+caller's attributes. They end with the run's plan as `opencode_fallback.plan`, and its place in the chain, counting
+from 1, as `opencode_fallback.attempt`. OpenCode's own spans carry no model or plan attribute, and both Coding Plan
+accounts call the same endpoint, so only `opencode_fallback.plan` tells their runs apart.
+
+Threat detection does not set the token. Its `gh-aw.detector.result` span records each detection's usage and outcome,
+and the provider and plan of its last run, which the detector step writes as its `provider` and `plan` outputs.
 
 The Coding Plan runs draw on the same accounts as the gh-aw agent workflows, and the primary also serves Pydanty; see
 [Shared Z.AI account limits](#shared-zai-account-limits). `PR Review Checks` starts several reviews per pull request
