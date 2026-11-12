@@ -765,7 +765,7 @@ async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> N
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_complex_agent_run_in_workflow(
-    allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire
+    allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire, complex_agent_mcp: None
 ):
     async with Worker(
         client_with_logfire,
@@ -863,22 +863,22 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "event_kind": "part_start"}'
+                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 1, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -968,7 +968,7 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{\\"", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
@@ -989,7 +989,7 @@ async def test_complex_agent_run_in_workflow(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "\\"}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -1049,7 +1049,7 @@ async def test_complex_agent_run_in_workflow(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"tool_name": "final_result", "tool_call_id": null, "event_kind": "final_result"}'
@@ -1175,7 +1175,7 @@ async def test_complex_agent_run_in_workflow(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "]}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -1219,7 +1219,8 @@ async def test_complex_agent_run_in_workflow(
     )
 
 
-async def test_complex_agent_run(allow_model_requests: None):
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+async def test_complex_agent_run(allow_model_requests: None, complex_agent_mcp: None):
     events: list[AgentStreamEvent] = []
 
     async def event_stream_handler(
@@ -1532,7 +1533,8 @@ async def test_complex_agent_run(allow_model_requests: None):
     )
 
 
-async def test_multiple_agents(allow_model_requests: None, client: Client):
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+async def test_multiple_agents(allow_model_requests: None, client: Client, complex_agent_mcp: None):
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -4039,6 +4041,12 @@ async def _enqueue_guard_handler(ctx: RunContext[object], stream: AsyncIterable[
     async for event in stream:
         with pytest.raises(UserError, match='enqueued messages would be dropped'):
             ctx.enqueue('later')
+        with pytest.raises(UserError, match=r'`ctx\.dequeue\(\)` is not supported inside a durable activity'):
+            ctx.dequeue('some-enqueue-id')
+        with pytest.raises(
+            UserError, match=r'`ctx\.set_enqueue_priority\(\)` is not supported inside a durable activity'
+        ):
+            ctx.set_enqueue_priority('some-enqueue-id', 'asap')
         boundary = 'model' if isinstance(event, (PartStartEvent, PartDeltaEvent)) else 'agent'
         _enqueue_handler_boundaries.add(boundary)
 

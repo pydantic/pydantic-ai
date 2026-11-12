@@ -5,8 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
-from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability
+from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, ValidatedToolArgs
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness._warn import warn_argument_ignored
@@ -72,6 +75,33 @@ class _SetToolStrict(AbstractCapability[AgentDepsT]):
         ]
 
 
+@dataclass
+class _ReportExhaustedRetries(AbstractCapability[AgentDepsT]):
+    """Returns a tool's last error to the model once its retry budget is spent, instead of ending the run.
+
+    A tool that keeps asking for a retry (a stale `edit_file` match, a denied path) would otherwise
+    raise `UnexpectedModelBehavior` and discard the whole run. The model gets the error as a failed
+    tool result and can change approach; run-level usage limits still bound a model that never does.
+    """
+
+    async def on_tool_execute_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        error: Exception,
+    ) -> Any:
+        cause = error.__cause__
+        if not isinstance(error, UnexpectedModelBehavior) or not isinstance(cause, ModelRetry):
+            raise error
+        raise ToolFailed(
+            f'{cause.message}\n\n`{call.tool_name}` has failed several times in a row. Do not repeat the same '
+            'call: check the current state and try a different approach.'
+        ) from error
+
+
 MAX_READ_CHARS = 50_000
 """Characters of complete lines per `read_file`, below the output cap."""
 
@@ -79,7 +109,7 @@ MAX_OUTPUT_CHARS = 64000
 """Characters kept from any tool result."""
 
 MAX_FILE_TOOL_RETRIES = 5
-"""Consecutive retries each file tool allows before the run fails.
+"""Consecutive retries each file tool allows before its execution errors come back as plain failures.
 
 A denied path or a stale edit is corrected from the error message. With the agent's default
 budget of one, a second consecutive mistake with the same tool ends a long autonomous run
@@ -107,32 +137,36 @@ class Coder(CombinedCapability[AgentDepsT]):
     its working directory: attach `LocalWorkspace('.')` for a local checkout, or
     a sandbox provider's capability for untrusted work, alongside `Coder()`. A
     run without a workspace fails at its start. Commands are unrestricted and
-    can outlive runs. Additional instructions supplement the default guidance.
-    `unrestricted_filesystem=True` lets the file tools reach the whole
-    workspace filesystem rather than only the working directory.
-    `repo_context=False` leaves out the bundled `RepoContext`, for hosts that
-    bind their own and would otherwise load the instruction files twice.
+    can outlive runs.
 
-    `sub_agents=True` adds `delegate_task`, which hands a self-contained sub-task
-    to a fresh run of the same agent `Coder` is bound to, so the delegate has
-    everything the agent has, including capabilities bound next to `Coder`.
-    That requires binding `Coder` with `Agent(capabilities=[...])` rather than
-    passing it to `run()`. `sub_agents=False` leaves delegation out.
-    `agent_folders` optionally adds disk-defined delegates using `SubAgents`' folder
-    names or explicit workspace paths. It defaults to `None` (no disk discovery).
-    `task_control=TaskControl()` is passed to `SubAgents(task_control=...)`, so the agent can run
-    delegations in the background, steer, answer, and cancel them; it requires `sub_agents=True`.
-
-    `caching=True` turns on prompt caching through the unified `cache` model setting,
-    unless the model, the agent, or a capability listed before `Coder` already sets
-    `cache`; a capability listed after it and the run's own `model_settings` take
-    precedence as usual. `caching=False` leaves it out.
-
-    `strict=False` turns off [strict mode](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#strict-mode)
-    for the tools `Coder` contributes, where OpenAI and Gemini 2.5+ would otherwise turn it on.
-    The bundled `RepairToolArguments` repairs malformed arguments instead. `strict=True` forces
-    strict mode on those tools, and `strict=None` leaves the choice to the provider. Tools bound
-    next to `Coder` keep their own `strict` value.
+    Args:
+        workspace: Deprecated and ignored; attach a workspace capability instead.
+        instructions: Appended to the default instructions.
+        unrestricted_filesystem: Let the file tools reach the whole workspace
+            filesystem rather than only the working directory.
+        repo_context: Include `RepoContext`. Pass `False` when the agent binds its
+            own, so the instruction files are not loaded twice. Pass a
+            `RepoContext` to use it in place of the bundled
+            `RepoContext(walk_up='repo_root')`, keeping the project-directory note;
+            e.g. `RepoContext()` loads only the working directory's instruction files.
+        sub_agents: Add `delegate_task`, which hands a self-contained sub-task to a
+            fresh run of the same agent `Coder` is bound to, including capabilities
+            bound next to `Coder`. This requires binding `Coder` with
+            `Agent(capabilities=[...])` rather than passing it to `run()`.
+        agent_folders: Also load disk-defined delegates, from `SubAgents` folder
+            names or explicit workspace paths. `None` skips disk discovery.
+        task_control: Passed to `SubAgents(task_control=...)`, so the agent can run
+            delegations in the background, steer, answer, and cancel them.
+            Requires `sub_agents=True`.
+        caching: Turn on prompt caching through the unified `cache` model setting,
+            unless the model, the agent, or a capability listed before `Coder`
+            already sets `cache`. A capability listed after it and the run's own
+            `model_settings` take precedence as usual.
+        strict: The `strict` value for the tools `Coder` contributes. The default
+            `False` turns off [strict mode](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#strict-mode),
+            which OpenAI and Gemini 2.5+ would otherwise turn on, and relies on the
+            bundled `RepairToolArguments` instead. `None` leaves the choice to the
+            provider. Tools bound next to `Coder` keep their own value.
     """
 
     def __init__(
@@ -141,7 +175,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         *,
         instructions: str | None = None,
         unrestricted_filesystem: bool = False,
-        repo_context: bool = True,
+        repo_context: bool | RepoContext[AgentDepsT] = True,
         sub_agents: bool = True,
         agent_folders: str | Sequence[str | Path] | None = None,
         task_control: TaskControl | None = None,
@@ -158,6 +192,13 @@ class Coder(CombinedCapability[AgentDepsT]):
                 f'`LocalWorkspace({str(workspace)!r})` (or a sandbox) alongside `Coder()`.',
                 stacklevel=3,
             )
+        bundled_repo_context = (
+            repo_context
+            if isinstance(repo_context, RepoContext)
+            else RepoContext[AgentDepsT](walk_up='repo_root')
+            if repo_context
+            else None
+        )
         delegation = (
             SubAgents[AgentDepsT](include_self=True, agent_folders=agent_folders, task_control=task_control)
             if sub_agents
@@ -170,13 +211,22 @@ class Coder(CombinedCapability[AgentDepsT]):
                 id='coder_instructions',
                 instructions=[
                     coder_instructions(
-                        repo_context=repo_context,
+                        repo_files=bundled_repo_context.filenames
+                        if bundled_repo_context is not None and bundled_repo_context.autoload_instructions
+                        else None,
+                        nested_instructions=bundled_repo_context is not None
+                        and bundled_repo_context.nested_traversal
+                        and bundled_repo_context.nested_inject == 'contents',
                         delegate_tool=delegation.tool_name if delegation is not None else None,
                     )
                     + ('\n' + instructions if instructions else ''),
                     # Naming the directory creates a lazily created sandbox, so it comes only with
                     # `RepoContext`, which reads the workspace at run start anyway.
-                    *([project_instructions(unrestricted=unrestricted_filesystem)] if repo_context else []),
+                    *(
+                        [project_instructions(unrestricted=unrestricted_filesystem)]
+                        if bundled_repo_context is not None
+                        else []
+                    ),
                 ],
             ),
             _file_system(unrestricted=unrestricted_filesystem),
@@ -188,8 +238,8 @@ class Coder(CombinedCapability[AgentDepsT]):
                 tools=['shell'],
             ),
         ]
-        if repo_context:
-            capabilities.append(RepoContext[AgentDepsT](expose_inventory_tool=False))
+        if bundled_repo_context is not None:
+            capabilities.append(bundled_repo_context)
         tool_names = {*FILE_TOOL_NAMES, 'shell'}
         if delegation is not None:
             capabilities.append(delegation)
@@ -204,6 +254,7 @@ class Coder(CombinedCapability[AgentDepsT]):
                 bands=[Band(over=MAX_OUTPUT_CHARS, action=Truncate(max_chars=MAX_OUTPUT_CHARS))],
             ),
             RepairToolArguments[AgentDepsT](),
+            _ReportExhaustedRetries[AgentDepsT](),
         ]
         if caching:
             capabilities.append(_DefaultCaching[AgentDepsT]())

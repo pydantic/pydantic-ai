@@ -1699,6 +1699,12 @@ class TestSearchFiles:
         with pytest.raises(ModelRetry, match='Invalid regex'):
             await toolset.search_files('[invalid', workspace=ws)
 
+    async def test_search_regex_repetition_overflow(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend
+    ) -> None:
+        with pytest.raises(ModelRetry, match='Invalid regex pattern: the repetition number is too large'):
+            await toolset.search_files('a{99999999999}', workspace=ws)
+
     async def test_search_include_glob(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = await toolset.search_files('print', include_glob='*.py', workspace=ws)
         assert 'nested.py' in result
@@ -3060,7 +3066,9 @@ class TestUsedAsAToolset:
             capabilities=[LocalWorkspace(tmp_path)],
             toolsets=[toolset if prefix is None else toolset.prefixed(prefix)],
         )
-        with pytest.raises(UserError, match=r'Pass `capabilities=\[FileSystem\(\)\]` rather than its toolset'):
+        with pytest.raises(
+            UserError, match=rf"The '{name}' tool .* Pass `capabilities=\[FileSystem\(\)\]` rather than its toolset"
+        ):
             await agent.run('go')
 
 

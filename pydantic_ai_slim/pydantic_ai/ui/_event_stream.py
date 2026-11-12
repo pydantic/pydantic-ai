@@ -7,13 +7,17 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypeVar, cast
 from uuid import uuid4
 
+from opentelemetry.trace import get_current_span
+
 from pydantic_ai import _utils
 
+from .._instrumentation import record_exception
 from ..exceptions import RunCancelled
 from ..messages import (
     INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentStreamEvent,
     CapabilityEvent,
+    CapabilityLoadDeltaEvent,
     CompactionPart,
     CustomEvent,
     DeferredToolRequestsEvent,
@@ -97,6 +101,31 @@ OnCancelFunc: TypeAlias = _CallbackFunc[RunCancelled, EventT]
 """Callback function type that receives the `RunCancelled` of the cancelled run. Can be sync, async, or an async generator of protocol-specific events."""
 
 
+async def dispatch_callback(
+    callback: _CallbackFunc[_CallbackArgT, EventT], arg: _CallbackArgT
+) -> AsyncIterator[EventT]:
+    """Call an `on_complete` or `on_cancel` callback, in whichever form it takes, and yield the events it produces."""
+    if inspect.isasyncgenfunction(callback):
+        # Fast path for the common `async def ... yield` form.
+        async for event in callback(arg):
+            yield event
+    elif _utils.is_async_callable(callback):
+        # `async def ... return None`, or a callable object with a coroutine `__call__`.
+        await callback(arg)
+    else:
+        # A plain callable can still return an async iterator or awaitable that neither
+        # `isasyncgenfunction` nor `is_async_callable` detects (a `def` that returns an async
+        # generator, or a callable instance whose `__call__` is an async generator). Run it
+        # off-thread in case it's blocking-sync, then honour whatever it returned so those
+        # `Callable[..., AsyncIterator]` / `Callable[..., Awaitable]` forms aren't silently dropped.
+        result = await _utils.run_in_executor(callback, arg)
+        if isinstance(result, AsyncIterator):
+            async for event in result:
+                yield event
+        elif inspect.isawaitable(result):
+            await result
+
+
 @dataclass
 class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     """Base class for UI event stream transformers.
@@ -144,11 +173,26 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         default_factory=list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta]
     )
     """Deltas used to bring `_open_part` up to date only if a synthetic end event is needed."""
+    _canonical_systems: dict[str, str | None] = field(default_factory=dict[str, str | None], init=False)
+    """The `canonical_system` that applies to each provider's parts, from the last part event from that provider.
+
+    Kept after the part's end event, so the metadata a subclass emits for a part after it, such as a tool call's,
+    carries it too, as `dump_messages` writes it.
+    """
 
     def new_message_id(self) -> str:
         """Generate and store a new message ID."""
         self.message_id = str(uuid4())
         return self.message_id
+
+    def _record_canonical_system(self, event: PartStartEvent | PartEndEvent) -> None:
+        # An unstamped event is recorded too, so a later response without a stamp doesn't inherit an earlier one's.
+        if (provider_name := event.part.provider_name) is not None:
+            self._canonical_systems[provider_name] = event.canonical_system
+
+    def _canonical_system_for(self, provider_name: str | None) -> str | None:
+        """The `canonical_system` to emit beside a part from `provider_name`, if the part's response has one."""
+        return self._canonical_systems.get(provider_name) if provider_name is not None else None
 
     def _record_part_delta(self, event: PartDeltaEvent) -> None:
         if event.index != self._open_part_index:
@@ -243,7 +287,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 if isinstance(event, PartStartEvent):
                     async for e in self._turn_to('response'):
                         yield e
+                    self._record_canonical_system(event)
                 elif isinstance(event, PartEndEvent):
+                    self._record_canonical_system(event)
                     # Only one part is open at a time, so this end is for `_open_part` (or it's already
                     # `None` for a part kind that isn't tracked); clearing unconditionally is safe either way.
                     self._open_part = None
@@ -268,7 +314,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                         yield e
 
                     if on_complete is not None:
-                        async for e in self._dispatch_callback(on_complete, result):
+                        async for e in self._dispatch_on_complete(on_complete, result):
                             yield e
                 elif isinstance(event, FinalResultEvent):
                     self._final_result_event = event
@@ -364,7 +410,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             if cancelled is not None:
                 self._cancelled = cancelled
                 if on_cancel is not None:
-                    async for e in self._dispatch_callback(on_cancel, cancelled):
+                    async for e in dispatch_callback(on_cancel, cancelled):
                         yield e
                 async for e in self.on_cancelled(cancelled):
                     yield e
@@ -380,28 +426,19 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         async for e in self.after_stream():
             yield e
 
-    async def _dispatch_callback(
-        self, callback: _CallbackFunc[_CallbackArgT, EventT], arg: _CallbackArgT
+    async def _dispatch_on_complete(
+        self, on_complete: OnCompleteFunc[EventT], result: AgentRunResult[Any]
     ) -> AsyncIterator[EventT]:
-        if inspect.isasyncgenfunction(callback):
-            # Fast path for the common `async def ... yield` form.
-            async for event in callback(arg):
+        try:
+            async for event in dispatch_callback(on_complete, result):
                 yield event
-        elif _utils.is_async_callable(callback):
-            # `async def ... return None`, or a callable object with a coroutine `__call__`.
-            await callback(arg)
-        else:
-            # A plain callable can still return an async iterator or awaitable that neither
-            # `isasyncgenfunction` nor `is_async_callable` detects (a `def` that returns an async
-            # generator, or a callable instance whose `__call__` is an async generator). Run it
-            # off-thread in case it's blocking-sync, then honour whatever it returned so those
-            # `Callable[..., AsyncIterator]` / `Callable[..., Awaitable]` forms aren't silently dropped.
-            result = await _utils.run_in_executor(callback, arg)
-            if isinstance(result, AsyncIterator):
-                async for event in result:
-                    yield event
-            elif inspect.isawaitable(result):
-                await result
+        except Exception as complete_error:
+            # The agent run's span has already ended, so record the failure on the span that's current now (the HTTP
+            # request's on an instrumented server), as `on_error` only tells the client. The stream doesn't know the
+            # run's `include_content` setting, and the message can quote the run's output, so only the exception's
+            # type is recorded.
+            record_exception(get_current_span(), complete_error, include_content=False, escaped=False)
+            raise
 
     async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
         """Fire hooks when turning from request to response or vice versa."""
@@ -437,6 +474,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] -> `handle_function_tool_call`
         - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
         - [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] -> `handle_tool_availability_delta`
+        - [`CapabilityLoadDeltaEvent`][pydantic_ai.messages.CapabilityLoadDeltaEvent] -> `handle_capability_load_delta`
         - [`ModelSettingsDeltaEvent`][pydantic_ai.messages.ModelSettingsDeltaEvent] -> `handle_model_settings_delta`
         - [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] -> `handle_output_tool_call`
         - [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] -> `handle_output_tool_result`
@@ -473,6 +511,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case ToolAvailabilityDeltaEvent():
                 async for e in self.handle_tool_availability_delta(event):
+                    yield e
+            case CapabilityLoadDeltaEvent():
+                async for e in self.handle_capability_load_delta(event):
                     yield e
             case ModelSettingsDeltaEvent():
                 async for e in self.handle_model_settings_delta(event):
@@ -872,6 +913,18 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Args:
             event: The function tool result event.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_capability_load_delta(self, event: CapabilityLoadDeltaEvent) -> AsyncIterator[EventT]:
+        """Handle a `CapabilityLoadDeltaEvent`.
+
+        By default no protocol events are emitted. Override this to carry the recorded load to a frontend that
+        rebuilds history from the event stream, so a capability loaded from code stays loaded on the next request.
+
+        Args:
+            event: The capability load delta event.
         """
         return  # pragma: no cover
         yield  # Make this an async generator

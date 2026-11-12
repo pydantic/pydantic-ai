@@ -16,6 +16,7 @@ import re
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast, get_args
@@ -35,6 +36,7 @@ from pydantic_ai import (
     PendingModelResponse,
     RunContext,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
     capture_run_messages,
     exceptions,
@@ -55,17 +57,21 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.capabilities.model_fallback import _SpecFallbackError  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import (
+    ContentFilterError,
     FallbackExceptionGroup,
+    IncompleteToolCall,
     ModelAPIError,
     ModelRateLimitError,
     ModelRetry,
+    OutputTokenLimitExceeded,
     RetryModelRequest,
     RunCancelled,
     RunTimedOut,
+    UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import CompactionPart, ModelRequestAttempt, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import CompactionPart, ModelRequestAttempt, ModelResponsePart, ToolReturnPart
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -1590,7 +1596,7 @@ async def test_rejected_attempt_span_status_says_what_rejected_it(capfire: Captu
     await _capability_agent(*chain, instrument=True).run('x')
     assert rejected_statuses() == ['Response rejected']
     await _fallback_model_agent(*chain, instrument=True).run('x')
-    assert rejected_statuses() == ['Response rejected by a `fallback_on` response handler']
+    assert rejected_statuses() == ['Response rejected by `fallback_on`']
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
@@ -2109,6 +2115,271 @@ async def test_a_rejected_pending_batch_request_is_withdrawn_once():
     )
 
 
+def _candidate(name: str, calls: list[str], *, fails: bool = False) -> FunctionModel:
+    """A model that logs its calls, calls the `noop` tool when there is one to answer a prompt, and otherwise answers."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        if fails:
+            raise ModelAPIError(model_name=name, message='down')
+        if info.function_tools and any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[ToolCallPart('noop')])
+        return ModelResponse(parts=[TextPart(name)])
+
+    return FunctionModel(respond, model_name=name)
+
+
+def _model_ids(messages: list[ModelMessage]) -> list[str | None]:
+    """The model each response in `messages` records it came from."""
+    return [message.model_id for message in messages if isinstance(message, ModelResponse)]
+
+
+def _failed_attempt(model_name: str) -> ModelRequestAttempt:
+    """An attempt at `model_name` that failed before the response it's recorded on, which was fallen back to."""
+    return ModelRequestAttempt(
+        model_name=model_name, outcome='error', timestamp=datetime(2026, 1, 1, tzinfo=UTC), duration=timedelta()
+    )
+
+
+def _sticky_history(model_id: str) -> list[ModelMessage]:
+    """A finished exchange whose answer came from the model `model_id` identifies, after the primary failed."""
+    return [
+        ModelRequest(parts=[UserPromptPart('x')]),
+        ModelResponse(parts=[TextPart('earlier')], model_id=model_id, failed_attempts=[_failed_attempt('primary')]),
+    ]
+
+
+def _with_noop(agent: Agent[None, str]) -> Agent[None, str]:
+    @agent.tool_plain
+    def noop() -> str:
+        return 'ok'
+
+    return agent
+
+
+async def test_sticky_stays_on_the_fallback_across_steps():
+    """After falling back, later steps of the run go straight to the candidate that answered."""
+    calls: list[str] = []
+    agent = _with_noop(
+        Agent(
+            _candidate('primary', calls, fails=True),
+            capabilities=[ModelFallback(_candidate('backup', calls), sticky=True)],
+        )
+    )
+    result = await agent.run('x')
+    assert result.output == 'backup'
+    assert calls == ['primary', 'backup', 'backup']
+    assert _model_ids(result.all_messages()) == ['function:backup', 'function:backup']
+    # Going straight to the sticky candidate isn't a failed attempt.
+    last = result.all_messages()[-1]
+    assert isinstance(last, ModelResponse)
+    assert last.failed_attempts is None
+
+
+async def test_sticky_stays_on_the_fallback_across_runs():
+    """A later run continuing the conversation's history starts from the candidate that last answered it."""
+    calls: list[str] = []
+    backup = _candidate('backup', calls)
+
+    def sticky_agent() -> Agent[None, str]:
+        # A new agent for every run, as a run continuing the conversation in another process would have.
+        return Agent(_candidate('primary', calls, fails=True), capabilities=[ModelFallback(backup, sticky=True)])
+
+    first = await sticky_agent().run('x')
+    second = await sticky_agent().run('y', message_history=first.all_messages())
+    assert second.output == 'backup'
+    assert calls == ['primary', 'backup', 'backup']
+    assert _model_ids(second.new_messages()) == ['function:backup']
+
+
+async def test_without_sticky_every_step_starts_from_the_step_model():
+    calls: list[str] = []
+    agent = _with_noop(
+        Agent(_candidate('primary', calls, fails=True), capabilities=[ModelFallback(_candidate('backup', calls))])
+    )
+    result = await agent.run('x')
+    # Each answer records the candidate it came from, but without `sticky` the next step doesn't go to it.
+    assert calls == ['primary', 'backup', 'primary', 'backup']
+    assert _model_ids(result.all_messages()) == ['function:backup', 'function:backup']
+
+
+async def test_a_conversation_the_step_model_answered_stays_on_it():
+    calls: list[str] = []
+    agent = Agent(_candidate('primary', calls), capabilities=[ModelFallback(_candidate('backup', calls), sticky=True)])
+    first = await agent.run('x')
+    assert _model_ids(first.all_messages()) == ['function:primary']
+    await agent.run('y', message_history=first.all_messages())
+    assert calls == ['primary', 'primary']
+
+
+async def test_sticky_with_a_default_model_given_by_name():
+    """The agent's model given as a string counts as its default, however a capability resolves it."""
+    calls: list[str] = []
+    primary = _candidate('primary', calls, fails=True)
+
+    class Alias(AbstractCapability[None]):
+        async def resolve_model_id(self, ctx: ModelResolutionContext[None], *, model_id: str) -> Model | None:
+            return primary if model_id == 'my-primary' else None
+
+    agent = _with_noop(
+        Agent(
+            'my-primary',
+            deps_type=type(None),
+            capabilities=[Alias(), ModelFallback(_candidate('backup', calls), sticky=True)],
+        )
+    )
+    assert (await agent.run('x')).output == 'backup'
+    assert calls == ['primary', 'backup', 'backup']
+
+
+async def test_sticky_with_an_inferred_default_model():
+    """A default model the agent infers from its name when it's constructed still counts as the default."""
+    calls: list[str] = []
+    backup = _candidate('backup', calls)
+    agent = Agent('test', capabilities=[ModelFallback(backup, sticky=True)])
+    result = await agent.run('y', message_history=_sticky_history(backup.model_id))
+    assert result.output == 'backup'
+    assert calls == ['backup']
+
+
+async def test_sticky_follows_a_reassigned_default_model():
+    """The default is the agent's model when the run starts, not when the capability was attached."""
+    calls: list[str] = []
+    backup = _candidate('backup', calls)
+    agent = Agent(_candidate('old', calls), capabilities=[ModelFallback(backup, sticky=True)])
+    agent.model = _candidate('new', calls)
+    result = await agent.run('y', message_history=_sticky_history(backup.model_id))
+    assert result.output == 'backup'
+    assert calls == ['backup']
+
+
+async def test_sticky_with_no_agent_model_replaces_the_first_candidate():
+    calls: list[str] = []
+    agent = _with_noop(
+        Agent(
+            capabilities=[
+                ModelFallback(_candidate('first', calls, fails=True), _candidate('second', calls), sticky=True)
+            ]
+        )
+    )
+    assert (await agent.run('x')).output == 'second'
+    assert calls == ['first', 'second', 'second']
+
+
+@dataclass
+class _StickyFailureCase:
+    failing: tuple[str, ...]
+    calls: list[str]
+    answered_by: str
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param(_StickyFailureCase(('b',), ['b', 'c'], 'function:c'), id='moves-on-after-the-sticky-model'),
+        pytest.param(
+            _StickyFailureCase(('b', 'c'), ['b', 'c', 'primary'], 'function:primary'),
+            id='comes-back-around-to-the-step-model',
+        ),
+        pytest.param(
+            _StickyFailureCase(('b', 'c', 'primary'), ['b', 'c', 'primary', 'a'], 'function:a'),
+            id='then-the-models-before-it',
+        ),
+    ],
+)
+async def test_a_failing_sticky_model_moves_on_down_the_rotated_chain(case: _StickyFailureCase):
+    """The chain goes on after the sticky model, then comes back around to the step's model and the ones before it.
+
+    An answer from the step's own model takes the conversation back to starting from it.
+    """
+    calls: list[str] = []
+    a, b, c = (_candidate(name, calls, fails=name in case.failing) for name in 'abc')
+    agent = Agent(
+        _candidate('primary', calls, fails='primary' in case.failing),
+        capabilities=[ModelFallback(a, b, c, sticky=True)],
+    )
+    result = await agent.run('y', message_history=_sticky_history(b.model_id))
+    assert calls == case.calls
+    assert _model_ids(result.new_messages()) == [case.answered_by]
+
+
+async def test_a_sticky_chain_that_fails_everywhere_attempts_each_model_once():
+    calls: list[str] = []
+    a, b = _candidate('a', calls, fails=True), _candidate('b', calls, fails=True)
+    agent = Agent(_candidate('primary', calls, fails=True), capabilities=[ModelFallback(a, b, a, sticky=True)])
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('y', message_history=_sticky_history(b.model_id))
+    assert [attempt.model_name for attempt in exc_info.value.attempts] == ['b', 'a', 'primary']
+
+
+async def test_an_explicit_run_model_outranks_sticky():
+    calls: list[str] = []
+    agent = Agent(_candidate('primary', calls), capabilities=[ModelFallback(_candidate('backup', calls), sticky=True)])
+    result = await agent.run(
+        'y', model=_candidate('explicit', calls), message_history=_sticky_history('function:backup')
+    )
+    assert result.output == 'explicit'
+    assert calls == ['explicit']
+
+
+async def test_select_model_outranks_sticky():
+    calls: list[str] = []
+    selected = _candidate('selected', calls)
+    agent = Agent(
+        _candidate('primary', calls),
+        capabilities=[SelectModel(lambda ctx: selected), ModelFallback(_candidate('backup', calls), sticky=True)],
+    )
+    await agent.run('y', message_history=_sticky_history('function:backup'))
+    assert calls == ['selected']
+
+
+@pytest.mark.parametrize('model_id', ['function:gone', 'function:primary'])
+async def test_an_answer_from_a_model_that_is_not_another_candidate_starts_the_step_normally(model_id: str):
+    """An answer from a model that's no longer a candidate, or from the step's own model, starts the step normally."""
+    calls: list[str] = []
+    primary = _candidate('primary', calls)
+    agent = Agent(primary, capabilities=[ModelFallback(primary, _candidate('backup', calls), sticky=True)])
+    assert (await agent.run('y', message_history=_sticky_history(model_id))).output == 'primary'
+    assert calls == ['primary']
+
+
+async def test_a_fallback_from_an_explicit_run_model_is_sticky_for_later_runs():
+    """The answer records the candidate it came from, so a later run on the default model picks up from there."""
+    calls: list[str] = []
+    agent = Agent(_candidate('primary', calls), capabilities=[ModelFallback(_candidate('backup', calls), sticky=True)])
+    first = await agent.run('x', model=_candidate('explicit', calls, fails=True))
+    await agent.run('y', message_history=first.all_messages())
+    assert calls == ['explicit', 'backup', 'backup']
+
+
+async def test_sticky_resumes_a_suspended_response_on_its_pinned_model_and_stays_there():
+    """A suspended response is still continued by the model that started it, which the conversation then sticks to."""
+    calls: list[str] = []
+    pinned = _candidate('pinned', calls)
+    agent = Agent(
+        _candidate('step', calls), capabilities=[ModelFallback(_candidate('other', calls), pinned, sticky=True)]
+    )
+    # The job was started on the candidate after the step's model failed, as its attempts record.
+    history = _suspended_history(pinned.model_id)
+    suspended = history[-1]
+    assert isinstance(suspended, ModelResponse)
+    suspended.failed_attempts = [_failed_attempt('step')]
+    first = await agent.run(message_history=history)
+    assert _model_ids(first.new_messages()) == ['function:pinned']
+    await agent.run('y', message_history=first.all_messages())
+    assert calls == ['pinned', 'pinned']
+
+
+async def test_sticky_leaves_a_conversation_whose_suspended_response_the_step_model_started_on_it():
+    """A suspended response the step's model started is continued there, and the conversation goes on there."""
+    calls: list[str] = []
+    step = _candidate('step', calls)
+    agent = Agent(step, capabilities=[ModelFallback(_candidate('backup', calls), sticky=True)])
+    first = await agent.run(message_history=_suspended_history(step.model_id))
+    await agent.run('y', message_history=first.all_messages())
+    assert calls == ['step', 'step']
+
+
 async def test_a_fallback_model_that_runs_out_keeps_the_attempts_before_it():
     """A `FallbackModel` among `ModelFallback`'s models that exhausts its own chain lists the step's earlier attempts first."""
     agent = Agent(
@@ -2145,6 +2416,82 @@ async def test_the_answer_that_crosses_a_token_limit_after_a_fallback_is_kept_as
     assert [(attempt.model_name, attempt.outcome) for attempt in response.failed_attempts or []] == [
         ('primary', 'rejected')
     ]
+
+
+async def test_sticky_follows_an_answer_another_capability_retried_on_the_same_candidate():
+    """A candidate's answer is followed even when another capability had it retried on that candidate."""
+    calls: list[str] = []
+
+    class RetryFirstAnswer(AbstractCapability[None]):
+        """Rejects the first response it sees, retrying the same model."""
+
+        rejected: bool = False
+
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            if not self.rejected:
+                self.rejected = True
+                raise RetryModelRequest()
+            return response
+
+    agent = Agent(
+        _candidate('primary', calls, fails=True),
+        deps_type=type(None),
+        capabilities=[RetryFirstAnswer(), ModelFallback(_candidate('backup', calls), sticky=True)],
+    )
+    first = await agent.run('x')
+    assert _model_ids(first.new_messages()) == ['function:backup']
+    await agent.run('y', message_history=first.all_messages())
+    assert calls == ['primary', 'backup', 'backup', 'backup']
+
+
+async def test_an_answer_from_a_model_chosen_for_its_run_does_not_stick():
+    """`run(model=...)` picks a candidate for that run only: an answer no attempt failed before doesn't make it sticky."""
+    calls: list[str] = []
+    backup = _candidate('backup', calls)
+    agent = Agent(_candidate('primary', calls), capabilities=[ModelFallback(backup, sticky=True)])
+    first = await agent.run('x', model=backup)
+    assert _model_ids(first.all_messages()) == ['function:backup']
+    await agent.run('y', message_history=first.all_messages())
+    assert calls == ['backup', 'primary']
+
+
+async def test_a_conversation_stays_on_the_model_it_fell_back_to_until_the_primary_answers():
+    """Sticky answers after the fallback keep the conversation there; once the primary answers again, it starts there."""
+    calls: list[str] = []
+    backup_fails = False
+
+    def backup_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('backup')
+        if backup_fails:
+            raise ModelAPIError(model_name='backup', message='down')
+        return ModelResponse(parts=[TextPart('backup')])
+
+    agent = Agent(
+        _candidate('primary', calls),
+        capabilities=[ModelFallback(FunctionModel(backup_fn, model_name='backup'), sticky=True)],
+    )
+    history = _sticky_history('function:backup')
+    for _ in range(2):
+        history = (await agent.run('y', message_history=history)).all_messages()
+    backup_fails = True
+    history = (await agent.run('y', message_history=history)).all_messages()
+    await agent.run('y', message_history=history)
+    assert calls == ['backup', 'backup', 'backup', 'primary', 'primary']
+
+
+async def test_a_later_answer_from_another_model_ends_the_sticky_streak():
+    """Only the latest answers count: one from the primary after a fallback, like a run's own choice, ends the streak."""
+    calls: list[str] = []
+    agent = Agent(_candidate('primary', calls), capabilities=[ModelFallback(_candidate('backup', calls), sticky=True)])
+    history = [
+        *_sticky_history('function:backup'),
+        ModelRequest(parts=[UserPromptPart('y')]),
+        ModelResponse(parts=[TextPart('from primary')], model_id='function:primary'),
+    ]
+    await agent.run('z', message_history=history)
+    assert calls == ['primary']
 
 
 # --- Agent specs ---
@@ -2214,13 +2561,13 @@ async def test_spec_fallback_on_names_only_fall_back_on_those_errors(fallback_on
 
 
 def test_spec_fallback_on_names_every_public_model_api_error():
-    """Every public `ModelAPIError` class can be named in a spec, and nothing else can."""
+    """Every public `ModelAPIError` class, `ContentFilterError` and `OutputTokenLimitExceeded` can be named in a spec."""
     public_errors = {
         name
         for name in exceptions.__all__
         if isinstance(cls := getattr(exceptions, name), type) and issubclass(cls, ModelAPIError)
     }
-    assert set(get_args(_SpecFallbackError)) == public_errors
+    assert set(get_args(_SpecFallbackError)) == public_errors | {'ContentFilterError', 'OutputTokenLimitExceeded'}
 
 
 @pytest.mark.parametrize(
@@ -2228,8 +2575,8 @@ def test_spec_fallback_on_names_every_public_model_api_error():
     [
         pytest.param(
             {'ModelFallback': {'models': ['working'], 'fallback_on': ['ModelRateLimitError', 'UserError']}},
-            "`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, got ['UserError']. "
-            'Valid names: ModelAPIError, ModelHTTPError, ',
+            '`ModelFallback` `fallback_on` in an agent spec takes names of `ModelAPIError` classes, '
+            "`ContentFilterError` and `OutputTokenLimitExceeded`, got ['UserError']. Valid names: ModelAPIError, ",
             id='not-a-model-api-error',
         ),
         pytest.param(
@@ -2310,3 +2657,304 @@ async def test_override_spec_sets_the_fallback():
         result = await agent.run('x')
     assert result.output == 'success (no tool calls)'
     assert attempted_models(result) == ['failing', 'test']
+
+
+# --- Refusals ---
+
+
+def _refusal(name: str, calls: list[str], text: str | None = None) -> FunctionModel:
+    """A model whose content filter ends every response, as a provider's safety refusal does."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        return ModelResponse(
+            parts=[TextPart(text)] if text else [],
+            finish_reason='content_filter',
+            provider_details={'refusal': 'I cannot help with that.'},
+            usage=RequestUsage(input_tokens=10, output_tokens=2),
+        )
+
+    return FunctionModel(respond, model_name=name)
+
+
+def _answering(name: str, calls: list[str]) -> FunctionModel:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        return ModelResponse(parts=[TextPart(f'{name} answered')])
+
+    return FunctionModel(respond, model_name=name)
+
+
+@pytest.mark.parametrize('text', [None, 'I cannot help with that.'], ids=['empty', 'with-text'])
+async def test_falls_back_when_a_model_refuses_by_default(text: str | None):
+    """A response the content filter ended falls back to the next model, whether or not it has partial text."""
+    calls: list[str] = []
+    agent = Agent(_refusal('primary', calls, text), capabilities=[ModelFallback(_answering('backup', calls))])
+    result = await agent.run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('primary', 'rejected')]
+    # The refused response was billed.
+    assert result.usage.input_tokens == 10 + 51
+
+
+async def test_a_refusal_ends_the_run_when_opted_out():
+    """With `fallback_on=(ModelAPIError,)`, a refusal is accepted, so the run ends on `ContentFilterError` as before."""
+    calls: list[str] = []
+    agent = Agent(
+        _refusal('primary', calls),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(ModelAPIError,))],
+    )
+    with pytest.raises(ContentFilterError, match='Content filter triggered'):
+        await agent.run('x')
+    assert calls == ['primary']
+
+
+async def test_a_refusal_with_text_is_the_output_when_opted_out():
+    """With `fallback_on=(ModelAPIError,)`, a refusal with text is the run's output, as without `ModelFallback`."""
+    calls: list[str] = []
+    agent = Agent(
+        _refusal('primary', calls, 'I cannot help with that.'),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(ModelAPIError,))],
+    )
+    assert (await agent.run('x')).output == 'I cannot help with that.'
+    assert calls == ['primary']
+
+
+async def test_only_content_filter_error_names_refusals():
+    """A supertype of `ContentFilterError`, like `UnexpectedModelBehavior` or `Exception`, doesn't name refusals."""
+    calls: list[str] = []
+    agent = Agent(
+        _refusal('primary', calls),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(Exception,))],
+    )
+    with pytest.raises(ContentFilterError):
+        await agent.run('x')
+    assert calls == ['primary']
+
+
+async def test_every_model_refusing_raises_the_group():
+    calls: list[str] = []
+    agent = Agent(_refusal('primary', calls), capabilities=[ModelFallback(_refusal('backup', calls))])
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x')
+    assert [(a.model_name, a.outcome) for a in exc_info.value.attempts] == [
+        ('primary', 'rejected'),
+        ('backup', 'rejected'),
+    ]
+
+
+async def test_fallback_model_does_not_fall_back_on_refusals_by_default():
+    """`FallbackModel` keeps its `(ModelAPIError,)` default, so a refusal ends the run as before."""
+    calls: list[str] = []
+    with pytest.raises(ContentFilterError):
+        await Agent(FallbackModel(_refusal('primary', calls), _answering('backup', calls))).run('x')
+    assert calls == ['primary']
+
+
+@pytest.mark.parametrize('text', [None, 'I cannot help with that.'], ids=['empty', 'with-text'])
+async def test_fallback_model_falls_back_on_refusals_when_named(text: str | None):
+    """`FallbackModel` falls back on a refusal, empty or with text, when `fallback_on` names `ContentFilterError`."""
+    calls: list[str] = []
+    model = FallbackModel(
+        _refusal('primary', calls, text), _answering('backup', calls), fallback_on=(ModelAPIError, ContentFilterError)
+    )
+    result = await Agent(model).run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
+
+
+async def test_spec_falls_back_on_refusals_by_default_and_can_opt_out():
+    calls: list[str] = []
+    models = {'primary': _refusal('primary', calls), 'backup': _answering('backup', calls)}
+    resolve = ResolveModelId(lambda ctx, model_id: models.get(model_id))
+
+    agent = Agent.from_spec({'capabilities': [{'ModelFallback': ['backup']}]}, model='primary', capabilities=[resolve])
+    assert (await agent.run('x')).output == 'backup answered'
+
+    calls.clear()
+    agent = Agent.from_spec(
+        {'capabilities': [{'ModelFallback': {'models': ['backup'], 'fallback_on': ['ModelAPIError']}}]},
+        model='primary',
+        capabilities=[resolve],
+    )
+    with pytest.raises(ContentFilterError):
+        await agent.run('x')
+    assert calls == ['primary']
+
+    calls.clear()
+    agent = Agent.from_spec(
+        {'capabilities': [{'ModelFallback': {'models': ['backup'], 'fallback_on': 'ContentFilterError'}}]},
+        model='primary',
+        capabilities=[resolve],
+    )
+    assert (await agent.run('x')).output == 'backup answered'
+
+
+async def test_sticky_stays_on_the_model_that_answered_a_refusal():
+    """A refusal that fell back makes the conversation sticky, like any other fallback."""
+    calls: list[str] = []
+    agent = _with_noop(
+        Agent(_refusal('primary', calls), capabilities=[ModelFallback(_answering('backup', calls), sticky=True)])
+    )
+    first = await agent.run('x')
+    assert first.output == 'backup answered'
+    calls.clear()
+    second = await agent.run('y', message_history=first.all_messages())
+    assert second.output == 'backup answered'
+    assert calls == ['backup']
+
+
+@pytest.mark.parametrize(
+    'make, message',
+    [
+        pytest.param(
+            lambda: ModelFallback(FunctionModel(success), fallback_on=[]),
+            '`ModelFallback` created with an empty `fallback_on`: all exceptions will propagate and all responses '
+            'will be accepted. Use `fallback_on=(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)` for the '
+            'default behavior.',
+            id='ModelFallback',
+        ),
+        pytest.param(
+            lambda: FallbackModel(FunctionModel(success), fallback_on=[]),
+            '`FallbackModel` created with an empty `fallback_on`: all exceptions will propagate and all responses '
+            'will be accepted. Use `fallback_on=(ModelAPIError,)` for the default behavior.',
+            id='FallbackModel',
+        ),
+    ],
+)
+def test_an_empty_fallback_on_suggests_the_owners_default(make: Callable[[], object], message: str):
+    with pytest.raises(UserError) as exc_info:
+        make()
+    assert str(exc_info.value) == message
+
+
+# --- Responses cut off by the output token limit ---
+
+
+def _cut_off(name: str, calls: list[str], parts: list[ModelResponsePart] | None = None) -> FunctionModel:
+    """A model whose every response reaches the output token limit."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        return ModelResponse(
+            parts=[TextPart('The three largest cities are Tokyo, Delhi and')] if parts is None else parts,
+            finish_reason='length',
+            usage=RequestUsage(input_tokens=10, output_tokens=20),
+        )
+
+    return FunctionModel(respond, model_name=name)
+
+
+@pytest.mark.parametrize(
+    'parts',
+    [
+        pytest.param(None, id='text'),
+        pytest.param([], id='empty'),
+        pytest.param([ToolCallPart('get_city', '{"name": "Tok')], id='incomplete-tool-call'),
+        pytest.param([ToolCallPart('get_city', '{"name": "Tokyo"}')], id='complete-tool-call'),
+    ],
+)
+async def test_falls_back_when_the_output_is_cut_off_by_default(parts: list[ModelResponsePart] | None):
+    """A response that reached the output token limit falls back to the next model, whatever it holds."""
+    calls: list[str] = []
+    agent = Agent(_cut_off('primary', calls, parts), capabilities=[ModelFallback(_answering('backup', calls))])
+
+    @agent.tool_plain
+    def get_city(name: str) -> str:
+        raise AssertionError('The cut-off response is rejected, so its tool call is never run.')  # pragma: no cover
+
+    result = await agent.run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('primary', 'rejected')]
+    # The cut-off response was billed.
+    assert result.usage.output_tokens == 20 + 2
+
+
+async def test_cut_off_text_is_the_output_when_opted_out():
+    """Without `OutputTokenLimitExceeded` in `fallback_on`, cut-off text is the run's output, as without `ModelFallback`."""
+    calls: list[str] = []
+    agent = Agent(
+        _cut_off('primary', calls),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(ModelAPIError, ContentFilterError))],
+    )
+    result = await agent.run('x')
+    assert result.output == 'The three largest cities are Tokyo, Delhi and'
+    assert result.response.finish_reason == 'length'
+    assert calls == ['primary']
+
+
+async def test_an_empty_cut_off_response_raises_when_opted_out():
+    calls: list[str] = []
+    agent = Agent(
+        _cut_off('primary', calls, []),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(ModelAPIError,))],
+    )
+    with pytest.raises(OutputTokenLimitExceeded, match=r'Model token limit \(provider default\) exceeded before any'):
+        await agent.run('x')
+    assert calls == ['primary']
+
+
+@pytest.mark.parametrize('fallback_on', [UnexpectedModelBehavior, IncompleteToolCall])
+async def test_only_output_token_limit_exceeded_names_cut_off_responses(fallback_on: type[Exception]):
+    """A supertype doesn't name cut-off responses, and nor does `IncompleteToolCall`, which names a cut-off tool call."""
+    calls: list[str] = []
+    agent = Agent(
+        _cut_off('primary', calls),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=fallback_on)],
+    )
+    assert (await agent.run('x')).output == 'The three largest cities are Tokyo, Delhi and'
+    assert calls == ['primary']
+
+
+async def test_every_model_cut_off_raises_the_group():
+    calls: list[str] = []
+    agent = Agent(_cut_off('primary', calls), capabilities=[ModelFallback(_cut_off('backup', calls))])
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x')
+    assert [(a.model_name, a.outcome) for a in exc_info.value.attempts] == [
+        ('primary', 'rejected'),
+        ('backup', 'rejected'),
+    ]
+
+
+async def test_fallback_model_falls_back_on_cut_off_responses_only_when_named():
+    """`FallbackModel` keeps its `(ModelAPIError,)` default, and falls back on cut-off responses when told to."""
+    calls: list[str] = []
+    result = await Agent(FallbackModel(_cut_off('primary', calls), _answering('backup', calls))).run('x')
+    assert result.output == 'The three largest cities are Tokyo, Delhi and'
+    assert calls == ['primary']
+
+    calls.clear()
+    model = FallbackModel(
+        _cut_off('primary', calls), _answering('backup', calls), fallback_on=(ModelAPIError, OutputTokenLimitExceeded)
+    )
+    assert (await Agent(model).run('x')).output == 'backup answered'
+    assert calls == ['primary', 'backup']
+
+
+async def test_spec_falls_back_on_cut_off_responses_by_default_and_can_opt_out():
+    calls: list[str] = []
+    models = {'primary': _cut_off('primary', calls), 'backup': _answering('backup', calls)}
+    resolve = ResolveModelId(lambda ctx, model_id: models.get(model_id))
+
+    agent = Agent.from_spec({'capabilities': [{'ModelFallback': ['backup']}]}, model='primary', capabilities=[resolve])
+    assert (await agent.run('x')).output == 'backup answered'
+
+    calls.clear()
+    agent = Agent.from_spec(
+        {'capabilities': [{'ModelFallback': {'models': ['backup'], 'fallback_on': ['ModelAPIError']}}]},
+        model='primary',
+        capabilities=[resolve],
+    )
+    assert (await agent.run('x')).output == 'The three largest cities are Tokyo, Delhi and'
+    assert calls == ['primary']
+
+    calls.clear()
+    agent = Agent.from_spec(
+        {'capabilities': [{'ModelFallback': {'models': ['backup'], 'fallback_on': 'OutputTokenLimitExceeded'}}]},
+        model='primary',
+        capabilities=[resolve],
+    )
+    assert (await agent.run('x')).output == 'backup answered'

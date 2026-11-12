@@ -12,21 +12,20 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from pr_gates import ChangedFile, Commit, GateError, GhCli, Label, Verdict
-from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIES
+from publish_douwebot_review import APPROVAL_BODY, DOUWEBOT_MARKER, REVIEW_BODIES, REVIEW_ENGINES
+from publish_pr_review_checks import MARKER as PR_REVIEW_CHECKS_MARKER
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
-ReviewGate = Literal['douwebot', 'human']
+ReviewGate = Literal['douwebot']
 Size = Literal['size: S', 'size: M', 'size: L', 'size: XL']
-Permission = Literal['admin', 'write', 'read', 'none']
 CommitStatus = Literal['pending', 'success', 'failure']
 REVIEW_CONTEXTS: dict[ReviewGate, str] = {
     'douwebot': 'Gate: clean douwebot approval',
-    'human': 'Gate: human approval',
 }
 
 
 class ReviewUser(BaseModel):
-    """An API identity; repository permission is checked separately."""
+    """The GitHub identity attached to a review or review comment."""
 
     id: int
     login: str
@@ -42,18 +41,17 @@ class _Head(Commit):
 
 
 class ReviewPullRequest(BaseModel):
-    """The live head, base, author, and labels that determine the review bar."""
+    """The live head, base, and labels that determine the review bar."""
 
     state: Literal['open', 'closed']
     head: _Head
     base: Commit
-    user: ReviewUser
     labels: list[Label]
     changed_files: int
 
 
 class Review(BaseModel):
-    """A submitted review, including its immutable reviewed commit."""
+    """A submitted review; GitHub can move its `commit_id` after a push, but not its body's marker."""
 
     id: int
     user: ReviewUser
@@ -64,7 +62,7 @@ class Review(BaseModel):
 
 
 class ReviewComment(BaseModel):
-    """The parent review identifies the head; `commit_id` can move on later pushes."""
+    """The parent review's marker identifies the head, else `original_commit_id`; `commit_id` can move on later pushes."""
 
     pull_request_review_id: int
     user: ReviewUser
@@ -93,10 +91,6 @@ class _Jobs(BaseModel):
     jobs: list[ReviewJob]
 
 
-class _Permission(BaseModel):
-    permission: Permission
-
-
 class _SizedFile(ChangedFile):
     additions: int = Field(ge=0)
     deletions: int = Field(ge=0)
@@ -114,7 +108,6 @@ class ReviewGitHub(Protocol):
     def size(self, pull: ReviewPullRequest) -> Size: ...
     def reviews(self) -> list[Review]: ...
     def review_comments(self) -> list[ReviewComment]: ...
-    def permission(self, login: str) -> Permission: ...
     def verified_review_run(self, run_id: int, head: str) -> bool: ...
     def status(self, head: str, gate: ReviewGate, state: CommitStatus, description: str, url: str) -> None: ...
 
@@ -126,7 +119,7 @@ def review_verdicts(
     comments: list[ReviewComment],
 ) -> dict[ReviewGate, Verdict]:
     """Apply the size-dependent review bar to a live metadata snapshot."""
-    verdicts: dict[ReviewGate, Verdict] = {'douwebot': Verdict(), 'human': Verdict()}
+    verdicts: dict[ReviewGate, Verdict] = {'douwebot': Verdict()}
     size = github.size(pull)
     size_labels = {label.name for label in pull.labels if label.name.startswith('size:')}
     if size_labels != {size}:
@@ -141,10 +134,6 @@ def review_verdicts(
         return verdicts
 
     verdicts['douwebot'] = douwebot_approval(github, pull, reviews, comments)
-    if size in ('size: L', 'size: XL'):
-        verdicts['human'] = human_approval(github, pull, reviews)
-    else:
-        verdicts['human'].summary.append('Size M does not require a human approval.')
     return verdicts
 
 
@@ -156,8 +145,8 @@ def douwebot_approval(
 ) -> Verdict:
     """Verify provenance and associate findings with their immutable review head.
 
-    GitHub can move a comment's `commit_id` after a push. Use its parent's reviewed
-    commit, or `original_commit_id` when the parent is unavailable.
+    GitHub can move a review's and a comment's `commit_id` after a push. Use the parent's
+    marker head, or `original_commit_id` when the parent is unavailable or unmarked.
     """
     verdict = Verdict()
     own_reviews: list[Review] = []
@@ -169,6 +158,12 @@ def douwebot_approval(
         if marker and marker[2] == pull.head.sha:
             marked_ids.add(review.id)
             body = review.body[: marker.start()]
+            if (engine := marker[3]) == 'claude' or engine == 'opencode' or engine == 'opencode-deepinfra':
+                suffix = '\n\n' + REVIEW_ENGINES[engine]
+                if body.endswith(suffix):
+                    body = body[: -len(suffix)]
+                else:
+                    verdict.failures.append('Douwebot review engine attribution is missing.')
             if body not in REVIEW_BODIES.values() or (review.state == 'APPROVED' and body != APPROVAL_BODY):
                 verdict.failures.append('Douwebot has discussion findings on this head.')
             if github.verified_review_run(int(marker[1]), pull.head.sha):
@@ -184,19 +179,23 @@ def douwebot_approval(
         if comment.user.login != 'github-actions[bot]' or comment.user.type != 'Bot':
             continue
         parent = by_id.get(comment.pull_request_review_id)
-        reviewed_head = parent.commit_id if parent else comment.original_commit_id
+        marker = DOUWEBOT_MARKER.search(parent.body) if parent else None
+        reviewed_head = marker[2] if marker else comment.original_commit_id
         if reviewed_head != pull.head.sha:
             continue
         if comment.pull_request_review_id in marked_ids:
             verdict.failures.append('Douwebot has inline findings on this head, including resolved/optional ones.')
         else:
-            # gh-aw gives its reviews a separate receipt despite sharing the account.
+            # gh-aw and PR Review Checks give their reviews separate receipts despite sharing the account.
+            if parent and PR_REVIEW_CHECKS_MARKER.search(parent.body):
+                continue
             receipt = f'{parent.body if parent else ""}\n{comment.body}'
             if any(
                 f'<!-- gh-aw-workflow-call-id: {workflow} -->' in receipt
                 or f'[gh-aw-workflow-call-id]: # "{workflow.replace("/", "%2F")}"' in receipt
                 for workflow in (
                     'pydantic/pydantic-ai/pydantic-ai-pr-review',
+                    # Retired, but an open PR's head can still carry its comments.
                     'pydantic/pydantic-ai/pydantic-ai-ui-security-review',
                 )
             ):
@@ -205,25 +204,6 @@ def douwebot_approval(
                 'Cannot attribute an unmarked bot comment on this head; obtain a fresh review/head.'
             )
         break
-    return verdict
-
-
-def human_approval(github: ReviewGitHub, pull: ReviewPullRequest, reviews: list[Review]) -> Verdict:
-    """Accept the latest non-dismissed decision from a different human with current write access."""
-    verdict = Verdict()
-    latest: dict[int, Review] = {}
-    for review in sorted(reviews, key=review_order):
-        if (
-            review.user.type == 'User'
-            and review.user.id != pull.user.id
-            and review.state in ('APPROVED', 'CHANGES_REQUESTED')
-        ):
-            latest[review.user.id] = review
-    if not any(
-        review.state == 'APPROVED' and github.permission(review.user.login) in ('write', 'admin')
-        for review in latest.values()
-    ):
-        verdict.failures.append('Requires a non-dismissed approval from another human with write/admin permission.')
     return verdict
 
 
@@ -242,6 +222,7 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
     expected_head = env['EXPECTED_HEAD_SHA']
     expected_repository = int(env['EXPECTED_HEAD_REPOSITORY_ID'])
     head = ''
+    failed = False
     verdicts: dict[ReviewGate, Verdict]
     try:
         for _ in range(3):
@@ -259,15 +240,14 @@ def reconcile_reviews(github: ReviewGitHub, env: Mapping[str, str]) -> int:
         else:
             raise GateError('PR changed repeatedly while evaluating reviews; retry the gate.')
     except (GateError, ValidationError, OSError) as error:
+        failed = True
         if not head:
             # Setup already left the independently verified target pending.
             # Never write to a caller-supplied SHA when no PR snapshot was read.
             print(f'Cannot read live PR: {type(error).__name__}: {error}')
             return 1
         verdicts = {gate: Verdict(failures=[f'{type(error).__name__}: {error}']) for gate in REVIEW_CONTEXTS}
-    failed = False
     for gate, verdict in verdicts.items():
-        failed |= bool(verdict.failures)
         state = 'failure' if verdict.failures else 'success'
         description = verdict.failures[0] if verdict.failures else 'Review requirement satisfied.'
         github.status(head, gate, state, description[:140], url)
@@ -324,10 +304,6 @@ class ReviewGhCli(GhCli):
         """Read every inline comment; resolution does not make a finding clean."""
         pages = _COMMENT_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/comments?per_page=100'))
         return [comment for page in pages for comment in page]
-
-    def permission(self, login: str) -> Permission:
-        """Resolve the reviewer's current base permission."""
-        return _Permission.model_validate_json(self._api(f'{self._repo}/collaborators/{login}/permission')).permission
 
     def verified_review_run(self, run_id: int, head: str) -> bool:
         """Only the trusted PR Bots publisher can supply a qualifying marker."""

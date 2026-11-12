@@ -4,12 +4,13 @@ Pure translation, with no server or plugin in it. Wire payloads are kw-only data
 `dump` with Pydantic; the browser's `web-ui/src/protocol.ts` mirrors these shapes.
 """
 
+import difflib
 import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Literal
+from typing import Literal, assert_never
 
 from pydantic import JsonValue, TypeAdapter
 from typing_extensions import TypeIs
@@ -26,6 +27,7 @@ from pydantic_ai.messages import (
     EnqueuedMessagesEvent,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -38,18 +40,27 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ask_user import AskUserRequest
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
+from pydantic_ai_harness.filesystem import (
+    EditFileCallPart,
+    FileChangeRequestedEvent,
+    FileEditedEvent,
+    FileWrittenEvent,
+    ReplacementArgs,
+)
+from pydantic_ai_harness.permissions import PermissionAction
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
 from pydantic_ai_harness.subagents import DelegationOutcome
+from pydantic_clai2.config import PermissionMode
 from pydantic_clai2.plugins import ForkEnd, ForkInfo, ForkStatus, PanelIcon, PluginOrigin, PluginStatus, QueuedInput
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL
 from pydantic_clai2.runtime.forks import failure_line
 from pydantic_clai2.runtime.imported_history import is_typed_prompt
 from pydantic_clai2.runtime.monty_cells import NOTE_PREFIX
+from pydantic_clai2.runtime.rewind import rewind_points
 from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
 from pydantic_clai2.runtime.session import STEERING
 from pydantic_clai2.ui.prompt.prompt_queue import InputKind, input_kind
-from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost
+from pydantic_clai2.ui.rendering.usage_report import SessionUsage, format_cost, starts_turn
 
 MONTY_TOOL = 'run_code'
 """The code mode tool whose cells make up the Monty panel."""
@@ -107,6 +118,8 @@ class Item:
     """A `run_code` cell the user ran with `/monty`, rather than one the model wrote."""
     images: list[str] = field(default_factory=list[str])
     """The IDs of a prompt's images, in order, which the session's `images/ID` route serves."""
+    run_id: str | None = None
+    """The run a prompt started, which Edit and Retry rewind to; `None` for a prompt they cannot rewind to."""
 
 
 @dataclass(kw_only=True)
@@ -128,13 +141,29 @@ class QuestionInfo:
 
 
 @dataclass(kw_only=True)
+class ApprovalInfo:
+    """A tool call `/permissions` holds until the user approves it, which the browser shows as an approval card."""
+
+    tool: str
+    action: PermissionAction
+    subject: str
+    """The command, or the path the call writes."""
+    reason: str
+    """Why the session's permission mode asks."""
+    diff: Diff | None = None
+    """The change a file write would make, from its arguments."""
+
+
+@dataclass(kw_only=True)
 class Questions:
-    """An open `ask_user_question` request the browser can answer."""
+    """An open `ask_user_question` request the browser can answer, or a held tool call to approve."""
 
     id: str
     questions: list[QuestionInfo]
     asker: str | None = None
     """Who asks when it is not the conversation itself, such as a delegated task."""
+    approval: ApprovalInfo | None = None
+    """Set when the question asks to approve a held tool call; its one question's labels approve or deny it."""
 
 
 @dataclass(kw_only=True)
@@ -205,6 +234,19 @@ def usage_info(usage: RunUsage) -> Usage:
 
 
 @dataclass(kw_only=True)
+class TurnSummary:
+    """A saved turn's usage line, which follows it in a reloaded transcript as a live turn's end adds one."""
+
+    id: str
+    kind: Literal['turn'] = 'turn'
+    outcome: Literal['completed'] = 'completed'
+    error: None = None
+    usage: Usage
+    seconds: None = None
+    """A saved turn records no duration."""
+
+
+@dataclass(kw_only=True)
 class StatusInfo:
     """The status row's figures, sent every `STATUS_INTERVAL` while a turn streams."""
 
@@ -224,6 +266,8 @@ class StatusInfo:
     """The `run.code_mode` setting; `None` without CLAI's settings."""
     speculation: bool | None = None
     """The `run.speculative_code_mode` setting, which turns code mode on for its runs too."""
+    permissions: PermissionMode | None = None
+    """The `run.permissions` mode; `None` without CLAI's settings."""
 
 
 @dataclass(kw_only=True)
@@ -350,7 +394,7 @@ class Snapshot:
 
     type: Literal['snapshot'] = 'snapshot'
     session: SessionInfo
-    items: list[Item]
+    items: list[Item | TurnSummary]
     running: bool
     status: StatusInfo
     questions: list[Questions]
@@ -673,6 +717,8 @@ class LiveEntry:
 
     id: str
     state: LiveState
+    busy: bool = False
+    """Whether it handles input or has some queued, a turn's `TurnEnd` hooks included: Edit and Retry are refused."""
     title: str | None
     workspace: str
 
@@ -851,8 +897,12 @@ class SessionEntry:
     title: str
     workspace: str
     updated_at: datetime
+    created_at: datetime
+    """When it was first saved, which the sidebar orders by, so activity and renames never move a row."""
     state: SessionState
     """`running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process is running."""
+    owner_pid: int | None = None
+    """The process running a `busy` session's turn."""
     messages: int
     model: str | None
     current: bool
@@ -860,6 +910,8 @@ class SessionEntry:
     """Hidden from the sidebar unless it lists archived sessions too."""
     openable: bool
     """Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first."""
+    source: str | None = None
+    """The agent it was imported from, `Claude Code` or `Codex`; `None` for CLAI's own sessions."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -880,7 +932,10 @@ class Project:
     """Saved sessions grouped by repository, then by checkout, as the `/resume` browser groups them."""
 
     key: str
+    folder: str | None
+    """Its main checkout's folder; `None` for Removed folders."""
     name: str
+    """Its folder's name, or the shortest end of its path no other listed project of that name shares."""
     current: bool
     worktrees: list[Worktree]
 
@@ -1022,6 +1077,41 @@ def tool_result_state(part: ToolReturnPart) -> ToolState:
     return 'error' if part.outcome == 'retried' else 'done'
 
 
+_MAX_LINE_PAIRS = 65_536
+"""The most old-by-new lines of one replacement that is diffed, as `difflib`'s matching is quadratic."""
+
+
+def _edit_diffs(call: EditFileCallPart | None, result: ToolReturnPart) -> list[Diff]:
+    """A successful edit's replacements as line diffs, so a reloaded card counts about what the live diff did.
+
+    Each is one unnumbered hunk, as the saved call does not say where in the file it was. An edit too
+    large to diff, or that only adds or drops a final line feed, gets none: the browser shows its arguments.
+    """
+    if call is None or result.outcome != 'success' or (edit := call.typed_args) is None:
+        return []
+    pairs = edit.get('replacements')
+    if not pairs:
+        old, new = edit.get('old_text'), edit.get('new_text')
+        if old is None or new is None:
+            return []
+        pairs = [ReplacementArgs(old_text=old, new_text=new)]
+    diffs: list[Diff] = []
+    for pair in pairs:
+        old, new = _lines(pair['old_text']), _lines(pair['new_text'])
+        if len(old) * len(new) > _MAX_LINE_PAIRS:
+            return []
+        hunk = list(difflib.unified_diff(old, new, lineterm='', n=max(len(old), len(new))))[3:]
+        if not hunk and pair['old_text'] != pair['new_text']:
+            return []
+        diffs.append(Diff(path=edit['path'], diff='\n'.join(hunk)))
+    return diffs
+
+
+def _lines(text: str) -> list[str]:
+    """`text`'s lines as the harness diffs them: split on line feeds only, with none for an empty text."""
+    return text.removesuffix('\n').split('\n') if text else []
+
+
 def image_id(image: BinaryContent) -> str:
     """An image's ID in the transcript: the SHA-256 of its bytes, so it stays the same after a reload."""
     return hashlib.sha256(image.data).hexdigest()
@@ -1079,13 +1169,15 @@ def user_text(part: UserPromptPart, *, thumbnails: bool = False) -> str:
     )
 
 
-def user_item(part: UserPromptPart, *, id: str, image_ids: ImageIds | None = None) -> Item:
+def user_item(part: UserPromptPart, *, id: str, image_ids: ImageIds | None = None, run_id: str | None = None) -> Item:
     """A prompt's transcript item: its text, and its images by `image_ids` for a session that serves them.
 
     Without `image_ids`, as in a saved session's preview, each image shows as `[image]`.
     """
     images = [] if image_ids is None else [image_ids(image) for image in user_images(part)]
-    return Item(id=id, kind='user', text=user_text(part, thumbnails=image_ids is not None), images=images)
+    return Item(
+        id=id, kind='user', text=user_text(part, thumbnails=image_ids is not None), images=images, run_id=run_id
+    )
 
 
 def history_images(messages: Sequence[ModelMessage]) -> list[BinaryContent]:
@@ -1101,45 +1193,110 @@ def history_images(messages: Sequence[ModelMessage]) -> list[BinaryContent]:
 
 
 def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | None = None) -> list[Item]:
-    """The transcript items of a saved or finished history; tool results join their calls.
+    """The transcript items of a saved or finished history, without `history_entries`' usage lines."""
+    return [entry for entry in history_entries(messages, image_ids=image_ids) if isinstance(entry, Item)]
 
-    A live session passes its `image_ids`, so prompts list their images; see `user_item`.
+
+def history_entries(messages: Sequence[ModelMessage], *, image_ids: ImageIds | None = None) -> list[Item | TurnSummary]:
+    """The transcript of a saved or finished history: its items, each turn followed by its usage line.
+
+    Tool results join their calls; turns are grouped as `/usage` groups them. A live session passes its `image_ids`,
+    so prompts list their images; see `user_item`.
     """
-    items: list[Item] = []
-    tools: dict[str, Item] = {}
-    for message in messages:
+    history = _HistoryEntriesContext(image_ids=image_ids)
+    rewindable = {point.message_index for point in rewind_points(messages) if not point.reason}
+    for index, message in enumerate(messages):
         if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if isinstance(part, UserPromptPart):
-                    if is_typed_prompt(part):
-                        items.append(user_item(part, id=f'h{len(items)}', image_ids=image_ids))
-                elif isinstance(part, ToolReturnPart) and (tool := tools.get(part.tool_call_id)):
-                    tool.text = tool_result_text(part)
-                    tool.state = tool_result_state(part)
+            if starts_turn(message):
+                _end_turn(history)
+                history.usage = RunUsage()
+            _add_request_entries(history, message, run_id=message.run_id if index in rewindable else None)
             continue
-        for part in message.parts:
-            if isinstance(part, TextPart) and part.content:
-                items.append(Item(id=f'h{len(items)}', kind='assistant', text=part.content))
-            elif isinstance(part, ThinkingPart) and part.content:
-                items.append(Item(id=f'h{len(items)}', kind='thinking', text=part.content))
-            elif isinstance(part, ToolCallPart):
-                tool = Item(
-                    id=part.tool_call_id,
-                    kind='tool',
-                    name=part.tool_name,
-                    args=part.args_as_json_str(),
-                    state='interrupted',
+        history.usage.incr(message.usage)
+        history.usage.requests += 1
+        _add_response_entries(history, message)
+    _end_turn(history)
+    return history.entries
+
+
+@dataclass(kw_only=True)
+class _HistoryEntriesContext:
+    """What `history_entries` builds across a history's messages, and what a later message's parts are joined to."""
+
+    image_ids: ImageIds | None
+    entries: list[Item | TurnSummary] = field(default_factory=list[Item | TurnSummary])
+    tools: dict[str, Item] = field(default_factory=dict[str, Item])
+    """Each tool call's item, by its call ID."""
+    edits: dict[str, EditFileCallPart] = field(default_factory=dict[str, EditFileCallPart])
+    """Each `edit_file` call, by its call ID."""
+    usage: RunUsage = field(default_factory=RunUsage)
+    """The usage of the turn so far."""
+
+
+def _end_turn(history: _HistoryEntriesContext) -> None:
+    """Follow the turn with its usage line, when it made a request."""
+    if history.usage.requests:
+        history.entries.append(TurnSummary(id=f'h{len(history.entries)}', usage=usage_info(history.usage)))
+
+
+def _add_request_entries(history: _HistoryEntriesContext, request: ModelRequest, *, run_id: str | None) -> None:
+    """Add `request`'s typed prompts, the first with `run_id`, and join its tool results to their calls."""
+    for part in request.parts:
+        match part:
+            case UserPromptPart() if is_typed_prompt(part):
+                history.entries.append(
+                    user_item(part, id=f'h{len(history.entries)}', image_ids=history.image_ids, run_id=run_id)
                 )
-                tools[part.tool_call_id] = tool
-                items.append(tool)
-    return items
+                run_id = None
+            case ToolReturnPart():
+                _join_tool_result(history, part)
+            case _:
+                pass
 
 
-def questions_info(request: AskUserRequest, *, asker: str | None) -> Questions:
-    """The browser's copy of an `ask_user_question` request."""
+def _join_tool_result(history: _HistoryEntriesContext, part: ToolReturnPart) -> None:
+    """Give `part`'s result to its call's item, when the history holds the call."""
+    if tool := history.tools.get(part.tool_call_id):
+        tool.text = tool_result_text(part)
+        tool.state = tool_result_state(part)
+        tool.diffs = _edit_diffs(history.edits.get(part.tool_call_id), part)
+
+
+def _add_response_entries(history: _HistoryEntriesContext, response: ModelResponse) -> None:
+    """Add `response`'s text, thinking, and tool calls."""
+    for part in response.parts:
+        match part:
+            case TextPart() if part.content:
+                history.entries.append(Item(id=f'h{len(history.entries)}', kind='assistant', text=part.content))
+            case ThinkingPart() if part.content:
+                history.entries.append(Item(id=f'h{len(history.entries)}', kind='thinking', text=part.content))
+            case ToolCallPart():
+                _add_tool_call(history, part)
+            case _:
+                pass
+
+
+def _add_tool_call(history: _HistoryEntriesContext, part: ToolCallPart) -> None:
+    """Add `part`'s tool item, interrupted until its result joins it."""
+    tool = Item(
+        id=part.tool_call_id,
+        kind='tool',
+        name=part.tool_name,
+        args=part.args_as_json_str(),
+        state='interrupted',
+    )
+    history.tools[part.tool_call_id] = tool
+    history.entries.append(tool)
+    if isinstance(part, EditFileCallPart):
+        history.edits[part.tool_call_id] = part
+
+
+def questions_info(request: AskUserRequest, *, asker: str | None, approval: ApprovalInfo | None = None) -> Questions:
+    """The browser's copy of an `ask_user_question` request, or of the question approving a held call."""
     return Questions(
         id=request.id,
         asker=asker,
+        approval=approval,
         questions=[
             QuestionInfo(
                 header=question.header,
@@ -1167,7 +1324,7 @@ class EventTranslator:
         self._scope = scope
         self._parts: dict[int, str] = {}
         self._count = 0
-        self._writes: dict[tuple[str | None, str], FileChangeRequestEvent] = {}
+        self._writes: dict[tuple[str | None, str], FileChangeRequestedEvent] = {}
         self._streamed: set[str] = set()
         """`run_code` cells already shown from their streamed part, so their call event only completes them."""
 
@@ -1249,7 +1406,7 @@ class EventTranslator:
             return [ToolOutput(id=event.tool_call_id, text=event.text)]
         if isinstance(event, CommandFinishedEvent) and event.tool_call_id is not None:
             return [ShellDone(id=event.tool_call_id, exit_code=event.exit_code)]
-        if isinstance(event, FileChangeRequestEvent) and event.operation == 'write':
+        if isinstance(event, FileChangeRequestedEvent) and event.operation == 'write':
             self._writes[event.tool_call_id, event.path] = event
         elif isinstance(event, FileEditedEvent) and event.tool_call_id is not None:
             diff = Diff(path=event.path, diff=event.diff, truncated=event.truncated)
@@ -1287,26 +1444,29 @@ class ItemLog:
         item = self.items.get(message.id)
         if item is None:
             return
-        if isinstance(message, TextDelta):
-            item.text += message.text
-        elif isinstance(message, ArgsDelta):
-            item.args += message.text
-        elif isinstance(message, ToolArgs):
-            item.args = message.args
-        elif isinstance(message, ToolOutput):
-            item.output += message.text
-        elif isinstance(message, ToolDone):
-            item.text, item.state = message.text, message.state
-        elif isinstance(message, ShellDone):
-            item.exit_code = message.exit_code
-        elif isinstance(message, DiffAdded):
-            item.diffs.append(message.diff)
-        elif isinstance(message, SubCallAdded):
-            item.calls.append(replace(message.call))
-        else:
-            for call in item.calls:
-                if call.id == message.call_id:
-                    if isinstance(message, SubCallOutput):
-                        call.output += message.text
-                    else:
-                        call.text, call.state = message.text, message.state
+        match message:
+            case TextDelta():
+                item.text += message.text
+            case ArgsDelta():
+                item.args += message.text
+            case ToolArgs():
+                item.args = message.args
+            case ToolOutput():
+                item.output += message.text
+            case ToolDone():
+                item.text, item.state = message.text, message.state
+            case ShellDone():
+                item.exit_code = message.exit_code
+            case DiffAdded():
+                item.diffs.append(message.diff)
+            case SubCallAdded():
+                item.calls.append(replace(message.call))
+            case SubCallOutput() | SubCallDone():
+                for call in item.calls:
+                    if call.id == message.call_id:
+                        if isinstance(message, SubCallOutput):
+                            call.output += message.text
+                        else:
+                            call.text, call.state = message.text, message.state
+            case _:
+                assert_never(message)

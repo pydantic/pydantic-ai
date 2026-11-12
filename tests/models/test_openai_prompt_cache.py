@@ -27,7 +27,6 @@ from cassetter import Cassette
 from pydantic import BaseModel, JsonValue
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -44,6 +43,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
@@ -443,10 +443,7 @@ async def test_openrouter_unified_cache_adds_cache_control(allow_model_requests:
     await Agent(model, instructions='Stable instructions.', model_settings={'cache': '1h'}).run('Hi')
 
     request = create.call_args.kwargs
-    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the standing prompt opens with the
-    # `<system>` tag announcement; the breakpoint after the instructions covers both.
-    announcement, system_message = request['messages'][:2]
-    assert announcement == {'role': 'system', 'content': SYSTEM_VOICE_ANNOUNCEMENT}
+    system_message = request['messages'][0]
     assert system_message['role'] == 'system'
     assert system_message['content'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
 
@@ -1982,6 +1979,51 @@ async def test_openai_responses_prompt_cache_e2e(allow_model_requests: None, ope
 
 
 @pytest.mark.vcr
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-6-astra',
+        'gpt-6-sol',
+        'gpt-6-luna',
+        'gpt-6.1-sol',
+        'gpt-6.1-terra',
+    ],
+)
+async def test_openai_responses_unified_cache_12h_e2e(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette, model_name: str
+):
+    """`cache='12h'` sends the 12-hour TTL on Responses, which every GPT-5.6 and GPT-6 model accepts."""
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, instructions=_STABLE_PREFIX, model_settings=ModelSettings(cache='12h'))
+
+    first = await agent.run('Reply with exactly: OK')
+    second = await agent.run('Reply with exactly: OK')
+
+    for index in (0, 1):
+        body = _request_body(vcr, index)
+        assert body['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '12h'}
+        assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    _assert_cache_usage(first.usage, second.usage)
+
+
+@pytest.mark.vcr
+async def test_openai_chat_unified_cache_12h_e2e(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
+    """Chat Completions rejects a `'12h'` TTL, so `cache='12h'` sends `'30m'` there."""
+    model = OpenAIChatModel('gpt-5.6-luna', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, instructions=_STABLE_PREFIX, model_settings=ModelSettings(cache='12h'))
+
+    first = await agent.run('Reply with exactly: OK')
+    second = await agent.run('Reply with exactly: OK')
+
+    for index in (0, 1):
+        assert _request_body(vcr, index)['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+    _assert_cache_usage(first.usage, second.usage)
+
+
+@pytest.mark.vcr
 async def test_openrouter_responses_prompt_cache_e2e(
     allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
 ):
@@ -2740,6 +2782,20 @@ async def test_openai_responses_unified_cache_stable_prefix_only_with_chaining(a
     assert request['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
     assert request['instructions'] == 'Support policies.'
     assert request['input'] == [{'role': 'user', 'content': 'Where is order 1234?'}]
+
+
+async def test_openai_responses_unified_cache_stable_prefix_only_with_chaining_keeps_12h(allow_model_requests: None):
+    """Falling back to the implicit breakpoint keeps the requested 12-hour TTL."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(
+        openai_previous_response_id='auto', cache={'retention': '12h', 'messages': False}
+    )
+
+    await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '12h'}
 
 
 async def test_openai_chat_unified_cache_stable_prefix_only_with_merged_system_messages(allow_model_requests: None):

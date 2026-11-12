@@ -216,25 +216,29 @@ async def externalize_media(node: object, *, media_store: MediaStore, threshold_
             out_list.append(await externalize_media(item, media_store=media_store, threshold_bytes=threshold_bytes))
         return out_list
     if _is_json_dict(node):
-        replaced: dict[str, object] | None = None
-        if (data := _binary_data(node)) is not None:
-            replaced = await _maybe_externalize_binary(node, data, media_store, threshold_bytes)
-        elif (content := _text_content(node)) is not None:
-            replaced = await _maybe_externalize_text(node, content, media_store, threshold_bytes)
-        if replaced is not None:
-            return replaced
-        out_dict: dict[str, object] = {}
-        for key, value in node.items():
-            out_dict[key] = await externalize_media(value, media_store=media_store, threshold_bytes=threshold_bytes)
-        if any(key in node for key in _LITERAL_TRIGGER_KEYS):
-            return {_LITERAL_KEY: out_dict, _MARKER_FORMAT: _LITERAL_FORMAT}
-        return out_dict
+        return await _externalize_dict(node, media_store, threshold_bytes)
     if _is_json_scalar(node):
         return node
     raise TypeError(
         f'`externalize_media` takes a JSON tree, got {type(node).__name__}; '
         "serialize messages with `ModelMessagesTypeAdapter.dump_python(messages, mode='json')` first"
     )
+
+
+async def _externalize_dict(node: dict[str, object], media_store: MediaStore, threshold_bytes: int) -> object:
+    replaced: dict[str, object] | None = None
+    if (data := _binary_data(node)) is not None:
+        replaced = await _maybe_externalize_binary(node, data, media_store, threshold_bytes)
+    elif (content := _text_content(node)) is not None:
+        replaced = await _maybe_externalize_text(node, content, media_store, threshold_bytes)
+    if replaced is not None:
+        return replaced
+    out_dict: dict[str, object] = {}
+    for key, value in node.items():
+        out_dict[key] = await externalize_media(value, media_store=media_store, threshold_bytes=threshold_bytes)
+    if any(key in node for key in _LITERAL_TRIGGER_KEYS):
+        return {_LITERAL_KEY: out_dict, _MARKER_FORMAT: _LITERAL_FORMAT}
+    return out_dict
 
 
 async def _maybe_externalize_binary(
@@ -405,31 +409,10 @@ async def _restore_external(node: dict[str, object], media_store: MediaStore) ->
             raise ValueError(f'externalized media marker has an unsupported escaped-keys format: {marker_format!r}')
         escaped = escaped_value
         dropped.update({_MARKER_FORMAT, _ESCAPED_KEYS})
-    if _URI_KEY in node:
-        uri_value = node[_URI_KEY]
-        dropped.add(_URI_KEY)
-        # `_write_reference` mirrors the reference to `uri` only when the source
-        # node had none, so a `uri` equal to the reference is that mirror and
-        # goes; anything else is the node's own data and stays.
-        if node.get('uri') == uri_value:
-            dropped.add('uri')
-    else:
-        # Markers written before `_URI_KEY` existed stored the blob reference
-        # under a plain `uri`. Falling back keyed on `_URI_KEY` being absent (not
-        # on its value being unusable) keeps a genuine `uri` from ever being read
-        # as a reference -- the bug `_URI_KEY` was introduced to fix.
-        uri_value = node.get('uri')
-        dropped.add('uri')
-    if not isinstance(uri_value, str):
-        raise ValueError(f'externalized media marker missing string uri: {node!r}')
+    uri_value, reference_keys = _read_reference(node)
+    dropped.update(reference_keys)
     is_text = node.get(_TEXT_MARKER) is True
-    if is_text:
-        context = MediaContext(media_type='text/plain')
-    else:
-        media_type_value = node.get('media_type')
-        media_type = media_type_value if isinstance(media_type_value, str) else None
-        context = MediaContext(media_type=media_type)
-    raw = await media_store.get(uri_value, context=context)
+    raw = await media_store.get(uri_value, context=_restore_context(node, is_text))
     # Inverse of `_maybe_externalize_*`: drop the marker and reference keys,
     # restore the externalized field, keep every other field the original part
     # carried. Preserved fields are recursively restored so a nested marker
@@ -448,3 +431,33 @@ async def _restore_external(node: dict[str, object], media_store: MediaStore) ->
         altchars = b'-_' if urlsafe else None
         restored['data'] = base64.b64encode(raw, altchars=altchars).decode('ascii')
     return restored
+
+
+def _read_reference(node: dict[str, object]) -> tuple[str, set[str]]:
+    """The blob reference on marker `node`, and the keys that hold it."""
+    if _URI_KEY in node:
+        uri_value = node[_URI_KEY]
+        reference_keys = {_URI_KEY}
+        # `_write_reference` mirrors the reference to `uri` only when the source
+        # node had none, so a `uri` equal to the reference is that mirror and
+        # goes; anything else is the node's own data and stays.
+        if node.get('uri') == uri_value:
+            reference_keys.add('uri')
+    else:
+        # Markers written before `_URI_KEY` existed stored the blob reference
+        # under a plain `uri`. Falling back keyed on `_URI_KEY` being absent (not
+        # on its value being unusable) keeps a genuine `uri` from ever being read
+        # as a reference -- the bug `_URI_KEY` was introduced to fix.
+        uri_value = node.get('uri')
+        reference_keys = {'uri'}
+    if not isinstance(uri_value, str):
+        raise ValueError(f'externalized media marker missing string uri: {node!r}')
+    return uri_value, reference_keys
+
+
+def _restore_context(node: dict[str, object], is_text: bool) -> MediaContext:
+    if is_text:
+        return MediaContext(media_type='text/plain')
+    media_type_value = node.get('media_type')
+    media_type = media_type_value if isinstance(media_type_value, str) else None
+    return MediaContext(media_type=media_type)

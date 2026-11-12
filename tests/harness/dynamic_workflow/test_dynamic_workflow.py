@@ -38,6 +38,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.dynamic_workflow import (
@@ -515,8 +516,8 @@ async def test_sleep_completes_without_an_os_handler(code: str) -> None:
     assert out == 'awake'
 
 
-async def test_sleeps_are_charged_to_max_duration_secs() -> None:
-    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits={'max_duration_secs': 1})
+async def test_sleeps_are_charged_to_max_duration_seconds() -> None:
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits={'max_duration_seconds': 1})
     with pytest.raises(ModelRetry, match=r'TimeoutError: sleeping 5s would exceed the 1s this code may sleep'):
         await _run_script(ts, 'import time\ntime.sleep(5)')
 
@@ -941,6 +942,77 @@ async def test_sub_agent_usage_limits_generous_allows_run() -> None:
     assert out == 'done'
 
 
+async def test_sub_agents_run_under_parent_usage_limits() -> None:
+    # Without `sub_agent_usage_limits`, a sub-agent sharing the parent's usage must be bounded by
+    # the parent run's `usage_limits`, not pydantic-ai's default `request_limit` of 50.
+    sub_requests = 60
+
+    def researcher_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if sum(isinstance(m, ModelResponse) for m in messages) < sub_requests - 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='step', args={})])
+        return ModelResponse(parts=[TextPart('researched')])
+
+    researcher: Agent[object, str] = Agent(FunctionModel(researcher_fn), name='researcher')
+
+    @researcher.tool_plain
+    def step() -> str:
+        return 'next'
+
+    def parent_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if returns := _workflow_returns(messages):
+            return ModelResponse(parts=[TextPart(str(returns[0].content))])
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='run_workflow', args={'code': "await researcher(task='dig')"})]
+        )
+
+    agent: Agent[object, str] = Agent(
+        FunctionModel(parent_fn), capabilities=[DynamicWorkflow[object](agents=[researcher])]
+    )
+    result = await agent.run('research', usage_limits=UsageLimits(request_limit=10_000))
+    assert result.output == 'researched'
+    assert result.usage.requests == sub_requests + 2
+
+
+async def test_sub_agents_hit_parent_usage_limits() -> None:
+    # The parent's limit is checked against the shared counter, so it bounds the whole tree.
+    researcher: Agent[object, str] = Agent(TestModel(), name='researcher')
+
+    @researcher.tool_plain
+    def step() -> str:
+        return 'next'
+
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=researcher)])
+    ctx = _ctx()
+    ctx.usage_limits = UsageLimits(request_limit=2)
+    ctx.usage.requests = 1
+    with pytest.raises(ModelRetry, match='The next request would exceed the request_limit of 2'):
+        await _run_script(ts, "await researcher(task='x')", ctx)
+
+
+async def test_sub_agent_usage_limits_replace_parent_usage_limits() -> None:
+    # An explicit `sub_agent_usage_limits` replaces the parent's limits rather than intersecting them:
+    # a shared counter that already spent the parent's limit doesn't trip a sub-agent under its own cap.
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], sub_agent_usage_limits=UsageLimits(request_limit=10_000))
+    ctx = _ctx()
+    ctx.usage_limits = UsageLimits(request_limit=2)
+    ctx.usage.requests = 2
+    assert await _run_script(ts, "await sub(task='x')", ctx) == 'ok'
+
+
+async def test_isolated_sub_agents_ignore_parent_usage_limits() -> None:
+    # With `forward_usage=False` each sub-agent counts on its own, so the parent's limits don't apply.
+    researcher: Agent[object, str] = Agent(TestModel(custom_output_text='done'), name='researcher')
+
+    @researcher.tool_plain
+    def step() -> str:
+        return 'next'
+
+    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=researcher)], forward_usage=False)
+    ctx = _ctx()
+    ctx.usage_limits = UsageLimits(request_limit=1)
+    assert await _run_script(ts, "await researcher(task='x')", ctx) == 'done'
+
+
 # --- Errors / output shapes ------------------------------------------------
 
 
@@ -1298,13 +1370,13 @@ async def test_sub_agent_output_serialization_error_is_wrapped() -> None:
 
 
 async def test_runaway_loop_stopped_by_duration_cap() -> None:
-    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits={'max_duration_secs': 0.2})
+    ts = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits={'max_duration_seconds': 0.2})
     with pytest.raises(ModelRetry, match='Runtime error'):
         await _run_script(ts, 'while True:\n    x = 1')
 
 
 async def test_awaiting_sub_agents_does_not_count_against_duration_cap() -> None:
-    # `max_duration_secs` bounds in-sandbox execution time, not wall-clock: time the script spends
+    # `max_duration_seconds` bounds in-sandbox execution time, not wall-clock: time the script spends
     # awaiting sub-agents is spent suspended on the host, so it must not accrue against the cap.
     # Here three sub-agents each sleep 0.2s on the host under a 0.1s cap; the workflow still
     # completes. Guards the documented behavior that the timer excludes sub-agent latency.
@@ -1313,7 +1385,9 @@ async def test_awaiting_sub_agents_does_not_count_against_duration_cap() -> None
         return ModelResponse(parts=[TextPart('done')])
 
     sub: Agent[object, str] = Agent(FunctionModel(slow_model), name='sub')
-    ts = DynamicWorkflowToolset[object](agents=[WorkflowAgent(agent=sub)], resource_limits={'max_duration_secs': 0.1})
+    ts = DynamicWorkflowToolset[object](
+        agents=[WorkflowAgent(agent=sub)], resource_limits={'max_duration_seconds': 0.1}
+    )
     code = "import asyncio\nawait asyncio.gather(sub(task='a'), sub(task='b'), sub(task='c'))"
     assert await _run_script(ts, code) == ['done', 'done', 'done']
 
@@ -1333,10 +1407,31 @@ async def test_unlimited_runs_without_a_backstop() -> None:
     assert out == 2
 
 
+def test_max_duration_secs_is_a_deprecated_alias() -> None:
+    renamed = r"resource_limits=\{'max_duration_secs': \.\.\.\}\)` has been renamed"
+    with pytest.warns(HarnessDeprecationWarning, match=rf'`DynamicWorkflow\({renamed}'):
+        capability = DynamicWorkflow[object](agents=[_sub_agent()], resource_limits={'max_duration_secs': 5})
+    assert capability.resource_limits == {'max_duration_seconds': 5}
+    with pytest.warns(HarnessDeprecationWarning, match=rf'`DynamicWorkflowToolset\({renamed}'):
+        toolset = DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits={'max_duration_secs': 5})
+    assert toolset.resource_limits == {'max_duration_seconds': 5}
+    with pytest.raises(TypeError, match='`max_duration_secs` is its deprecated name'):
+        DynamicWorkflowToolset[object](
+            agents=[_wf_agent()], resource_limits={'max_duration_seconds': 5, 'max_duration_secs': 5}
+        )
+
+
+async def test_stale_max_duration_secs_key_is_rejected_at_run_time() -> None:
+    toolset = DynamicWorkflowToolset[object](agents=[_wf_agent()])
+    toolset.resource_limits = {'max_duration_secs': 5}
+    with pytest.raises(UserError, match=r"key\(s\): \['max_duration_secs'\]"):
+        await _run_script(toolset, '1 + 1')
+
+
 @pytest.mark.parametrize('unknown_key', ['max_durations_secs', 'max_allocations'])
 def test_unknown_resource_limit_key_raises_at_construction(unknown_key: str) -> None:
     # Unknown keys must not be silently dropped, which would disable the intended cap.
-    with pytest.raises(UserError, match='Unknown `resource_limits` key'):
+    with pytest.raises(UserError, match=r"Valid keys are \['max_duration_seconds', 'max_memory'"):
         DynamicWorkflowToolset[object](
             agents=[_wf_agent()],
             resource_limits={unknown_key: 5},  # pyright: ignore[reportArgumentType]

@@ -22,11 +22,13 @@ from pydantic import TypeAdapter, ValidationError
 from ... import ExternalToolset, ToolDefinition
 from ..._mcp_apps import get_mcp_app_tool_result
 from ..._utils import is_str_dict
+from ...conversation_store import ConversationEntry, ConversationStore
 from ...messages import (
     ERROR_OUTCOMES,
     AudioUrl,
     BinaryContent,
     CachePoint,
+    CapabilityLoadDeltaPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -70,6 +72,8 @@ from ...tools import (
 from ...toolsets import AbstractToolset
 from .._adapter import (
     DEFAULT_ALLOWED_CONTENT_TYPES,
+    capability_load_delta_from_payload,
+    capability_load_delta_payload,
     compaction_part_from_payload,
     compaction_payload,
     model_settings_delta_from_payload,
@@ -80,6 +84,7 @@ from .._adapter import (
     structured_content_from_payload,
     structured_content_payload,
     tool_availability_delta_from_payload,
+    tool_availability_delta_payload,
     warn_dropped_tool_results,
 )
 from .._utils import MCP_APPS_UI_TYPE, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
@@ -89,6 +94,7 @@ try:
         ActivityMessage,
         AssistantMessage,
         BaseEvent,
+        CustomEvent as AGUICustomEvent,
         DeveloperMessage,
         FunctionCall,
         InputContent,
@@ -113,7 +119,9 @@ try:
     )
     from ._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
+        CAPABILITY_LOAD_DELTA_ACTIVITY_TYPE,
         COMPACTION_ACTIVITY_TYPE,
+        CONVERSATION_SAVED_EVENT_NAME,
         DEFAULT_AG_UI_VERSION,
         ENCRYPTED_VALUE_VERSION,
         ENQUEUED_MESSAGES_ACTIVITY_TYPE,
@@ -437,6 +445,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         preserve_file_data: bool = False,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        conversation_store: ConversationStore | None = None,
+        conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
@@ -452,6 +462,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             preserve_file_data=preserve_file_data,
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            conversation_store=conversation_store,
+            conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
@@ -464,6 +476,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     def messages(self) -> list[ModelMessage]:
         """Pydantic AI messages from the AG-UI run input."""
         return self.load_messages(self.run_input.messages, preserve_file_data=self.preserve_file_data)
+
+    def _conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[BaseEvent]:
+        """A `pydantic_ai_conversation_saved` custom event with the stored entries' ids."""
+        return [
+            AGUICustomEvent(
+                name=CONVERSATION_SAVED_EVENT_NAME,
+                value={'conversation_id': conversation_id, 'entry_ids': [entry.id for entry in entries]},
+            )
+        ]
 
     def _server_held_client_messages(self, message_history: Sequence[ModelMessage]) -> list[ModelMessage]:
         """Load a tool result the client sends without its call against the call `message_history` is waiting on.
@@ -745,6 +766,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 case ActivityMessage() as activity_msg:
                     if activity_msg.activity_type == TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE:
                         builder.add(tool_availability_delta_from_payload(activity_msg.content))
+                    elif activity_msg.activity_type == CAPABILITY_LOAD_DELTA_ACTIVITY_TYPE:
+                        if (load_part := capability_load_delta_from_payload(activity_msg.content)) is not None:
+                            builder.add(load_part)
                     elif activity_msg.activity_type == MODEL_SETTINGS_DELTA_ACTIVITY_TYPE:
                         if (effort_part := model_settings_delta_from_payload(activity_msg.content)) is not None:
                             builder.add(effort_part)
@@ -980,10 +1004,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     ActivityMessage(
                         id=_new_message_id(),
                         activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
-                        content={
-                            'added': part.tools_added,
-                            'tool_call_id': part.tool_call_id,
-                        },
+                        content=tool_availability_delta_payload(part),
+                    )
+                )
+            elif isinstance(part, CapabilityLoadDeltaPart):
+                flush_user_content()
+                result.append(
+                    ActivityMessage(
+                        id=_new_message_id(),
+                        activity_type=CAPABILITY_LOAD_DELTA_ACTIVITY_TYPE,
+                        content=capability_load_delta_payload(part),
                     )
                 )
             # TODO(v3): remove `RetryPromptPart`

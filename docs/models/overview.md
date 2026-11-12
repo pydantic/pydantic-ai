@@ -1,10 +1,12 @@
 ---
-description: "Find supported model developers, cloud platforms, inference services, gateways and local servers, with setup guides, model selection and fallback configuration."
+description: "Pydantic AI is model-agnostic: switch between OpenAI, Anthropic, Gemini, Amazon Bedrock, Google Vertex AI, Azure OpenAI and local models by changing one string. Find each provider's setup guide, model selection and fallback configuration."
 ---
 
 # Models and Providers
 
 Pydantic AI supports model developers, cloud platforms, inference services, gateways, and local model servers. Find your service below and follow its setup guide for installation, authentication, and supported features.
+
+Pydantic AI is model-agnostic: switch an agent between OpenAI, Anthropic, Gemini, Amazon Bedrock, Google Vertex AI, Azure OpenAI and local models by changing one string, without rewriting the agent. It runs on [Azure OpenAI](azure.md), [Amazon Bedrock](bedrock.md) and [Google Vertex AI](google-cloud.md) with your cloud's own credentials.
 
 To keep an agent running when a provider fails, give it other models to fall back to with the [`ModelFallback`](../capabilities/model-fallback.md) capability: see [Fallback Model](#fallback-model).
 
@@ -189,7 +191,7 @@ For streaming, you'll also need to implement the [`StreamedResponse`][pydantic_a
 
 A subclass with dataclass equality, including one that inherits it, compares its `settings` and `profile` along with its dataclass fields. A subclass that hashes by identity, such as a direct non-dataclass subclass of `Model` or a direct `@dataclass(eq=False)` subclass, compares by identity. Its `repr` shows its `model_name`, any dataclass fields, and its `settings` and `profile` when set. Define `__eq__` or `__repr__` on the subclass to replace either.
 
-The best place to start is to review the source code for existing implementations, e.g. [`OpenAIChatModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).
+The best place to start is to review the source code for existing implementations, e.g. [`OpenAIChatModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai/_chat_model.py).
 
 For details on when we'll accept contributions adding new models to Pydantic AI, see the [contributing guidelines](../contributing.md#new-model-rules).
 
@@ -297,11 +299,12 @@ these categories, whichever provider it came from:
 | [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] | The provider couldn't find the model, deployment or other resource the request names, e.g. an HTTP 404. A subclass of `ModelRequestRejectedError`. |
 
 A provider's own signal decides between categories that share a status code: a 429 is a rate limit unless the
-provider says the quota is exhausted, and a 503 is only unavailable unless the provider says it's overloaded. A 400 is
-a `ModelRequestRejectedError`, or one of its subclasses when the provider says why: a `ModelContextWindowExceededError`,
-a `ModelNotFoundError` (OpenAI's Responses API sends `model_not_found` as a 400), or a `ModelAuthenticationError` (the
-Gemini API sends `API_KEY_INVALID` as a 400). Exhausted credits are a `ModelQuotaExceededError` instead, even when the
-provider sends them as a 400, as Anthropic does.
+provider says the quota is exhausted (the Gemini API names the exceeded quotas in its `RESOURCE_EXHAUSTED` error, so
+its daily quota is a `ModelQuotaExceededError`), and a 503 is only unavailable unless the provider says it's
+overloaded. A 400 is a `ModelRequestRejectedError`, or one of its subclasses when the provider says why: a
+`ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAuthenticationError` (the Gemini API sends
+`API_KEY_INVALID` as a 400). Exhausted credits or disabled billing are a `ModelQuotaExceededError` instead, even when
+the provider sends them as a 400, as Anthropic and the Gemini API do.
 
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message
@@ -366,8 +369,8 @@ print(should_retry(ModelHTTPError.for_category(ModelRateLimitError, status_code=
 [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
 [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and
 [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] are all a
-`ModelRequestRejectedError`, so `should_retry` skips them too. Under [Temporal](../durable_execution/temporal.md#activity-retries), list the same classes in
-`non_retryable_model_errors` to stop the activity from retrying them.
+`ModelRequestRejectedError`, so `should_retry` skips them too. Under [Temporal](../durable_execution/temporal.md#activity-retries), the activity
+doesn't retry them either, as they're in `non_retryable_model_errors` by default.
 
 ### HTTP errors {#handling-http-errors}
 
@@ -443,7 +446,7 @@ from pydantic_ai.capabilities import ModelFallback
 agent = Agent('{{ openai:medium }}', capabilities=[ModelFallback('{{ anthropic:medium }}')])
 ```
 
-`ModelFallback` makes each attempt within the agent's own request loop, so capabilities see the model that will serve each attempt and prepare the request for it, each attempt is [batched](../batch.md) on its own model, and under [durable execution](../durable_execution/overview.md) each attempt is a durable model operation of its own. See [Model Fallback](../capabilities/model-fallback.md) for how it works, and [Migrating from `FallbackModel`](../capabilities/model-fallback.md#migrating-from-fallbackmodel) to move an agent over.
+`ModelFallback` makes each attempt within the agent's own request loop, so capabilities see the model that will serve each attempt and prepare the request for it, each attempt is [batched](../batch.md) on its own model, and under [durable execution](../durable_execution/overview.md) each attempt is a durable model operation of its own. See [Model Fallback](../capabilities/model-fallback.md) for how it works, and [Migrating from `FallbackModel`](../capabilities/model-fallback.md#migrating-from-fallbackmodel) to move an agent over. [Recovery scopes compared](../retries.md#recovery-scopes) sets fallback beside retrying the same model and the other ways a request is attempted again.
 
 The rest of this section covers [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], which remains the way to fall back with [direct model requests](../direct.md) or a standalone model, outside an agent. Its `fallback_on` policies, failed attempts and telemetry work the same way under `ModelFallback`, so the handler examples below apply to both.
 
@@ -470,7 +473,7 @@ exception handlers, and response handlers — all of which can be sync or async.
 
     When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0` on the agent, or on each candidate model but the last. Bedrock and xAI ignore it and warn with [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], so with one of those as a candidate, set it on the other candidates. See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
 
-    To bound how long the fallback can be delayed instead, set [`request_timeout`](../timeouts.md#model-request-deadlines) in the model settings: each model gets that long across all of its attempts, and when it runs out the resulting [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] triggers the fallback to the next model, which gets a fresh deadline.
+    To bound how long the fallback can be delayed instead, set [`request_timeout`](../timeouts.md#model-request-deadlines) in the model settings: each model gets that long across all of its attempts, and when it runs out the resulting [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] triggers the fallback to the next model, which gets a fresh deadline. On a streamed request, [`first_event_timeout`](../timeouts.md#waiting-for-the-first-event) does the same for the wait until a model starts producing output, without cutting off a long response once it has.
 
 In the following example, the agent first makes a request to the OpenAI model (which fails due to an invalid API key),
 and then falls back to the Anthropic model.
@@ -636,7 +639,7 @@ The rejected responses' usage also counts when the request ends another way: a l
     Under [durable execution](../durable_execution/overview.md), a `FallbackModel` runs inside the durable model operation, and the error that ends its request reaches the workflow without its attempts, so the usage of the responses it rejected is only recorded when another model answers. [`ModelFallback`](../capabilities/model-fallback.md#durable-execution) makes each attempt a durable operation of its own and records the attempts on the workflow side, so it doesn't have this limitation.
 
 ```python {title="fallback_model_attempts.py"}
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai import Agent, ModelMessage, ModelResponse, OutputTokenLimitExceeded, TextPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
@@ -657,14 +660,10 @@ def complete(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     )
 
 
-def was_truncated(response: ModelResponse) -> bool:
-    return response.finish_reason == 'length'
-
-
 fallback_model = FallbackModel(
     FunctionModel(truncated, model_name='primary'),
     FunctionModel(complete, model_name='backup'),
-    fallback_on=was_truncated,
+    fallback_on=OutputTokenLimitExceeded,
 )
 agent = Agent(fallback_model)
 result = agent.run_sync('What is the capital of France?')
@@ -679,7 +678,7 @@ for attempt in result.response.failed_attempts or []:
     #> primary rejected RequestUsage(input_tokens=60, output_tokens=100)
 ```
 
-When the agent is [instrumented](../logfire.md), the model request (`chat`) span describes the model that answered and ends OK. Each attempt the `FallbackModel` moved on from gets its own child span, `model request attempt <model name>`, which ends with an ERROR status, the way a failed tool call gets its own span inside a successful agent run. An error is recorded on that span as an exception, and a response rejected by a [response handler](#response-based-fallback) carries its usage, cost and finish reason instead, as a `chat` span would. Each attempt span names the model it tried in its `gen_ai.provider.name` and `gen_ai.request.model` attributes, and gives its zero-based position among the request's attempts in `pydantic_ai.model_request.attempt`. With [`include_content=False`](../logfire.md#excluding-prompts-and-completions), the exception keeps only its type. The attempt span is created once the attempt has failed, so spans the tried model opens itself, such as a [decision model](decision.md)'s `decide` span, sit beside it under the `chat` span rather than inside it.
+When the agent is [instrumented](../logfire.md), the model request (`chat`) span describes the model that answered and ends OK. Each attempt the `FallbackModel` moved on from gets its own child span, `model request attempt <model name>`, which ends with an ERROR status, the way a failed tool call gets its own span inside a successful agent run. An error is recorded on that span as an exception, and a response rejected by a [response handler](#response-based-fallback), or as a refusal, carries its usage, cost and finish reason instead, as a `chat` span would. Each attempt span names the model it tried in its `gen_ai.provider.name` and `gen_ai.request.model` attributes, and gives its zero-based position among the request's attempts in `pydantic_ai.model_request.attempt`. With [`include_content=False`](../logfire.md#excluding-prompts-and-completions), the exception keeps only its type. The attempt span is created once the attempt has failed, so spans the tried model opens itself, such as a [decision model](decision.md)'s `decide` span, sit beside it under the `chat` span rather than inside it.
 
 ### Response-Based Fallback
 
@@ -738,20 +737,25 @@ print(result.output)
 !!! note
     The [agent loop](../agent.md) only acts on a finish reason when the response has no actionable
     output. A `'length'` finish reason on an empty or thinking-only response raises
-    [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] (typically the model hit
+    [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] (typically the model hit
     the token limit mid-thinking), and an empty or thinking-only response with a `'content_filter'` finish
     reason raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
     responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
-    regardless of finish reason — a tool call truncated mid-arguments is re-prompted like any other
+    regardless of finish reason: a tool call truncated mid-arguments is re-prompted like any other
     invalid-arguments failure, and only once its retry budget is exhausted does it surface as
     [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
-    `UnexpectedModelBehavior`).
+    `OutputTokenLimitExceeded`, itself an `UnexpectedModelBehavior`). The exception is
+    [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]
+    text cut off at `'length'` into JSON that doesn't parse, which raises `OutputTokenLimitExceeded` right away.
 
     All of these are raised from the agent loop, after `model.request()` has already returned
-    successfully, so no exception-based `fallback_on` can catch them — not the default
-    `fallback_on=(ModelAPIError,)` (which wouldn't match anyway, as `ContentFilterError` inherits from
-    `UnexpectedModelBehavior`, not [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]), and not an
-    explicit `fallback_on=(ContentFilterError,)` either. To fall back on a bad finish reason instead,
+    successfully, so an exception-based `fallback_on` can't catch them: not the default
+    `fallback_on=(ModelAPIError,)`, which wouldn't match anyway, as `ContentFilterError` inherits from
+    `UnexpectedModelBehavior`, not [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. The exceptions are
+    `ContentFilterError` and `OutputTokenLimitExceeded` themselves: naming `ContentFilterError` in `fallback_on`
+    rejects any response with a `'content_filter'` finish reason, and naming `OutputTokenLimitExceeded` any
+    response with a `'length'` finish reason, empty or not, so the next model is tried instead, as
+    [`ModelFallback`](../capabilities/model-fallback.md#when-to-fall-back) does by default. To fall back on another bad finish reason instead,
     use a response handler (see the [example above](#finish-reason-example)) that inspects
     [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason]: it rejects the response inside
     `FallbackModel` before the agent loop sees it, so the next model is tried instead of an exception
@@ -759,6 +763,9 @@ print(result.output)
     ones the agent loop would have accepted. To instead raise on `content_filter` responses that still
     carry partial or refusal text, add the
     [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError] capability.
+    [Falling back when a model refuses](../capabilities/model-fallback.md#refusals) puts this together
+    for safety refusals, and [Falling back when the output is cut off](../capabilities/model-fallback.md#token-limit)
+    for the token limit.
 
 #### Native Tool Failure Example
 
