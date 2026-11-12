@@ -332,7 +332,11 @@ one that is not.
   (`ui/menus/slash_search.py`), not a bare `.searchable()`: plain letters stay
   hotkeys, `/` starts a search, Esc leaves it. Pass single-key actions as its
   `hotkeys` so they type into the search instead of firing while the user
-  searches.
+  searches. For searchable `FieldMenu` lists, use `slash_search` only when a row offers Space cycling.
+  Eligible rows have multiple declared choices and no action/submenu mapping.
+  Cycle choices in declaration order and wrap. Start at the first choice when the current value is absent or unlisted.
+  Keep searchable field lists without eligible rows on type-to-filter with uppercase `R` reset.
+  Keep nonsearchable field lists without search and with lowercase `r` reset.
 - A widget opened mid-run (including the inline `ask_user` picker) goes inside
   `async with host.full_screen()`, which flushes streamed text and suspends the
   editor's input reader first, preserving its draft. Slash-command handlers
@@ -514,6 +518,10 @@ The resume browser is a focused exception to the single `MenuBuilder` convention
 it needs independently focused projects/sessions and two-line cards. Keep its
 frame pure, inject keys/size/IO, use Termflow terminal ownership and layout, and
 run through `menu_worker`. Metadata refreshes must preserve selection by ID.
+`/tasks` is the other exception: a `termflow.live` app, because a transcript that
+streams beside an input needs a frame loop. Its actions are Ctrl chords, since
+letters type the message. Keep `TaskView` free of the terminal and the event loop:
+`snapshot`, `act` and `size` are injected, and tests pass `open_tasks` a scripted `run`.
 History-changing plugins use `await conversation.commit_messages`, not the legacy
 in-memory `replace_messages`, so exiting immediately after `/compact` is durable.
 

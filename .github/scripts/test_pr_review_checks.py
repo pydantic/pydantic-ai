@@ -80,11 +80,19 @@ def test_specialist_owns_its_files_and_general_reviews_the_rest() -> None:
     }
 
 
-@pytest.mark.parametrize('backend', ['docker_sandbox', 'smol_sandbox', 'boxlite_sandbox', 'e2b_sandbox'])
+@pytest.mark.parametrize(
+    'backend', ['docker_container', 'docker_sandbox', 'smol_sandbox', 'boxlite_sandbox', 'e2b_sandbox']
+)
 def test_sandboxes_check_owns_every_sandbox_backend(backend: str) -> None:
     """Every sandbox backend, local or cloud, gets the sandbox review."""
     path = f'src/pydantic_ai_harness/pydantic_ai_harness/{backend}/_sandbox.py'
     assert select([_file(path)]) == {'sandboxes': [path]}
+
+
+def test_ui_check_owns_the_clai2_live_session_socket() -> None:
+    """The same-UID control socket is a local input path, reviewed with CLAI 2's other local control surface."""
+    path = 'src/pydantic_clai2/pydantic_clai2/runtime/live_registry.py'
+    assert select([_file(path)]) == {'ui': [path]}
 
 
 @pytest.mark.parametrize(

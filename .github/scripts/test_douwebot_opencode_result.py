@@ -53,17 +53,17 @@ def test_line_separator_in_model_text_stays_in_its_event(tmp_path: Path) -> None
         f'```\n{_RESULT}\n```',
         f'\n  ```json\n{json.dumps(json.loads(_RESULT), indent=2)}\n```\n',
         '```json\n{"verdict":"APPROVE","comments":[],"discussion":"Use:\\n```py\\nx = 1\\n```"}\n```',
+        f'Here is the review:\n```json\n{_RESULT}\n```',
     ],
 )
-def test_one_surrounding_code_fence_is_stripped(tmp_path: Path, text: str) -> None:
-    """Accept a final JSON object that the model wrapped in one Markdown code fence."""
+def test_code_fence_that_ends_the_answer_is_unwrapped(tmp_path: Path, text: str) -> None:
+    """Accept a final JSON object in the Markdown code fence that ends the answer."""
     assert review_result(_stream(tmp_path, text)).verdict == 'APPROVE'
 
 
 @pytest.mark.parametrize(
     'text',
     [
-        f'Here is the review:\n```json\n{_RESULT}\n```',
         f'```json\n{_RESULT}\n```\nLet me know if you need more.',
         f'```json\n```json\n{_RESULT}\n```\n```',
         f'```json\n{_RESULT}',
@@ -71,7 +71,7 @@ def test_one_surrounding_code_fence_is_stripped(tmp_path: Path, text: str) -> No
     ],
 )
 def test_fence_with_other_text_still_fails(tmp_path: Path, text: str) -> None:
-    """Only a bare fence is unwrapped; prose, nested or unterminated fences stay invalid."""
+    """Text after the fence, nested or unterminated fences stay invalid."""
     with pytest.raises(ValidationError):
         review_result(_stream(tmp_path, text))
 

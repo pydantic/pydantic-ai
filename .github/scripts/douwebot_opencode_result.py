@@ -9,15 +9,19 @@ import sys
 from pathlib import Path
 
 from publish_douwebot_review import ReviewResult
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 _EVENT = TypeAdapter(dict[str, object])
-# Some models wrap the requested JSON object in one Markdown code fence despite the prompt.
-_FENCE = re.compile(r'\A\s*```[\w+-]*[ \t]*\n(.*)\n[ \t]*```\s*\Z', re.DOTALL)
+# Some models write prose, then the requested JSON object in a Markdown code fence, despite the prompt.
+# The last fenced block is the answer when it ends the text; text after it still fails.
+_FENCE = re.compile(r'\A(?:.*\n)?[ \t]*```[\w+-]*[ \t]*\n(.*?)\n[ \t]*```\s*\Z', re.DOTALL)
 
 
 def final_text(path: Path) -> str:
-    """Return the final assistant text only after a normal completed stream."""
+    """Return the final assistant text only after a normal completed stream.
+
+    The `ValueError`s it raises itself carry fixed messages, which `rejection_reason` prints to public job logs.
+    """
     # Only LF ends an event: `JSON.stringify` leaves U+2028 and U+2029 raw, and `splitlines` would split at them.
     events = [_EVENT.validate_json(line) for line in path.read_text(encoding='utf-8').split('\n') if line]
     if not events or events[-1].get('type') != 'step_finish':
@@ -42,12 +46,23 @@ def final_text(path: Path) -> str:
     raise ValueError('OpenCode review did not return text')
 
 
+def unfenced(text: str) -> str:
+    """Return the fenced block that ends `text`, or `text` itself when no fence ends it."""
+    return fenced[1] if (fenced := _FENCE.match(text)) else text
+
+
+def rejection_reason(error: ValueError) -> str:
+    """Say why `final_text`, or validation of the text it returned, rejected a stream, without repeating the stream."""
+    if isinstance(error, ValidationError):
+        # A validation error's message repeats its input, which can be model text, and job logs are public.
+        return 'validation failed: ' + ', '.join(sorted({detail['type'] for detail in error.errors()}))
+    # A subclass, such as `UnicodeDecodeError`, can describe its input.
+    return str(error) if type(error) is ValueError else type(error).__name__
+
+
 def review_result(path: Path) -> ReviewResult:
     """Return the final assistant result only after a normal completed stream."""
-    text = final_text(path)
-    if fenced := _FENCE.match(text):
-        text = fenced[1]
-    return ReviewResult.model_validate_json(text)
+    return ReviewResult.model_validate_json(unfenced(final_text(path)))
 
 
 def main() -> None:

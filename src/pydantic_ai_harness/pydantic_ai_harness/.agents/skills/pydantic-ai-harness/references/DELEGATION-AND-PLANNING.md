@@ -202,9 +202,9 @@ orchestrator = Agent(
   its observer then gets every task event as `DelegationTaskEvent(event=...)`.
 - `TaskControl` fields `auto_background_after=None`, `max_running_tasks=None`, `forward_events=False`
   are opt-in.
-- Every step is a `SubAgentMessage` capability event (`TaskAssignedEvent`, `TaskQuestionEvent`,
+- Every step is a `SubAgentMessageEvent` capability event (`TaskAssignedEvent`, `TaskQuestionAskedEvent`,
   `TaskCompletedEvent`, ...) plus `TaskBackgroundedEvent`; `@on_event` listeners can rewrite or
-  `veto()` the ones sent to a task, and answer a `TaskQuestionEvent` by setting `answer`.
+  `veto()` the ones sent to a task, and answer a `TaskQuestionAskedEvent` by setting `answer`.
 - Remote agents: `TaskControl(remote_agents=[RemoteSubAgent(name=...)], transport=...)` (`SubAgentTransport`;
   `InMemoryTransport` in process), served by `SubAgentWorker(agents={name: agent}, transport=..., deps=...)`
   in the other process. `accept_timeout=30.0` fails a task no worker picks up.
@@ -217,6 +217,13 @@ orchestrator = Agent(
   `UserError` under durability: task control with `include_self`, `remote_agents` or `forward_events`,
   `auto_background_after` or `max_running_tasks` outside Temporal, other durable engines, and a bound
   `DelegationTasks` owner.
+- Non-`self` delegations run in an activity on Temporal and inline in the workflow on DBOS. To keep a delegate's
+  own durability, add `SetToolMetadata(tools=['delegate_task'], temporal={'child_workflow': {}})` (or `dbos=...`):
+  every delegate must be durable on that engine, and on Temporal registered with the worker (`AgentPlugin`).
+  Combined with `include_self`, `inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`,
+  `dynamic_agents`, `task_control`, or `max_calls`, a delegation raises `UserError`.
+  The delegate's usage isn't reliably counted in the parent's usage or bounded by its limits.
+  Depth isn't carried across, so nested opt-ins reset `max_depth` per child workflow.
 
 ## DelegationReports
 
@@ -241,6 +248,9 @@ reports = DelegationReports(tasks, conversation_id='conversation-1')
 - For a host-started, report-only continuation, use `priority='asap'` with `agent.run(None, ...)`, so
   the reports reach the first model request with no synthetic user prompt.
 - Reports are marked delivered once consumed and are not replayed. The host owns idle wake-up.
+- With `DelegationTasks(directory=...)`, a damaged saved task file is skipped and listed in
+  `owner.problems` instead of stopping `opened()`. `await DelegationTasks.discover(directory)` reads the
+  saved task tree (`tasks` by ID, plus `problems`) without opening an owner or resuming anything.
 
 ## DynamicWorkflow
 
@@ -371,10 +381,10 @@ serialization and merging consecutive requests. The Vercel AI and AG-UI message 
 this metadata. A history loaded back from them keeps the text and its framing, but the follow-up
 is then an ordinary user prompt. `ToolReturn.metadata` is discarded.
 
-The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
+The follow-up wraps what the tool returned in `<pyai:tool_result tool_name="..." tool_call_id="...">`
 tags, the same tags Pydantic AI puts around tool files it sends on the user channel. This tells the
 model the text is the tool's output rather than something the user said, and which pending call it
-completes. A closing `</tool_result>` tag inside the output is escaped, so the output cannot end the
+completes. A closing `</pyai:tool_result>` tag inside the output is escaped, so the output cannot end the
 frame early. A failed call is framed the same way with `outcome="failed"`, wrapping the message from
 `ModelRetry` or `ToolFailed`.
 
