@@ -65,7 +65,8 @@ class PGTaskOperationBackend(JournalCallableOperationBackend[None]):
         assert steps is not None
         if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId | ModelCancelSuspendedResponseId):
             # The task's `retry_delay` is set where its handler is registered, out of reach here, so a wait is
-            # capped at a minute. Each wait counts against the task's remaining attempts.
+            # capped at a minute. Each model request waits at most as many times as the task has attempts left
+            # after the current one.
             return await step_waiting_retry_after(
                 name,
                 body,
