@@ -1617,6 +1617,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     citations=IsCitationList(),
                 ),
                 next_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=1,
@@ -1627,6 +1628,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     provider_name='google',
                 ),
                 previous_part_kind='text',
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=1,
@@ -1637,6 +1639,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     provider_name='google',
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=2,
@@ -1674,6 +1677,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     provider_name='google',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
         ]
     )
@@ -1965,6 +1969,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     tool_call_id=IsStr(),
                     provider_name='google',
                 ),
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=0,
@@ -1975,6 +1980,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     provider_name='google',
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=1,
@@ -1991,6 +1997,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     provider_name='google',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=2,
@@ -2016,6 +2023,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
+                canonical_system='google',
             ),
         ]
     )
@@ -2498,6 +2506,7 @@ I've identified the core user intent: to learn safe street-crossing. Now, I'm fo
                     provider_details={'thought_signature': IsStr()},
                 ),
                 previous_part_kind='thinking',
+                canonical_system='google',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
@@ -2558,6 +2567,7 @@ The most important rule is to **stay alert and be predictable**. Always assume a
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
         ]
     )
@@ -5051,6 +5061,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         tool_call_id=IsStr(),
                         provider_name='google',
                     ),
+                    canonical_system='google',
                 ),
                 PartEndEvent(
                     index=0,
@@ -5061,6 +5072,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         provider_name='google',
                     ),
                     next_part_kind='text',
+                    canonical_system='google',
                 ),
                 PartStartEvent(
                     index=1,
@@ -5094,6 +5106,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         citations=IsCitationList(),
                     ),
                     next_part_kind='builtin-tool-return',
+                    canonical_system='google',
                 ),
                 PartStartEvent(
                     index=2,
@@ -5110,6 +5123,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         provider_name='google',
                     ),
                     previous_part_kind='text',
+                    canonical_system='google',
                 ),
             ]
         )
@@ -6422,6 +6436,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=0,
@@ -6432,6 +6447,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(

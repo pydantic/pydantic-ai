@@ -1201,7 +1201,10 @@ class AgentRunResult(Generic[OutputDataT]):
             conversation_id=self.conversation_id,
             deferred_tool_requests=(
                 DeferredToolRequests(
-                    calls=list(output.calls), approvals=list(output.approvals), metadata=dict(output.metadata)
+                    calls=list(output.calls),
+                    approvals=list(output.approvals),
+                    metadata=dict(output.metadata),
+                    _kinds=dict(output._kinds),  # pyright: ignore[reportPrivateUsage]
                 )
                 if isinstance(output, DeferredToolRequests)
                 else None
