@@ -194,10 +194,9 @@ Run outside a durable handler, for example in local development, the same agent 
 
 Under Temporal, add [`TemporalDurability`](../durable_execution/temporal.md) and run the agent from a workflow. The workflow records the answer and waits without holding a worker, for as long as the timeout allows. The token names the workflow, and the approval endpoint resolves it by signalling the workflow with [`resolve_external_event`][pydantic_ai.durable_exec.temporal.resolve_external_event] from `pydantic_ai.durable_exec.temporal`, which takes a Temporal client. The workflow declares no signal for it:
 
-```python {title="request_input_temporal.py" test="skip"}
+```python {title="support_agent.py" test="skip"}
 from datetime import timedelta
 
-from temporalio import workflow
 from temporalio.client import Client
 
 from pydantic_ai import Agent, DeferredToolRequests, RunContext
@@ -221,14 +220,6 @@ def issue_refund(order_id: str, amount: int) -> str:
     return f'Refunded ${amount} for order {order_id}'
 
 
-@workflow.defn
-class SupportWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await agent.run(prompt)
-        return result.output
-
-
 async def decide(client: Client, token: str, tool_call_ids: list[str], approved: bool) -> None:  # (2)!
     decision = {'approvals': {tool_call_id: approved for tool_call_id in tool_call_ids}}
     await resolve_external_event(client, token, decision)
@@ -237,8 +228,25 @@ async def decide(client: Client, token: str, tool_call_ids: list[str], approved:
 1. Write the token and `requests` to where the approver will see them, such as a database table your admin UI lists, or a Slack message whose buttons carry the token. `ask` runs in a local activity on the worker running the workflow, so it can do I/O, and it gets the run's own context, so `ctx.deps` doesn't have to be serializable.
 2. Runs in your approval endpoint, with a client connected with [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] to the workflow's namespace.
 
+The workflow lives in its own module and imports the agent under `workflow.unsafe.imports_passed_through()`:
+
+```python {title="support_workflow.py" test="skip" lint="skip"}
+from temporalio import workflow
+
+with workflow.unsafe.imports_passed_through():
+    from support_agent import agent
+
+
+@workflow.defn
+class SupportWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await agent.run(prompt)
+        return result.output
+```
+
 !!! warning "Import the agent with `imports_passed_through()`"
-    Temporal's workflow sandbox re-imports the workflow's modules, and `ask` comes from the agent the workflow runs. Defined in the workflow module as above, `ask` is the sandbox's copy, with the sandbox's own copies of the clients and state it uses. Define the agent and `ask` in a module of their own, and import it in the workflow module under `workflow.unsafe.imports_passed_through()`, so `ask` uses the worker's clients. See [Waiting for approvals and answers](../durable_execution/temporal.md#waiting-for-approvals-and-answers).
+    Temporal's workflow sandbox re-imports the workflow's modules, and `ask` comes from the agent the workflow runs. Imported without `imports_passed_through()`, or defined in the workflow module, `ask` is the sandbox's copy, with the sandbox's own copies of the clients and state it uses, not the worker's. See [Waiting for approvals and answers](../durable_execution/temporal.md#waiting-for-approvals-and-answers).
 
 An `ask` that answers in place works the same on Temporal: its answer is recorded, and the workflow continues without waiting. See [Waiting for approvals and answers](../durable_execution/temporal.md#waiting-for-approvals-and-answers) for what the workflow history records.
 
