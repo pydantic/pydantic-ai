@@ -76,14 +76,14 @@ agent = Agent(
 
 To set the metadata on tools you don't define yourself, such as a capability's, use [`SetToolMetadata(tools=[...], durable=False)`][pydantic_ai.capabilities.SetToolMetadata]. `durable=True` puts back the default.
 
-Only async function tools can leave their durable unit this way. On a sync tool, an [MCP](../mcp/client.md) tool or a dynamic toolset's tool that the engine runs in a durable unit, `{'durable': False}` raises a [`UserError`][pydantic_ai.exceptions.UserError] when the tool is called, because those run in a thread or perform I/O.
+Only async function tools can leave their durable unit this way. On a sync tool, an [MCP](../mcp/client.md) tool or a dynamic toolset's tool that the engine runs in a durable unit, `{'durable': False}` raises a [`UserError`][pydantic_ai.exceptions.UserError] when the tool is called, because those run in a thread or perform I/O. So does a value other than `True` or `False`. DBOS runs function tools in workflow code without wrapping them, so it checks neither on them: keep an agent you may move to another engine to async tools.
 
 An engine's own metadata key wins when a tool sets it, so `metadata={'temporal': ActivityConfig(...), 'durable': False}` still runs the tool in a Temporal activity. Engine keys also accept the engine's unit config, and some allow tools the engine-neutral key refuses. `{'durable': False}` in turn wins over per-tool config set in code, such as Azure Durable Task's and Render Workflows' `resolve_tool_options`:
 
 | Engine | Where `{'durable': False}` runs the tool | Engine's own key |
 |---|---|---|
 | [Temporal](./temporal.md#per-tool-activity-config) | workflow code | `'temporal'` |
-| [DBOS](./dbos.md) | workflow code, where DBOS already runs function tools | none; `{'dbos': {'child_workflow': ...}}` selects a [child workflow](./dbos.md#child-workflows) |
+| [DBOS](./dbos.md) | workflow code, where DBOS already runs function tools, so it doesn't check the key on them | none; `{'dbos': {'child_workflow': ...}}` selects a [child workflow](./dbos.md#child-workflows) |
 | [Prefect](./prefect.md) | flow code | `'prefect'` |
 | [AWS Lambda](../harness/aws-lambda.md) | handler code, outside any step | `'aws_lambda'` |
 | [Azure Durable Task](../harness/azure-durable-task.md) | orchestrator code | `'azure_durable_task'` |

@@ -2,8 +2,8 @@
 
 The operation parameters, results and the reconstructed `RunContext` come from the public
 `pydantic_ai.durable_exec` builder surface. Private context attributes, the effective
-tracer lookup and the `durable` tool metadata reader remain here. `test_local_runtime_live.py` checks context, usage, events and
-tracing in separate Render processes.
+tracer lookup and the `durable` tool metadata reader remain here. `test_local_runtime_live.py`
+checks context, usage, events and tracing in separate Render processes.
 
 Public backend contract: https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/
 """

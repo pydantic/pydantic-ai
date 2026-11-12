@@ -1164,8 +1164,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Whether a function tool's engine-neutral `{'durable': False}` metadata runs it outside the durable unit.
 
         The metadata wins over the engine backend's per-tool config. Every engine built on this base applies the
-        same rules to the tools it wraps, so the metadata means the same thing whichever of them runs the agent:
-        only async function tools can opt out.
+        same rule to the function tools it wraps: only async ones can opt out. An engine that doesn't wrap
+        function tools, such as DBOS, already runs them in workflow code and never reads the metadata for them.
         """
         if not self._durable_metadata_opts_out(tool, tool_name):
             return False
