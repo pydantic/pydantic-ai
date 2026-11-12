@@ -1566,7 +1566,10 @@ async def test_failed_tool_return_image_keeps_order_and_one_error_wrapper(allow_
 
 
 async def test_failed_tool_return_keeps_a_structured_item_beside_an_image(allow_model_requests: None):
-    """A dict in a failed return with an image goes in the error wrapper as the JSON object it is without the image."""
+    """A dict in a failed return with an image goes in the error wrapper as the JSON object it is without the image.
+
+    Mocks the transport: the cassette matchers ignore the request body, so a recording would not pin it.
+    """
     image = BinaryContent(b'tool-image', media_type='image/png')
     history: list[ModelMessage] = [
         ModelRequest.user_text_prompt('Check the weather.'),
@@ -1608,7 +1611,10 @@ class InfAsString(BaseModel):
 async def test_failed_tool_return_serializes_items_beside_an_image_as_alone(
     allow_model_requests: None, outcome: Literal['failed', 'retried']
 ):
-    """Each item beside an image is serialized as it is alone: own settings, keys as dumped, no extra nesting level."""
+    """Each item beside an image is serialized as it is alone: own settings, keys as dumped, no extra nesting level.
+
+    Mocks the transport: the cassette matchers ignore the request body, so a recording would not pin it.
+    """
     deep: object = {'leaf': 1}
     for _ in range(253):
         deep = {'child': deep}
