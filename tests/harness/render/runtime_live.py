@@ -42,6 +42,9 @@ class LocalTaskRun(BaseModel):
     results: list[object] | None = None
 
 
+READINESS_WAIT_TIMEOUT = 300
+"""Bounds a wait for a run the test started, so it only ever catches a hang, never a slow runner."""
+
 _JSON_VALUE = TypeAdapter(object)
 _LOCAL_TASKS = TypeAdapter(list[LocalTask])
 _LOCAL_RUN = TypeAdapter(LocalTaskRun)
@@ -126,12 +129,16 @@ class LocalRenderRuntime:
         """Return local runs for one registered task name."""
         return _LOCAL_RUNS.validate_python(self.cli(['runs', 'list', task_name]))
 
-    def wait_for_run(self, run_id: str, *, timeout: float = 60) -> LocalTaskRun:
-        """Poll a run until the local task server reports a terminal state."""
+    def wait_for_run(self, run_id: str, *, timeout: float = READINESS_WAIT_TIMEOUT) -> LocalTaskRun:
+        """Poll a run until the local task server reports a terminal state, with its results once it completed.
+
+        The dev server maps a run for `runs show` outside its store's lock, reading the run's output before its
+        status, so a show that overlaps the run's completion can report it completed with no results yet.
+        """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             run = _LOCAL_RUN.validate_python(self.cli(['runs', 'show', run_id]))
-            if run.status in {'completed', 'failed', 'canceled'}:
+            if run.status in {'failed', 'canceled'} or (run.status == 'completed' and run.results is not None):
                 return run
             if self.process.poll() is not None:
                 break
