@@ -229,10 +229,12 @@ def test_mid_conversation_system_prompt_announced():
     agent.run_sync('2', message_history=history)
     assert create_message.call_args.kwargs['system_prompt'] == f'{ANNOUNCEMENT}\n\nstanding block'
     sampling_messages = create_message.call_args.args[0]
-    assert any(
-        isinstance(message.content, TextContent) and message.content.text == '<system>mid-conversation block</system>'
-        for message in sampling_messages
-    )
+    assert [(message.role, message.content) for message in sampling_messages] == [
+        ('user', TextContent(type='text', text='1')),
+        ('user', TextContent(type='text', text='<system>mid-conversation block</system>')),
+        ('assistant', TextContent(type='text', text='text content')),
+        ('user', TextContent(type='text', text='2')),
+    ]
 
 
 def test_no_announcement_without_system_block():
@@ -245,7 +247,9 @@ def test_no_announcement_without_system_block():
     agent.run_sync('1')
     assert create_message.call_args.kwargs['system_prompt'] == ''
     sampling_messages = create_message.call_args.args[0]
-    assert all(ANNOUNCEMENT not in message.content.text for message in sampling_messages)
+    assert [(message.role, message.content) for message in sampling_messages] == [
+        ('user', TextContent(type='text', text='1'))
+    ]
 
 
 def test_assistant_text_history_complex():
@@ -464,6 +468,8 @@ async def test_append_instruction_baseline_is_tagged_like_its_updates():
 
     first = await agent.run('Continue.', deps='A')
     await agent.run('Continue.', deps='B', message_history=first.all_messages())
+    # `map_from_pai_messages` puts each request's instructions ahead of its parts, so the announcement follows the
+    # first request's instructions here, where other adapters put it first. Not intended: see #8768.
     assert create_message.call_args.kwargs['system_prompt'] == snapshot("""\
 <pyai:context id="agent:state">
 A
