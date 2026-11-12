@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -309,7 +310,8 @@ def export_span(
     try:
         with urllib.request.urlopen(request, timeout=30):
             pass
-    except OSError as error:
+    # `main` exports while a failed review's own exception propagates, so a failed export must not replace it.
+    except (OSError, ValueError, http.client.HTTPException) as error:
         print(f'::warning::Could not export the review span: {error}')
 
 

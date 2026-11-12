@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import http.client
 import json
 import os
 import re
@@ -519,6 +520,31 @@ def test_review_without_a_logfire_token_exports_nothing(
         '::warning::LOGFIRE_TOKEN is empty, so this review exports no telemetry.'
         in capsys.readouterr().out.splitlines()
     )
+
+
+@pytest.mark.parametrize(
+    'error',
+    [ConnectionResetError('reset'), http.client.BadStatusLine('garbled'), ValueError('unknown url type')],
+    ids=['connection', 'http', 'url'],
+)
+def test_failed_export_never_replaces_the_reviews_own_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    exported: list[dict[str, object]],
+    error: Exception,
+) -> None:
+    """A span export that fails while the review's own exception propagates only warns."""
+    _fake_opencode(tmp_path, monkeypatch, 'exit 1')
+    monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
+
+    def urlopen(request: urllib.request.Request, timeout: int) -> contextlib.nullcontext[None]:
+        raise error
+
+    monkeypatch.setattr(run_pr_review_check.urllib.request, 'urlopen', urlopen)
+    with pytest.raises(subprocess.CalledProcessError):
+        run_pr_review_check.main()
+    assert f'::warning::Could not export the review span: {error}' in capsys.readouterr().out.splitlines()
 
 
 def test_review_that_fails_before_opencode_runs_exports_its_span(
