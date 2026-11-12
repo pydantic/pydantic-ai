@@ -814,6 +814,48 @@ async def test_a_pixel_scroll_note_reads_the_clicks_by_the_counts_kept_on_the_ca
     )
 
 
+@pytest.mark.parametrize(
+    'counts, scroll_y',
+    [
+        # Each action becomes at least one tool action, so these counts came from somewhere else.
+        pytest.param([3, -1], 340, id='negative-count'),
+        pytest.param([2, 0], 340, id='zero-count'),
+        pytest.param([1, 1], '340', id='pixels-not-a-number'),
+    ],
+)
+async def test_a_stored_call_no_mapping_could_make_adds_no_scroll_note(
+    allow_model_requests: None, counts: list[int], scroll_y: Any
+) -> None:
+    client = MockOpenAIResponses.create_mock(_done())
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    item = {
+        **_COMPUTER_ITEM,
+        'actions': [
+            {'type': 'click', 'button': 'left', 'x': 1, 'y': 2},
+            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': scroll_y},
+        ],
+    }
+    click: dict[str, Any] = {'type': 'click', 'x': 1, 'y': 2, 'button': 'left', 'modifiers': []}
+    scroll: dict[str, Any] = {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 3, 'modifiers': []}
+    result = ToolReturnPart(
+        'computer',
+        ['Ran 2 actions.', _SCREEN],
+        tool_call_id='call_1',
+        metadata={'performed': 2},
+        tool_kind=COMPUTER_KIND.id,
+    )
+    history = _computer_history({'actions': [click, scroll]}, item, result, computer_action_counts=counts)
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    await model.request(
+        history,
+        None,
+        ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
+
+    (request,) = get_mock_responses_kwargs(client)
+    assert [item['content'] for item in request['input'] if item.get('role') == 'user'][1:] == []
+
+
 @pytest.mark.parametrize('native', [True, False], ids=['native', 'opted-out-since'])
 async def test_a_stored_computer_call_is_answered_as_one_whatever_its_arguments_or_the_tool_now(
     allow_model_requests: None, native: bool
