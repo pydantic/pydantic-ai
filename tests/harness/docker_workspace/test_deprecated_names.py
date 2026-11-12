@@ -9,7 +9,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai_harness import HarnessDeprecationWarning
-from pydantic_ai_harness.docker_container import DockerContainer, DockerContainerBackend
+from pydantic_ai_harness.docker_workspace import DockerWorkspace, DockerWorkspaceBackend
 
 
 def test_shim_warns_and_aliases_old_names() -> None:
@@ -20,12 +20,12 @@ def test_shim_warns_and_aliases_old_names() -> None:
         shim = importlib.import_module('pydantic_ai_harness.docker_sandbox')
 
     with pytest.warns(
-        HarnessDeprecationWarning, match=r'renamed to `pydantic_ai_harness\.docker_container`.*security sandbox'
+        HarnessDeprecationWarning, match=r'renamed to `pydantic_ai_harness\.docker_workspace`.*security sandbox'
     ):
         importlib.reload(shim)
 
-    assert issubclass(shim.DockerSandbox, DockerContainer)
-    assert shim.DockerSandboxBackend is DockerContainerBackend
+    assert issubclass(shim.DockerSandbox, DockerWorkspace)
+    assert shim.DockerSandboxBackend is DockerWorkspaceBackend
 
 
 def test_old_spec_block_name_loads() -> None:
@@ -38,6 +38,6 @@ def test_old_spec_block_name_loads() -> None:
         custom_capability_types=[DockerSandbox],
     )
 
-    assert [c.image for c in agent.root_capability.capabilities if isinstance(c, DockerContainer)] == [
+    assert [c.image for c in agent.root_capability.capabilities if isinstance(c, DockerWorkspace)] == [
         'python:3.13-slim'
     ]

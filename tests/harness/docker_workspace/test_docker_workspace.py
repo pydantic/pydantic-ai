@@ -1,4 +1,4 @@
-"""Tests for `DockerContainerBackend` and the `DockerContainer` capability, against a fake `docker` that runs commands locally."""
+"""Tests for `DockerWorkspaceBackend` and the `DockerWorkspace` capability, against a fake `docker` that runs commands locally."""
 
 from __future__ import annotations
 
@@ -21,14 +21,14 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.docker_container import DockerContainer, DockerContainerBackend
-from pydantic_ai_harness.docker_container._backend import _WRAPPER  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness.docker_workspace import DockerWorkspace, DockerWorkspaceBackend
+from pydantic_ai_harness.docker_workspace._backend import _WRAPPER  # pyright: ignore[reportPrivateUsage]
 
 from ._fake_docker import FakeDocker, install_fake_docker
 
 pytestmark = [
     pytest.mark.anyio,
-    pytest.mark.skipif(os.name != 'posix', reason='`DockerContainerBackend` runs `docker` as a POSIX subprocess'),
+    pytest.mark.skipif(os.name != 'posix', reason='`DockerWorkspaceBackend` runs `docker` as a POSIX subprocess'),
 ]
 
 
@@ -45,7 +45,7 @@ def container_dir(tmp_path: Path) -> Path:
 
 
 async def test_first_use_runs_docker_run_with_the_configured_options(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerContainerBackend(
+    backend = DockerWorkspaceBackend(
         image='python:3.13-slim',
         working_dir=str(container_dir),
         allow_internet_access=False,
@@ -63,7 +63,7 @@ async def test_first_use_runs_docker_run_with_the_configured_options(docker: Fak
 
 
 async def test_a_calls_env_goes_on_top_of_the_backends(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerContainerBackend(
+    backend = DockerWorkspaceBackend(
         image='image', working_dir=str(container_dir), env={'A': 'backend', 'B': "it's $HOME"}
     )
 
@@ -73,7 +73,7 @@ async def test_a_calls_env_goes_on_top_of_the_backends(docker: FakeDocker, conta
 
 
 async def test_new_containers_keep_dockers_default_network(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerContainerBackend(image='image', working_dir=str(container_dir))
+    backend = DockerWorkspaceBackend(image='image', working_dir=str(container_dir))
 
     await backend.working_dir()
 
@@ -81,7 +81,7 @@ async def test_new_containers_keep_dockers_default_network(docker: FakeDocker, c
 
 
 async def test_a_container_that_failed_to_start_keeps_its_ref(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerContainerBackend(image='unstartable-image', working_dir=str(container_dir))
+    backend = DockerWorkspaceBackend(image='unstartable-image', working_dir=str(container_dir))
     with pytest.raises(WorkspaceUnavailableError, match='port is already allocated'):
         await backend.working_dir()
 
@@ -91,7 +91,7 @@ async def test_a_container_that_failed_to_start_keeps_its_ref(docker: FakeDocker
 async def test_a_create_that_made_no_container_leaves_no_ref_and_is_retried(
     docker: FakeDocker, container_dir: Path
 ) -> None:
-    backend = DockerContainerBackend(image='flaky-image', working_dir=str(container_dir))
+    backend = DockerWorkspaceBackend(image='flaky-image', working_dir=str(container_dir))
     with pytest.raises(WorkspaceUnavailableError, match=r'could not create a container from flaky-image: .*TLS'):
         await backend.working_dir()
     assert backend.ref is None
@@ -102,7 +102,7 @@ async def test_a_create_that_made_no_container_leaves_no_ref_and_is_retried(
 
 
 async def test_a_cancelled_create_is_retried_under_the_same_name(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerContainerBackend(image='image', working_dir=str(container_dir), docker_args=['--fake-hang'])
+    backend = DockerWorkspaceBackend(image='image', working_dir=str(container_dir), docker_args=['--fake-hang'])
     with anyio.move_on_after(0.5) as scope:
         await backend.working_dir()
     assert scope.cancelled_caught and backend.ref is not None
@@ -116,7 +116,7 @@ async def test_a_cancelled_create_is_retried_under_the_same_name(docker: FakeDoc
 async def test_a_create_cancelled_after_docker_made_the_container_keeps_that_container(
     docker: FakeDocker, container_dir: Path
 ) -> None:
-    backend = DockerContainerBackend(image='image', working_dir=str(container_dir), docker_args=['--fake-hang-late'])
+    backend = DockerWorkspaceBackend(image='image', working_dir=str(container_dir), docker_args=['--fake-hang-late'])
     with anyio.move_on_after(0.5) as scope:
         await backend.working_dir()
     assert scope.cancelled_caught and backend.ref is not None
@@ -130,12 +130,12 @@ async def test_a_silent_docker_failure_reports_its_exit_code(docker: FakeDocker,
     docker.add_container('silent', container_dir)
 
     with pytest.raises(WorkspaceUnavailableError, match='`docker exec` exited with code 1'):
-        await DockerContainerBackend(ref=WorkspaceRef(provider='docker', id='silent')).run(['true'])
+        await DockerWorkspaceBackend(ref=WorkspaceRef(provider='docker', id='silent')).run(['true'])
 
 
 async def test_an_unwritable_pid_directory_is_unavailable(docker: FakeDocker, container_dir: Path) -> None:
     docker.add_container('readonly', container_dir)
-    backend = DockerContainerBackend(ref=WorkspaceRef(provider='docker', id='readonly'), working_dir=str(container_dir))
+    backend = DockerWorkspaceBackend(ref=WorkspaceRef(provider='docker', id='readonly'), working_dir=str(container_dir))
 
     with pytest.raises(WorkspaceUnavailableError, match=r'cannot write .*: /run/pydantic-ai must be writable'):
         await backend.run(['true'])
@@ -150,7 +150,7 @@ async def test_a_command_cannot_forge_its_exit_status(
         return 'feedface'
 
     monkeypatch.setattr(secrets, 'token_hex', token_hex)
-    backend = DockerContainerBackend(image='image', working_dir=str(container_dir))
+    backend = DockerWorkspaceBackend(image='image', working_dir=str(container_dir))
     forged = r'printf "\n__pydantic_ai_docker_done__feedface:0\n" >&2'
 
     result = await backend.run(f'{forged}; (sleep 0.2; {forged}) & exit 3', shell=True)
@@ -164,7 +164,7 @@ async def test_commands_start_in_the_resolved_working_dir(docker: FakeDocker, tm
     first.mkdir()
     second.mkdir()
     link.symlink_to(first)
-    backend = DockerContainerBackend(image='image', working_dir=str(link))
+    backend = DockerWorkspaceBackend(image='image', working_dir=str(link))
 
     resolved = await backend.working_dir()
     link.unlink()
@@ -175,7 +175,7 @@ async def test_commands_start_in_the_resolved_working_dir(docker: FakeDocker, tm
 
 
 async def test_a_stop_that_comes_before_the_command_starts_prevents_it(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerContainerBackend(image='image', working_dir=str(container_dir))
+    backend = DockerWorkspaceBackend(image='image', working_dir=str(container_dir))
     await backend.working_dir()
     tag = secrets.token_hex(8)
     assert backend.ref is not None
@@ -195,7 +195,7 @@ async def test_a_timeout_is_stopped_even_when_the_configured_working_dir_is_gone
     target, link = tmp_path / 'target', tmp_path / 'link'
     target.mkdir()
     link.symlink_to(target)
-    backend = DockerContainerBackend(image='image', working_dir=str(link))
+    backend = DockerWorkspaceBackend(image='image', working_dir=str(link))
     await backend.working_dir()
     link.unlink()
     assert backend.ref is not None
@@ -208,7 +208,7 @@ async def test_a_timeout_is_stopped_even_when_the_configured_working_dir_is_gone
 
 
 async def test_a_running_commands_pid_file_survives_other_commands(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerContainerBackend(image='image', working_dir=str(container_dir))
+    backend = DockerWorkspaceBackend(image='image', working_dir=str(container_dir))
     await backend.working_dir()
     assert backend.ref is not None
     before = docker.pid_files(backend.ref.id)
@@ -227,7 +227,7 @@ async def test_a_running_commands_pid_file_survives_other_commands(docker: FakeD
 async def test_finished_commands_pid_files_are_removed_by_the_next_command(
     docker: FakeDocker, container_dir: Path
 ) -> None:
-    backend = DockerContainerBackend(image='image', working_dir=str(container_dir))
+    backend = DockerWorkspaceBackend(image='image', working_dir=str(container_dir))
     await backend.run(['true'])
     assert backend.ref is not None
     before = docker.pid_files(backend.ref.id)
@@ -238,7 +238,7 @@ async def test_finished_commands_pid_files_are_removed_by_the_next_command(
 
 
 async def test_output_over_the_limit_stops_the_command(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerContainerBackend(image='image', working_dir=str(container_dir))
+    backend = DockerWorkspaceBackend(image='image', working_dir=str(container_dir))
     await backend.working_dir()
     assert backend.ref is not None
 
@@ -250,7 +250,7 @@ async def test_output_over_the_limit_stops_the_command(docker: FakeDocker, conta
 
 
 async def test_cancelling_a_command_stops_it_in_the_container(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerContainerBackend(image='image', working_dir=str(container_dir))
+    backend = DockerWorkspaceBackend(image='image', working_dir=str(container_dir))
     await backend.working_dir()
     assert backend.ref is not None
     before = docker.pid_files(backend.ref.id)
@@ -268,7 +268,7 @@ async def test_cancelling_a_command_stops_it_in_the_container(docker: FakeDocker
 
 
 async def test_a_timeout_keeps_the_commands_own_output(docker: FakeDocker, container_dir: Path) -> None:
-    backend = DockerContainerBackend(image='image', working_dir=str(container_dir))
+    backend = DockerWorkspaceBackend(image='image', working_dir=str(container_dir))
 
     with pytest.raises(WorkspaceTimeoutError) as caught:
         await backend.run('echo out; echo err >&2; sleep 30', shell=True, timeout=1)
@@ -278,7 +278,7 @@ async def test_a_timeout_keeps_the_commands_own_output(docker: FakeDocker, conta
 
 async def test_a_calls_env_is_validated_before_anything_runs(docker: FakeDocker) -> None:
     with pytest.raises(ValueError, match="invalid environment variable name: 'A-B'"):
-        await DockerContainerBackend(image='image').run(['true'], env={'A-B': 'x'})
+        await DockerWorkspaceBackend(image='image').run(['true'], env={'A-B': 'x'})
 
     assert docker.calls == []
 
@@ -286,7 +286,7 @@ async def test_a_calls_env_is_validated_before_anything_runs(docker: FakeDocker)
 async def test_a_stalled_stop_still_raises_the_timeout(docker: FakeDocker, container_dir: Path) -> None:
     docker.add_container('box', container_dir)
     docker.hang_stops('box')
-    backend = DockerContainerBackend(ref=WorkspaceRef(provider='docker', id='box'), working_dir=str(container_dir))
+    backend = DockerWorkspaceBackend(ref=WorkspaceRef(provider='docker', id='box'), working_dir=str(container_dir))
 
     with anyio.fail_after(10), pytest.raises(WorkspaceTimeoutError):
         await backend.run(['sleep', '30'], timeout=0.5)
@@ -308,12 +308,12 @@ def test_invalid_configuration_is_rejected_at_construction(
     kwargs: dict[str, object], error: type[Exception], match: str
 ) -> None:
     with pytest.raises(error, match=match):
-        DockerContainerBackend(**kwargs)  # pyright: ignore[reportArgumentType]
+        DockerWorkspaceBackend(**kwargs)  # pyright: ignore[reportArgumentType]
 
 
 async def test_capability_supplies_the_run_workspace(docker: FakeDocker, container_dir: Path) -> None:
     agent = Agent(
-        TestModel(call_tools=['probe']), capabilities=[DockerContainer(image='image', working_dir=str(container_dir))]
+        TestModel(call_tools=['probe']), capabilities=[DockerWorkspace(image='image', working_dir=str(container_dir))]
     )
 
     @agent.tool
@@ -328,13 +328,13 @@ async def test_capability_supplies_the_run_workspace(docker: FakeDocker, contain
 
 
 async def test_destroying_a_removed_container_is_fine(docker: FakeDocker) -> None:
-    await DockerContainer().destroy(WorkspaceRef(provider='docker', id='gone'))
+    await DockerWorkspace().destroy(WorkspaceRef(provider='docker', id='gone'))
 
 
 async def test_a_capability_without_an_image_leaves_new_runs_to_other_workspaces(
     docker: FakeDocker, tmp_path: Path
 ) -> None:
-    agent = Agent(TestModel(), capabilities=[DockerContainer(), LocalWorkspace(str(tmp_path))])
+    agent = Agent(TestModel(), capabilities=[DockerWorkspace(), LocalWorkspace(str(tmp_path))])
 
     result = await agent.run('go')
 
@@ -342,7 +342,7 @@ async def test_a_capability_without_an_image_leaves_new_runs_to_other_workspaces
 
 
 def test_env_is_kept_out_of_the_repr() -> None:
-    assert 'hunter2' not in repr(DockerContainer(image='image', env={'TOKEN': 'hunter2'}))
+    assert 'hunter2' not in repr(DockerWorkspace(image='image', env={'TOKEN': 'hunter2'}))
 
 
 async def test_the_docker_client_gets_only_the_variables_that_select_a_daemon(
@@ -351,7 +351,7 @@ async def test_the_docker_client_gets_only_the_variables_that_select_a_daemon(
     monkeypatch.setenv('DOCKER_HOST', 'unix:///run/other.sock')
     monkeypatch.setenv('UNRELATED_TOKEN', 'hunter2')
 
-    await DockerContainerBackend(image='image', working_dir=str(container_dir)).working_dir()
+    await DockerWorkspaceBackend(image='image', working_dir=str(container_dir)).working_dir()
 
     client_env = docker.client_env()
     assert 'DOCKER_HOST=unix:///run/other.sock' in client_env and 'hunter2' not in client_env
@@ -361,7 +361,7 @@ async def test_the_cli_is_the_one_on_path_when_the_capability_was_created(
     docker: FakeDocker, container_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     docker.add_container('box', container_dir)
-    container = DockerContainer(working_dir=str(container_dir))
+    container = DockerWorkspace(working_dir=str(container_dir))
     later = tmp_path / 'later-bin'
     later.mkdir()
     (later / 'docker').write_text('#!/bin/sh\nexit 99\n')
@@ -375,7 +375,7 @@ async def test_the_cli_is_the_one_on_path_when_the_capability_was_created(
 
 async def test_destroy_uses_the_configured_executable(docker: FakeDocker, container_dir: Path) -> None:
     docker.add_container('box', container_dir)
-    container = DockerContainer(executable='podman')
+    container = DockerWorkspace(executable='podman')
     (docker.bin_dir / 'docker').unlink()
 
     await container.destroy(WorkspaceRef(provider='docker', id='box'))
@@ -385,7 +385,7 @@ async def test_destroy_uses_the_configured_executable(docker: FakeDocker, contai
 
 async def test_a_working_dir_that_cannot_be_created_is_an_error(docker: FakeDocker, container_dir: Path) -> None:
     (container_dir / 'file').touch()
-    backend = DockerContainerBackend(image='image', working_dir=str(container_dir / 'file' / 'workspace'))
+    backend = DockerWorkspaceBackend(image='image', working_dir=str(container_dir / 'file' / 'workspace'))
 
     with pytest.raises(WorkspaceError, match=r'could not create or enter the working directory.*Not a directory'):
         await backend.working_dir()
@@ -396,21 +396,21 @@ async def test_attaching_creates_a_working_dir_the_container_lacks(docker: FakeD
     missing = container_dir / 'missing'
 
     working_dir = (
-        await DockerContainer(working_dir=str(missing)).backend(WorkspaceRef(provider='docker', id='box')).working_dir()
+        await DockerWorkspace(working_dir=str(missing)).backend(WorkspaceRef(provider='docker', id='box')).working_dir()
     )
 
     assert working_dir == str(missing.resolve())
 
 
 async def test_without_a_working_dir_commands_start_in_the_images_own(docker: FakeDocker) -> None:
-    backend = DockerContainerBackend(image='image', working_dir=None)
+    backend = DockerWorkspaceBackend(image='image', working_dir=None)
 
     assert await backend.working_dir() == str(docker.image_workdir.resolve())
     assert '--workdir' not in docker.calls[0]
 
 
 async def test_capability_attaches_to_its_own_refs_only() -> None:
-    agent = Agent(TestModel(), capabilities=[DockerContainer()])
+    agent = Agent(TestModel(), capabilities=[DockerWorkspace()])
     ref = WorkspaceRef(provider='docker', id='earlier')
 
     assert (await agent.run('go', workspace=ref)).workspace.ref == ref
@@ -420,7 +420,7 @@ async def test_capability_attaches_to_its_own_refs_only() -> None:
 
 async def test_destroy_refuses_another_providers_ref() -> None:
     with pytest.raises(ValueError, match="unsupported workspace provider 'e2b'"):
-        await DockerContainer().destroy(WorkspaceRef(provider='e2b', id='earlier'))
+        await DockerWorkspace().destroy(WorkspaceRef(provider='e2b', id='earlier'))
 
 
 async def test_attaching_starts_a_stopped_container_but_not_a_running_one(
@@ -429,7 +429,7 @@ async def test_attaching_starts_a_stopped_container_but_not_a_running_one(
     docker.add_container('stopped', container_dir)
     ref = WorkspaceRef(provider='docker', id='stopped')
 
-    container = DockerContainer(working_dir=str(container_dir))
+    container = DockerWorkspace(working_dir=str(container_dir))
     await container.backend(ref).working_dir()
     await container.backend(ref).working_dir()
 
@@ -440,10 +440,10 @@ async def test_containers_it_did_not_create_are_refused(docker: FakeDocker, cont
     docker.add_container('database', container_dir, labeled=False)
     ref = WorkspaceRef(provider='docker', id='database')
 
-    with pytest.raises(WorkspaceUnavailableError, match='database was not created by `DockerContainer`'):
-        await DockerContainer().backend(ref).run(['true'])
-    with pytest.raises(WorkspaceError, match='database was not created by `DockerContainer`'):
-        await DockerContainer().destroy(ref)
+    with pytest.raises(WorkspaceUnavailableError, match='database was not created by `DockerWorkspace`'):
+        await DockerWorkspace().backend(ref).run(['true'])
+    with pytest.raises(WorkspaceError, match='database was not created by `DockerWorkspace`'):
+        await DockerWorkspace().destroy(ref)
     assert docker.containers() == ['database']
     assert not any(call.startswith(('start', 'exec', 'rm')) for call in docker.calls)
 
@@ -453,9 +453,9 @@ async def test_a_container_that_cannot_be_inspected_is_refused(docker: FakeDocke
     ref = WorkspaceRef(provider='docker', id='uninspectable')
 
     with pytest.raises(WorkspaceUnavailableError, match='could not inspect container uninspectable: permission denied'):
-        await DockerContainer().backend(ref).working_dir()
+        await DockerWorkspace().backend(ref).working_dir()
     with pytest.raises(WorkspaceError, match='could not inspect container uninspectable'):
-        await DockerContainer().destroy(ref)
+        await DockerWorkspace().destroy(ref)
 
 
 async def test_a_container_that_fails_to_start_is_unavailable(docker: FakeDocker, container_dir: Path) -> None:
@@ -464,14 +464,14 @@ async def test_a_container_that_fails_to_start_is_unavailable(docker: FakeDocker
     with pytest.raises(
         WorkspaceUnavailableError, match='broken is unavailable: Error response from daemon: port is already allocated'
     ):
-        await DockerContainer().backend(WorkspaceRef(provider='docker', id='broken')).working_dir()
+        await DockerWorkspace().backend(WorkspaceRef(provider='docker', id='broken')).working_dir()
 
 
 async def test_a_failed_removal_raises(docker: FakeDocker, container_dir: Path) -> None:
     docker.add_container('stuck', container_dir)
 
     with pytest.raises(WorkspaceError, match=r'(?s)could not remove container stuck: .*removal already in progress'):
-        await DockerContainer().destroy(WorkspaceRef(provider='docker', id='stuck'))
+        await DockerWorkspace().destroy(WorkspaceRef(provider='docker', id='stuck'))
 
 
 @pytest.mark.parametrize(
@@ -483,4 +483,4 @@ async def test_a_failed_removal_raises(docker: FakeDocker, container_dir: Path) 
 )
 def test_invalid_capability_configuration_is_rejected_at_construction(kwargs: dict[str, object], match: str) -> None:
     with pytest.raises(UserError, match=match):
-        DockerContainer(**kwargs)  # pyright: ignore[reportArgumentType]
+        DockerWorkspace(**kwargs)  # pyright: ignore[reportArgumentType]

@@ -1,20 +1,20 @@
-"""Deprecated pre-rename name for `DockerContainer`, kept for agent-spec compatibility."""
+"""Deprecated pre-rename name for `DockerWorkspace`, kept for agent-spec compatibility."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai_harness.docker_container._capability import DockerContainer
+from pydantic_ai_harness.docker_workspace._capability import DockerWorkspace
 
 
 @dataclass(init=False)
-class DockerSandbox(DockerContainer[AgentDepsT]):
-    """Deprecated name for `DockerContainer`.
+class DockerSandbox(DockerWorkspace[AgentDepsT]):
+    """Deprecated name for `DockerWorkspace`.
 
     Keeps the pre-rename `'DockerSandbox'` agent-spec block name, so specs saved before the
     rename still load when this class is passed via `custom_capability_types`. Specs
-    saved through this class keep the old block name; migrate to `DockerContainer` to
+    saved through this class keep the old block name; migrate to `DockerWorkspace` to
     save under the new one.
 
     `init=False` keeps the inherited `__init__`: one regenerated here would resolve its

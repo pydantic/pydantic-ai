@@ -540,7 +540,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ),
     # Capabilities resolve their executables, and clients their package versions, once when they're built.
     *(
-        (func, f'pydantic_ai_harness/docker_container/{module}', constructor)
+        (func, f'pydantic_ai_harness/docker_workspace/{module}', constructor)
         for func in ('os.stat', 'os.access', 'os.path.abspath')
         for module, constructor in (('_capability.py', '__post_init__'), ('_backend.py', '__init__'))
     ),

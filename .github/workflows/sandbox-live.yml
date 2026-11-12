@@ -133,7 +133,7 @@ jobs:
 
       # The runners ship Podman too, which `DockerSandbox` supports through `executable='podman'`.
       - if: matrix.provider == 'docker'
-        run: uv run --no-sync pytest -p no:cacheprovider -m docker_live tests/harness/docker_sandbox -q
+        run: uv run --no-sync pytest -p no:cacheprovider -m docker_live tests/harness/docker_workspace -q
         env:
           PYDANTIC_AI_HARNESS_DOCKER_LIVE: "1"
           DOCKER_REQUIRE_LIVE: "1"

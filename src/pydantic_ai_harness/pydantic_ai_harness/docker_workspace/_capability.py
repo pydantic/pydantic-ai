@@ -9,28 +9,28 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
-from pydantic_ai_harness.docker_container._backend import (
+from pydantic_ai_harness.docker_workspace._backend import (
     PROVIDER,
-    DockerContainerBackend,
+    DockerWorkspaceBackend,
     remove_container,
     resolve_executable,
 )
 
 
 @dataclass(kw_only=True)
-class DockerContainer(AbstractCapability[AgentDepsT]):
+class DockerWorkspace(AbstractCapability[AgentDepsT]):
     """Supply a local [Docker](https://www.docker.com/) container as the run's workspace, created on first use.
 
     ```python {test="skip"}
     from pydantic_ai import Agent
-    from pydantic_ai_harness import Coder, DockerContainer
+    from pydantic_ai_harness import Coder, DockerWorkspace
 
-    agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerContainer(image='python:3.13-slim'), Coder()])
+    agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerWorkspace(image='python:3.13-slim'), Coder()])
     ```
 
     A run with no reference creates a fresh container. Pass a `WorkspaceRef` supplied by the
     application to attach to a container created earlier. The container outlives the run: remove it
-    with [`destroy`][pydantic_ai_harness.docker_container.DockerContainer.destroy].
+    with [`destroy`][pydantic_ai_harness.docker_workspace.DockerWorkspace.destroy].
 
     This capability supplies execution only. Compose it with tools or capabilities that use the
     workspace, such as `Coder`, `Shell`, or `FileSystem`.
@@ -64,13 +64,13 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
     _executable_path: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        reject_defer_loading('DockerContainer', self.defer_loading)
+        reject_defer_loading('DockerWorkspace', self.defer_loading)
         check_working_dir(self.working_dir)
         self._executable_path = resolve_executable(self.executable)
 
-    def backend(self, ref: WorkspaceRef) -> DockerContainerBackend:
+    def backend(self, ref: WorkspaceRef) -> DockerWorkspaceBackend:
         """Attach lazily to an existing container by ref, starting it on first use if it is stopped."""
-        return DockerContainerBackend(
+        return DockerWorkspaceBackend(
             ref=ref, working_dir=self.working_dir, env=self.env, executable=self._executable_path
         )
 
@@ -86,7 +86,7 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
             return self.backend(ref) if ref.provider == PROVIDER else None
         if self.image is None:
             return None
-        return DockerContainerBackend(
+        return DockerWorkspaceBackend(
             image=self.image,
             working_dir=self.working_dir,
             env=self.env,

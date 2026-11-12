@@ -18,7 +18,7 @@ changing how sandboxes are created, attached to, or how commands run and stop:
 - A sandbox's `timeout` deletes it when it runs out, files included; `renew` sets a new one.
 - The SDK runs on asyncio only, and each `Sandbox` holds an HTTP transport bound to the event loop that opened it.
 
-File operations go through the shell, as for `DockerContainerBackend`: execd's own file API reads a directory as a
+File operations go through the shell, as for `DockerWorkspaceBackend`: execd's own file API reads a directory as a
 500 and deletes a missing path without error, so native file access needs its own probes and is left for later.
 """
 
@@ -97,7 +97,7 @@ exit "$status"
 """
 """Runs as `sh -c WRAPPER sh <tag> <argv...>`: records its PID so a second command can stop it, then runs the argv.
 
-`DockerContainerBackend`'s wrapper, without the markers `docker exec` needs. A subshell `exec` runs the program
+`DockerWorkspaceBackend`'s wrapper, without the markers `docker exec` needs. A subshell `exec` runs the program
 itself and exits 127 when it is missing, 126 when it cannot run, and 128 plus the signal number when a signal
 ends it, as a shell reports them.
 """
@@ -110,7 +110,7 @@ read -r pid 2> /dev/null < "$pidfile" || exit 0
 kill -KILL "-$pid" "$pid" 2> /dev/null
 rm -f "$pidfile" "$stopped"
 exit 0"""
-"""Kills the command recorded under the tag `$1` and its process group, as `DockerContainerBackend`'s stop does.
+"""Kills the command recorded under the tag `$1` and its process group, as `DockerWorkspaceBackend`'s stop does.
 
 The `.stopped` marker it leaves first fences a command whose start the stop overtook: whichever of the two
 comes second sees the other's file.

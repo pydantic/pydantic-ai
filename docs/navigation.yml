@@ -413,9 +413,9 @@ navigation:
           - page: "OpenSandbox"
             path: "harness/opensandbox-sandbox.md"
             slug: "harness/opensandbox-sandbox"
-          - page: "Docker Container"
-            path: "harness/docker-container.md"
-            slug: "harness/docker-container"
+          - page: "Docker Workspace"
+            path: "harness/docker-workspace.md"
+            slug: "harness/docker-workspace"
             aliases:
               - "harness/docker-sandbox"
           - page: "SSH Workspace"
