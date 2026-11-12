@@ -12,7 +12,7 @@ from pydantic_ai.computer_use import Point, Region
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError, WorkspaceUnavailableError
 
 from ._png import PNG_SIGNATURE
-from .computer_use import ComputerAction, UnsupportedActionError
+from .computer_use import DisplayAction, UnsupportedActionError
 
 __all__ = ('DisplayDriver', 'ManagedDisplay')
 
@@ -44,7 +44,7 @@ class DisplayDriver(Protocol):
     async def display_size(self) -> tuple[int, int]: ...
     async def screenshot(self) -> bytes: ...
     async def scaled_screenshot(self, width: int, height: int) -> bytes: ...
-    async def act(self, action: ComputerAction) -> None: ...
+    async def act(self, action: DisplayAction) -> None: ...
     async def zoom(self, region: Region) -> bytes: ...
     async def cursor_position(self) -> Point: ...
 
@@ -121,7 +121,7 @@ class ManagedDisplay:
         """
         return await self._look(lambda driver: driver.scaled_screenshot(width, height))
 
-    async def act(self, action: ComputerAction) -> None:
+    async def act(self, action: DisplayAction) -> None:
         async def act(driver: DisplayDriver) -> bool:
             if self._unseen:
                 return False
