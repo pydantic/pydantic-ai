@@ -1,4 +1,11 @@
-"""Tests for `CapabilityPart`: declaring kinds, serializing them, rendering them before any model, and enqueueing them."""
+"""Tests for `CapabilityPart`: declaring kinds, serializing them, rendering them before any model, and enqueueing them.
+
+Not VCR tests: a capability part is rendered into plain system and user parts in `Model.prepare_messages`, before any
+adapter builds a request, so a recording would only show those plain parts, which the provider tests already pin. What
+these tests check is the rendering itself, the stored history and the run's handling of enqueued parts, which
+`prepare_messages` and `FunctionModel` show directly. The adapters' cache breakpoints around a rendered part are in
+`tests/models/test_request_scoped_system_prompts.py`.
+"""
 
 from __future__ import annotations
 
