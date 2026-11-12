@@ -2663,15 +2663,16 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
         if not files:
             return self.model_response_str(wrap_if_error=wrap_if_error), []
 
-        tool_content_parts: list[str] = []
+        tool_content_parts: list[object] = []
         file_content: list[UserContent] = []
 
-        for item in self.content_items(mode='str', wrap_if_error=False):
+        # `jsonable`, not `str`: an item rendered to its JSON text here would be JSON-encoded again by the dump below.
+        for item in self.content_items(mode='jsonable', wrap_if_error=False):
             if is_multi_modal_content(item):
                 tool_content_parts.append(f'See file {item.identifier}.')
                 open_tag, close_tag = _tool_result_provenance_tags(self.tool_name, self.tool_call_id, item.identifier)
                 file_content.extend([open_tag, item, close_tag])
-            elif isinstance(item, str):  # pragma: no branch
+            else:
                 tool_content_parts.append(item)
 
         if wrap_if_error and self.outcome in ERROR_OUTCOMES:
@@ -2681,9 +2682,10 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
             return tool_return_ta.dump_json([error, *file_references]).decode(), file_content
         if was_list:
             return tool_return_ta.dump_json(tool_content_parts).decode(), file_content
-        # Safe: when was_list is False, content is either scalar data (→ str item) or a single
-        # MultiModalContent (→ 'See file ...' placeholder), so tool_content_parts always has one entry.
-        return tool_content_parts[0], file_content
+        # Content that isn't a list but has a file is that one file, so its 'See file ...' reference is the whole text.
+        [reference] = tool_content_parts
+        assert isinstance(reference, str)
+        return reference, file_content
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         part = _otel_messages.ToolCallResponsePart(

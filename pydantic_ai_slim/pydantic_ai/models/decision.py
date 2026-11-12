@@ -2516,9 +2516,9 @@ def _tool_return_entry(part: BaseToolReturnPart, images: list[BinaryContent | Im
     if part.files:
         if images is None:
             raise UserError('Files are not supported by this model: a file in a tool result cannot be sent to it.')
-        content: list[str] = []
-        for item in part.content_items(mode='str', wrap_if_error=False):
-            content.append(item if isinstance(item, str) else _image_label(item, images, 'A tool result'))
+        content: list[object] = []
+        for item in part.content_items(mode='jsonable', wrap_if_error=False):
+            content.append(_image_label(item, images, 'A tool result') if is_multi_modal_content(item) else item)
         part = dataclasses.replace(part, content=content)
     return {'tool_return': {'name': part.tool_name, 'content': part.model_response_str()}}
 

@@ -392,6 +392,40 @@ async def test_openai_chat_image_detail_vendor_metadata(allow_model_requests: No
     assert all(part['detail'] == 'high' for part in image_parts)
 
 
+async def test_openai_chat_structured_tool_return_beside_a_file(allow_model_requests: None):
+    """A dict a tool returns beside a file reaches the text-only tool message as a JSON object, as it does without the file.
+
+    Not a VCR test: the cassette matchers ignore the request body, so only the captured request pins the tool message.
+    """
+    responses = [
+        completion_message(
+            ChatCompletionMessage(
+                content=None,
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='call_1', function=Function(arguments='{}', name='weather'), type='function'
+                    )
+                ],
+            )
+        ),
+        completion_message(ChatCompletionMessage(content='done', role='assistant')),
+    ]
+    mock_client = MockOpenAI.create_mock(responses)
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    @agent.tool_plain
+    def weather() -> list[dict[str, int] | BinaryContent]:
+        return [{'temp': 20}, BinaryContent(b'\x89PNG', media_type='image/png')]
+
+    await agent.run('weather?')
+
+    tool_messages = [m for m in get_mock_chat_completion_kwargs(mock_client)[1]['messages'] if m['role'] == 'tool']
+    assert tool_messages == snapshot(
+        [{'role': 'tool', 'tool_call_id': 'call_1', 'content': '[{"temp":20},"See file 4effda."]'}]
+    )
+
+
 async def test_request_structured_response(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(

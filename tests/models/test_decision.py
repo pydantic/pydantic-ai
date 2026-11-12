@@ -226,6 +226,35 @@ async def test_decision_model_preserves_image_evidence_in_state(allow_model_requ
     assert request.state == expected_state
 
 
+async def test_decision_model_keeps_structured_tool_return_items_beside_an_image(allow_model_requests: None):
+    """A dict a tool returns beside an image is history as the JSON object it is without the image, failed or not."""
+    image = BinaryContent(b'tool', media_type='image/png')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Check the weather.')]),
+        ModelResponse(parts=[ToolCallPart('weather', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('weather', [{'temp': 20}, image], tool_call_id='tool-1')]),
+        ModelResponse(parts=[ToolCallPart('weather', {}, tool_call_id='tool-2')]),
+        ModelRequest(parts=[ToolReturnPart('weather', [{'temp': 20}, image], tool_call_id='tool-2', outcome='failed')]),
+    ]
+    model = ImageEnabledDecisionModel()
+
+    await Agent(model, output_type=bool, instructions='Is it warm?').run('Decide.', message_history=history)
+
+    [request] = model.requests
+    assert request.state == snapshot(
+        {
+            'history': [
+                {'user': 'Check the weather.'},
+                {'tool_call': {'name': 'weather', 'args': {}}},
+                {'tool_return': {'name': 'weather', 'content': '[{"temp":20},"<image 1>"]'}},
+                {'tool_call': {'name': 'weather', 'args': {}}},
+                {'tool_return': {'name': 'weather', 'content': '{"error":"[{\\"temp\\":20},\\"<image 2>\\"]"}'}},
+            ],
+            'text': 'Decide.',
+        }
+    )
+
+
 class Release(BaseModel):
     """Decide whether a change can ship."""
 

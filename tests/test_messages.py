@@ -3218,6 +3218,17 @@ def test_tool_return_part_model_response_str_and_user_content():
         ]
     )
 
+    # Items beside a file keep the JSON form they have without one: structured values stay JSON values in the
+    # array rather than strings holding their JSON text, and a value whose JSON form is a string stays that string.
+    items = [{'temp': 20}, 3, None, [1, 2], 'sunny', datetime(2026, 1, 1, 12, 0)]
+    assert ToolReturnPart(tool_name='t', content=items, tool_call_id='c7').model_response_str() == snapshot(
+        '[{"temp":20},3,null,[1,2],"sunny","2026-01-01T12:00:00"]'
+    )
+    text, _ = ToolReturnPart(
+        tool_name='t', content=[*items, img], tool_call_id='c7'
+    ).model_response_str_and_user_content()
+    assert text == snapshot('[{"temp":20},3,null,[1,2],"sunny","2026-01-01T12:00:00","See file d5a901."]')
+
 
 def test_args_as_dict_valid_json():
     """args_as_dict should return parsed dict for valid JSON args."""
