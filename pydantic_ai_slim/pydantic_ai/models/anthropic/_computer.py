@@ -2,9 +2,9 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, TypeGuard, cast
+from typing import Annotated, Any, TypeGuard
 
 from anthropic.types.beta import (
     BetaComputerToolset20260801Param,
@@ -14,7 +14,7 @@ from anthropic.types.beta import (
     BetaToolUnionParam,
     BetaToolUseBlock,
 )
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from ...computer_use import ComputerCallPart
@@ -41,17 +41,25 @@ class ComputerReplay(TypedDict):
 
     computer_blocks: list[ComputerBlock]
     computer_tool: AnthropicComputerToolVersion
-    computer_action_counts: list[int]
+    computer_action_counts: list[Annotated[int, Field(ge=1)]]
     """How many actions each call became, so results are matched to calls without mapping them again."""
 
 
 _REPLAY = TypeAdapter(ComputerReplay)
 
 
+class _CallArgs(TypedDict):
+    actions: list[Any]
+
+
+_CALL_ARGS = TypeAdapter(_CallArgs)
+
+
 def computer_replay(part: ToolCallPart, provider_name: str) -> ComputerReplay | None:
     """The calls a `computer` call came from, or `None` to send it back as a plain call.
 
-    A history can come back from storage or a UI, so what it kept is validated, and one call per count is required.
+    A history can come back from storage or a UI, so what it kept is validated: one count per call, each at least 1,
+    adding up to the call's actions, as the result's `performed` counts actions.
     The part's class isn't: a call whose actions don't validate, such as one Claude asked for with an option the
     `computer` tool lacks, is a plain `ToolCallPart` once the history has been through JSON, and still goes back as
     the calls it came from.
@@ -60,10 +68,11 @@ def computer_replay(part: ToolCallPart, provider_name: str) -> ComputerReplay | 
         return None
     try:
         replay = _REPLAY.validate_python(part.provider_details)
+        actions = _CALL_ARGS.validate_python(part.args_as_dict())['actions']
     except ValidationError:
         return None
-    blocks = replay['computer_blocks']
-    return replay if blocks and len(blocks) == len(replay['computer_action_counts']) else None
+    blocks, counts = replay['computer_blocks'], replay['computer_action_counts']
+    return replay if blocks and len(blocks) == len(counts) and sum(counts) == len(actions) else None
 
 
 @dataclass(frozen=True)
@@ -171,35 +180,79 @@ _COMPUTER_CLICKS = {
 }
 
 
-def _point(coordinate: Any) -> dict[str, Any]:
-    """A toolset `[x, y]` coordinate as `x` and `y`, or nothing when it's absent.
-
-    Anything else goes through as `x` alone, so validation refuses it instead of the action running at the pointer.
-    """
-    if coordinate is None:
-        return {}
-    if isinstance(coordinate, list) and len(cast(list[Any], coordinate)) == 2:
-        x, y = cast(list[Any], coordinate)
-        return {'x': x, 'y': y}
-    return {'x': coordinate}
+class _Strict(BaseModel, extra='forbid', strict=True):
+    """A member's input as the tool documents it, checked as is: a field it lacks or a number for text is refused."""
 
 
-_COMPUTER_MEMBER_FIELDS: dict[str, frozenset[str]] = {
-    **{name: frozenset({'coordinate', 'text'}) for name in _COMPUTER_CLICKS},
-    'mouse_move': frozenset({'coordinate', 'text'}),
-    'left_click_drag': frozenset({'start_coordinate', 'coordinate', 'text'}),
-    'left_mouse_down': frozenset(),
-    'left_mouse_up': frozenset(),
-    'scroll': frozenset({'coordinate', 'scroll_direction', 'scroll_amount', 'text'}),
-    'type': frozenset({'text'}),
-    'key': frozenset({'text', 'repeat'}),
-    'hold_key': frozenset({'text', 'duration'}),
-    'wait': frozenset({'duration'}),
-    'zoom': frozenset({'region'}),
-    'screenshot': frozenset(),
-    'cursor_position': frozenset(),
+_Coordinate = Annotated[list[int], Field(min_length=2, max_length=2)]
+
+
+class _Click(_Strict):
+    coordinate: _Coordinate | None = None
+    text: str | None = None
+    """Keys held during the click, as for a move, scroll or drag."""
+
+
+class _Move(_Strict):
+    coordinate: _Coordinate
+    text: str | None = None
+
+
+class _Drag(_Strict):
+    start_coordinate: _Coordinate
+    coordinate: _Coordinate
+    text: str | None = None
+
+
+class _Scroll(_Strict):
+    coordinate: _Coordinate | None = None
+    scroll_direction: str
+    scroll_amount: int
+    text: str | None = None
+
+
+class _Type(_Strict):
+    text: str
+
+
+class _Key(_Strict):
+    text: str
+    repeat: int | None = None
+
+
+class _HoldKey(_Strict):
+    text: str
+    duration: float
+
+
+class _Wait(_Strict):
+    duration: float | None = None
+
+
+class _Zoom(_Strict):
+    region: Annotated[list[int], Field(min_length=4, max_length=4)]
+
+
+class _NoInput(_Strict):
+    pass
+
+
+_MEMBERS: dict[str, type[_Strict]] = {
+    **dict.fromkeys(_COMPUTER_CLICKS, _Click),
+    'mouse_move': _Move,
+    'left_click_drag': _Drag,
+    'left_mouse_down': _NoInput,
+    'left_mouse_up': _NoInput,
+    'scroll': _Scroll,
+    'type': _Type,
+    'key': _Key,
+    'hold_key': _HoldKey,
+    'wait': _Wait,
+    'zoom': _Zoom,
+    'screenshot': _NoInput,
+    'cursor_position': _NoInput,
 }
-"""The input fields of each computer use member that map onto the `computer` tool."""
+"""The input each computer use member takes that maps onto the `computer` tool."""
 
 _COMPUTER_MEMBER_TYPES: dict[str, str] = {
     **dict.fromkeys(_COMPUTER_CLICKS, 'click'),
@@ -211,97 +264,71 @@ _COMPUTER_MEMBER_TYPES: dict[str, str] = {
 }
 """The `computer` tool action type of each member whose name differs from it."""
 
-_REQUIRED_MEMBER_FIELDS: dict[str, frozenset[str]] = {
-    'mouse_move': frozenset({'coordinate'}),
-    'scroll': frozenset({'scroll_direction', 'scroll_amount'}),
-    'type': frozenset({'text'}),
-    'key': frozenset({'text'}),
-    'hold_key': frozenset({'text', 'duration'}),
-    'zoom': frozenset({'region'}),
-}
-"""The input fields a member can't do without; one that is missing is refused, not filled in."""
+
+def _point(coordinate: list[int] | None) -> dict[str, int]:
+    """A `[x, y]` coordinate as `x` and `y`, or nothing when it's absent."""
+    return {} if coordinate is None else {'x': coordinate[0], 'y': coordinate[1]}
 
 
-def _ints(value: Any, count: int) -> bool:
-    return (
-        isinstance(value, list)
-        and len(cast(list[Any], value)) == count
-        and all(type(item) is int for item in cast(list[Any], value))
-    )
-
-
-_MEMBER_FIELD_TYPES: dict[str, Callable[[Any], bool]] = {
-    'coordinate': lambda value: _ints(value, 2),
-    'start_coordinate': lambda value: _ints(value, 2),
-    'region': lambda value: _ints(value, 4),
-    'text': lambda value: isinstance(value, str),
-    'scroll_direction': lambda value: isinstance(value, str),
-    'scroll_amount': lambda value: type(value) is int,
-    'repeat': lambda value: type(value) is int,
-    'duration': lambda value: type(value) in (int, float),
-}
-"""Whether each input field has the type the tool documents, checked as is: a number is not text."""
-
-
-def _unmapped_member_fields(name: str, args: dict[str, Any]) -> list[str] | None:
-    """The input fields of a member that don't map, or `None` when every one does.
-
-    A field that isn't one the `computer` tool takes, is missing though required, or has the wrong type doesn't map.
-    """
-    fields = _COMPUTER_MEMBER_FIELDS.get(name)
-    if fields is None:
-        return sorted(args.keys())
-    unmapped = (args.keys() - fields) | (_REQUIRED_MEMBER_FIELDS.get(name, frozenset()) - args.keys())
-    unmapped |= {key for key, value in args.items() if key in fields and not _MEMBER_FIELD_TYPES[key](value)}
-    return sorted(unmapped) if unmapped else None
+def _modifiers(text: str | None) -> list[str]:
+    return [text] if text else []
 
 
 def map_computer_member(name: str, args: dict[str, Any]) -> list[dict[str, Any]]:
-    """One computer use call as `computer` tool actions, mapped field by field.
+    """One computer use call as `computer` tool actions.
 
     A member or field that doesn't map fails validation, so the model retries; only the names of what didn't map are
     kept, so the call never runs with part of what the model asked for.
     """
-    unsupported = _unmapped_member_fields(name, args)
-    if unsupported is not None:
+    kind = _COMPUTER_MEMBER_TYPES.get(name, name)
+    schema = _MEMBERS.get(name)
+    if schema is None:
+        return [{'type': kind, 'unsupported_fields': sorted(args)}]
+    try:
+        member = schema.model_validate(args)
+    except ValidationError as error:
         # Under the tool's own type, so the retry names the fields rather than refusing the member.
-        return [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'unsupported_fields': unsupported}]
-    position = _point(args.get('coordinate'))
-    modifiers = [args['text']] if args.get('text') else []  # keys held during a click, move, scroll or drag
-    if name in _COMPUTER_CLICKS:
-        button, count = _COMPUTER_CLICKS[name]
-        return [{'type': 'click', **position, 'button': button, 'count': count, 'modifiers': modifiers}]
-    match name:
-        case 'mouse_move':
-            return [{'type': 'move', **position, 'modifiers': modifiers}]
-        case 'left_click_drag':
-            # A missing end leaves the path too short to validate, so the model is asked again.
-            ends = [args.get('start_coordinate'), args.get('coordinate')]
-            path = [_point(point) for point in ends if point is not None]
-            return [{'type': 'drag', 'path': path, 'modifiers': modifiers}]
-        case 'left_mouse_down':
-            return [{'type': 'mouse_down'}]
-        case 'left_mouse_up':
-            return [{'type': 'mouse_up'}]
-        case 'scroll':
-            direction = args.get('scroll_direction')
-            amount = args.get('scroll_amount')
-            return [{'type': 'scroll', **position, 'direction': direction, 'amount': amount, 'modifiers': modifiers}]
-        case 'type':
-            return [{'type': 'type', 'text': args['text']}]
-        case 'key':
+        fields = sorted({str(detail['loc'][0]) for detail in error.errors() if detail['loc']})
+        return [{'type': kind, 'unsupported_fields': fields}]
+    match member:
+        case _Click():
+            button, count = _COMPUTER_CLICKS[name]
+            return [
+                {
+                    'type': 'click',
+                    **_point(member.coordinate),
+                    'button': button,
+                    'count': count,
+                    'modifiers': _modifiers(member.text),
+                }
+            ]
+        case _Move():
+            return [{'type': 'move', **_point(member.coordinate), 'modifiers': _modifiers(member.text)}]
+        case _Drag():
+            path = [_point(member.start_coordinate), _point(member.coordinate)]
+            return [{'type': 'drag', 'path': path, 'modifiers': _modifiers(member.text)}]
+        case _Scroll():
+            return [
+                {
+                    'type': 'scroll',
+                    **_point(member.coordinate),
+                    'direction': member.scroll_direction,
+                    'amount': member.scroll_amount,
+                    'modifiers': _modifiers(member.text),
+                }
+            ]
+        case _Type():
+            return [{'type': 'type', 'text': member.text}]
+        case _Key():
             # xdotool syntax, which Claude writes: chords separated by spaces are pressed one after another.
-            chords = args['text'].split() or ['']
-            return [{'type': 'keypress', 'keys': [chord], 'repeat': args.get('repeat')} for chord in chords]
-        case 'hold_key':
-            return [{'type': 'hold_key', 'keys': [args['text']], 'seconds': args['duration']}]
-        case 'wait':
-            return [{'type': 'wait', 'seconds': args.get('duration')}]
-        case 'zoom':
-            region = args.get('region')
-            if isinstance(region, list) and len(cast(list[Any], region)) == 4:
-                left, top, right, bottom = cast(list[Any], region)
-                return [{'type': 'zoom', 'region': {'left': left, 'top': top, 'right': right, 'bottom': bottom}}]
-            return [{'type': 'zoom', 'region': region}]
-        case _:  # `screenshot` and `cursor_position`, the only members left
-            return [{'type': name}]
+            chords = member.text.split() or ['']
+            return [{'type': 'keypress', 'keys': [chord], 'repeat': member.repeat} for chord in chords]
+        case _HoldKey():
+            return [{'type': 'hold_key', 'keys': [member.text], 'seconds': member.duration}]
+        case _Wait():
+            return [{'type': 'wait', 'seconds': member.duration}]
+        case _Zoom():
+            left, top, right, bottom = member.region
+            return [{'type': 'zoom', 'region': {'left': left, 'top': top, 'right': right, 'bottom': bottom}}]
+        case _:  # `left_mouse_down`, `left_mouse_up`, `screenshot` and `cursor_position` take no input
+            return [{'type': kind}]
