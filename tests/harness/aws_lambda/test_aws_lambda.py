@@ -59,6 +59,7 @@ from pydantic_ai_harness.aws_lambda import (
 )
 
 from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
+from .._background_job import BackgroundJobModel
 from .conftest import FakeDurableContext
 from .test_aws_lambda_mcp import FakeMCPToolset
 
@@ -1857,21 +1858,11 @@ class TestDurableSleep:
         A checkpointed tool runs in a step, during which no other durable operation can be made. A tool opted out of
         checkpointing runs again on every invocation, and so would the nested run's requests if a wait suspended it.
         """
-
-        class Background(FunctionModel):
-            def continuation_delay(self, response: ModelResponse) -> float | None:
-                return 0.01
-
-        def background(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if isinstance(messages[-1], ModelResponse):
-                return ModelResponse(parts=[TextPart('ready')], provider_response_id='job')
-            return ModelResponse(parts=[], provider_response_id='job', state='suspended')
-
         agent = Agent(tool_then_text(), name='a', capabilities=[AWSLambdaDurability()])
 
         @agent.tool_plain(metadata=None if checkpointed else {'aws_lambda': False})
         async def act() -> str:
-            return (await Agent(Background(background)).run('go')).output
+            return (await Agent(BackgroundJobModel(delay=0.01, checks=1)).run('go')).output
 
         output, contexts = _run_until_done(agent)
 

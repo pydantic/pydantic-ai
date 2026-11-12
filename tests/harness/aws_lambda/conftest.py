@@ -1,7 +1,7 @@
 """A recording stand-in for `DurableContext`.
 
 The real `DurableContext` talks to the durable-execution service, so tests drive a fake that
-reproduces the two behaviours this capability depends on:
+reproduces the behaviours this capability depends on:
 
 - a step result is checkpointed through the SDK's serializer, so a value that cannot be
   serialized fails here exactly as it would in production;
