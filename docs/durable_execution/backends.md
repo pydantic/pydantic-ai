@@ -348,15 +348,16 @@ A run waits between polls of a model's server-side job, such as an
 can take hours. In the durable context, `BaseDurabilityCapability.wrap_run` routes these waits to
 [`durable_sleep`][pydantic_ai.durable_exec.BaseDurabilityCapability.durable_sleep]. Override it with
 the engine's durable timer, so a wait holds no process and a recovered run doesn't wait again through
-time that already passed. It's only called for the durable run's own waits in container code: in a
-durable unit's body, and in a nested agent run, such as one in a tool, whose model requests aren't
-recorded, the wait stays a plain sleep.
+time that already passed. It's only called in container code: in a durable unit's body, the wait
+stays a plain sleep.
 
 Some engines wait by ending the container's current attempt with an error, and run it again once
 the timer fires, replaying the journal up to the wait. List those errors in
 `DurabilityEngineSpec.suspension_error_types`: when one of them ends a wait, the job the run is
 waiting on is left running for the replayed run to continue, instead of being cancelled as on other
-errors.
+errors. On such an engine, a nested agent run without a durability capability of its own, such as one
+in a tool, waits with a plain sleep too: its model requests aren't recorded, so a container woken
+from the suspension would make them again.
 
 ```python {title="durable_sleep.py" test="skip" lint="skip"}
 class MyEngineDurability(BaseDurabilityCapability):

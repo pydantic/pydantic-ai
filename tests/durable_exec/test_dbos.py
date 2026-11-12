@@ -6156,6 +6156,31 @@ async def test_dbos_durability_continuation_delay_outside_workflow_and_in_step(d
     assert await run_durable_agent() == snapshot('{"delegate":"The answer is 42."}')
 
 
+async def test_dbos_durability_nested_run_in_function_tool_sleeps_durably(dbos: DBOS) -> None:
+    """A nested run in a function tool, which DBOS runs as workflow code, records its wait as a `DBOS.sleep` step.
+
+    DBOS's sleep doesn't suspend the workflow, so a nested run that inherits it uses it too, as before.
+    """
+    outer = Agent(
+        TestModel(call_tools=['delegate']), name='durability_continuation_delay_tool', capabilities=[DBOSDurability()]
+    )
+
+    @outer.tool_plain
+    async def delegate() -> str:
+        return (await Agent(_delayed_continuation_model()).run('go')).output
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await outer.run('go')
+        return result.output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        assert await run_durable_agent() == snapshot('{"delegate":"The answer is 42."}')
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert 'DBOS.sleep' in [step['function_name'] for step in steps]
+
+
 async def test_dbos_agent_continuation_delay_is_a_durable_sleep(dbos: DBOS) -> None:
     """The deprecated `DBOSAgent` wrapper records the wait between continuation polls as a `DBOS.sleep` step too."""
     dbos_agent = DBOSAgent(Agent(_delayed_continuation_model(), name='dbos_agent_continuation_delay'))  # pyright: ignore[reportDeprecated]

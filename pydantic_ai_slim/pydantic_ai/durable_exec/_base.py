@@ -1191,23 +1191,28 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         An engine whose timer suspends the container by raising lists that error in
         `DurabilityEngineSpec.suspension_error_types`.
 
-        It's only called for the durable run's own waits in container code: in a durable unit's body, and in a nested
-        agent run, such as one in a tool, the wait is a plain `anyio.sleep`. An engine without a durable timer doesn't override it, and its waits stay plain sleeps in
-        the container's process: the process has to stay up for a wait, and a recovered run waits it again. The
-        default implementation is that plain sleep.
+        It's only called in container code: in a durable unit's body, the wait is a plain `anyio.sleep`. On an engine
+        that lists `suspension_error_types`, so is a wait in a nested agent run that inherited it, such as one in a
+        tool: that run's model requests aren't recorded, so a container woken from a suspension would make them again.
+        A nested run with a durability capability of its own waits with that capability's `durable_sleep`.
+
+        An engine without a durable timer doesn't override it, and its waits stay plain sleeps in the container's
+        process: the process has to stay up for a wait, and a recovered run waits it again. The default implementation
+        is that plain sleep.
         """
         await anyio.sleep(max(seconds, 0))  # workflow-nondeterminism-ok: the default without a durable timer
 
     async def _sleep_in_container(self, run_id: str | None, seconds: float) -> None:
-        """The agent graph's sleep for the run `run_id`: `durable_sleep` in its container code, a plain sleep elsewhere.
+        """The agent graph's sleep for the run `run_id`: `durable_sleep` in container code, a plain sleep in a unit.
 
-        A durable unit's body, and another run that inherited this sleep, such as a nested agent run in a tool that
-        isn't recorded, wait with a plain sleep: their model requests aren't recorded, so a container woken from a
-        durable sleep would make them again, and wait again.
+        Another run that inherited this sleep, such as a nested agent run in a tool, waits with a plain sleep too if
+        `durable_sleep` suspends the container: its model requests aren't recorded, so a container woken from the
+        suspension would make them again, and suspend again.
         """
         current = get_current_run_context()
-        if in_durable_unit() or (current is not None and current.run_id != run_id):
-            await anyio.sleep(max(seconds, 0))  # workflow-nondeterminism-ok: a durable unit is not container code
+        other_run = current is not None and current.run_id != run_id
+        if in_durable_unit() or (other_run and self.engine_spec.suspension_error_types):
+            await anyio.sleep(max(seconds, 0))  # workflow-nondeterminism-ok: not this run's container code
             return
         try:
             await self.durable_sleep(seconds)

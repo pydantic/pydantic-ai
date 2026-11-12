@@ -371,11 +371,11 @@ class _UnrecordedToolsDurability(SleepingJournalDurability):
 
 @pytest.mark.parametrize('recorded', [True, False])
 async def test_nested_run_in_tool_waits_with_plain_sleep(recorded: bool) -> None:
-    """A nested run in a tool waits with a plain sleep rather than the container's timer.
+    """A nested run in a tool waits with a plain sleep rather than a timer that suspends the container.
 
     Inside the tool's durable unit, the unit is what's recorded. A tool that runs in the container without one, like
     a tool opted out of its unit, isn't recorded either, and neither are the nested run's requests: a container woken
-    from a durable sleep would make them again.
+    from the suspension would make them again.
     """
     durability = SleepingJournalDurability() if recorded else _UnrecordedToolsDurability()
     outer = Agent(TestModel(call_tools=['delegate']), name='sleeping_outer', capabilities=[durability])
