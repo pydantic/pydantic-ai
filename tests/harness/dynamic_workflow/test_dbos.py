@@ -8,8 +8,16 @@ from pathlib import Path
 
 import pytest
 
+from pydantic_ai import Agent
+from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 from tests.conftest import detach_dbos_logging, try_import, without_admin_server
-from tests.harness.dynamic_workflow._concurrent_sub_agents import EXPECTED, build_orchestrator, summarize_model
+from tests.harness.dynamic_workflow._concurrent_sub_agents import (
+    EXPECTED,
+    build_orchestrator,
+    noop,
+    orchestrator_model,
+    summarize_model,
+)
 
 with try_import() as imports_successful:
     from dbos import DBOS, DBOSConfig, DBOSContextSetAuth, SetWorkflowID
@@ -157,6 +165,32 @@ async def test_sub_agents_without_dbos_durability_run_concurrently_in_a_workflow
     # Alpha, dispatched first, finished last.
     assert sorted(model_calls) == ['alpha 1', 'alpha 3', 'beta 1', 'beta 3']
     assert model_calls[-1] == 'alpha 3'
+
+
+@pytest.fixture
+def mixed_catalog_workflow(dbos: DBOS, model_calls: list[str]) -> Callable[[], Awaitable[str]]:
+    model = summarize_model(model_calls, alpha_waits_for_beta=False)
+    durable = Agent(model, name='summarize', tools=[noop], capabilities=[DBOSDurability()])
+    plain = Agent(model, name='plain', tools=[noop])
+    orchestrator = Agent(
+        orchestrator_model("import asyncio\nawait asyncio.gather(summarize(task='alpha'), plain(task='beta'))"),
+        name='orchestrator',
+        capabilities=[DynamicWorkflow(agents=[durable, plain]), DBOSDurability()],
+    )
+
+    @DBOS.workflow(name='dynamic_workflow_dbos_mixed_catalog')
+    async def run() -> str:
+        return (await orchestrator.run('Summarize alpha and beta')).output
+
+    return run
+
+
+async def test_one_dbos_sub_agent_serializes_calls_to_the_others(
+    mixed_catalog_workflow: Callable[[], Awaitable[str]], model_calls: list[str]
+) -> None:
+    assert await mixed_catalog_workflow() == EXPECTED
+    # The plain sub-agent's call waits for the DBOS sub-agent's call to finish.
+    assert model_calls == ['alpha 1', 'alpha 3', 'beta 1', 'beta 3']
 
 
 async def test_sub_agents_outside_a_workflow_run_concurrently(dbos: DBOS) -> None:
