@@ -79,5 +79,6 @@ def build_orchestrator(
     return Agent(
         _orchestrator_model(script),
         name='orchestrator',
+        deps_type=type(None),
         capabilities=[DynamicWorkflow(agents=[summarize_agent]), *([durability()] if durable_orchestrator else [])],
     )
