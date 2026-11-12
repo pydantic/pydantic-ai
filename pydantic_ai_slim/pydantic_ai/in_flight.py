@@ -52,7 +52,8 @@ InFlightOnEnd: TypeAlias = Literal['drain', 'cancel', 'detach']
     workspace that is kept, or a task an application-owned object runs. The run lists it while it lives, but
     never waits for it or cancels it.
 
-A run that ends with an error, is cancelled or times out cancels all work except `'detach'` work.
+A run that ends with an error, is cancelled, times out or hits a usage limit cancels all work except `'detach'`
+work.
 """
 
 InFlightWorkState: TypeAlias = Literal['running', 'succeeded', 'failed', 'cancelled']
@@ -449,8 +450,8 @@ class InFlightRegistry:
     ) -> _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]]:
         """Raise the error of failed work, and apply the end rule when the step ends the run.
 
-        Runs after every capability hook of the step and before the pending messages are drained, so content the
-        work queued while the run waited still gets its turn, or is recorded after a pause.
+        Runs after every capability hook of the step and before the pending messages are drained, so the drain
+        handles content the work queued while the run waited, as it does any content queued when a run ends.
         """
         self._raise_failure()
         if not isinstance(result, End) or not (waiting := self._draining()):
