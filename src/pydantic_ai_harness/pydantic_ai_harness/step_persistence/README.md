@@ -37,6 +37,8 @@ which `StepPersistence` works alongside.
    `Agent.run(message_history=...)` to continue or fork.
 3. **Tool-effect ledger** -- every tool call's lifecycle (`started`,
    `completed`, `failed`) is recorded against `(run_id, tool_call_id)`.
+   A tool that fails, including with `ModelRetry` or `ToolFailed`, is
+   recorded `failed`.
    After a crash, a tool with a `started` record and no terminal update
    should be treated as `unknown_after_crash`: the side effect may or may
    not have happened.
@@ -131,6 +133,18 @@ while records created directly with `idempotency_key=None` retain append
 behavior. Snapshot keys use a per-run save sequence together with
 `step_index` and `state`. Replay produces the same sequence, while distinct
 snapshots at the same step and state retain their write order and newer history.
+
+> [!WARNING]
+> **Compatibility impact: recorded tool-failure operations.** Recording a tool
+> call that raises `ModelRetry` or `ToolFailed` as `failed` adds a tool-effect
+> failure and an event append to the recorded operation sequence. Before
+> upgrading, let in-flight DBOS or Temporal runs that already made such a call
+> finish, or deploy the upgrade as a new DBOS application version or with
+> [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning).
+> Set the DBOS `application_version` explicitly: the computed one does not
+> change with a library upgrade. Replaying an older run with the new code
+> raises `DBOSUnexpectedStepError` on DBOS and a nondeterminism error on
+> Temporal.
 
 The orchestrator pattern -- one logical agent serving many turns -- uses
 `conversation_id`, not a shared `run_id`:
@@ -349,8 +363,8 @@ async def set_label(ctx: RunContext[Deps], issue: int, label: str) -> str:
 The helper reads the active `run_id` from the `StepPersistence`
 `ContextVar` and `tool_call_id` / `tool_name` from `ctx`, then merges the
 metadata into the prior record. It is a no-op when called outside a
-step-persistence-wrapped tool call. `after_tool_execute` preserves both
-fields when it writes the terminal `completed` / `failed` entry.
+step-persistence-wrapped tool call. The terminal `completed` / `failed`
+entry preserves both fields.
 
 ## Compaction receipt handles
 
@@ -897,11 +911,13 @@ or shortened history rewrites. Put the recorder before capabilities whose
 message values are copied before storage so later mutations cannot alter a saved
 in-memory checkpoint through shared references.
 
-`SnapshotSaved` is a typed capability event emitted after a checkpoint write
+`SnapshotSavedEvent` is a typed capability event emitted after a checkpoint write
 completes. It carries `persistence_run_id`, `conversation_id`, `step_index`, and
-`state`. Subscribe using core's `hooks.on.event(SnapshotSaved)`, which a CLAI plugin
+`state`. Subscribe using core's `hooks.on.event(SnapshotSavedEvent)`, which a CLAI plugin
 returns from `get_capabilities`. Store writes are the source of truth; notifications may
 repeat during durable replay and observer failures cannot undo committed writes.
+`STEP_PERSISTENCE_EVENTS` is the namespace of that event (`step_persistence`), not of the
+persisted `StepEvent` log.
 
 Automatic execution recovery is not implemented. Snapshots are saved per settled
 batch, not per tool, so a hard kill during a parallel batch can leave a completed

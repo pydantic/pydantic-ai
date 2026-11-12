@@ -1190,10 +1190,10 @@ class TestSpritesSandbox:
         assert not Path(socket.query['cmd'][4]).exists()
         assert (await backend.run('echo oops >&2', shell=True)).stderr == 'oops\n'
 
-    @pytest.mark.parametrize('timeout', [0, -1, float('inf')])
-    async def test_invalid_timeout(self, transport: SpriteTransport, timeout: float) -> None:
-        with pytest.raises(ValueError, match='timeout'):
-            await SpritesSandboxBackend().run(['true'], timeout=timeout)
+    @pytest.mark.parametrize('timeout', [0, -1, float('inf'), '5'])
+    async def test_invalid_timeout(self, transport: SpriteTransport, timeout: object) -> None:
+        with pytest.raises(ValueError, match=r'^timeout must be a positive finite number or None, got '):
+            await SpritesSandboxBackend().run(['true'], timeout=timeout)  # pyright: ignore[reportArgumentType]
 
     def test_run_signature_matches_the_protocol(self) -> None:
         assert inspect.signature(SpritesSandboxBackend.run) == inspect.signature(SupportsCommands.run)

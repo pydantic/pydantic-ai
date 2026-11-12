@@ -409,12 +409,14 @@ print(result1.output)
 
 result2 = agent.run_sync(
     'Explain?',
-    message_history=result1.new_messages(),
+    message_history=result1.all_messages(),
     model_settings=model_settings
 )
 print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
+
+Pass the whole conversation, as [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] does, even though only the messages after the latest response are sent. A history missing its earlier messages, such as [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] from a later turn, looks the same as one that compaction or a history processor trimmed. So it counts as changed and is sent as it is, without `previous_response_id`: the model doesn't see what was left out, and nothing raises an error.
 
 As an alternative to passing `message_history`, you can pass a concrete `provider_response_id` from an earlier run as the seed. Pydantic AI uses the seed for the first request in the new run, then automatically chains to the response returned for that request on any subsequent in-run calls — so the chain still extends correctly if the run includes tool-call continuations or retries.
 
@@ -514,7 +516,7 @@ agent = Agent(
 )
 ```
 
-As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], or when you need explicit out-of-band control over when compaction runs. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
+As an alternative, `OpenAICompaction` supports a **stateless mode** (`stateless=True`) that calls the stateless `/responses/compact` endpoint via a `before_model_request` hook. Use this in [ZDR](https://openai.com/enterprise-privacy/) environments where OpenAI must not retain conversation data, when using [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store], when you need explicit out-of-band control over when compaction runs, or when the per-request cost of stateful mode matters. Stateful mode sends `context_management` on every `/responses` request, not only once the conversation nears the threshold; in our measurements, that added roughly 50 ms of server processing time per request, and setting `token_threshold` didn't reduce it. Stateless mode sends no `context_management`, and instead makes a separate `/responses/compact` request before the model request whenever its trigger fires. Stateless mode requires you to specify either a [`message_count_threshold`][pydantic_ai.models.openai.OpenAICompaction] or a custom `trigger` callable:
 
 ```python {title="openai_compaction_stateless.py" test="skip"}
 from pydantic_ai import Agent
@@ -758,7 +760,7 @@ agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
 
 All the questions of a request go to the API in one call, and its usage is reported in tokens, as for the Responses API. OpenAI bills only input tokens on this API, with no cache-read or cache-write charges. The `cost` Pydantic AI reports comes from [genai-prices](https://github.com/pydantic/genai-prices)' prices for `gpt-6-luna`, which price cached input apart, so it can differ from the bill when the API reports cached tokens.
 
-The conversation goes to the API as Responses input items, rather than as the [state](decision.md#where-the-wording-comes-from) other decision models are sent: system prompts, user prompts, answers and tool calls with their results keep their roles, so a question names what to judge, such as "the user's latest request", where it would otherwise point at the state's `text`. Item types the API doesn't take are sent as text: thinking as the assistant's, wrapped in thinking tags, and a tool result whose call is no longer in the history as a framed `<tool_result>` on the user channel. An image from an assistant response goes in a user message too, right after the assistant's `<image N>` reference to it, since an assistant message can only hold text. Retry feedback goes as a `developer` message, so it isn't read as a newer request. A lone prompt with no history goes as plain text.
+The conversation goes to the API as Responses input items, rather than as the [state](decision.md#where-the-wording-comes-from) other decision models are sent: system prompts, user prompts, answers and tool calls with their results keep their roles, so a question names what to judge, such as "the user's latest request", where it would otherwise point at the state's `text`. Item types the API doesn't take are sent as text: thinking as the assistant's, wrapped in thinking tags, and a tool result whose call is no longer in the history as a framed `<pyai:tool_result>` on the user channel. An image from an assistant response goes in a user message too, right after the assistant's `<image N>` reference to it, since an assistant message can only hold text. Retry feedback goes as a `developer` message, so it isn't read as a newer request. A lone prompt with no history goes as plain text.
 
 OpenAI Decisions supports image input through [`BinaryContent`][pydantic_ai.BinaryContent], [`BinaryImage`][pydantic_ai.messages.BinaryImage] or [`ImageUrl`][pydantic_ai.messages.ImageUrl]; `ImageUrl` images are downloaded and sent inline as data URLs. Images in user input and message history, including assistant file parts and tool or native-tool images, are sent where they appear in the conversation, while instructions remain separate questions. See [image input](../input.md#image-input). Set `vendor_metadata={'detail': 'high'}` on an image to control its detail level; Decisions accepts `'low'`, `'high'`, `'auto'` and `'original'`. The metadata is preserved when image URLs are downloaded.
 

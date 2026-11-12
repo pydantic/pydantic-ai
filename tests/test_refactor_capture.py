@@ -7,30 +7,58 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypeAlias
+from unittest.mock import Mock
 
 import pytest
 from inline_snapshot import snapshot
 
 import pydantic_ai
-from pydantic_ai.models import StreamedResponse
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import BatchModelRequests
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.models import StreamedResponse, override_allow_model_requests
+from pydantic_ai.models.test import TestModel
 
-from .conftest import try_import
+from .batch_utils import FAST_BATCH_SETTINGS
+from .conftest import IsStr, try_import
 
 with try_import() as imports_successful:
+    import httpx
+    import httpx2
+    from anthropic import AsyncAnthropicBedrock
+
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
     from . import refactor_capture
-    from .refactor_capture import CAPTURE_OPTION, SDK_MOCKS, SOURCE_FILE, RefactorCapture, compare, normalized
+    from .refactor_capture import (
+        CAPTURE_OPTION,
+        SDK_MOCKS,
+        SOURCE_FILE,
+        RefactorCapture,
+        bedrock_canary_model,
+        compare,
+        main,
+        normalized,
+    )
 
 pytest_plugins = ['pytester']
 
 pytestmark = [
-    # The plugin imports `httpx`, `groq` and `anthropic`; the `REQUESTS` sessions import `openai` too.
+    # The plugin imports `httpx`, `groq`, `anthropic` and `boto3`; the `REQUESTS` sessions import `openai` too.
     pytest.mark.skipif(
         not imports_successful() or importlib.util.find_spec('openai') is None,
-        reason='`httpx`, `groq`, `anthropic` or `openai` not installed',
+        reason='`httpx`, `groq`, `anthropic`, `boto3` or `openai` not installed',
     ),
     # A capture of this session would record the streams of the sessions these tests run inside it.
     pytest.mark.skipif(
@@ -123,6 +151,7 @@ from contextlib import suppress
 
 import httpx
 import httpx2
+from anthropic import AsyncAnthropic
 from openai.types.chat import ChatCompletionMessage
 
 from pydantic_ai import Agent
@@ -161,7 +190,9 @@ def test_sdk_mock():
 
 async def send_with_beta():
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda request: httpx2.Response(400))) as client:
-        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='secret', http_client=client))
+        # Keep the captured target stable across SDK versions that add or omit this query parameter.
+        sdk_client = AsyncAnthropic(api_key='secret', http_client=client, default_query=dict(beta='true'))
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=sdk_client))
         with override_allow_model_requests(True), suppress(ModelHTTPError):
             await Agent(model).run('hi', model_settings=dict(anthropic_betas=[{text!r}]))
 
@@ -419,13 +450,141 @@ def test_capture_stops_the_run_when_it_misses_the_canary_stream(tmp_path: Path):
 def test_capture_stops_the_run_when_it_misses_a_canary_request(tmp_path: Path):
     """A canary request the capture doesn't see fails the run instead of the capture recording nothing.
 
-    The capture's `send` wrappers aren't installed, standing in for SDKs that moved to an HTTP client they don't reach.
+    The capture's request wrappers aren't installed, standing in for SDKs that moved to an HTTP client they don't reach.
     """
     with pytest.raises(
         pytest.UsageError,
-        match='with `GroqModel` over `httpx` and `AnthropicModel` over `httpx2` was not recorded',
+        match=(
+            'with `GroqModel` over `httpx` and `AnthropicModel` over `httpx2` and `BedrockConverseModel` over `botocore` '
+            'was not recorded'
+        ),
     ):
         RefactorCapture(tmp_path).check_request_hook()
+
+
+async def test_capture_records_a_request_botocore_sends(tmp_path: Path):
+    """A request a botocore client sends is recorded unsigned, with the extra headers the model adds."""
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        with override_allow_model_requests(True), suppress(ModelHTTPError):
+            await Agent(bedrock_canary_model()).run('hello', model_settings={'extra_headers': {'x-canary': 'yes'}})
+    finally:
+        capture.pytest_unconfigure()
+
+    assert capture.records == snapshot(
+        [
+            {
+                'kind': 'request',
+                'node': None,
+                'target': 'POST https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-micro-v1%3A0/converse',
+                'headers': {'Content-Type': 'application/json', 'User-Agent': IsStr(), 'x-canary': 'yes'},
+                'body': {
+                    'messages': [{'role': 'user', 'content': [{'text': 'hello'}]}],
+                    'system': [],
+                    'inferenceConfig': {},
+                },
+            }
+        ]
+    )
+
+
+async def test_capture_leaves_out_a_sigv4_session_token(tmp_path: Path):
+    """A request SigV4 signs with a session token is recorded without the token, which is a credential."""
+    sent: list[httpx2.Request] = []
+
+    def answer_400(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request)
+        return httpx2.Response(400)
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(answer_400)) as http_client:
+            client = AsyncAnthropicBedrock(
+                aws_access_key='canary',
+                aws_secret_key='canary',
+                aws_session_token='canary-session-token',
+                aws_region='us-east-1',
+                http_client=http_client,
+            )
+            model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+            with override_allow_model_requests(True), suppress(ModelHTTPError):
+                await Agent(model).run('hello')
+    finally:
+        capture.pytest_unconfigure()
+
+    assert [request.headers['x-amz-security-token'] for request in sent] == ['canary-session-token']
+    assert len(capture.records) == 1
+    assert 'canary-session-token' not in json.dumps(capture.records)
+
+
+@pytest.mark.skipif(importlib.util.find_spec('prefect') is None, reason='`prefect` not installed')
+async def test_capture_records_a_prefect_request_once_and_not_the_ones_prefect_sends_itself(tmp_path: Path):
+    """Prefect's client retries a request by sending it again, which the capture records once.
+
+    The log batches, server version checks and CSRF token fetches it sends of its own accord aren't recorded at all. When
+    its test server is busy, the client retries, and its background worker sends logs, checks the version and fetches a
+    token in whichever test is running.
+    """
+    from prefect.client.orchestration import PrefectClient
+
+    sent: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request.url.path)
+        if request.url.path == '/api/csrf-token':
+            # What a server without CSRF tokens answers, so the client stops asking for one.
+            return httpx.Response(404)
+        if sent.count(request.url.path) == 1:
+            return httpx.Response(503, headers={'Retry-After': '0'})
+        return httpx.Response(200, json={})
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        async with PrefectClient(
+            'http://127.0.0.1:4200/api', httpx_settings={'transport': httpx.MockTransport(answer)}
+        ) as client:
+            assert await client.api_healthcheck() is None
+            await client.api_version()
+            await client.create_logs([])
+    finally:
+        capture.pytest_unconfigure()
+
+    assert sent == snapshot(
+        [
+            '/api/health',
+            '/api/health',
+            '/api/admin/version',
+            '/api/admin/version',
+            '/api/csrf-token',
+            '/api/logs/',
+            '/api/logs/',
+        ]
+    )
+    assert [record['target'] for record in capture.records] == snapshot(['GET http://127.0.0.1:PORT/api/health'])
+
+
+async def test_capture_normalizes_the_custom_id_of_an_in_memory_batch_request(tmp_path: Path):
+    """`TestModel`'s batches encode each request as a random token, which the `custom_id` it's sent with hashes."""
+    agent = Agent(TestModel(), capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)])
+
+    @agent.tool_plain
+    def pick() -> str:
+        return 'a'
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        await agent.run('hello')
+    finally:
+        capture.pytest_unconfigure()
+
+    # The second request carries the first response, which the batch answered.
+    assert re.findall(r'"(?:custom_id|provider_response_id)": "[^"]*"', json.dumps(capture.records)) == snapshot(
+        ['"custom_id": "CUSTOM_ID"', '"provider_response_id": "batch:batch_UUID:CUSTOM_ID"']
+    )
 
 
 def test_capture_stops_the_run_when_it_misses_a_canary_model_call(tmp_path: Path):
@@ -586,6 +745,57 @@ def test_compare_names_the_nodes_that_recorded_no_request(
     )
 
 
+def test_main_extracts_the_base_commit_where_no_symlink_leads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Each pytest session is handed paths that go through no symlink, though the temporary directory is reached by one.
+
+    DBOS resolves a workflow function's file with `os.path.realpath`, which reads a symlink on the way with
+    `os.readlink`, and blockbuster raises on that in the event loop. On macOS the temporary directory is reached through
+    `/var`, a symlink, so DBOS tests failed on the base side alone.
+    """
+    (tmp_path / 'real').mkdir()
+    (tmp_path / 'link').symlink_to(tmp_path / 'real')
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path / 'link'))
+    monkeypatch.delenv('PYTHONPATH', raising=False)
+    # `main` extracts each workspace package on `sys.path`; only `pydantic_graph`, the smallest, is left there.
+    repo, venv = Path(refactor_capture.__file__).resolve().parent.parent, Path(sys.prefix).resolve()
+    kept = [
+        entry
+        for entry in sys.path
+        if not (path := Path(entry).resolve()).is_relative_to(repo) or path == repo or path.is_relative_to(venv)
+    ]
+    monkeypatch.setattr(sys, 'path', [*kept, str(repo / 'pydantic_graph')])
+    run_git = subprocess.run
+    sessions: list[tuple[list[str], str]] = []
+
+    def run(
+        command: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str] | None = None,
+        check: bool = False,
+        capture_output: bool = False,
+    ) -> subprocess.CompletedProcess[bytes]:
+        if env is None:
+            return run_git(command, cwd=cwd, check=check, capture_output=capture_output)
+        sessions.append((command, env['PYTHONPATH']))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, 'run', run)
+
+    # Neither pytest session ran, so there's no capture to compare.
+    assert main(['HEAD', 'tests/test_nothing.py']) == 2
+
+    (out,) = (tmp_path / 'real').iterdir()
+    sources = out / 'base-src' / 'pydantic_graph'
+    assert (sources / 'pydantic_graph' / '__init__.py').is_file()
+    pytest_command = [sys.executable, '-m', 'pytest', '-p', 'tests.refactor_capture']
+    assert sessions == [
+        ([*pytest_command, f'{CAPTURE_OPTION}={out / "base"}', 'tests/test_nothing.py'], str(sources)),
+        ([*pytest_command, f'{CAPTURE_OPTION}={out / "head"}', 'tests/test_nothing.py'], ''),
+    ]
+    assert os.path.realpath(out) == str(out)
+
+
 def test_normalized_replaces_values_that_change_between_runs():
     now = datetime.now(UTC)
     assert normalized(
@@ -597,6 +807,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'tool_call_id': f'pyd_ai_{"0" * 32}',
             'uuid': '12345678-1234-5678-1234-567812345678',
             'repr': object(),
+            'mock_repr': Mock(name='mock.service_tier'),
             'history_digest': '0' * 64,
             'duration': timedelta(seconds=1.5),
             'url': 'http://127.0.0.1:8123/v1',
@@ -611,6 +822,40 @@ def test_normalized_replaces_values_that_change_between_runs():
             'plan': 'Current plan:\n1. [ ] [0a1b2c3d] a\n2. [x] [4e5f6a7b] b',
             'added_step': "Added step 'a' with id: 0a1b2c3d",
             'echoed_step_id': {'task_id': '0a1b2c3d'},
+            'amz_date': now.strftime('%Y%m%dT%H%M%SZ'),
+            'recorded_amz_date': '20240101T000000Z',
+            'botocore_error': (
+                "ModelHTTPError: status_code: 400, body: {'ResponseMetadata': {'HTTPStatusCode': 400, 'HTTPHeaders': "
+                "{'date': 'Mon, 01 Jan 2024 00:00:00 GMT', 'content-type': 'application/json', 'connection': "
+                "'keep-alive'}, 'RetryAttempts': 0}}"
+            ),
+            # The trace ID has the shape of a version 4 UUID without dashes.
+            'mcp_meta': {'traceparent': '00-12345678123441238123123456789abc-0123456789abcdef-01', 'progressToken': 2},
+            'prefect_labels': {'__OTEL_TRACEPARENT': '00-01a1cb2f55a38937d7e2c3ba122f0f00-367bccfae831323d-01'},
+            'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-095f908e', 'dynamic_key': '0'},
+            'in_memory_ticket': {
+                'custom_id': '52a31e60e1afe0ff4a1058d5fcf539a6-1',
+                'batch': {'id': 'batch_12345678123441238123123456789abc', 'model_name': 'test'},
+            },
+            'in_memory_response': {
+                'provider_details': {
+                    'batch': {
+                        'id': 'batch_12345678123441238123123456789abc',
+                        'custom_id': '12345678123441238123123456789abc',
+                    }
+                },
+                'provider_response_id': 'batch:batch_12345678123441238123123456789abc:52a31e60e1afe0ff4a1058d5fcf539a6',
+            },
+            # A provider's batch ID isn't a UUID, so the `custom_id` it was sent, which hashes the request, stays.
+            'provider_response': {
+                'provider_details': {
+                    'batch': {
+                        'id': 'batch_6ad154c0fd50819086f8336d5b30addb',
+                        'custom_id': '400d94ba99d83e31c153e0e49776c1a5',
+                    }
+                },
+                'provider_response_id': 'batch:batch_6ad154c0fd50819086f8336d5b30addb:400d94ba99d83e31c153e0e49776c1a5',
+            },
         }
     ) == snapshot(
         {
@@ -621,6 +866,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'tool_call_id': 'pyd_ai_ID',
             'uuid': 'UUID',
             'repr': '<object object at 0x?>',
+            'mock_repr': "<Mock name='mock.service_tier' id='ID'>",
             'history_digest': 'DIGEST',
             'duration': 'DURATION',
             'url': 'http://127.0.0.1:PORT/v1',
@@ -635,5 +881,29 @@ def test_normalized_replaces_values_that_change_between_runs():
             'plan': 'Current plan:\n1. [ ] [STEP_ID] a\n2. [x] [STEP_ID] b',
             'added_step': "Added step 'a' with id: STEP_ID",
             'echoed_step_id': {'task_id': '0a1b2c3d'},
+            'amz_date': 'NOW',
+            'recorded_amz_date': '20240101T000000Z',
+            'botocore_error': (
+                "ModelHTTPError: status_code: 400, body: {'ResponseMetadata': {'HTTPStatusCode': 400, 'HTTPHeaders': "
+                "{'connection': 'keep-alive', 'content-type': 'application/json', 'date': 'Mon, 01 Jan 2024 00:00:00 "
+                "GMT'}, 'RetryAttempts': 0}}"
+            ),
+            'mcp_meta': {'traceparent': '00-TRACE_ID-SPAN_ID-01', 'progressToken': 2},
+            'prefect_labels': {'__OTEL_TRACEPARENT': '00-TRACE_ID-SPAN_ID-01'},
+            'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-CODE_HASH', 'dynamic_key': '0'},
+            'in_memory_ticket': {'custom_id': 'CUSTOM_ID-1', 'batch': {'id': 'batch_UUID', 'model_name': 'test'}},
+            'in_memory_response': {
+                'provider_details': {'batch': {'id': 'batch_UUID', 'custom_id': 'CUSTOM_ID'}},
+                'provider_response_id': 'batch:batch_UUID:CUSTOM_ID',
+            },
+            'provider_response': {
+                'provider_details': {
+                    'batch': {
+                        'id': 'batch_6ad154c0fd50819086f8336d5b30addb',
+                        'custom_id': '400d94ba99d83e31c153e0e49776c1a5',
+                    }
+                },
+                'provider_response_id': 'batch:batch_6ad154c0fd50819086f8336d5b30addb:400d94ba99d83e31c153e0e49776c1a5',
+            },
         }
     )

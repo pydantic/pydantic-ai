@@ -11,6 +11,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
 
 from pydantic_ai import AgentRunResult, FunctionToolset, Tool, ToolKind
+from pydantic_ai._framing import second_model_prompt
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -644,12 +645,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         agent: Agent[None, str] = Agent(
             model, name='tool_output_limits', instructions='You summarize oversized tool output.'
         )
-        run = await agent.run(
-            prompt,
-            conversation_id=ctx.conversation_id,
-            usage=ctx.usage,
-            usage_limits=reserved_usage_limits(ctx.usage_limits),
-        )
+        with second_model_prompt():
+            run = await agent.run(
+                prompt,
+                conversation_id=ctx.conversation_id,
+                usage=ctx.usage,
+                usage_limits=reserved_usage_limits(ctx.usage_limits),
+            )
         return run.output.strip()
 
     @staticmethod
@@ -772,18 +774,18 @@ def _with_handles(
 def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, read_hint: str) -> str:
     """Compose the model-visible spill stand-in: marker, sketch, and a head/tail preview."""
     if unit.binary:
-        size_desc = f'{len(unit.data):,} bytes (binary)'
+        size_description = f'{len(unit.data):,} bytes (binary)'
         body = f'<{len(unit.data):,} bytes of binary data>'
         sketch = ''
     else:
         text = unit.text or ''
         size_unit = 'tokens' if over_tokens else 'chars'
         amount = measure(text, over_tokens=over_tokens, tokenizer=None) if over_tokens else len(text)
-        size_desc = f'{amount:,} {size_unit}'
+        size_description = f'{amount:,} {size_unit}'
         body = _head_tail_preview(text, preview_chars)
         sketch = json_sketch(unit.value)
 
-    header = f'[Tool output too large ({size_desc}); stored to handle {handle!r}.{read_hint}]'
+    header = f'[Tool output too large ({size_description}); stored to handle {handle!r}.{read_hint}]'
     parts = [header]
     if sketch:
         parts.append(f'shape: {sketch}')

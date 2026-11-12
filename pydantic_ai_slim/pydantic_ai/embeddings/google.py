@@ -36,19 +36,18 @@ def _map_api_errors(model_name: str) -> Generator[None]:
     except errors.APIError as e:
         if (status_code := e.code) >= 400:
             status = e.status if isinstance(e.status, str) else None
-            raise ModelHTTPError.for_category(
-                _model_errors.google_status_category(
-                    status,
-                    e.message,
-                    cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
-                )
+            body = cast(object, e.details)  # pyright: ignore[reportUnknownMemberType]
+            error = ModelHTTPError.for_category(
+                _model_errors.google_status_category(status, e.message, body)
                 or _model_errors.http_status_category(status_code, e.message),
                 status_code=status_code,
                 model_name=model_name,
-                body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
+                body=body,
                 headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
                 provider_error_code=status,
-            ) from e
+            )
+            error.retry_after = _model_errors.google_retry_after(error)
+            raise error from e
 
         raise
     except httpx2.TransportError as e:
@@ -57,7 +56,10 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
-LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview', 'gemini-embedding-2']
+LatestGoogleGLAEmbeddingModelNames = Literal[
+    'gemini-embedding-2',
+    'gemini-embedding-001',
+]
 """Latest Gemini API embedding models.
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings)
@@ -65,11 +67,8 @@ for available models and their capabilities.
 """
 
 LatestGoogleVertexEmbeddingModelNames = Literal[
-    'gemini-embedding-001',
-    'gemini-embedding-2-preview',
     'gemini-embedding-2',
-    'text-embedding-005',
-    'text-multilingual-embedding-002',
+    'gemini-embedding-001',
 ]
 """Latest Google Cloud (formerly known as Vertex AI) embedding models.
 

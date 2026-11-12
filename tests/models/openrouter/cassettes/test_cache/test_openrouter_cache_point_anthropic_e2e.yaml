@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -47,7 +47,9 @@ interactions:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - X-Generation-Id,x-openrouter-error-origin,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -63,9 +65,9 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1792905655-3Xvuvk1PezmSmPzVxvQK
+        id: gen-1793763601-mj5s6t3ocWYO5OgG7AbA
         object: chat.completion
-        created: 1792905655
+        created: 1793763601
         model: anthropic/claude-sonnet-5.5
         provider: Claude Platform on AWS
         system_fingerprint: null
@@ -78,16 +80,16 @@ interactions:
           message:
             role: assistant
             content: |-
-              The only content in your message is the sentence "Here is some important context to cache," repeated 20 times, with no actual context included.
+              The message repeats the phrase "Here is some important context to cache" 20 times but never includes any actual context, so there is nothing substantive to summarize.
 
-              If you meant to share a document, data, or details, please paste it again and I'll summarize it.
+              If you meant to share specific content (a document, data, or instructions), please paste it and I'll summarize it.
             refusal: null
             reasoning: null
         usage:
           prompt_tokens: 220
-          completion_tokens: 68
-          total_tokens: 288
-          cost: 0.00112
+          completion_tokens: 83
+          total_tokens: 303
+          cost: 0.00127
           is_byok: false
           prompt_tokens_details:
             cached_tokens: 0
@@ -95,11 +97,11 @@ interactions:
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 0.00112
+            upstream_inference_cost: 0.00127
             upstream_inference_prompt_cost: 0.00044
-            upstream_inference_completions_cost: 0.00068
+            upstream_inference_completions_cost: 0.00083
           completion_tokens_details:
             reasoning_tokens: 0
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-25T05:20:57.183698+00:00
+  recorded_at: 2026-11-04T03:40:03.209836+00:00

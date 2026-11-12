@@ -89,7 +89,7 @@ _SETUP_TIMEOUT = 60.0
 _ENGINE_TIMEOUT_GRACE = 5.0
 """Seconds past a command's timeout before smolvm kills it itself, in case this event loop can't."""
 
-lifecycle: dict[str, asyncio.Task[object]] = {}
+_lifecycle: dict[str, asyncio.Task[object]] = {}
 """This process's latest unfinished creation, attachment or deletion of each VM, by name.
 
 Each one waits for the one started before it, so the latest finishing means they all have, and none
@@ -143,7 +143,7 @@ def check_ref(ref: WorkspaceRef) -> None:
 
 def start_lifecycle(machine_id: str, work: Callable[[], Awaitable[_T]]) -> asyncio.Task[_T]:
     """Run `work` on `machine_id` once its earlier operations finish, in a task its callers' cancellation doesn't stop."""
-    previous = lifecycle.get(machine_id)
+    previous = _lifecycle.get(machine_id)
 
     async def run() -> _T:
         if previous is not None:
@@ -155,8 +155,8 @@ def start_lifecycle(machine_id: str, work: Callable[[], Awaitable[_T]]) -> async
     # Waiting callers still get the failure; this only stops asyncio reporting it as never retrieved
     # when every caller was cancelled first.
     task.add_done_callback(lambda done: done.cancelled() or done.exception())
-    lifecycle[machine_id] = task
-    task.add_done_callback(lambda done: lifecycle.pop(machine_id) if lifecycle.get(machine_id) is done else None)
+    _lifecycle[machine_id] = task
+    task.add_done_callback(lambda done: _lifecycle.pop(machine_id) if _lifecycle.get(machine_id) is done else None)
     return task
 
 
@@ -190,12 +190,27 @@ def _next_event(stream: smol.ExecStream) -> Mapping[str, object] | None:
 
 
 class _Output:
-    """A command's output so far, bounded by `_MAX_OUTPUT_BYTES`."""
+    """A command's output so far, bounded by `_MAX_OUTPUT_BYTES`, and its exit status once it has one."""
 
     def __init__(self) -> None:
         self.stdout: list[str] = []
         self.stderr: list[str] = []
         self.size = 0
+        self.exit_code: int | None = None
+
+    def record(self, event: Mapping[str, object]) -> None:
+        kind = event.get('kind')
+        if kind == 'stdout' or kind == 'stderr':
+            if type(data := event.get('data')) is not str:
+                raise WorkspaceError(f'smol sent {kind} output that is not text: {type(data).__name__}')
+            self.add(self.stdout if kind == 'stdout' else self.stderr, data)
+        elif kind == 'exit':
+            if type(code := event.get('exit_code')) is not int:
+                raise WorkspaceError(f'smol sent an exit status that is not an integer: {code!r:.100}')
+            self.exit_code = code
+        else:
+            # `error`, the only other kind the SDK sends, carries a bracketed code.
+            raise smol.wrap_native_error(RuntimeError(str(event.get('message', event))))
 
     def add(self, stream: list[str], data: str) -> None:
         # A character is at least one byte, so an event longer than what is left is over the cap
@@ -399,7 +414,6 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         timeout: float | None = None,
     ) -> CommandResult:
         output = _Output()
-        exit_code: int | None = None
         engine_timeout = None if timeout is None else timeout + _ENGINE_TIMEOUT_GRACE
         options = smol.ExecOptions(env=env or None, workdir=working_dir, timeout=engine_timeout)
         try:
@@ -407,18 +421,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
                 stream = await _open(machine, argv, options)
                 try:
                     while (event := await asyncio.to_thread(_next_event, stream)) is not None:
-                        kind = event.get('kind')
-                        if kind == 'stdout' or kind == 'stderr':
-                            if type(data := event.get('data')) is not str:
-                                raise WorkspaceError(f'smol sent {kind} output that is not text: {type(data).__name__}')
-                            output.add(output.stdout if kind == 'stdout' else output.stderr, data)
-                        elif kind == 'exit':
-                            if type(code := event.get('exit_code')) is not int:
-                                raise WorkspaceError(f'smol sent an exit status that is not an integer: {code!r:.100}')
-                            exit_code = code
-                        else:
-                            # `error`, the only other kind the SDK sends, carries a bracketed code.
-                            raise smol.wrap_native_error(RuntimeError(str(event.get('message', event))))
+                        output.record(event)
                 finally:
                     # On any way out, this kills the command in the VM and wakes a thread waiting for its next event.
                     stream.close()
@@ -428,8 +431,8 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
                 raise
             raise translated from error
         stdout, stderr = output.text()
-        if exit_code is not None:
-            return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
+        if output.exit_code is not None:
+            return CommandResult(exit_code=output.exit_code, stdout=stdout, stderr=stderr)
         if scope.cancelled_caught:
             raise WorkspaceTimeoutError(f'Command timed out after {timeout:g} seconds', stdout=stdout, stderr=stderr)
         raise WorkspaceError(f'The command in smol VM {machine.id} ended without an exit status')
