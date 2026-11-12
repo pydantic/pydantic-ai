@@ -231,7 +231,7 @@ def no_keyring(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) 
     monkeypatch.setattr(keyring, 'delete_password', raise_error)
 
 
-@pytest.mark.parametrize('no_keyring', [NoKeyringError, InitError], indirect=True)
+@pytest.mark.parametrize('no_keyring', [NoKeyringError, InitError, RuntimeError], indirect=True)
 def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None, caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level('WARNING', logger=credential_store.__name__):
         assert load_codex_credentials(fallback=fallback) is None
@@ -251,17 +251,29 @@ def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None, caplog:
         assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
 
 
+@pytest.mark.parametrize('error', [NoKeyringError, RuntimeError, None])
 def test_file_fallback_when_set_password_has_no_keyring(
-    fallback: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    fallback: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    error: type[Exception] | None,
 ) -> None:
     def fail_set(service: str, account: str, value: str) -> None:
-        raise NoKeyringError('No recommended backend was available')
+        if error is not None:
+            raise error('No recommended backend was available')
 
     monkeypatch.setattr(keyring, 'set_password', fail_set)
     with caplog.at_level('WARNING', logger=credential_store.__name__):
+        assert load_codex_credentials(fallback=fallback) is None
+        assert caplog.records == []
         save_codex_credentials(fallback=fallback, value='{"access_token":"first"}')
+        assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING]
         assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
-    assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING]
+        assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING]
+        new_session()
+        assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
+        assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING, PLAINTEXT_WARNING]
+    assert list(fallback.parent.glob('credentials.*')) == [fallback]
     if sys.platform != 'win32':  # pragma: no branch
         assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
 

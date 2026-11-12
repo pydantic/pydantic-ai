@@ -28,8 +28,25 @@ _PREFIX = 'clai-chunks-v1:'
 _SLASH = '%2F'
 """How `/` is written in a credential file name; no account name CLAI stores otherwise contains `%`."""
 # A locked or failing keyring is not "no keyring": only these mean nothing is configured.
+# `SecretService` and `kwallet` raise plain `RuntimeError` during backend priority/init when D-Bus or
+# Secret Service is missing; `_get_password`/`_set_password` wrap keyring calls so `UserError` (a
+# `RuntimeError` subclass raised by `_decrypt` and `_chunk_services`) is never caught as `_NO_KEYRING`.
 _NO_KEYRING = (NoKeyringError, InitError)
 _logger = logging.getLogger(__name__)
+
+
+def _get_password(service: str, account: str) -> str | None:
+    try:
+        return keyring.get_password(service, account)
+    except RuntimeError as exc:
+        raise NoKeyringError(str(exc)) from exc
+
+
+def _set_password(service: str, account: str, value: str) -> None:
+    try:
+        keyring.set_password(service, account, value)
+    except RuntimeError as exc:
+        raise NoKeyringError(str(exc)) from exc
 
 
 @cache
@@ -109,7 +126,7 @@ def credential_lock(*, account: str, busy: str) -> Generator[None]:
 @cache
 def _stored_key() -> str | None:
     """The one keyring read a session needs. Cached, so the OS asks for permission at most once."""
-    return keyring.get_password(_SERVICE, _KEY_ACCOUNT)
+    return _get_password(_SERVICE, _KEY_ACCOUNT)
 
 
 def _cipher() -> Fernet | None:
@@ -130,10 +147,10 @@ def _create_cipher() -> Fernet:
         if (cipher := _cipher()) is not None:
             return cipher
         key = Fernet.generate_key().decode()
-        keyring.set_password(_SERVICE, _KEY_ACCOUNT, key)
+        _set_password(_SERVICE, _KEY_ACCOUNT, key)
         _stored_key.cache_clear()
         if _stored_key() != key:
-            raise UserError('The credential backend did not retain the key. Configure an OS keyring backend.')
+            raise NoKeyringError('The credential backend did not retain the key.')
         return Fernet(key)
 
 
@@ -161,15 +178,15 @@ def load_codex_credentials(*, account: str = _ACCOUNT, fallback: Path | None = N
     try:
         if encrypted.is_file():
             return _decrypt(encrypted)
-        root = keyring.get_password(_SERVICE, account)
+        root = _get_password(_SERVICE, account)
     except _NO_KEYRING:
-        if not plaintext.is_file():
-            return None
-        _warn_plaintext_fallback()
-        return plaintext.read_text(encoding='utf-8')
+        root = None
     if root is not None:
         return _migrate(root=root, account=account, encrypted=encrypted)
-    return plaintext.read_text(encoding='utf-8') if plaintext.is_file() else None
+    if not plaintext.is_file():
+        return None
+    _warn_plaintext_fallback()
+    return plaintext.read_text(encoding='utf-8')
 
 
 def save_codex_credentials(*, value: str, account: str = _ACCOUNT, fallback: Path | None = None) -> None:
@@ -253,7 +270,7 @@ def _join_chunks(*, root: str, account: str) -> str:
 
 
 def _delete_keyring(*, account: str) -> None:
-    if (root := keyring.get_password(_SERVICE, account)) is not None:
+    if (root := _get_password(_SERVICE, account)) is not None:
         _delete_entries(root=root, account=account)
 
 
