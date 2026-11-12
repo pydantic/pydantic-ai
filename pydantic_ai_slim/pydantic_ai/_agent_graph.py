@@ -990,8 +990,16 @@ def _check_compaction_result(result: CompactionResult, given: Sequence[_messages
 
 
 def _standing_prompt_count(messages: Sequence[_messages.ModelMessage]) -> int:
-    """How many `SystemPromptPart`s the standing system prompt of `messages` has, as the request to a model counts it."""
-    return len(models._standing_system_prompt(messages))  # pyright: ignore[reportPrivateUsage]
+    """How many `SystemPromptPart`s the standing system prompt of `messages` has, as the request to a model counts it.
+
+    The requests a history starts with are merged into one before they're sent, so their parts are counted together.
+    """
+    parts: list[_messages.ModelRequestPart] = []
+    for message in messages:
+        if not isinstance(message, _messages.ModelRequest):
+            break
+        parts.extend(message.parts)
+    return models._standing_system_prompt_count(_messages.ModelRequest(parts=parts))  # pyright: ignore[reportPrivateUsage]
 
 
 class _PartPosition(NamedTuple):
