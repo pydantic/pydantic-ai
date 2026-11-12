@@ -172,7 +172,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     args=item.arguments,
                     tool_call_id=stored_tool_call_id(
                         item.call_id,
-                        response_scoped=self._tool_call_ids_are_response_scoped,
+                        # Without the response ID yet, the ID is kept as sent rather than scoped by the timestamp:
+                        # a request continuing this response by `previous_response_id` no longer holds it, so
+                        # only the response ID can restore the IDs its results carry.
+                        response_scoped=self._tool_call_ids_are_response_scoped
+                        and self.provider_response_id is not None,
                         provider_response_id=self.provider_response_id,
                         timestamp=self.timestamp,
                     ),

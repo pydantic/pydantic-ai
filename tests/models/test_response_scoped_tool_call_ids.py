@@ -32,11 +32,11 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
-from .mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
+from .mock_openai import MockOpenAI, MockOpenAIResponses, get_mock_chat_completion_kwargs, response_message
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
-    from openai.types import chat
+    from openai.types import chat, responses
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_chunk import (
         Choice as ChunkChoice,
@@ -49,7 +49,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_message_tool_call import Function
 
     from pydantic_ai.models.bedrock import BedrockConverseModel
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -287,6 +287,50 @@ async def test_chat_stream_whose_response_id_arrives_late_restores_its_ids(allow
     await Agent(replay_model).run('Again.', message_history=messages)
 
     assert _wire_ids(replay_client) == [['call_0', 'call_0']]
+
+
+@pytest.mark.parametrize('created_first', [True, False], ids=['created_first', 'no_created'])
+async def test_responses_stream_qualifies_only_once_its_response_id_is_known(
+    allow_model_requests: None, created_first: bool
+):
+    """A Responses call streamed before the response ID is known keeps the ID it was sent with.
+
+    A request continuing that response by `previous_response_id` no longer holds it, so only the response ID could
+    restore its results' IDs: a timestamp-scoped ID would reach the provider qualified.
+    """
+    call = responses.ResponseFunctionToolCall(
+        id='fc_1', arguments='{}', call_id='call_0', name='first_tool', status='completed', type='function_call'
+    )
+    completed = response_message([call])
+    completed.id = 'resp_a'
+    events: list[responses.ResponseStreamEvent] = [
+        responses.ResponseOutputItemAddedEvent(
+            item=call, output_index=0, sequence_number=1, type='response.output_item.added'
+        ),
+        responses.ResponseOutputItemDoneEvent(
+            item=call, output_index=0, sequence_number=2, type='response.output_item.done'
+        ),
+        responses.ResponseCompletedEvent(response=completed, sequence_number=3, type='response.completed'),
+    ]
+    if created_first:
+        events.insert(0, responses.ResponseCreatedEvent(response=completed, sequence_number=0, type='response.created'))
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock_stream(events)),
+        profile=ModelProfile(tool_call_ids_are_response_scoped=True),
+    )
+
+    async with model.request_stream(
+        [ModelRequest(parts=[UserPromptPart('Go.')])], None, ModelRequestParameters()
+    ) as stream:
+        async for _ in stream:
+            pass
+
+    response = stream.get()
+    assert response.provider_response_id == 'resp_a'
+    assert response.tool_calls[0].tool_call_id == (
+        qualify_tool_call_id('call_0', 'resp_a') if created_first else 'call_0'
+    )
 
 
 @pytest.mark.vcr
