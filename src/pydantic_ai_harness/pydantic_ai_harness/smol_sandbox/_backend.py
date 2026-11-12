@@ -89,7 +89,7 @@ _SETUP_TIMEOUT = 60.0
 _ENGINE_TIMEOUT_GRACE = 5.0
 """Seconds past a command's timeout before smolvm kills it itself, in case this event loop can't."""
 
-lifecycle: dict[str, asyncio.Task[object]] = {}
+_lifecycle: dict[str, asyncio.Task[object]] = {}
 """This process's latest unfinished creation, attachment or deletion of each VM, by name.
 
 Each one waits for the one started before it, so the latest finishing means they all have, and none
@@ -104,14 +104,16 @@ _HOST_UNAVAILABLE = frozenset(
 # `exec` keeps the argv literal and replaces the shell with the program. BusyBox and bash read a
 # program named like `-c` as an option of `exec`, and dash's `exec` takes no `--`, so such a name is
 # resolved to its path first. smolmachines 1.22 leaves a streamed command's stdin open, so it is
-# closed here.
-_EXEC_SCRIPT = """p=$1
-shift
-case $p in
--*/*) p=./$p ;;
--*) q=$(command -v -- "$p") || { printf 'sh: %s: not found\\n' "$p" >&2; exit 127; }; p=$q ;;
+# closed here. The command's `env` is the shell's own environment, and assigning a variable the
+# environment has changes what the program inherits, so the script assigns none on the usual path
+# and only a reserved name for a program named like an option.
+_EXEC_SCRIPT = """case $1 in
+-*/*) PYDANTIC_AI_HARNESS_PROGRAM=./$1 ;;
+-*) PYDANTIC_AI_HARNESS_PROGRAM=$(command -v -- "$1") || { printf 'sh: %s: not found\\n' "$1" >&2; exit 127; } ;;
+*) exec "$@" </dev/null ;;
 esac
-exec "$p" "$@" </dev/null"""
+shift
+exec "$PYDANTIC_AI_HARNESS_PROGRAM" "$@" </dev/null"""
 _EXEC = ('/bin/sh', '-c', _EXEC_SCRIPT, 'sh')
 
 # The local backend's cap and E2B's preview: the output is held in memory until the command ends.
@@ -143,7 +145,7 @@ def check_ref(ref: WorkspaceRef) -> None:
 
 def start_lifecycle(machine_id: str, work: Callable[[], Awaitable[_T]]) -> asyncio.Task[_T]:
     """Run `work` on `machine_id` once its earlier operations finish, in a task its callers' cancellation doesn't stop."""
-    previous = lifecycle.get(machine_id)
+    previous = _lifecycle.get(machine_id)
 
     async def run() -> _T:
         if previous is not None:
@@ -155,8 +157,8 @@ def start_lifecycle(machine_id: str, work: Callable[[], Awaitable[_T]]) -> async
     # Waiting callers still get the failure; this only stops asyncio reporting it as never retrieved
     # when every caller was cancelled first.
     task.add_done_callback(lambda done: done.cancelled() or done.exception())
-    lifecycle[machine_id] = task
-    task.add_done_callback(lambda done: lifecycle.pop(machine_id) if lifecycle.get(machine_id) is done else None)
+    _lifecycle[machine_id] = task
+    task.add_done_callback(lambda done: _lifecycle.pop(machine_id) if _lifecycle.get(machine_id) is done else None)
     return task
 
 

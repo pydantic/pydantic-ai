@@ -1158,7 +1158,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=87, output_tokens=11),
+                usage=RequestUsage(input_tokens=89, output_tokens=11),
                 model_name='function:model_fn:',
                 model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
@@ -1431,7 +1431,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=94, output_tokens=10),
+                usage=RequestUsage(input_tokens=96, output_tokens=10),
                 model_name='function:model_fn:',
                 model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
@@ -1468,7 +1468,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=121, output_tokens=17),
+                usage=RequestUsage(input_tokens=125, output_tokens=17),
                 model_name='function:model_fn:',
                 model_id='function:function:model_fn:',
                 timestamp=IsDatetime(),
@@ -3039,7 +3039,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='refund_status', args={'order_id': 'A1'}, tool_call_id='status')],
-                usage=RequestUsage(input_tokens=80, output_tokens=7),
+                usage=RequestUsage(input_tokens=82, output_tokens=7),
                 model_name='function:_open_case_then_check_refund:',
                 model_id='function:function:_open_case_then_check_refund:',
                 timestamp=IsDatetime(),
@@ -3062,7 +3062,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='A1: refunded')],
-                usage=RequestUsage(input_tokens=82, output_tokens=9),
+                usage=RequestUsage(input_tokens=84, output_tokens=9),
                 model_name='function:_open_case_then_check_refund:',
                 model_id='function:function:_open_case_then_check_refund:',
                 timestamp=IsDatetime(),

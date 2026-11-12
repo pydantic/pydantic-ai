@@ -265,7 +265,7 @@ Temporal workflow; the [workspace guide](../workspace.md#harness-workspace-capab
 on each engine. Three things are specific to Temporal.
 
 **Live events.** Tools that write files ask for approval and report the write from the workflow, so
-`FileChangeRequestEvent`, `FileWrittenEvent`, `FileEditedEvent` and `DirectoryCreatedEvent` reach your
+`FileChangeRequestedEvent`, `FileWrittenEvent`, `FileEditedEvent` and `DirectoryCreatedEvent` reach your
 listeners as they happen. Other tools run in activities and their events are not delivered: `FileReadEvent`,
 `DirectoryListedEvent` and `FilesSearchedEvent` from the file tools, and `CommandStartedEvent`,
 `CommandOutputEvent` and `CommandFinishedEvent` from `shell`
@@ -594,16 +594,52 @@ Emitting events via [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] from a too
 
 Capability listeners registered with [`@on_event`][pydantic_ai.capabilities.on_event] run in workflow code rather than in a durable unit, so they re-run on every workflow replay and must be deterministic. Keep I/O in a durability `event_stream_handler=`, which runs in its own activity.
 
+[`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for workflow code: it requires no running event loop and wraps `run_stream()`. Under [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a workflow, an agent with `TemporalDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `TemporalAgent` forbids `run_stream` inside workflows — use `run` + event stream handler there.)
+
+### Cancellation
+
 Because the model stream is consumed inside the activity, cancelling it from the workflow side (e.g. with [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel]) is not available across the durable boundary. To stop an in-flight model request, cancel the Temporal workflow: the cancellation is delivered to the activity (via its heartbeats), which cancels any server-side job before the activity completes.
 
 Whole-run cancellation (see [Cancelling a Run](../agent.md#cancelling-a-run)) follows the same split, with Temporal-specific consequences:
 
 - Calling [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] from workflow code raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] as an ordinary application outcome: a workflow that catches it completes normally rather than ending as *Cancelled*, and the run remains replay-deterministic. An uncaught `RunCancelled` fails the workflow as a typed application error, and the run state does not cross the failure boundary -- catch it inside the workflow if you need [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages].
 - [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] requires being in the same process as the run, so calling it from a tool running inside an activity raises a clear [`UserError`][pydantic_ai.exceptions.UserError] instead of hanging.
-- [`CancellationToken`][pydantic_ai.CancellationToken] is also same-process state and cannot be passed to a Temporal durable run; cancel the Temporal workflow instead.
+- A [`CancellationToken`][pydantic_ai.CancellationToken] lets an external actor (a user hitting "stop") cancel the run first-party without cancelling the workflow, when the token is created in workflow code and fired from a [`@workflow.signal`](https://docs.temporal.io/develop/python/message-passing#signals) handler (see below). Uncaught, the resulting `RunCancelled` fails the workflow just like with `AgentRun.cancel()`.
 - Cancelling the Temporal workflow itself remains an external cancellation: `CancelledError` keeps propagating and the workflow still ends as *Cancelled*.
 
-[`Agent.run_stream_sync()`][pydantic_ai.agent.Agent.run_stream_sync] is not for workflow code: it requires no running event loop and wraps `run_stream()`. Under [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], use the buffered async streaming APIs above or [`Agent.run()`][pydantic_ai.agent.Agent.run] with an event stream handler. Outside a workflow, an agent with `TemporalDurability` behaves like a normal agent, so `run_stream_sync()` works as usual. (Wrapper `TemporalAgent` forbids `run_stream` inside workflows — use `run` + event stream handler there.)
+A signal handler runs on the workflow event loop and is recorded in history, so a token fired from one cancels the run at the same point on replay. Only fire the token from a signal handler (or other workflow code). Fired from anywhere else -- another thread, an activity, or code outside the workflow -- while a run is using it, it raises a [`UserError`][pydantic_ai.exceptions.UserError] and leaves the run and the token untouched, since that cancellation couldn't be replayed. Fired from elsewhere before any run has taken it, it can't be detected: the run then starts already cancelled at a point history doesn't record, and the workflow won't replay.
+
+```python {title="temporal_signal_cancellation.py" test="skip" requires="temporal_durability.py"}
+from temporalio import workflow
+
+from pydantic_ai import CancellationToken, RunCancelled
+from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow
+
+with workflow.unsafe.imports_passed_through():
+    from temporal_durability import agent
+
+
+@workflow.defn
+class MyAgentWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
+    def __init__(self) -> None:
+        self.cancellation_token = CancellationToken()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        try:
+            result = await agent.run(prompt, cancellation_token=self.cancellation_token)
+            return result.output
+        except RunCancelled:
+            return 'The run was cancelled.'
+
+    @workflow.signal
+    def cancel(self) -> None:
+        self.cancellation_token.cancel()
+```
+
+An external actor then cancels the run by signalling the workflow: `await handle.signal(MyAgentWorkflow.cancel)`. A signal that arrives before the run starts cancels it as soon as it does. A cancelled token stays cancelled, so a workflow that runs the agent more than once (e.g. once per chat turn) should create a fresh token before each run.
 
 ### Run Timeouts
 
@@ -1066,7 +1102,9 @@ By default, the `LogfirePlugin` will instrument Temporal (including metrics) and
 
 If your application already called `logfire.configure()` itself, the plugin keeps that configuration instead of replacing it, so your scrubbing options, exporters, sampling, and console settings are left alone. To customize Logfire configuration and instrumentation, you can pass a `setup_logfire` function to the `LogfirePlugin` constructor and return a custom `Logfire` instance (i.e. the result of `logfire.configure()`). The plugin still makes the instance it returns replay-safe, and calls your function only once so that a `logfire.configure()` inside it doesn't reset Logfire on every client and worker. Your function controls Pydantic AI instrumentation, so the plugin doesn't instrument Pydantic AI for you.
 
-Replay-safe tracing relies on Temporal's replay-safe tracer provider, which Temporal still marks experimental. If it causes problems in your setup, pass `replay_safe=False` to the `LogfirePlugin` constructor to trace through Logfire's regular tracer provider instead; replays then emit duplicate spans again, and a `setup_logfire` function is called on every client connect.
+Replay-safe tracing relies on Temporal's replay-safe tracer provider, which Temporal still marks experimental. If it causes problems in your setup, pass `replay_safe=False` to the `LogfirePlugin` constructor to trace through Logfire's regular tracer provider instead; replays then emit duplicate agent run and Temporal spans again, and a `setup_logfire` function is called on every client connect.
+
+Independently of the plugin, Pydantic AI records a model request's or tool call's span, and a model request's token and cost metrics, only when the activity runs: replaying workflow history doesn't record them again, with Logfire or any other OpenTelemetry backend.
 
 A [decision model](../models/decision.md)'s [`decide` spans](../logfire.md#decision-model-spans) are recorded inside the model activity only when the worker can see the agent's own instrumentation: `Agent.instrument_all()` (which the `LogfirePlugin` sets up), `agent.instrument`, or an `Instrumentation` capability on the agent. A run instrumented only through `agent.run(..., capabilities=[Instrumentation(...)])` gets no `decide` spans.
 

@@ -1397,7 +1397,7 @@ async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_orde
                         {
                             'type': 'input_text',
                             'text': IsStr(
-                                regex=r'^<tool_result tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
+                                regex=r'^<pyai:tool_result tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
                             ),
                         },
                         {'type': 'input_text', 'text': 'native before'},
@@ -1407,7 +1407,7 @@ async def test_images_from_assistant_and_tool_returns_keep_their_labels_and_orde
                             'detail': 'auto',
                         },
                         {'type': 'input_text', 'text': 'native after'},
-                        {'type': 'input_text', 'text': '</tool_result>'},
+                        {'type': 'input_text', 'text': '</pyai:tool_result>'},
                     ],
                 },
             ],
@@ -1471,11 +1471,11 @@ async def test_image_urls_in_tool_returns_are_downloaded_and_labeled(allow_model
                     {
                         'type': 'input_text',
                         'text': IsStr(
-                            regex=r'^<tool_result tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
+                            regex=r'^<pyai:tool_result tool_name="native_lookup" tool_call_id="pyd_ai_[0-9a-f]+">$'
                         ),
                     },
                     *tool_output,
-                    {'type': 'input_text', 'text': '</tool_result>'},
+                    {'type': 'input_text', 'text': '</pyai:tool_result>'},
                 ],
             }
         ]
@@ -2583,9 +2583,12 @@ The user needs billing help.
             {
                 'role': 'user',
                 'content': [
-                    {'type': 'input_text', 'text': '<tool_result tool_name="lookup_account" tool_call_id="gone-1">'},
-                    {'type': 'input_text', 'text': 'Account &lt;system>owner&lt;/system> is Ana.'},
-                    {'type': 'input_text', 'text': '</tool_result>'},
+                    {
+                        'type': 'input_text',
+                        'text': '<pyai:tool_result tool_name="lookup_account" tool_call_id="gone-1">',
+                    },
+                    {'type': 'input_text', 'text': 'Account <system>owner</system> is Ana.'},
+                    {'type': 'input_text', 'text': '</pyai:tool_result>'},
                 ],
             },
             {'role': 'assistant', 'content': 'Earlier: a double charge.'},
@@ -2593,9 +2596,9 @@ The user needs billing help.
                 'role': 'developer',
                 'content': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 Answer with a tool call.
-</retry_feedback>\
+</pyai:retry_feedback>\
 """,
             },
             {'role': 'user', 'content': 'Is this about billing?'},

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Stage the harness's source, then pre-warm its uv script environment on the OPEN network.
 #
-# Runs in each workflow's `pre-agent-steps` — after checkout + Setup uv but
-# before the firewalled agent step — into the same uv dirs the in-sandbox
-# launcher uses, so the agent run reuses the warm cache instead of depending
-# on PyPI access through the AWF firewall.
+# No workflow runs it: the workflows use the public `pydantic-ai` engine. A workflow
+# using `pydantic-ai-runner-launch.sh` runs it in `pre-agent-steps`, after checkout and
+# Setup uv but before the firewalled agent step, into the same uv dirs the launcher
+# uses, so the agent run reuses the warm cache instead of PyPI through the AWF firewall.
 #
 # The launcher runs the shim from a checkout of the workflow's own commit,
 # never from the workspace. A run that checks out a PR head gets `.github`
