@@ -163,11 +163,8 @@ class ModelProfile(TypedDict, total=False):
     computer_use_screenshot_max_side: int
     """The longest side, in pixels, of a screenshot the model takes. Default: unset, meaning no limit.
 
-    The agent records it on the model's `computer` calls as
-    [`ComputerCallPart.screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side]. A
-    computer-use capability, such as Pydantic AI Harness's `ComputerUse`, sends a larger screen scaled down to fit
-    this and `computer_use_screenshot_max_pixels`, and scales the model's coordinates back up. Claude profiles set
-    both: Claude refuses a larger image, or, on its earlier computer use tools, is sent it scaled down and answers in
+    A computer-use capability, such as Pydantic AI Harness's `ComputerUse`, refuses a screen larger than this and
+    `computer_use_screenshot_max_pixels`. Claude profiles set both: Claude refuses a larger image, or, on its earlier computer use tools, is sent it scaled down and answers in
     the smaller image's pixels.
     """
 

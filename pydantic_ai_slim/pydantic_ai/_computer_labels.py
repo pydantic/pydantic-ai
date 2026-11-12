@@ -2,19 +2,16 @@
 
 The agent applies it per attempt, from the model serving it, also when a capability like `ModelFallback` moves the
 request to another model: a model that points on a grid is told so in the tool's description, and its calls record the
-grid and the largest screenshot the model takes.
+grid.
 """
 
 from __future__ import annotations as _annotations
 
 from dataclasses import replace
-from typing import Literal
 
 from . import messages as _messages
 from .computer_use import (
     _COORDINATE_GRID,  # pyright: ignore[reportPrivateUsage]
-    _SCREENSHOT_MAX_PIXELS,  # pyright: ignore[reportPrivateUsage]
-    _SCREENSHOT_MAX_SIDE,  # pyright: ignore[reportPrivateUsage]
     COMPUTER_KIND,
 )
 from .models import Model, ModelRequestParameters
@@ -48,13 +45,6 @@ def shared_grid(model: Model) -> int | None:
     return grids.pop() if len(grids) == 1 else None
 
 
-def _smallest_limit(
-    models: list[Model], key: Literal['computer_use_screenshot_max_side', 'computer_use_screenshot_max_pixels']
-) -> int | None:
-    """The smallest of the models' screenshot limits under `key`, which every one of them can see."""
-    return min((limit for answering in models if (limit := answering.profile.get(key))), default=None)
-
-
 def add_grid_hint(model: Model, params: ModelRequestParameters) -> ModelRequestParameters:
     """Tell a model that points on a grid so in the `computer` tool's description."""
     name = params.tool_name_for_kind(COMPUTER_KIND)
@@ -71,20 +61,11 @@ def add_grid_hint(model: Model, params: ModelRequestParameters) -> ModelRequestP
 
 
 def label_calls(model: Model, params: ModelRequestParameters, response: _messages.ModelResponse) -> None:
-    """Record on the response's `computer` calls the grid `model` was told to point on and the screenshots it takes."""
+    """Record on the response's `computer` calls the grid `model` was told to point on, when it points on one."""
     name = params.tool_name_for_kind(COMPUTER_KIND)
-    if name is None:
-        return
-    models = _candidate_models(model)
-    labels = {
-        _COORDINATE_GRID: shared_grid(model),
-        _SCREENSHOT_MAX_SIDE: _smallest_limit(models, 'computer_use_screenshot_max_side'),
-        _SCREENSHOT_MAX_PIXELS: _smallest_limit(models, 'computer_use_screenshot_max_pixels'),
-    }
-    labels = {key: value for key, value in labels.items() if value is not None}
-    if not labels:
+    if name is None or (grid := shared_grid(model)) is None:
         return
     for part in response.parts:
         if isinstance(part, _messages.ToolCallPart) and part.tool_name == name:
             part.provider_name = part.provider_name or response.provider_name
-            part.provider_details = {**(part.provider_details or {}), **labels}
+            part.provider_details = {**(part.provider_details or {}), _COORDINATE_GRID: grid}
