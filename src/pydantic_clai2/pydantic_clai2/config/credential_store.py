@@ -5,6 +5,7 @@ bundle) meant one password prompt per credential at startup. The keyring now hol
 most once per process; each account's secret is an encrypted file next to its lock file.
 """
 
+import logging
 import os
 import re
 import sqlite3
@@ -28,6 +29,15 @@ _SLASH = '%2F'
 """How `/` is written in a credential file name; no account name CLAI stores otherwise contains `%`."""
 # A locked or failing keyring is not "no keyring": only these mean nothing is configured.
 _NO_KEYRING = (NoKeyringError, InitError)
+_logger = logging.getLogger(__name__)
+# Avoid terminal noise when no application logging handler is configured.
+_logger.addHandler(logging.NullHandler())
+
+
+@cache
+def _warn_plaintext_fallback() -> None:
+    """Log a single warning per session when falling back to plaintext credential files."""
+    _logger.warning('No OS keyring backend available; falling back to 0600 plaintext credential files.')
 
 
 def credentials_path(*, account: str = _ACCOUNT) -> Path:
@@ -172,6 +182,7 @@ def load_codex_credentials(*, account: str = _ACCOUNT, fallback: Path | None = N
             return _decrypt(encrypted)
         root = keyring.get_password(_SERVICE, account)
     except _NO_KEYRING:
+        _warn_plaintext_fallback()
         root = None
     if root is not None:
         return _migrate(root=root, account=account, encrypted=encrypted)
@@ -184,6 +195,7 @@ def save_codex_credentials(*, value: str, account: str = _ACCOUNT, fallback: Pat
     try:
         cipher = _create_cipher()
     except _NO_KEYRING:
+        _warn_plaintext_fallback()
         write_private(path=plaintext, value=value)
         return
     write_private(path=encrypted, value=cipher.encrypt(value.encode()).decode())
