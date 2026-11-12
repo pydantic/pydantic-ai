@@ -896,9 +896,10 @@ When no keyring backend exists at all (keyring raises `NoKeyringError` or
 `0600` file in `$XDG_CONFIG_HOME/pydantic-clai2/` (`~/.config/pydantic-clai2/` by
 default) instead, named for the account: Codex uses `credentials-openai-codex.json`,
 and the GitHub Copilot, vllm and openrouter connections use their own files. Like keyring entries,
-these files are per user, so `--database PATH` does not move them. `pydantic_clai2.config.credential_store` logs a single warning record per process when reading or writing a plaintext credential file (reaching stderr via `logging.lastResort` in headless runs without a logging handler), and `/login` says so in its confirmation. A locked keyring is not treated as
-missing; unlock it instead. Once a keyring becomes available, the next login or
-token refresh encrypts the credentials and deletes the plaintext file.
+these files are per user, so `--database PATH` does not move them. Reading or writing one logs a
+single warning per process, which headless runs show on stderr; `/login` says so in its
+confirmation. A locked keyring is not treated as missing; unlock it instead. Once a keyring becomes
+available, the next login or token refresh encrypts the credentials and deletes the plaintext file.
 
 The default Coder shell runs under your OS identity, without a sandbox. Commands
 can read files and access credential backends available to that identity, including

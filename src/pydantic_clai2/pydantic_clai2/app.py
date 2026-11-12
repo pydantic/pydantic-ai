@@ -24,7 +24,7 @@ from pydantic_clai2.cli.self_update import WebHandoff
 from pydantic_clai2.commands import (
     Commands,
 )
-from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config import PluginSettings, Settings, credential_store
 from pydantic_clai2.config.builtins import DEFAULT_PLUGINS, STOCK_PLUGINS
 from pydantic_clai2.config.project_settings import ProjectSettings, load_project_settings, with_current_approvals
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -319,13 +319,13 @@ async def chat(
 
 
 @contextmanager
-def _quiet_credential_store_logs(*, console: Console | None = None) -> Generator[None]:
+def _quiet_credential_store_logs(*, console: Console) -> Generator[None]:
     """Keep credential store fallback warnings off stderr during interactive terminal sessions (`/login` reports fallback directly)."""
-    if console is not None and not console.is_terminal:
+    if not console.is_terminal:
         yield
         return
     handler = logging.NullHandler()
-    logger = logging.getLogger('pydantic_clai2.config.credential_store')
+    logger = logging.getLogger(credential_store.__name__)
     logger.addHandler(handler)
     try:
         yield
