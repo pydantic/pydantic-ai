@@ -131,7 +131,7 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   `event_stream_handler` so that running them twice does no harm.
 - Inside a task, passing function, MCP, or dynamic toolsets to a single run with
   `run(toolsets=...)` raises a `UserError`. Add them to the agent instead. `ExternalToolset` is
-  fine.
+  fine, and so is a `FunctionToolset` whose tools are all async and set `metadata={'durable': False}`.
 - Streaming inside a task isn't live: the whole model response is received and saved first, and
   then its events are sent to you.
 - Under [`BatchModelRequests`](https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution), submitting a request and each check on its batch are

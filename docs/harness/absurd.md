@@ -105,7 +105,8 @@ These are not checkpointed and run again on replay:
 - A step is checkpointed after it runs, so a crash between a tool's side effect and its checkpoint
   re-runs the tool. Keep side effects in tools and in an `event_stream_handler` idempotent.
 - Function, MCP, or dynamic toolsets passed per run with `run(toolsets=...)` inside a task raise a
-  `UserError`; register them on the agent instead. `ExternalToolset` is allowed.
+  `UserError`; register them on the agent instead. `ExternalToolset` is allowed, and so is a
+  `FunctionToolset` whose tools are all async and set `metadata={'durable': False}`.
 - Streaming inside a task is not live: the model stream is consumed inside the step, then its
   final response is replayed to the caller, one event per part.
 - Under [`BatchModelRequests`](../batch.md#durable-execution), submitting a request and each check on its batch are
