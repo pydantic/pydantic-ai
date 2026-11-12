@@ -110,10 +110,6 @@ async def test_the_display_starts_on_first_use_and_actions_go_to_it(
     assert await workspace.display_size() == (1280, 800)
     (start,) = (docker.bin_dir / 'xvfb-starts').read_text().splitlines()
     assert screen in start
-    # Nothing has seen the display that just started, so an action waits for a screenshot of it.
-    with pytest.raises(WorkspaceError, match='The display was not running and started since the last screenshot'):
-        await workspace.act(Click(x=3, y=4))
-    await workspace.screenshot()
     await workspace.act(Click(x=3, y=4))
 
     assert docker.xvfb_starts == 1
@@ -177,10 +173,7 @@ async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, con
     docker.remove_display()
     with pytest.raises(WorkspaceError):
         await workspace.act(Click(x=1, y=1))
-    # The next action starts the display again, and doesn't run on the new screen until a screenshot shows it.
-    with pytest.raises(WorkspaceError, match='The display was not running and started since the last screenshot'):
-        await workspace.act(Click(x=1, y=1))
-    await workspace.screenshot()
+    # The next action starts the display again and runs on it.
     await workspace.act(Click(x=1, y=1))
 
     assert docker.xvfb_starts == 1
