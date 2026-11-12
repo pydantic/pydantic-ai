@@ -616,11 +616,11 @@ async def test_invalid_commands_and_arguments_are_rejected(tmp_path: Path) -> No
     with pytest.raises(TypeError, match='bwrap_args must be a sequence'):
         BubblewrapWorkspace(wrapped, bwrap_args='--share-net')
     with pytest.raises(TypeError, match='requires shell=True'):
-        await workspace.run('true')
+        await workspace.run('true', cwd='missing')
     with pytest.raises(TypeError, match='cannot be combined with shell=True'):
-        await workspace.run(['true'], shell=True)
+        await workspace.run(['true'], shell=True, cwd='missing')
     with pytest.raises(ValueError, match='must not be empty'):
-        await workspace.run([])
+        await workspace.run([], cwd='.')
     with pytest.raises(ValueError, match='timeout'):
         await workspace.run(['true'], timeout=0)
 

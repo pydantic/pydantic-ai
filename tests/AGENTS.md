@@ -341,15 +341,15 @@ CI runners stall: a loop turn can take seconds, a process start can take minutes
 - Narrow the strategy only to leave out an input that providers and users never produce, or one whose shape needs its own strategy. List each narrowing with its reason in the `tests/history_strategies.py` module docstring.
 - Hypothesis settings are module-local; there is no suite-wide profile. `tests/test_history_properties.py` gives each property its `PROPERTY_SETTINGS`, a derandomized batch of 50 examples, so a run is reproducible and fits the per-test budget. Hunt for new failures with `HISTORY_PROPERTY_EXAMPLES=1000 uv run pytest tests/test_history_properties.py`, which draws 1000 randomized examples per test.
 
-## Proving a refactor keeps stream events and requests
+## Proving a refactor keeps stream events, requests and UI output
 
-A refactor of a streamed response (`StreamedResponse._get_event_iterator`, `__aiter__`, or what feeds them) must leave the events consumers receive unchanged, and a refactor of how a model builds its request must leave the request it sends unchanged. `tests/refactor_capture.py` records the streams each selected test iterates and the requests it sends, once on a base commit and once on the working tree, and lists the tests whose records differ:
+A refactor of a streamed response (`StreamedResponse._get_event_iterator`, `__aiter__`, or what feeds them) must leave the events consumers receive unchanged, and a refactor of how a model builds its request must leave the request it sends unchanged. A refactor of a UI adapter under `pydantic_ai/ui/` must leave unchanged the events `UIEventStream.transform_stream` emits, what `load_messages` and `dump_messages` return, and the web API's responses. `tests/refactor_capture.py` records the streams each selected test iterates, the requests it sends and what the UI adapters it runs produce, once on a base commit and once on the working tree, and lists the tests whose records differ:
 
 ```bash
 uv run python -m tests.refactor_capture "$(git merge-base HEAD upstream/main)" <test nodes>
 ```
 
-Select one or two test nodes that reach each changed line, not whole files. The command exits non-zero when a test's records differ or only one side has them; put its summary in the PR. Check that the summary's per-target counts include the requests your change builds: a request sent through a mocked SDK client is recorded only when `SDK_MOCKS` in `tests/refactor_capture.py` lists the mock's method; a call on `FunctionModel` or `TestModel` counts as a request, recorded with the messages, model settings and model request parameters the model is handed. The module docstring says what it records and normalizes.
+Select one or two test nodes that reach each changed line, not whole files. The command exits non-zero when a test's records differ or only one side has them; put its summary in the PR. Check that the summary's per-target counts include the requests your change builds: a request sent through a mocked SDK client is recorded only when `SDK_MOCKS` in `tests/refactor_capture.py` lists the mock's method; a call on `FunctionModel` or `TestModel` counts as a request, recorded with the messages, model settings and model request parameters the model is handed. For a UI adapter refactor, check that the per-UI-target counts include each event stream class, adapter method and web API route your change reaches. The module docstring says what it records and normalizes.
 
 ## Dependency floors
 

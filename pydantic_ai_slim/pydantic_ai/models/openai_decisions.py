@@ -10,7 +10,7 @@ from typing import ClassVar, Literal, assert_never, cast
 from pydantic import JsonValue
 
 from .. import _model_errors
-from .._framing import TOOL_RESULT_TAG, close_tag, neutralize_tags, open_tag
+from .._framing import TOOL_RESULT_TAG, frame_tags
 from .._http import to_httpx2_timeout
 from .._thinking_part import render_replayed_thinking
 from ..exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
@@ -72,12 +72,14 @@ from .decision import (
     ScoreQuestion,
     _probability_bounds,  # pyright: ignore[reportPrivateUsage]
     _score_fits,  # pyright: ignore[reportPrivateUsage]
+    _text,  # pyright: ignore[reportPrivateUsage]
 )
 
 try:
     from openai import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, APITimeoutError, AsyncOpenAI
     from openai.types import Decision
     from openai.types.decision import (
+        Answer,
         AnswerAnswerResourceChoice,
         AnswerAnswerResourcePredicate,
         AnswerAnswerResourceRefusal,
@@ -278,8 +280,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
             decision = Decision.model_validate(data, strict=True)
         except ValueError as e:
             raise UnexpectedModelBehavior('Invalid response from the OpenAI Decisions API', response.text) from e
-        by_name = {answer.name: answer for answer in decision.answers if answer.name is not None}
-        if len(by_name) != len(decision.answers) or by_name.keys() != request.questions.keys():
+        if (by_name := _answers_by_name(decision, request.questions)) is None:
             raise UnexpectedModelBehavior(
                 'Invalid response from the OpenAI Decisions API: answer names do not match the questions', response.text
             )
@@ -316,6 +317,25 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         )
 
 
+def _answers_by_name(decision: Decision, questions: dict[str, DecisionQuestion]) -> dict[str, Answer] | None:
+    """The decision's answers by the question each names, or `None` when they don't name each question once."""
+    by_name = {answer.name: answer for answer in decision.answers if answer.name is not None}
+    if len(by_name) != len(decision.answers) or by_name.keys() != questions.keys():
+        return None
+    return by_name
+
+
+def _tool_call_ids(messages: Sequence[ModelMessage]) -> set[str]:
+    """The IDs of the tool calls in the responses, which a tool output must answer to go as a native item."""
+    return {
+        part.tool_call_id
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart | NativeToolCallPart)
+    }
+
+
 def _state_input(request: DecisionRequest) -> str | list[DecisionInputMessageParam]:
     """A request without a conversation, as its `state` in one user message with each image after its label."""
     text = _text(request.state)
@@ -348,13 +368,7 @@ class _Conversation:
         self._items: list[ResponseInputItemParam] = []
 
     def items(self, messages: Sequence[ModelMessage]) -> str | list[DecisionInputMessageParam]:
-        calls = {
-            part.tool_call_id
-            for message in messages
-            if isinstance(message, ModelResponse)
-            for part in message.parts
-            if isinstance(part, ToolCallPart | NativeToolCallPart)
-        }
+        calls = _tool_call_ids(messages)
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
@@ -432,17 +446,7 @@ class _Conversation:
         if isinstance(part, SystemPromptPart):
             self._message('system', part.content)
         elif isinstance(part, UserPromptPart):
-            prompt: list[str | MultiModalContent] = []
-            for item in [part.content] if isinstance(part.content, str) else part.content:
-                if isinstance(item, str):
-                    prompt.append(item)
-                elif isinstance(item, TextContent):
-                    prompt.append(item.content)
-                elif isinstance(item, CachePoint):
-                    pass  # A marker for models that cache a prompt prefix; there is nothing in it to send.
-                else:
-                    prompt.append(item)
-            self._user(prompt)
+            self._user_prompt(part)
         elif isinstance(part, ToolReturnPart):
             self._tool_return(part, calls)
         elif isinstance(part, RetryFeedbackPart):
@@ -462,6 +466,19 @@ class _Conversation:
         else:
             assert_never(part)
 
+    def _user_prompt(self, part: UserPromptPart) -> None:
+        prompt: list[str | MultiModalContent] = []
+        for item in [part.content] if isinstance(part.content, str) else part.content:
+            if isinstance(item, str):
+                prompt.append(item)
+            elif isinstance(item, TextContent):
+                prompt.append(item.content)
+            elif isinstance(item, CachePoint):
+                pass  # A marker for models that cache a prompt prefix; there is nothing in it to send.
+            else:
+                prompt.append(item)
+        self._user(prompt)
+
     def _tool_return(self, part: BaseToolReturnPart, calls: set[str]) -> None:
         if part.tool_call_id in calls:
             output = self._output(part) if part.files else part.model_response_str()
@@ -471,11 +488,8 @@ class _Conversation:
         else:
             # A trimmed or compacted history can keep a result without its call, which the API refuses natively. It
             # goes on the user channel instead, framed as the tool's so it doesn't read as the user's own words.
-            framed: list[str | MultiModalContent] = [
-                open_tag(TOOL_RESULT_TAG, tool_name=part.tool_name, tool_call_id=part.tool_call_id),
-                *(neutralize_tags(item) if isinstance(item, str) else item for item in part.content_items(mode='str')),
-                close_tag(TOOL_RESULT_TAG),
-            ]
+            open_tag, close_tag = frame_tags(TOOL_RESULT_TAG, tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+            framed: list[str | MultiModalContent] = [open_tag, *part.content_items(mode='str'), close_tag]
             self._user(framed)
 
     def _response_part(self, part: ModelResponsePart, calls: set[str]) -> None:
@@ -516,11 +530,6 @@ class _Conversation:
             raise _unconverted_speech_part_error()
         else:
             assert_never(part)
-
-
-def _text(value: JsonValue) -> str:
-    """A protocol value as the text the API takes: a string as it is, anything else as JSON."""
-    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
 
 def _api_error(e: APIError, model_name: str) -> ModelAPIError:
