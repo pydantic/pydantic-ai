@@ -41,7 +41,8 @@ def wait_until_ready(ready: str, pid: str, what: str, log: str) -> str:
     """A shell fragment that waits until the command `ready` succeeds, for a program just started in the background.
 
     It gives up as soon as the process `pid` exits, or after 10 seconds, saying `what` didn't start, with the end of
-    `log` as the reason.
+    `log` as the reason. `ready` must answer for the new process only: a log it reads is emptied before the program
+    starts, since the program's own redirect runs in the background, after the check may have read the last run's.
     """
     return (
         f'i=0; until {ready}; do '
