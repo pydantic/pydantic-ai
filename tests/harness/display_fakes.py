@@ -14,7 +14,7 @@ from typing import Self
 from pydantic_ai.computer_use import MoveMouse, Point, Region
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.computer_use import (
-    ComputerAction,
+    DisplayAction,
     SupportsCursorPosition,
     SupportsDisplay,
     SupportsScaledScreenshot,
@@ -46,7 +46,7 @@ class ScreenProvider(InMemoryProvider):
 
     def __init__(self, name: str = 'fake', *, in_unit: Callable[[], bool] | None = None) -> None:
         super().__init__(name, in_unit=in_unit)
-        self.actions: list[ComputerAction] = []
+        self.actions: list[DisplayAction] = []
         # Set to lose the worker just after the next action takes effect, on whichever backend serves it.
         self.lose_next_action = False
 
@@ -84,7 +84,7 @@ class ScreenBackend(
         await self._files()
         return FAKE_SCREENSHOT
 
-    async def act(self, action: ComputerAction) -> None:
+    async def act(self, action: DisplayAction) -> None:
         await self._files()
         # Everything but `hold_key`, so tests can see an action kind refused.
         if action.type not in {'click', 'move', 'drag', 'mouse_down', 'mouse_up', 'scroll', 'type', 'keypress'}:
@@ -125,5 +125,5 @@ class DisplayOnlyBackend(FilesystemOnlyWorkspaceBackend, SupportsDisplay):
     async def screenshot(self) -> bytes:
         return await self._display.screenshot()
 
-    async def act(self, action: ComputerAction) -> None:
+    async def act(self, action: DisplayAction) -> None:
         await self._display.act(action)
