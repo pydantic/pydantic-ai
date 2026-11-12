@@ -1576,7 +1576,8 @@ source, as in the terminal, which prints what each one saved. Any other bare com
 terminal menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead. When CLAI has no terminal, as for `clai2 --web` started from a script or
 service, a command that opens a terminal menu or prompt, such as `/model add`, fails with an error
-notice instead of closing as cancelled.
+notice instead of closing as cancelled; `/login openai-codex` and a plugin's `read_line` ask in the
+page instead.
 
 The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
 `host.tasks` and `on_task_progress`: each delegated task under the one that started it, with its
@@ -2741,7 +2742,7 @@ the terminal; the shell has already printed them.
 `on_task_progress` receives a `TaskProgress` for everything a task the agent delegated does, and its
 descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the event
 from the task's own run (text, thinking, tool calls and results), its `DelegationStartedEvent` or
-`DelegationFinishedEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
+`DelegationFinishedEvent`, one of its `sub_agents` task events, such as `TaskQuestionAskedEvent` when it asks
 its parent, or `None` when only the task changed, such as when it started, finished, or began
 waiting for an answer. Its own run's events never reach the main run's hooks: they are the feed
 `/tasks` shows. Its `sub_agents` task events also go into the stream of the run that delegated it,
@@ -3842,7 +3843,10 @@ such as an authorization code. Cancelling the task that awaits it, because the
 browser's callback won the race, closes the prompt. A slash command or
 `/login` handler can call it directly; a tool or hook asking mid-run takes the
 screen first, inside `async with host.full_screen()`. Without the live editor it
-is a plain terminal prompt.
+is a plain terminal prompt. Where CLAI has no terminal and the web UI runs, it is
+a dialog in the page, titled with the prompt; what you printed is not shown there.
+Esc cancels that dialog too, so keep any other terminal-only key hint out of the
+prompt.
 
 Do not draw a prompt yourself from a `run_worker` operation. By default
 `run_worker` takes the live panel, and the transcript with your URL, off the

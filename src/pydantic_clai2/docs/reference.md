@@ -969,7 +969,10 @@ section, beside the saved `/keys`, with the same steps behind each account's but
 ChatGPT/Codex and GitHub Copilot sign in behind a waiting screen showing the link or code, an
 API-key account saves its key in `/keys` (as `PROVIDER_PROFILE` unless you pick a saved one),
 and connections and plugins' sign-ins are run as `/login NAME` in the terminal. Usage shows
-only in the terminal.
+only in the terminal. `/login NAME` typed in the page opens in the terminal that runs CLAI;
+when there is none, `/login openai-codex` waits in the page too, and a plugin's sign-in asks
+in a dialog for what it would have you paste. The link a plugin prints is not shown in the
+page: finish in the browser the plugin opens where CLAI runs, or run `/login NAME` in a terminal.
 
 When you pick a model in `/model add` and its provider has more than one account,
 CLAI asks which account runs it, or **all accounts**. All accounts saves the model
@@ -1213,13 +1216,25 @@ are read locally and converted to PNG (the first frame of animated images).
 Each image appears as `[image:...]`. Add your question and press Enter, or submit
 the image alone. Delete a marker before submitting to remove that attachment.
 Images in queued follow-ups belong to that follow-up, not the running turn.
-Paste errors appear in the footer without submitting a message or losing the draft.
+Paste errors appear in the footer without submitting a message. They clear after
+30 seconds, even without keyboard input, so the status row can return. Each new
+paste error starts its own 30-second lifetime. Expiry preserves your draft,
+attachments, and queued input; it does not clear a newer notice. Successful
+attachment feedback and unrelated notices do not use this timeout.
 
 Clipboard access uses Pillow's native Windows and macOS backends. On Linux,
-install `wl-clipboard` for Wayland or `xclip` for X11 and run inside that graphical
-session. SSH and headless sessions generally cannot read your local desktop
-clipboard; paste a path to an image accessible on the machine running CLAI instead.
-The clipboard is read only when you invoke the image shortcut.
+Pillow uses `wl-paste` (from `wl-clipboard`) for Wayland or `xclip` for X11.
+If the active desktop backend's binary is missing, CLAI names the package to
+install. It includes an installation command only when it recognizes your
+Linux distribution and finds its package manager; otherwise, use your
+distribution's package manager.
+
+If an installed backend cannot read the clipboard, check access to the graphical
+session or, over SSH, your remote clipboard bridge. Installing the package again
+does not restore that access. A working remote bridge can provide clipboard
+images in a headless session. Alternatively, paste a path to an image accessible
+on the machine running CLAI. The clipboard is read only when you invoke the
+image shortcut.
 
 Use a model that accepts images. CLAI sends the image bytes to the selected model;
 provider-specific size and format restrictions can still apply. Each source file
@@ -2850,7 +2865,8 @@ many sessions run at once.
   `/resume claude`, or `/set api_key`, opens it in the terminal that runs CLAI. When
   there is none, as for `clai2 --web` started from a script or service, the command
   fails with an error saying to enter it in a terminal, and names the page's
-  equivalent when there is one, such as `/model` or `/keys`.
+  equivalent when there is one, such as `/model` or `/keys`. `/login openai-codex`
+  and a plugin's `read_line` prompt (see `PLUGINS.md`) ask in the page instead.
 - **Quitting.** Ctrl-C in the terminal that runs `clai2 --web` quits CLAI and ends
   every session.
 

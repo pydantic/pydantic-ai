@@ -9,6 +9,20 @@ CLAI attaches the launch directory as the agent's workspace, so relative paths
 and commands start there. Commands get CLAI's environment minus LLM provider API
 keys. Use a custom agent with `Coder()` to retain workspace-scoped file tools. Shell output is displayed dimly.
 
+## Pasting images
+
+Copy a screenshot or image, then press **Ctrl-V** in CLAI to attach it. If your
+terminal intercepts Ctrl-V, use **Alt-V** (or press Esc, then V). On macOS, Cmd-V
+is the terminal's text paste, not CLAI's clipboard-image shortcut. You can also
+paste or drag an existing image file path into the prompt using your terminal's
+bracketed-paste support.
+
+Paste errors clear from the footer after 30 seconds, even without keyboard input,
+without losing your draft, attachments, or queued input.
+
+See the [image-paste reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#pasting-images)
+for Linux clipboard setup, remote bridges, error guidance, and attachment limits.
+
 ## Word deletion
 
 Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
