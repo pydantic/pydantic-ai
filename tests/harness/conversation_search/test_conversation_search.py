@@ -1105,8 +1105,8 @@ class TestSearchScope:
 Found 1 match(es) for 'DELTATAIL' in 1 persisted messages:
 
 [score: 0.3 | run: r1]
-[0] System: ...cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar DELTATAIL
-</context>\
+[0] System: ... cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar cedar DELTATAIL
+</pyai:context>\
 """)
 
     async def test_max_matches_and_context_lines_honored(self) -> None:
@@ -1397,11 +1397,11 @@ Found 2 match(es) for 'ORCHID' in 4 persisted messages:
         assert rendered == snapshot("""\
 Found 1 match(es) for 'FINISHED' in 6 persisted messages:
 
-[score: 1.0 | run: r2]
+[score: 0.9 | run: r2]
 [2] Tool [finish]: ok
-System: <context id="agent:state">
+System: <pyai:context id="agent:state">
 status FINISHED
-</context>\
+</pyai:context>\
 """)
         assert (await _search(source, 'HERON')).count('[score:') == 1
         # The request that carries the change is indexed whole, so its tool return repeats once.

@@ -234,3 +234,7 @@ async def test_coder_tools_reach_each_provider_non_strict(
         await agent.run('go')
 
     assert strict_tools(provider, bodies[0]) == dict.fromkeys(CODER_TOOLS - CONTROL_TOOLS, False)
+
+
+def test_coder_loads_from_agent_spec() -> None:
+    Agent.from_spec({'model': 'test', 'capabilities': ['Coder']}, custom_capability_types=[Coder])

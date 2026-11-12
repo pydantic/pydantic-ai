@@ -76,7 +76,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
-from pydantic_ai._gateway_cost import fill_gateway_header_cost
+from pydantic_ai._gateway_cost import fill_gateway_header_cost, gateway_reported_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._thinking_part import REDACTED_THINKING_PART_IDS, render_replayed_thinking
@@ -106,6 +106,7 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._anthropic_max_tokens import cap_max_tokens
 from pydantic_ai.models._anthropic_schema_limits import (
     SCHEMA_TOO_COMPLEX_HINT,
     default_output_mode_within_limits,
@@ -862,6 +863,8 @@ class BedrockConverseModel(Model[BaseClient]):
 
     # The Converse API has no audio content block.
     _unsupported_file_inputs = frozenset({'audio'})
+    # A tool's files that a tool result can't carry here go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset(
         {
@@ -1093,6 +1096,7 @@ class BedrockConverseModel(Model[BaseClient]):
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
+        prepared_settings = cap_max_tokens(prepared_settings, self.profile.get('anthropic_max_output_tokens'))
         if prepared_settings and (
             self.profile.get('anthropic_disallows_sampling_settings', False)
             or self.profile.get('bedrock_disallows_sampling_settings', False)
@@ -2481,6 +2485,11 @@ class BedrockStreamedResponse(StreamedResponse):
                 raw_finish_reason = message_stop['stopReason']
                 self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                # The gateway reports the stream's cost here. The `metadata` event's usage, which usually comes after,
+                # carries no cost, so adding it keeps this one.
+                response_fields = message_stop.get('additionalModelResponseFields')
+                if (cost := gateway_reported_cost({'usage': response_fields})) is not None:
+                    self._usage.cost = cost
             case {'metadata': metadata}:
                 if 'usage' in metadata:  # pragma: no branch
                     self._add_usage(

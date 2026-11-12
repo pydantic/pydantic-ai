@@ -7,7 +7,7 @@ import uuid
 import warnings
 from base64 import b64decode
 from collections.abc import Mapping, Sequence
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
 from typing import (
     TYPE_CHECKING,
@@ -53,6 +53,7 @@ from ...messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolPartKind,
+    ToolReturnContent,
     ToolReturnPart,
     UploadedFile,
     UserContent,
@@ -87,7 +88,7 @@ from .._adapter import (
     tool_availability_delta_payload,
     warn_dropped_tool_results,
 )
-from .._utils import MCP_APPS_UI_TYPE, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
+from .._utils import MCP_APPS_UI_TYPE, client_error_text, get_ui_message_id, mcp_app_ui_payload, set_ui_message_id
 
 try:
     from ag_ui.core import (
@@ -252,17 +253,7 @@ def _input_content_to_user_content(
             case _ if isinstance(part, BinaryInputContent):
                 # A guard, not a class pattern: AG-UI 1.0 retired the part from the content union,
                 # but an install below 1.0 still sends it.
-                if part.url:
-                    try:
-                        converted.append(BinaryContent.from_data_uri(part.url))
-                    except ValueError:
-                        media_type_constructors = {'image': ImageUrl, 'video': VideoUrl, 'audio': AudioUrl}
-                        constructor = media_type_constructors.get(part.mime_type.split('/', 1)[0], DocumentUrl)
-                        converted.append(constructor(url=part.url, media_type=part.mime_type))
-                elif part.data:
-                    converted.append(BinaryContent(data=b64decode(part.data), media_type=part.mime_type))
-                else:
-                    raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
+                converted.append(_binary_input_to_user_content(part))
             case ImageInputContent() | AudioInputContent() | VideoInputContent() | DocumentInputContent():
                 from ._multimodal import multimodal_input_to_content
 
@@ -271,6 +262,26 @@ def _input_content_to_user_content(
             case _:
                 assert_never(part)
     return converted
+
+
+def _binary_input_to_user_content(
+    part: BinaryInputContent,
+) -> BinaryContent | ImageUrl | VideoUrl | AudioUrl | DocumentUrl:
+    """The content a retired `binary` input part carries: its data URI or `data` inlined, or else its URL."""
+    if part.url:
+        try:
+            return BinaryContent.from_data_uri(part.url)
+        except ValueError:
+            media_type_constructors: dict[str, type[ImageUrl | VideoUrl | AudioUrl]] = {
+                'image': ImageUrl,
+                'video': VideoUrl,
+                'audio': AudioUrl,
+            }
+            constructor = media_type_constructors.get(part.mime_type.split('/', 1)[0], DocumentUrl)
+            return constructor(url=part.url, media_type=part.mime_type)
+    if part.data:
+        return BinaryContent(data=b64decode(part.data), media_type=part.mime_type)
+    raise ValueError('BinaryInputContent must have either a `url` or `data` field.')
 
 
 _messages_ta: TypeAdapter[list[Message]] = TypeAdapter(list[Message])
@@ -291,6 +302,12 @@ def _enqueued_messages(content: dict[str, Any]) -> list[Message]:
         for message in messages
         if not (isinstance(message, ActivityMessage) and message.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE)
     ]
+
+
+def _orphaned_tool_call_ids(messages: Sequence[Message]) -> set[str]:
+    """The tool call ids of the `ToolMessage`s in `messages` that answer a call no `AssistantMessage` there makes."""
+    called = {call.id for m in messages if isinstance(m, AssistantMessage) for call in m.tool_calls or ()}
+    return {m.tool_call_id for m in messages if isinstance(m, ToolMessage) and m.tool_call_id not in called}
 
 
 def _user_content_to_input(
@@ -495,8 +512,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         that isn't pending is dropped with a warning, as `manage_message_history='server'` drops it anyway.
         """
         messages = self.run_input.messages
-        called = {call.id for m in messages if isinstance(m, AssistantMessage) for call in m.tool_calls or ()}
-        orphaned = {m.tool_call_id for m in messages if isinstance(m, ToolMessage) and m.tool_call_id not in called}
+        orphaned = _orphaned_tool_call_ids(messages)
         if not orphaned:
             return self.messages
         pending = [call for call in pending_tool_calls(message_history) if call.tool_call_id in orphaned]
@@ -573,269 +589,39 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         return DeferredToolResults(approvals=approvals)
 
     @classmethod
-    def load_messages(cls, messages: Sequence[Message], *, preserve_file_data: bool = False) -> list[ModelMessage]:  # noqa: C901
+    def load_messages(cls, messages: Sequence[Message], *, preserve_file_data: bool = False) -> list[ModelMessage]:
         """Transform AG-UI messages into Pydantic AI messages."""
         builder = MessagesBuilder()
-        tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
-        tool_kinds: dict[str, ToolPartKind] = {}  # Tool call ID to `tool_kind` claim mapping.
-        # `ToolCall`/`ToolMessage.encrypted_value` only exists on the installed model from 0.1.11
-        # onward; older versions drop the client's claim, so the field is only read when present.
-        use_encrypted_value = parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= ENCRYPTED_VALUE_VERSION
+        context = _LoadMessagesContext(
+            builder=builder,
+            # `ToolCall`/`ToolMessage.encrypted_value` only exists on the installed model from 0.1.11
+            # onward; older versions drop the client's claim, so the field is only read when present.
+            use_encrypted_value=parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= ENCRYPTED_VALUE_VERSION,
+            preserve_file_data=preserve_file_data,
+        )
         for msg in messages:
             checkpoint = builder.checkpoint()
             match msg:
-                case UserMessage() as user_msg:
-                    # A user message only reloads as harness retry feedback when it carries the
-                    # `encrypted_value` marker this adapter dumped it with; one a person wrote has no
-                    # such claim and stays a `UserPromptPart`. See `retry_feedback_from_payload`.
-                    user_feedback = (
-                        parse_encrypted_retry_feedback(user_msg.encrypted_value) if use_encrypted_value else None
+                case UserMessage():
+                    _load_user_message(msg, context)
+                case SystemMessage() | DeveloperMessage():
+                    _load_system_message(msg, context)
+                case AssistantMessage():
+                    _load_assistant_message(msg, context)
+                case ToolMessage():
+                    _load_tool_message(msg, context)
+                case ReasoningMessage():
+                    _load_reasoning_message(msg, builder)
+                case ActivityMessage() if msg.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE:
+                    # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
+                    # They carry their own message ids, so the activity's id isn't kept on them.
+                    # `_append_whole` is private on purpose, so custom adapters don't depend on it yet.
+                    builder._append_whole(  # pyright: ignore[reportPrivateUsage]
+                        cls.load_messages(_enqueued_messages(msg.content), preserve_file_data=preserve_file_data)
                     )
-                    # Otherwise the same carrier may hold the values of its `StructuredContent` text items.
-                    structured = (
-                        parse_encrypted_structured_content(user_msg.encrypted_value) if use_encrypted_value else {}
-                    )
-                    content = user_msg.content
-                    if user_feedback is not None:
-                        builder.add(user_feedback)
-                    elif isinstance(content, str):
-                        loaded = (
-                            structured_content_from_payload(structured['0'], content) if '0' in structured else content
-                        )
-                        builder.add(UserPromptPart(content=loaded if isinstance(loaded, str) else [loaded]))
-                    elif user_prompt_content := _input_content_to_user_content(content, structured):
-                        content_to_add = (
-                            user_prompt_content[0]
-                            if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str)
-                            else user_prompt_content
-                        )
-                        builder.add(UserPromptPart(content=content_to_add))
-
-                case SystemMessage() | DeveloperMessage() as system_msg:
-                    # A system message only reloads as harness retry feedback when it carries the
-                    # `encrypted_value` marker this adapter dumped it with; one the client wrote has
-                    # no such claim and stays a plain `SystemPromptPart`, so it can never gain
-                    # harness provenance. See `retry_feedback_from_payload`.
-                    feedback = (
-                        parse_encrypted_retry_feedback(system_msg.encrypted_value) if use_encrypted_value else None
-                    )
-                    builder.add(feedback if feedback is not None else SystemPromptPart(content=system_msg.content))
-
-                case AssistantMessage(content=content, tool_calls=tool_calls_list):
-                    # An empty answer only marks a response boundary, so content that follows it in the same
-                    # response replaces it rather than joining it.
-                    last = builder.messages[-1] if builder.messages else None
-                    if (
-                        (content or tool_calls_list)
-                        and isinstance(last, ModelResponse)
-                        and last.parts == [TextPart(content='')]
-                    ):
-                        builder.messages.pop()
-                    # An empty answer still keeps its place as a response, so the request after it doesn't
-                    # merge into the one before it.
-                    if content or (content == '' and not tool_calls_list):
-                        builder.add(TextPart(content=content))
-                    if tool_calls_list:
-                        for tool_call in tool_calls_list:
-                            tool_call_id = tool_call.id
-                            tool_name = tool_call.function.name
-                            tool_calls[tool_call_id] = tool_name
-
-                            # The claim is client-supplied, so it's set on the base part and promoted
-                            # best-effort by the final `narrow_message_parts` pass. A claim whose data
-                            # doesn't validate leaves a base part; only core's kinds are then stripped.
-                            tool_kind = (
-                                parse_encrypted_tool_kind(tool_call.encrypted_value) if use_encrypted_value else None
-                            )
-                            if tool_kind is not None:
-                                tool_kinds[tool_call_id] = tool_kind
-
-                            builtin_id = parse_builtin_tool_call_id(tool_call_id)
-                            if builtin_id is not None:
-                                provider_name, original_id = builtin_id
-                                builder.add(
-                                    NativeToolCallPart(
-                                        tool_name=tool_name,
-                                        args=tool_call.function.arguments,
-                                        tool_call_id=original_id,
-                                        provider_name=provider_name,
-                                        tool_kind=tool_kind,
-                                    )
-                                )
-                            else:
-                                builder.add(
-                                    ToolCallPart(
-                                        tool_name=tool_name,
-                                        tool_call_id=tool_call_id,
-                                        args=tool_call.function.arguments,
-                                        tool_kind=tool_kind,
-                                    )
-                                )
-                case ToolMessage() as tool_msg:
-                    tool_call_id = tool_msg.tool_call_id
-                    tool_name = tool_calls.get(tool_call_id)
-                    if tool_name is None:  # pragma: no cover
-                        raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
-
-                    if isinstance(tool_msg.content, list):
-                        # 1.0 tool content parts: a lone text part is the string form, so it rehydrates like one;
-                        # anything else validates as a tool return. No parts left keeps the result, with no content.
-                        parts = _input_content_to_user_content(tool_msg.content)
-                        if len(parts) == 1 and isinstance(parts[0], str):
-                            content = rehydrate_tool_return_content(parts[0])
-                        elif parts:
-                            content = tool_return_content_ta.validate_python(parts[0] if len(parts) == 1 else parts)
-                        else:
-                            content = None
-                    else:
-                        # Rehydrate here (not in a later `ModelMessagesTypeAdapter` pass) so structured and
-                        # multimodal content comes back as real types; see `rehydrate_tool_return_content`.
-                        content = rehydrate_tool_return_content(tool_msg.content)
-
-                    # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
-                    # slot, so client-built ToolMessages usually carry no `encrypted_value`. A
-                    # non-success return keeps its kind too: it is never promoted to a typed return
-                    # part, so the kind can't pass it off as a success. A non-success outcome claim
-                    # keeps the return from reloading as `'success'`, which would change how it
-                    # serializes to the provider.
-                    encrypted_tool_kind = (
-                        parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
-                    )
-                    tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
-                    outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] = 'success'
-                    encrypted_outcome = (
-                        parse_encrypted_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
-                    )
-                    retry = None
-                    if encrypted_outcome is not None:
-                        outcome = encrypted_outcome
-                        if outcome == 'retried':
-                            retry = parse_encrypted_tool_retry(tool_msg.encrypted_value)
-                    elif tool_msg.error is not None:
-                        outcome = 'failed'
-
-                    builtin_id = parse_builtin_tool_call_id(tool_call_id)
-                    if builtin_id is not None:
-                        provider_name, original_id = builtin_id
-                        builder.add(
-                            NativeToolReturnPart(
-                                tool_name=tool_name,
-                                content=content,
-                                tool_call_id=original_id,
-                                provider_name=provider_name,
-                                tool_kind=tool_kind,
-                                outcome=outcome,
-                            )
-                        )
-                    else:
-                        # The final `narrow_message_parts` pass parses the rehydrated content into a typed
-                        # return subclass when the return succeeded and the `tool_kind` claim validates,
-                        # and otherwise leaves the base `ToolReturnPart` (which keeps the claim, unless
-                        # it is one of core's kinds).
-                        builder.add(
-                            ToolReturnPart(
-                                tool_name=tool_name,
-                                content=content,
-                                tool_call_id=tool_call_id,
-                                tool_kind=tool_kind,
-                                outcome=outcome,
-                                retry=retry,
-                            )
-                        )
-
-                case ReasoningMessage() as reasoning_msg:
-                    try:
-                        metadata: dict[str, Any] = (
-                            json.loads(reasoning_msg.encrypted_value) if reasoning_msg.encrypted_value else {}
-                        )
-                        if not isinstance(metadata, dict):
-                            metadata = {}
-                    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
-                        metadata = {}
-                    builder.add(
-                        ThinkingPart(
-                            content=reasoning_msg.content,
-                            id=metadata.get('id'),
-                            signature=metadata.get('signature'),
-                            provider_name=metadata.get('provider_name'),
-                            provider_details=metadata.get('provider_details'),
-                        )
-                    )
-                    restore_canonical_system(builder, metadata.get('provider_name'), metadata.get('canonical_system'))
-
-                case ActivityMessage() as activity_msg:
-                    if activity_msg.activity_type == TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE:
-                        builder.add(tool_availability_delta_from_payload(activity_msg.content))
-                    elif activity_msg.activity_type == CAPABILITY_LOAD_DELTA_ACTIVITY_TYPE:
-                        if (load_part := capability_load_delta_from_payload(activity_msg.content)) is not None:
-                            builder.add(load_part)
-                    elif activity_msg.activity_type == MODEL_SETTINGS_DELTA_ACTIVITY_TYPE:
-                        if (effort_part := model_settings_delta_from_payload(activity_msg.content)) is not None:
-                            builder.add(effort_part)
-                    elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
-                        if (compaction_part := compaction_part_from_payload(activity_msg.content)) is not None:
-                            builder.add(compaction_part)
-                            restore_canonical_system(
-                                builder, compaction_part.provider_name, activity_msg.content.get('canonical_system')
-                            )
-                    elif activity_msg.activity_type == ENQUEUED_MESSAGES_ACTIVITY_TYPE:
-                        # Whole messages, not parts: each delivery is its own `ModelRequest` in history.
-                        # They carry their own message ids, so the activity's id isn't kept on them.
-                        # `_append_whole` is private on purpose, so custom adapters don't depend on it yet.
-                        builder._append_whole(  # pyright: ignore[reportPrivateUsage]
-                            cls.load_messages(
-                                _enqueued_messages(activity_msg.content), preserve_file_data=preserve_file_data
-                            )
-                        )
-                        continue
-                    elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
-                        activity_content = activity_msg.content
-                        url = activity_content.get('url', '')
-                        if not url:
-                            raise ValueError(
-                                f'ActivityMessage with activity_type={FILE_ACTIVITY_TYPE!r} must have a non-empty url.'
-                            )
-                        binary_content = BinaryContent.from_data_uri(url)
-                        vendor_metadata = activity_content.get('vendor_metadata')
-                        # `vendor_metadata` is client-supplied and typed `Any`; assignment on the
-                        # (non-`validate_assignment`) `BinaryContent` dataclass bypasses validation,
-                        # so ignore anything that isn't a dict rather than let it reach the provider.
-                        if is_str_dict(vendor_metadata):
-                            binary_content.vendor_metadata = vendor_metadata
-                        builder.add(
-                            FilePart(
-                                content=binary_content,
-                                id=activity_content.get('id'),
-                                provider_name=activity_content.get('provider_name'),
-                                provider_details=activity_content.get('provider_details'),
-                            )
-                        )
-                        restore_canonical_system(
-                            builder, activity_content.get('provider_name'), activity_content.get('canonical_system')
-                        )
-                    elif activity_msg.activity_type == UPLOADED_FILE_ACTIVITY_TYPE and preserve_file_data:
-                        activity_content = activity_msg.content
-                        file_id = activity_content.get('file_id', '')
-                        provider_name = activity_content.get('provider_name', '')
-                        if not file_id or not provider_name:
-                            raise ValueError(
-                                f'ActivityMessage with activity_type={UPLOADED_FILE_ACTIVITY_TYPE!r}'
-                                ' must have non-empty file_id and provider_name.'
-                            )
-                        builder.add(
-                            UserPromptPart(
-                                content=[
-                                    UploadedFile(
-                                        file_id=file_id,
-                                        provider_name=provider_name,
-                                        vendor_metadata=activity_content.get('vendor_metadata'),
-                                        media_type=activity_content.get('media_type'),
-                                        identifier=activity_content.get('identifier'),
-                                    )
-                                ]
-                            )
-                        )
-
+                    continue
+                case ActivityMessage():
+                    _load_activity_message(msg, context)
                 case _:
                     if TYPE_CHECKING:
                         assert_never(msg)
@@ -861,7 +647,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         return narrow_message_parts(builder.messages)
 
     @staticmethod
-    def _dump_request_parts(  # noqa: C901
+    def _dump_request_parts(
         msg: ModelRequest,
         *,
         ag_ui_version: str = DEFAULT_AG_UI_VERSION,
@@ -875,211 +661,60 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         consecutive system prompts becomes one `SystemMessage` in the same way, so a system prompt
         enqueued after a tool result reloads after it, not at the head of the request.
         """
-        # An SDK without the retired `binary` part can't build a message holding it, so it writes typed media.
-        use_multimodal = parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION or not HAS_BINARY_INPUT_PART
-        # `ToolMessage.encrypted_value` (the `tool_kind` carrier here) and `UserMessage.encrypted_value`
-        # (the `StructuredContent` carrier) landed in 0.1.11 — see `tool_kind_encrypted_value`.
-        use_encrypted_value = parse_ag_ui_version(ag_ui_version) >= ENCRYPTED_VALUE_VERSION
-        result: list[Message] = []
-        system_content: list[str] = []
-        user_content: list[InputContent] = []
-        # Positions in `user_content` of the text items that are `StructuredContent`, with what text can't carry.
-        structured_payloads: dict[int, dict[str, Any]] = {}
-
-        def flush_user_content() -> None:
-            nonlocal user_content, structured_payloads
-            if not user_content:
-                return
-            result.append(
-                UserMessage(
-                    id=_new_message_id(),
-                    # Simplify to plain string if only a single text item.
-                    content=user_content[0].text
-                    if len(user_content) == 1 and isinstance(user_content[0], TextInputContent)
-                    else user_content,
-                    **structured_content_encrypted_value_kwargs(structured_payloads),
-                )
-            )
-            user_content = []
-            structured_payloads = {}
-
-        def flush_system_content() -> None:
-            nonlocal system_content
-            if system_content:
-                result.append(SystemMessage(id=_new_message_id(), content='\n'.join(system_content)))
-                system_content = []
-
+        context = _DumpRequestContext(
+            # An SDK without the retired `binary` part can't build a message holding it, so it writes typed media.
+            use_multimodal=parse_ag_ui_version(ag_ui_version) >= MULTIMODAL_VERSION or not HAS_BINARY_INPUT_PART,
+            # `ToolMessage.encrypted_value` (the `tool_kind` carrier here) and `UserMessage.encrypted_value`
+            # (the `StructuredContent` carrier) landed in 0.1.11 — see `tool_kind_encrypted_value`.
+            use_encrypted_value=parse_ag_ui_version(ag_ui_version) >= ENCRYPTED_VALUE_VERSION,
+            preserve_file_data=preserve_file_data,
+        )
         for part in msg.parts:
             if isinstance(part, SystemPromptPart):
                 # A request-scoped prompt is for the model's current request only; loaded back, it would
                 # come back as a lasting system prompt.
                 if part.scope != 'request':
-                    flush_user_content()
-                    system_content.append(part.content)
+                    _flush_user_content(context)
+                    context.system_content.append(part.content)
                 continue
             if not isinstance(part, (InstructionDeltaPart, InstructionBaselinePart, SpeechPart)):
                 # Parts that dump to nothing don't end the run of system prompts.
-                flush_system_content()
-            if isinstance(part, UserPromptPart):
-                # Each prompt gets its own `UserMessage`, which loads back as its own `UserPromptPart`. Merged
-                # into one, a request's prompts would come back as one, which providers like OpenAI Chat send
-                # as one user message instead of one per prompt.
-                flush_user_content()
-                if isinstance(part.content, str):
-                    user_content.append(TextInputContent(type='text', text=part.content))
-                else:
-                    for item in part.content:
-                        if isinstance(item, StructuredContent):
-                            # AG-UI has no structured user input, so the item is text the frontend shows,
-                            # and its value rides the message's `encrypted_value`. Before 0.1.11 it's text only, with
-                            # no warning (unlike a lost `tool_kind`): the text the user and model see is unchanged.
-                            if use_encrypted_value:
-                                structured_payloads[len(user_content)] = structured_content_payload(item)
-                            user_content.append(TextInputContent(type='text', text=item.content))
-                        elif isinstance(item, UploadedFile) and preserve_file_data:
-                            # AG-UI has no native uploaded-file message type. We repurpose
-                            # ActivityMessage with a reserved `pydantic_ai_*` activity_type
-                            # for round-trip fidelity. See UploadedFileActivityContent.
-                            flush_user_content()
-                            uploaded_content: dict[str, Any] = {
-                                'file_id': item.file_id,
-                                'provider_name': item.provider_name,
-                                'media_type': item.media_type,
-                                'identifier': item.identifier,
-                            }
-                            if item.vendor_metadata is not None:
-                                uploaded_content['vendor_metadata'] = item.vendor_metadata
-                            result.append(
-                                ActivityMessage(
-                                    id=_new_message_id(),
-                                    activity_type=UPLOADED_FILE_ACTIVITY_TYPE,
-                                    content=uploaded_content,
-                                )
-                            )
-                        else:
-                            converted = _user_content_to_input(item, use_multimodal=use_multimodal)
-                            if converted is not None:
-                                user_content.append(converted)
-            elif isinstance(part, ToolReturnPart):
-                flush_user_content()
-                # Tool-return files ride inline in `ToolMessage.content` (see `dump_tool_return_content`).
-                # A non-success outcome rides the `encrypted_value` carrier alongside `tool_kind`,
-                # since a `ToolMessage` has no outcome slot. `error` is the return's own content, so a
-                # retry's feedback reaches the frontend as the feedback itself, without the
-                # instruction framing a `RetryPromptPart` renders
-                # (https://github.com/pydantic/pydantic-ai/pull/4869).
-                result.append(
-                    ToolMessage(
-                        id=_new_message_id(),
-                        content=dump_tool_return_content(part.content),
-                        tool_call_id=part.tool_call_id,
-                        error=part.model_response_str(wrap_if_error=False)
-                        if part.outcome in ERROR_OUTCOMES or part.outcome == 'denied'
-                        else None,
-                        **tool_kind_encrypted_value_kwargs(
-                            part.tool_kind, outcome=part.outcome, retry=part.retry, supported=use_encrypted_value
-                        ),
+                _flush_system_content(context)
+            match part:
+                case UserPromptPart():
+                    _dump_user_prompt_part(part, context)
+                case ToolReturnPart():
+                    _dump_tool_return_part(part, context)
+                case InstructionDeltaPart() | InstructionBaselinePart():
+                    pass  # Operator instruction state stays in trusted server-side history.
+                case ModelSettingsDeltaPart():
+                    _dump_request_activity(
+                        context, MODEL_SETTINGS_DELTA_ACTIVITY_TYPE, model_settings_delta_payload(part)
                     )
-                )
-                if (app := get_mcp_app_tool_result(part.metadata)) is not None:
-                    result.append(
-                        ActivityMessage(
-                            id=_new_message_id(), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app)
-                        )
+                case ToolAvailabilityDeltaPart():
+                    _dump_request_activity(
+                        context, TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE, tool_availability_delta_payload(part)
                     )
-            elif isinstance(part, (InstructionDeltaPart, InstructionBaselinePart)):
-                pass  # Operator instruction state stays in trusted server-side history.
-            elif isinstance(part, ModelSettingsDeltaPart):
-                flush_user_content()
-                result.append(
-                    ActivityMessage(
-                        id=_new_message_id(),
-                        activity_type=MODEL_SETTINGS_DELTA_ACTIVITY_TYPE,
-                        content=model_settings_delta_payload(part),
+                case CapabilityLoadDeltaPart():
+                    _dump_request_activity(
+                        context, CAPABILITY_LOAD_DELTA_ACTIVITY_TYPE, capability_load_delta_payload(part)
                     )
-                )
-            elif isinstance(part, ToolAvailabilityDeltaPart):
-                flush_user_content()
-                result.append(
-                    ActivityMessage(
-                        id=_new_message_id(),
-                        activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
-                        content=tool_availability_delta_payload(part),
-                    )
-                )
-            elif isinstance(part, CapabilityLoadDeltaPart):
-                flush_user_content()
-                result.append(
-                    ActivityMessage(
-                        id=_new_message_id(),
-                        activity_type=CAPABILITY_LOAD_DELTA_ACTIVITY_TYPE,
-                        content=capability_load_delta_payload(part),
-                    )
-                )
-            # TODO(v3): remove `RetryPromptPart`
-            elif isinstance(part, RetryPromptPart | RetryFeedbackPart):  # pyright: ignore[reportDeprecated]
-                # Harness feedback dumps in the voice the model is shown it in, not as text a person
-                # appears to have written (https://github.com/pydantic/pydantic-ai/issues/6404), and
-                # carries the part itself so the reload can rebuild it. Flushing first keeps it in
-                # the position it was authored in, instead of joining the standing prompt at the head
-                # of the request; `VercelAIAdapter` keeps the authored order the same way.
-                flush_user_content()
-                translated = (
-                    _translate_legacy_retry_part(part)
-                    if isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
-                    else part
-                )
-                if isinstance(translated, ToolReturnPart):
-                    result.append(
-                        ToolMessage(
-                            id=_new_message_id(),
-                            content=dump_tool_return_content(translated.content),
-                            tool_call_id=translated.tool_call_id,
-                            error=translated.model_response_str(wrap_if_error=False),
-                            **tool_kind_encrypted_value_kwargs(
-                                translated.tool_kind,
-                                outcome=translated.outcome,
-                                retry=translated.retry,
-                                supported=use_encrypted_value,
-                            ),
-                        )
-                    )
-                elif _retry_feedback_speaks_for_the_harness(translated):
-                    result.append(
-                        SystemMessage(
-                            id=_new_message_id(),
-                            content=translated.model_response(),
-                            **retry_feedback_encrypted_value_kwargs(translated, supported=use_encrypted_value),
-                        )
-                    )
-                else:
-                    result.append(
-                        UserMessage(
-                            id=_new_message_id(),
-                            content=translated.model_response(),
-                            **retry_feedback_encrypted_value_kwargs(translated, supported=use_encrypted_value),
-                        )
-                    )
-            elif isinstance(part, CompactionPart):
-                flush_user_content()
-                result.append(
-                    ActivityMessage(
-                        id=_new_message_id(),
-                        activity_type=COMPACTION_ACTIVITY_TYPE,
-                        content=compaction_payload(part),
-                    )
-                )
-            elif isinstance(part, SpeechPart):  # pragma: no cover
-                pass  # Realtime audio parts are not rendered in AG-UI
-            else:
-                assert_never(part)
+                # TODO(v3): remove `RetryPromptPart`
+                case RetryPromptPart() | RetryFeedbackPart():  # pyright: ignore[reportDeprecated]
+                    _dump_retry_part(part, context)
+                case CompactionPart():
+                    _dump_request_activity(context, COMPACTION_ACTIVITY_TYPE, compaction_payload(part))
+                case SpeechPart():  # pragma: no cover
+                    pass  # Realtime audio parts are not rendered in AG-UI
+                case _:
+                    assert_never(part)
 
-        flush_system_content()
-        flush_user_content()
-        return result
+        _flush_system_content(context)
+        _flush_user_content(context)
+        return context.result
 
     @staticmethod
-    def _dump_response_parts(  # noqa: C901
+    def _dump_response_parts(
         msg: ModelResponse, *, ag_ui_version: str = DEFAULT_AG_UI_VERSION, preserve_file_data: bool = False
     ) -> list[Message]:
         """Convert a `ModelResponse` into AG-UI messages.
@@ -1088,139 +723,46 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         gets its own AssistantMessage, and ThinkingPart/FilePart boundaries trigger a flush
         so content on either side doesn't get merged.
         """
-        result: list[Message] = []
-        text_content: list[str] = []
-        tool_calls_list: list[ToolCall] = []
-        tool_messages: list[ToolMessage] = []
-
         version = parse_ag_ui_version(ag_ui_version)
-        # `ReasoningMessage` and the `tool_kind` carrier `ToolCall`/`ToolMessage.encrypted_value`
-        # both landed in 0.1.11, so these two thresholds coincide — see `tool_kind_encrypted_value`.
-        use_reasoning = version >= REASONING_VERSION
-        use_encrypted_value = version >= ENCRYPTED_VALUE_VERSION
-
-        builtin_returns = {part.tool_call_id: part for part in msg.parts if isinstance(part, NativeToolReturnPart)}
-
-        def flush() -> None:
-            nonlocal text_content, tool_calls_list, tool_messages
-            if not text_content and not tool_calls_list:
-                return
-            result.append(
-                AssistantMessage(
-                    id=_new_message_id(),
-                    content='\n'.join(text_content) if text_content else None,
-                    tool_calls=tool_calls_list if tool_calls_list else None,
-                )
-            )
-            result.extend(tool_messages)
-            text_content = []
-            tool_calls_list = []
-            tool_messages = []
-
+        context = _DumpResponseContext(
+            msg=msg,
+            # `ReasoningMessage` and the `tool_kind` carrier `ToolCall`/`ToolMessage.encrypted_value`
+            # both landed in 0.1.11, so these two thresholds coincide — see `tool_kind_encrypted_value`.
+            use_reasoning=version >= REASONING_VERSION,
+            use_encrypted_value=version >= ENCRYPTED_VALUE_VERSION,
+            preserve_file_data=preserve_file_data,
+            builtin_returns={part.tool_call_id: part for part in msg.parts if isinstance(part, NativeToolReturnPart)},
+        )
         for index, part in enumerate(msg.parts):
-            if isinstance(part, TextPart):
-                if tool_calls_list:
-                    flush()
-                # Check adjacency in the original parts, not the buffer: a part dropped from the dump still separates text.
-                if index > 0 and isinstance(msg.parts[index - 1], TextPart):
-                    text_content[-1] += part.content
-                else:
-                    text_content.append(part.content)
-            elif isinstance(part, ThinkingPart):
-                if use_reasoning:
-                    from ag_ui.core import ReasoningMessage
+            match part:
+                case TextPart():
+                    _dump_text_part(part, index, context)
+                case ThinkingPart():
+                    _dump_thinking_part(part, context)
+                case ToolCallPart():
+                    context.tool_calls_list.append(
+                        ToolCall(
+                            id=part.tool_call_id,
+                            function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
+                            **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=context.use_encrypted_value),
+                        )
+                    )
+                case NativeToolCallPart():
+                    _dump_native_tool_call_part(part, context)
+                case NativeToolReturnPart():
+                    # Emitted when matching NativeToolCallPart is processed above.
+                    pass
+                case FilePart():
+                    _dump_file_part(part, context)
+                case CompactionPart():
+                    _dump_response_compaction_part(part, context)
+                case SpeechPart():  # pragma: no cover
+                    pass  # Realtime audio parts are not rendered in AG-UI
+                case _:
+                    assert_never(part)
 
-                    flush()
-                    encrypted = thinking_encrypted_metadata(
-                        part, canonical_system=part_canonical_system(msg, part.provider_name)
-                    )
-                    result.append(
-                        ReasoningMessage(
-                            id=_new_message_id(),
-                            content=part.content,
-                            encrypted_value=json.dumps(encrypted) if encrypted else None,
-                        )
-                    )
-            elif isinstance(part, ToolCallPart):
-                tool_calls_list.append(
-                    ToolCall(
-                        id=part.tool_call_id,
-                        function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
-                        **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
-                    )
-                )
-            elif isinstance(part, NativeToolCallPart):
-                prefixed_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', part.tool_call_id])
-                tool_calls_list.append(
-                    ToolCall(
-                        id=prefixed_id,
-                        function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
-                        **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=use_encrypted_value),
-                    )
-                )
-                if builtin_return := builtin_returns.get(part.tool_call_id):
-                    # Built-in tool-return files also ride inline in `ToolMessage.content` (see above).
-                    tool_messages.append(
-                        ToolMessage(
-                            id=_new_message_id(),
-                            content=dump_tool_return_content(builtin_return.content),
-                            tool_call_id=prefixed_id,
-                            error=builtin_return.model_response_str(wrap_if_error=False)
-                            if builtin_return.outcome in ERROR_OUTCOMES or builtin_return.outcome == 'denied'
-                            else None,
-                            **tool_kind_encrypted_value_kwargs(
-                                builtin_return.tool_kind, outcome=builtin_return.outcome, supported=use_encrypted_value
-                            ),
-                        )
-                    )
-            elif isinstance(part, NativeToolReturnPart):
-                # Emitted when matching NativeToolCallPart is processed above.
-                pass
-            elif isinstance(part, FilePart):
-                if preserve_file_data:
-                    # AG-UI has no native file message type. We repurpose ActivityMessage
-                    # with a reserved `pydantic_ai_*` activity_type for round-trip fidelity.
-                    # See FileActivityContent.
-                    flush()
-                    file_content: dict[str, Any] = {
-                        'url': part.content.data_uri,
-                        'media_type': part.content.media_type,
-                    }
-                    if part.id is not None:
-                        file_content['id'] = part.id
-                    if part.provider_name is not None:
-                        file_content['provider_name'] = part.provider_name
-                    if part.provider_details is not None:
-                        file_content['provider_details'] = part.provider_details
-                    if (canonical_system := part_canonical_system(msg, part.provider_name)) is not None:
-                        file_content['canonical_system'] = canonical_system
-                    if part.content.vendor_metadata is not None:
-                        file_content['vendor_metadata'] = part.content.vendor_metadata
-                    result.append(
-                        ActivityMessage(
-                            id=_new_message_id(),
-                            activity_type=FILE_ACTIVITY_TYPE,
-                            content=file_content,
-                        )
-                    )
-            elif isinstance(part, CompactionPart):
-                flush()
-                result.append(
-                    ActivityMessage(
-                        id=_new_message_id(),
-                        activity_type=COMPACTION_ACTIVITY_TYPE,
-                        content=compaction_payload(
-                            part, canonical_system=part_canonical_system(msg, part.provider_name)
-                        ),
-                    )
-                )
-            elif isinstance(part, SpeechPart):  # pragma: no cover
-                pass  # Realtime audio parts are not rendered in AG-UI
-            else:
-                assert_never(part)
-
-        flush()
-        return result
+        _flush_assistant_content(context)
+        return context.result
 
     @classmethod
     def dump_messages(
@@ -1347,3 +889,541 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             result.extend(dumped)
 
         return result
+
+
+@dataclass
+class _LoadMessagesContext:
+    """What `AGUIAdapter.load_messages` carries from one AG-UI message to the next."""
+
+    builder: MessagesBuilder
+    use_encrypted_value: bool
+    preserve_file_data: bool
+    tool_calls: dict[str, str] = field(default_factory=dict[str, str])
+    """Tool call ID to tool name mapping."""
+    tool_kinds: dict[str, ToolPartKind] = field(default_factory=dict[str, ToolPartKind])
+    """Tool call ID to `tool_kind` claim mapping."""
+
+
+def _load_user_message(user_msg: UserMessage, context: _LoadMessagesContext) -> None:
+    # A user message only reloads as harness retry feedback when it carries the
+    # `encrypted_value` marker this adapter dumped it with; one a person wrote has no
+    # such claim and stays a `UserPromptPart`. See `retry_feedback_from_payload`.
+    user_feedback = parse_encrypted_retry_feedback(user_msg.encrypted_value) if context.use_encrypted_value else None
+    # Otherwise the same carrier may hold the values of its `StructuredContent` text items.
+    structured = parse_encrypted_structured_content(user_msg.encrypted_value) if context.use_encrypted_value else {}
+    content = user_msg.content
+    if user_feedback is not None:
+        context.builder.add(user_feedback)
+    elif isinstance(content, str):
+        loaded = structured_content_from_payload(structured['0'], content) if '0' in structured else content
+        context.builder.add(UserPromptPart(content=loaded if isinstance(loaded, str) else [loaded]))
+    elif user_prompt_content := _input_content_to_user_content(content, structured):
+        content_to_add = (
+            user_prompt_content[0]
+            if len(user_prompt_content) == 1 and isinstance(user_prompt_content[0], str)
+            else user_prompt_content
+        )
+        context.builder.add(UserPromptPart(content=content_to_add))
+
+
+def _load_system_message(system_msg: SystemMessage | DeveloperMessage, context: _LoadMessagesContext) -> None:
+    # A system message only reloads as harness retry feedback when it carries the
+    # `encrypted_value` marker this adapter dumped it with; one the client wrote has
+    # no such claim and stays a plain `SystemPromptPart`, so it can never gain
+    # harness provenance. See `retry_feedback_from_payload`.
+    feedback = parse_encrypted_retry_feedback(system_msg.encrypted_value) if context.use_encrypted_value else None
+    context.builder.add(feedback if feedback is not None else SystemPromptPart(content=system_msg.content))
+
+
+def _load_assistant_message(assistant_msg: AssistantMessage, context: _LoadMessagesContext) -> None:
+    builder = context.builder
+    content = assistant_msg.content
+    tool_calls_list = assistant_msg.tool_calls
+    # An empty answer only marks a response boundary, so content that follows it in the same
+    # response replaces it rather than joining it.
+    last = builder.messages[-1] if builder.messages else None
+    if (content or tool_calls_list) and isinstance(last, ModelResponse) and last.parts == [TextPart(content='')]:
+        builder.messages.pop()
+    # An empty answer still keeps its place as a response, so the request after it doesn't
+    # merge into the one before it.
+    if content or (content == '' and not tool_calls_list):
+        builder.add(TextPart(content=content))
+    if tool_calls_list:
+        for tool_call in tool_calls_list:
+            _load_tool_call(tool_call, context)
+
+
+def _load_tool_call(tool_call: ToolCall, context: _LoadMessagesContext) -> None:
+    tool_call_id = tool_call.id
+    tool_name = tool_call.function.name
+    context.tool_calls[tool_call_id] = tool_name
+
+    # The claim is client-supplied, so it's set on the base part and promoted
+    # best-effort by the final `narrow_message_parts` pass. A claim whose data
+    # doesn't validate leaves a base part; only core's kinds are then stripped.
+    tool_kind = parse_encrypted_tool_kind(tool_call.encrypted_value) if context.use_encrypted_value else None
+    if tool_kind is not None:
+        context.tool_kinds[tool_call_id] = tool_kind
+
+    builtin_id = parse_builtin_tool_call_id(tool_call_id)
+    if builtin_id is not None:
+        provider_name, original_id = builtin_id
+        context.builder.add(
+            NativeToolCallPart(
+                tool_name=tool_name,
+                args=tool_call.function.arguments,
+                tool_call_id=original_id,
+                provider_name=provider_name,
+                tool_kind=tool_kind,
+            )
+        )
+    else:
+        context.builder.add(
+            ToolCallPart(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                args=tool_call.function.arguments,
+                tool_kind=tool_kind,
+            )
+        )
+
+
+def _load_tool_message(tool_msg: ToolMessage, context: _LoadMessagesContext) -> None:
+    tool_call_id = tool_msg.tool_call_id
+    tool_name = context.tool_calls.get(tool_call_id)
+    if tool_name is None:  # pragma: no cover
+        raise ValueError(f'Tool call with ID {tool_call_id} not found in the history.')
+
+    if isinstance(tool_msg.content, list):
+        # 1.0 tool content parts: a lone text part is the string form, so it rehydrates like one;
+        # anything else validates as a tool return. No parts left keeps the result, with no content.
+        content = _tool_return_content_from_parts(_input_content_to_user_content(tool_msg.content))
+    else:
+        # Rehydrate here (not in a later `ModelMessagesTypeAdapter` pass) so structured and
+        # multimodal content comes back as real types; see `rehydrate_tool_return_content`.
+        content = rehydrate_tool_return_content(tool_msg.content)
+
+    # Fall back to the paired call's claim: `ToolCallResultEvent` has no metadata
+    # slot, so client-built ToolMessages usually carry no `encrypted_value`. A
+    # non-success return keeps its kind too: it is never promoted to a typed return
+    # part, so the kind can't pass it off as a success. A non-success outcome claim
+    # keeps the return from reloading as `'success'`, which would change how it
+    # serializes to the provider.
+    encrypted_tool_kind = parse_encrypted_tool_kind(tool_msg.encrypted_value) if context.use_encrypted_value else None
+    tool_kind = encrypted_tool_kind or context.tool_kinds.get(tool_call_id)
+    outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] = 'success'
+    encrypted_outcome = parse_encrypted_outcome(tool_msg.encrypted_value) if context.use_encrypted_value else None
+    retry = None
+    if encrypted_outcome is not None:
+        outcome = encrypted_outcome
+        if outcome == 'retried':
+            retry = parse_encrypted_tool_retry(tool_msg.encrypted_value)
+    elif tool_msg.error is not None:
+        outcome = 'failed'
+
+    builtin_id = parse_builtin_tool_call_id(tool_call_id)
+    if builtin_id is not None:
+        provider_name, original_id = builtin_id
+        context.builder.add(
+            NativeToolReturnPart(
+                tool_name=tool_name,
+                content=content,
+                tool_call_id=original_id,
+                provider_name=provider_name,
+                tool_kind=tool_kind,
+                outcome=outcome,
+            )
+        )
+    else:
+        # The final `narrow_message_parts` pass parses the rehydrated content into a typed
+        # return subclass when the return succeeded and the `tool_kind` claim validates,
+        # and otherwise leaves the base `ToolReturnPart` (which keeps the claim, unless
+        # it is one of core's kinds).
+        context.builder.add(
+            ToolReturnPart(
+                tool_name=tool_name,
+                content=content,
+                tool_call_id=tool_call_id,
+                tool_kind=tool_kind,
+                outcome=outcome,
+                retry=retry,
+            )
+        )
+
+
+def _tool_return_content_from_parts(parts: list[UserContent]) -> ToolReturnContent:
+    if len(parts) == 1 and isinstance(parts[0], str):
+        return rehydrate_tool_return_content(parts[0])
+    if parts:
+        return tool_return_content_ta.validate_python(parts[0] if len(parts) == 1 else parts)
+    return None
+
+
+def _load_reasoning_message(reasoning_msg: ReasoningMessage, builder: MessagesBuilder) -> None:
+    try:
+        metadata: dict[str, Any] = json.loads(reasoning_msg.encrypted_value) if reasoning_msg.encrypted_value else {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
+        metadata = {}
+    builder.add(
+        ThinkingPart(
+            content=reasoning_msg.content,
+            id=metadata.get('id'),
+            signature=metadata.get('signature'),
+            provider_name=metadata.get('provider_name'),
+            provider_details=metadata.get('provider_details'),
+        )
+    )
+    restore_canonical_system(builder, metadata.get('provider_name'), metadata.get('canonical_system'))
+
+
+def _load_activity_message(activity_msg: ActivityMessage, context: _LoadMessagesContext) -> None:
+    builder = context.builder
+    if activity_msg.activity_type == TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE:
+        builder.add(tool_availability_delta_from_payload(activity_msg.content))
+    elif activity_msg.activity_type == CAPABILITY_LOAD_DELTA_ACTIVITY_TYPE:
+        if (load_part := capability_load_delta_from_payload(activity_msg.content)) is not None:
+            builder.add(load_part)
+    elif activity_msg.activity_type == MODEL_SETTINGS_DELTA_ACTIVITY_TYPE:
+        if (effort_part := model_settings_delta_from_payload(activity_msg.content)) is not None:
+            builder.add(effort_part)
+    elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
+        if (compaction_part := compaction_part_from_payload(activity_msg.content)) is not None:
+            builder.add(compaction_part)
+            restore_canonical_system(
+                builder, compaction_part.provider_name, activity_msg.content.get('canonical_system')
+            )
+    elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and context.preserve_file_data:
+        _load_file_activity(activity_msg, builder)
+    elif activity_msg.activity_type == UPLOADED_FILE_ACTIVITY_TYPE and context.preserve_file_data:
+        _load_uploaded_file_activity(activity_msg, builder)
+
+
+def _load_file_activity(activity_msg: ActivityMessage, builder: MessagesBuilder) -> None:
+    activity_content = activity_msg.content
+    url = activity_content.get('url', '')
+    if not url:
+        raise ValueError(f'ActivityMessage with activity_type={FILE_ACTIVITY_TYPE!r} must have a non-empty url.')
+    binary_content = BinaryContent.from_data_uri(url)
+    vendor_metadata = activity_content.get('vendor_metadata')
+    # `vendor_metadata` is client-supplied and typed `Any`; assignment on the
+    # (non-`validate_assignment`) `BinaryContent` dataclass bypasses validation,
+    # so ignore anything that isn't a dict rather than let it reach the provider.
+    if is_str_dict(vendor_metadata):
+        binary_content.vendor_metadata = vendor_metadata
+    builder.add(
+        FilePart(
+            content=binary_content,
+            id=activity_content.get('id'),
+            provider_name=activity_content.get('provider_name'),
+            provider_details=activity_content.get('provider_details'),
+        )
+    )
+    restore_canonical_system(builder, activity_content.get('provider_name'), activity_content.get('canonical_system'))
+
+
+def _load_uploaded_file_activity(activity_msg: ActivityMessage, builder: MessagesBuilder) -> None:
+    activity_content = activity_msg.content
+    file_id = activity_content.get('file_id', '')
+    provider_name = activity_content.get('provider_name', '')
+    if not file_id or not provider_name:
+        raise ValueError(
+            f'ActivityMessage with activity_type={UPLOADED_FILE_ACTIVITY_TYPE!r}'
+            ' must have non-empty file_id and provider_name.'
+        )
+    builder.add(
+        UserPromptPart(
+            content=[
+                UploadedFile(
+                    file_id=file_id,
+                    provider_name=provider_name,
+                    vendor_metadata=activity_content.get('vendor_metadata'),
+                    media_type=activity_content.get('media_type'),
+                    identifier=activity_content.get('identifier'),
+                )
+            ]
+        )
+    )
+
+
+@dataclass
+class _DumpRequestContext:
+    """What `AGUIAdapter._dump_request_parts` carries from one part of a `ModelRequest` to the next."""
+
+    use_multimodal: bool
+    use_encrypted_value: bool
+    preserve_file_data: bool
+    result: list[Message] = field(default_factory=list[Message])
+    system_content: list[str] = field(default_factory=list[str])
+    user_content: list[InputContent] = field(default_factory=list[InputContent])
+    structured_payloads: dict[int, dict[str, object]] = field(default_factory=dict[int, dict[str, object]])
+    """Positions in `user_content` of the text items that are `StructuredContent`, with what text can't carry."""
+
+
+def _flush_user_content(context: _DumpRequestContext) -> None:
+    user_content = context.user_content
+    if not user_content:
+        return
+    context.result.append(
+        UserMessage(
+            id=_new_message_id(),
+            # Simplify to plain string if only a single text item.
+            content=user_content[0].text
+            if len(user_content) == 1 and isinstance(user_content[0], TextInputContent)
+            else user_content,
+            **structured_content_encrypted_value_kwargs(context.structured_payloads),
+        )
+    )
+    context.user_content = []
+    context.structured_payloads = {}
+
+
+def _flush_system_content(context: _DumpRequestContext) -> None:
+    if context.system_content:
+        context.result.append(SystemMessage(id=_new_message_id(), content='\n'.join(context.system_content)))
+        context.system_content = []
+
+
+def _dump_request_activity(context: _DumpRequestContext, activity_type: str, content: dict[str, object]) -> None:
+    _flush_user_content(context)
+    context.result.append(ActivityMessage(id=_new_message_id(), activity_type=activity_type, content=content))
+
+
+def _dump_user_prompt_part(part: UserPromptPart, context: _DumpRequestContext) -> None:
+    # Each prompt gets its own `UserMessage`, which loads back as its own `UserPromptPart`. Merged
+    # into one, a request's prompts would come back as one, which providers like OpenAI Chat send
+    # as one user message instead of one per prompt.
+    _flush_user_content(context)
+    if isinstance(part.content, str):
+        context.user_content.append(TextInputContent(type='text', text=part.content))
+    else:
+        for item in part.content:
+            _dump_user_content_item(item, context)
+
+
+def _dump_user_content_item(item: UserContent, context: _DumpRequestContext) -> None:
+    if isinstance(item, StructuredContent):
+        # AG-UI has no structured user input, so the item is text the frontend shows,
+        # and its value rides the message's `encrypted_value`. Before 0.1.11 it's text only, with
+        # no warning (unlike a lost `tool_kind`): the text the user and model see is unchanged.
+        if context.use_encrypted_value:
+            context.structured_payloads[len(context.user_content)] = structured_content_payload(item)
+        context.user_content.append(TextInputContent(type='text', text=item.content))
+    elif isinstance(item, UploadedFile) and context.preserve_file_data:
+        # AG-UI has no native uploaded-file message type. We repurpose
+        # ActivityMessage with a reserved `pydantic_ai_*` activity_type
+        # for round-trip fidelity. See UploadedFileActivityContent.
+        uploaded_content: dict[str, object] = {
+            'file_id': item.file_id,
+            'provider_name': item.provider_name,
+            'media_type': item.media_type,
+            'identifier': item.identifier,
+        }
+        if item.vendor_metadata is not None:
+            uploaded_content['vendor_metadata'] = item.vendor_metadata
+        _dump_request_activity(context, UPLOADED_FILE_ACTIVITY_TYPE, uploaded_content)
+    else:
+        converted = _user_content_to_input(item, use_multimodal=context.use_multimodal)
+        if converted is not None:
+            context.user_content.append(converted)
+
+
+def _dump_tool_return_part(part: ToolReturnPart, context: _DumpRequestContext) -> None:
+    _flush_user_content(context)
+    # Tool-return files ride inline in `ToolMessage.content` (see `dump_tool_return_content`).
+    # A non-success outcome rides the `encrypted_value` carrier alongside `tool_kind`,
+    # since a `ToolMessage` has no outcome slot. `error` is the return's own content, so a
+    # retry's feedback reaches the frontend as the feedback itself, without the
+    # instruction framing a `RetryPromptPart` renders
+    # (https://github.com/pydantic/pydantic-ai/pull/4869).
+    context.result.append(
+        ToolMessage(
+            id=_new_message_id(),
+            content=dump_tool_return_content(part.content),
+            tool_call_id=part.tool_call_id,
+            error=client_error_text(part) if part.outcome in ERROR_OUTCOMES or part.outcome == 'denied' else None,
+            **tool_kind_encrypted_value_kwargs(
+                part.tool_kind, outcome=part.outcome, retry=part.retry, supported=context.use_encrypted_value
+            ),
+        )
+    )
+    if (app := get_mcp_app_tool_result(part.metadata)) is not None:
+        context.result.append(
+            ActivityMessage(id=_new_message_id(), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app))
+        )
+
+
+# TODO(v3): remove `RetryPromptPart`
+def _dump_retry_part(
+    part: RetryPromptPart | RetryFeedbackPart,  # pyright: ignore[reportDeprecated]
+    context: _DumpRequestContext,
+) -> None:
+    # Harness feedback dumps in the voice the model is shown it in, not as text a person
+    # appears to have written (https://github.com/pydantic/pydantic-ai/issues/6404), and
+    # carries the part itself so the reload can rebuild it. Flushing first keeps it in
+    # the position it was authored in, instead of joining the standing prompt at the head
+    # of the request; `VercelAIAdapter` keeps the authored order the same way.
+    _flush_user_content(context)
+    translated = (
+        _translate_legacy_retry_part(part)
+        if isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+        else part
+    )
+    if isinstance(translated, ToolReturnPart):
+        context.result.append(
+            ToolMessage(
+                id=_new_message_id(),
+                content=dump_tool_return_content(translated.content),
+                tool_call_id=translated.tool_call_id,
+                error=client_error_text(translated),
+                **tool_kind_encrypted_value_kwargs(
+                    translated.tool_kind,
+                    outcome=translated.outcome,
+                    retry=translated.retry,
+                    supported=context.use_encrypted_value,
+                ),
+            )
+        )
+    elif _retry_feedback_speaks_for_the_harness(translated):
+        context.result.append(
+            SystemMessage(
+                id=_new_message_id(),
+                content=translated.model_response(),
+                **retry_feedback_encrypted_value_kwargs(translated, supported=context.use_encrypted_value),
+            )
+        )
+    else:
+        context.result.append(
+            UserMessage(
+                id=_new_message_id(),
+                content=translated.model_response(),
+                **retry_feedback_encrypted_value_kwargs(translated, supported=context.use_encrypted_value),
+            )
+        )
+
+
+@dataclass
+class _DumpResponseContext:
+    """What `AGUIAdapter._dump_response_parts` carries from one part of a `ModelResponse` to the next."""
+
+    msg: ModelResponse
+    use_reasoning: bool
+    use_encrypted_value: bool
+    preserve_file_data: bool
+    builtin_returns: dict[str, NativeToolReturnPart]
+    result: list[Message] = field(default_factory=list[Message])
+    text_content: list[str] = field(default_factory=list[str])
+    tool_calls_list: list[ToolCall] = field(default_factory=list[ToolCall])
+    tool_messages: list[ToolMessage] = field(default_factory=list[ToolMessage])
+
+
+def _flush_assistant_content(context: _DumpResponseContext) -> None:
+    if not context.text_content and not context.tool_calls_list:
+        return
+    context.result.append(
+        AssistantMessage(
+            id=_new_message_id(),
+            content='\n'.join(context.text_content) if context.text_content else None,
+            tool_calls=context.tool_calls_list if context.tool_calls_list else None,
+        )
+    )
+    context.result.extend(context.tool_messages)
+    context.text_content = []
+    context.tool_calls_list = []
+    context.tool_messages = []
+
+
+def _dump_text_part(part: TextPart, index: int, context: _DumpResponseContext) -> None:
+    if context.tool_calls_list:
+        _flush_assistant_content(context)
+    # Check adjacency in the original parts, not the buffer: a part dropped from the dump still separates text.
+    if index > 0 and isinstance(context.msg.parts[index - 1], TextPart):
+        context.text_content[-1] += part.content
+    else:
+        context.text_content.append(part.content)
+
+
+def _dump_thinking_part(part: ThinkingPart, context: _DumpResponseContext) -> None:
+    if not context.use_reasoning:
+        return
+    from ag_ui.core import ReasoningMessage
+
+    _flush_assistant_content(context)
+    encrypted = thinking_encrypted_metadata(
+        part, canonical_system=part_canonical_system(context.msg, part.provider_name)
+    )
+    context.result.append(
+        ReasoningMessage(
+            id=_new_message_id(),
+            content=part.content,
+            encrypted_value=json.dumps(encrypted) if encrypted else None,
+        )
+    )
+
+
+def _dump_native_tool_call_part(part: NativeToolCallPart, context: _DumpResponseContext) -> None:
+    prefixed_id = '|'.join([BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', part.tool_call_id])
+    context.tool_calls_list.append(
+        ToolCall(
+            id=prefixed_id,
+            function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
+            **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=context.use_encrypted_value),
+        )
+    )
+    if builtin_return := context.builtin_returns.get(part.tool_call_id):
+        # Built-in tool-return files also ride inline in `ToolMessage.content` (see above).
+        context.tool_messages.append(
+            ToolMessage(
+                id=_new_message_id(),
+                content=dump_tool_return_content(builtin_return.content),
+                tool_call_id=prefixed_id,
+                error=client_error_text(builtin_return)
+                if builtin_return.outcome in ERROR_OUTCOMES or builtin_return.outcome == 'denied'
+                else None,
+                **tool_kind_encrypted_value_kwargs(
+                    builtin_return.tool_kind, outcome=builtin_return.outcome, supported=context.use_encrypted_value
+                ),
+            )
+        )
+
+
+def _dump_file_part(part: FilePart, context: _DumpResponseContext) -> None:
+    if not context.preserve_file_data:
+        return
+    # AG-UI has no native file message type. We repurpose ActivityMessage
+    # with a reserved `pydantic_ai_*` activity_type for round-trip fidelity.
+    # See FileActivityContent.
+    _flush_assistant_content(context)
+    file_content: dict[str, object] = {
+        'url': part.content.data_uri,
+        'media_type': part.content.media_type,
+    }
+    if part.id is not None:
+        file_content['id'] = part.id
+    if part.provider_name is not None:
+        file_content['provider_name'] = part.provider_name
+    if part.provider_details is not None:
+        file_content['provider_details'] = part.provider_details
+    if (canonical_system := part_canonical_system(context.msg, part.provider_name)) is not None:
+        file_content['canonical_system'] = canonical_system
+    if part.content.vendor_metadata is not None:
+        file_content['vendor_metadata'] = part.content.vendor_metadata
+    context.result.append(
+        ActivityMessage(
+            id=_new_message_id(),
+            activity_type=FILE_ACTIVITY_TYPE,
+            content=file_content,
+        )
+    )
+
+
+def _dump_response_compaction_part(part: CompactionPart, context: _DumpResponseContext) -> None:
+    _flush_assistant_content(context)
+    context.result.append(
+        ActivityMessage(
+            id=_new_message_id(),
+            activity_type=COMPACTION_ACTIVITY_TYPE,
+            content=compaction_payload(part, canonical_system=part_canonical_system(context.msg, part.provider_name)),
+        )
+    )
