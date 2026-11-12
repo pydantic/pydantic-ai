@@ -4117,6 +4117,39 @@ def test_decision_span_export_never_changes_the_decision(
     assert warnings == ([] if warning is None else [f'::warning::Could not export the provider health span: {warning}'])
 
 
+class _BrokenEndpoint(BaseHTTPRequestHandler):
+    """An OTLP endpoint that drops the connection, or answers with a line that is not an HTTP status line."""
+
+    reply = b''
+
+    def do_POST(self) -> None:
+        self.rfile.read(int(self.headers['Content-Length']))
+        self.wfile.write(self.reply)
+        self.close_connection = True
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+@pytest.mark.parametrize(('reply', 'error'), [(b'', 'RemoteDisconnected'), (b'not http\r\n', 'BadStatusLine')])
+def test_a_broken_export_connection_only_warns(
+    reply: bytes, error: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A dropped connection (`OSError`) or a reply that is not HTTP (`HTTPException`) warns, and the decision stands."""
+    _stub_account_quotas(monkeypatch, health.Quota('healthy'), None)
+    monkeypatch.setattr(_BrokenEndpoint, 'reply', reply)
+    monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS', 'Authorization=token')
+
+    with _http_server(_BrokenEndpoint) as url:
+        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', url)
+        decision, outputs, _ = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
+
+    assert decision.ready
+    assert outputs == 'ready=true\nreason=Provider health check passed\naccount=primary\n'
+    warnings = [line for line in capsys.readouterr().out.splitlines() if line.startswith('::warning::')]
+    assert warnings == [f'::warning::Could not export the provider health span: {error}']
+
+
 def test_a_blocked_decision_exports_its_unknown_quota_without_an_account(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
