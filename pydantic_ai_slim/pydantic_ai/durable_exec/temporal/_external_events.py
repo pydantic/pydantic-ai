@@ -93,11 +93,15 @@ def ask_activity(agent_name: str) -> AskActivity:
 
     async def external_event_ask(pending_key: str, token: str) -> JsonValue:
         ask = _pending_asks.get(pending_key)
-        # The workflow task that scheduled this local activity holds the callback until it ends, and a
-        # local activity doesn't outlive that task.
+        # The wait that scheduled this local activity, in this process, holds the callback until it ends, so it
+        # is missing only when the workflow sandbox re-imported `pydantic_ai` and holds its own copy of the
+        # registry, which no retry can fix.
         if ask is None:  # pragma: no cover
             raise ApplicationError(
-                'The wait that scheduled this activity is no longer running on this worker; it will be retried.'
+                "The wait for an external event that scheduled this activity isn't in this worker's registry: the "
+                "worker's workflow sandbox must pass `pydantic_ai` through. Configure the worker with "
+                '`PydanticAIPlugin` or `AgentPlugin`, which do.',
+                non_retryable=True,
             )
         with non_retryable_subclasses_as_application_errors():
             return await ask(token)
