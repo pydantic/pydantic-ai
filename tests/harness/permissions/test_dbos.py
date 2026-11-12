@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -87,8 +88,11 @@ def test_remembered_approval_holds_on_replay_and_in_the_next_run(dbos: DBOS) -> 
             raise _Crash
         if len(attempts) == 2:
             # The resumed attempt runs on a DBOS executor thread, where `run_sync` sets a new event loop that nothing
-            # else closes.
-            asyncio.get_event_loop().close()
+            # else closes. DBOS made its own executor that loop's default, and closing a loop shuts its default
+            # executor down, which the next run still needs, so the loop gets an unused one to shut down instead.
+            loop = asyncio.get_event_loop()
+            loop.set_default_executor(ThreadPoolExecutor())
+            loop.close()
 
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id), pytest.raises(_Crash):
