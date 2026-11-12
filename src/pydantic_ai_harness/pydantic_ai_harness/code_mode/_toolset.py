@@ -1525,8 +1525,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         Refusing here means no task is created; the executor hands the error to the sandbox at
         the call site, so calls that already completed keep their recorded results.
         """
-        if execution.output_submission is not None or execution.run_ending_error is not None:
-            # Code that caught the stop doesn't get to run more tools after submitting or after the run ended.
+        if execution.output_submission is not None or isinstance(execution.run_ending_error, OutputBlocked):
+            # Code that caught the stop doesn't get to run more tools after submitting, including a submission an
+            # output guardrail blocked, which only `_submit_output` records.
             raise RuntimeError('This code already submitted the final output, so it cannot call more functions.')
         original_name = tool.sanitized_to_original.get(sandbox_name, sandbox_name)
         tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
