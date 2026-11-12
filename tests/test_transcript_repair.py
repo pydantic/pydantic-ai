@@ -48,6 +48,9 @@ from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, legacy_r
 
 TS = datetime(2024, 1, 1, tzinfo=UTC)
 
+PAUSE_RECORD = {'__pydantic_ai__': {'deferred_pause': True}}
+"""The metadata a run puts on the requests it writes when it pauses for deferred tool calls."""
+
 
 def capture_agent() -> tuple[Agent, list[list[ModelMessage]]]:
     """An agent whose model records the exact message history it receives and replies with text."""
@@ -654,7 +657,7 @@ async def test_resuming_a_mixed_deferred_pause_with_a_repeated_call_id_runs_only
 
 
 async def test_resuming_after_content_recorded_at_an_all_deferred_pause_pauses_again():
-    """Content the paused run recorded after its response, stamped with its `run_id`, is part of the pause."""
+    """Content the paused run recorded after its response is part of the pause."""
     received: list[list[ModelMessage]] = []
 
     def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -669,11 +672,9 @@ async def test_resuming_after_content_recorded_at_an_all_deferred_pause_pauses_a
 
     result = await agent.run('Do it.')
     assert isinstance(result.output, DeferredToolRequests)
-    response = result.all_messages()[-1]
-    assert isinstance(response, ModelResponse)
     message_history = [
         *result.all_messages(),
-        ModelRequest(parts=[UserPromptPart('Queued at the pause.')], run_id=response.run_id),
+        ModelRequest(parts=[UserPromptPart('Queued at the pause.')], metadata=PAUSE_RECORD),
     ]
 
     resumed = await agent.run(message_history=message_history)
@@ -704,10 +705,7 @@ def _two_call_agent(received: list[list[ModelMessage]]) -> Agent[None, str | Def
 
 
 async def test_resuming_a_pause_with_several_recorded_requests_keeps_pausing():
-    """Requests the pause wrote stay as stored, so their run ID still marks them on the next resume.
-
-    Their instructions differ, so cleaning wouldn't merge them; if they matched, merging would drop the run ID.
-    """
+    """Every request the pause wrote records it, whether cleaning merges them or keeps them apart for their instructions."""
     received: list[list[ModelMessage]] = []
     agent = _two_call_agent(received)
     message_history: list[ModelMessage] = [
@@ -725,14 +723,22 @@ async def test_resuming_a_pause_with_several_recorded_requests_keeps_pausing():
             timestamp=TS,
             instructions='A',
             run_id='run_1',
+            metadata=PAUSE_RECORD,
         ),
-        ModelRequest(parts=[UserPromptPart('Queued.', timestamp=TS)], timestamp=TS, instructions='B', run_id='run_1'),
-        ModelRequest(parts=[UserPromptPart('Queued too.', timestamp=TS)], timestamp=TS, run_id='run_1'),
+        ModelRequest(
+            parts=[UserPromptPart('Queued.', timestamp=TS)],
+            timestamp=TS,
+            instructions='B',
+            run_id='run_1',
+            metadata=PAUSE_RECORD,
+        ),
+        ModelRequest(
+            parts=[UserPromptPart('Queued too.', timestamp=TS)], timestamp=TS, run_id='run_1', metadata=PAUSE_RECORD
+        ),
     ]
 
     resumed = await agent.run(message_history=message_history)
     assert isinstance(resumed.output, DeferredToolRequests)
-    assert resumed.all_messages() == message_history
 
     resumed_again = await agent.run(message_history=resumed.all_messages())
     assert isinstance(resumed_again.output, DeferredToolRequests)
@@ -759,6 +765,7 @@ async def test_a_legacy_retry_prompt_answers_its_call_at_a_pause():
             parts=[ToolReturnPart('get_data', 'data', tool_call_id='call_data', timestamp=TS), retry],
             timestamp=TS,
             run_id='run_1',
+            metadata=PAUSE_RECORD,
         ),
     ]
 
@@ -769,9 +776,9 @@ async def test_a_legacy_retry_prompt_answers_its_call_at_a_pause():
 
 
 async def test_new_message_in_the_request_after_a_mixed_deferred_pause_continues_the_run():
-    """A UI adapter can put the user's new message in the same request as the results, without a `run_id`.
+    """A UI adapter can put the user's new message in the same request as the results.
 
-    No agent run wrote that request, so it isn't a pause: the waiting call isn't run, and the model gets the message.
+    No paused run wrote that request, so it isn't a pause: the waiting call isn't run, and the model gets the message.
     """
     agent, received = capture_agent()
 
@@ -804,7 +811,7 @@ async def test_new_message_in_the_request_after_a_mixed_deferred_pause_continues
 
 
 async def test_content_queued_at_a_second_pause_keeps_the_pause():
-    """A resumed run that pauses again records what was queued with its own run ID, which still marks the pause."""
+    """What a resumed run that pauses again records is part of the pause, though another run wrote the response."""
     received: list[list[ModelMessage]] = []
     create_file_runs = 0
 
@@ -837,6 +844,7 @@ async def test_content_queued_at_a_second_pause_keeps_the_pause():
     recorded = second.all_messages()[-1]
     assert isinstance(recorded, ModelRequest)
     assert recorded.run_id == second.run_id != first.run_id
+    assert recorded.metadata == PAUSE_RECORD
 
     third = await agent.run(message_history=second.all_messages())
     assert isinstance(third.output, DeferredToolRequests)
@@ -844,6 +852,82 @@ async def test_content_queued_at_a_second_pause_keeps_the_pause():
     assert len(received) == 1
 
 
+def _mixed_pause_agent(received: list[list[ModelMessage]]) -> Agent[None, str | DeferredToolRequests]:
+    """An agent whose first response calls `get_data`, which runs, and `create_file`, which waits for approval.
+
+    `create_file` queues a note, so the pause records a request after the step's results. Later model requests
+    reply with text, except that one with the prompt 'Fail.' fails.
+    """
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        if len(received) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('get_data', {}, tool_call_id='call_data'),
+                    ToolCallPart('create_file', {'path': 'x'}, tool_call_id='call_file'),
+                ]
+            )
+        if len(received) == 2:
+            raise RuntimeError('The model is down.')
+        return ModelResponse(parts=[TextPart('All done.')])
+
+    agent = Agent(FunctionModel(model_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def get_data() -> str:
+        return 'data'
+
+    @agent.tool
+    def create_file(ctx: RunContext[object], path: str) -> str:
+        if ctx.tool_call_approved:
+            return 'created'  # pragma: no cover
+        ctx.enqueue('Noted while waiting.')
+        raise ApprovalRequired
+
+    return agent
+
+
+async def test_resuming_after_a_new_prompt_failed_at_a_mixed_deferred_pause_retries_the_prompt():
+    """A new prompt whose model request failed isn't part of the pause, though the run that sent it wrote it.
+
+    Resuming the history captured from the failed run sends the prompt again, as it would without the pause.
+    """
+    received: list[list[ModelMessage]] = []
+    agent = _mixed_pause_agent(received)
+    paused = await agent.run('Do it.')
+    assert isinstance(paused.output, DeferredToolRequests)
+
+    with capture_run_messages() as captured, pytest.raises(RuntimeError, match='The model is down'):
+        await agent.run('Something else.', message_history=paused.all_messages())
+    failed_prompt = captured[-1]
+    assert isinstance(failed_prompt, ModelRequest)
+    assert failed_prompt.run_id is not None
+
+    result = await agent.run(message_history=captured)
+
+    assert result.output == 'All done.'
+    assert 'Something else.' in [part.content for part in received[-1][-1].parts if isinstance(part, UserPromptPart)]
+
+
+async def test_a_paused_history_repaired_without_closing_its_last_response_keeps_the_pause():
+    """`repair_messages` merges the requests the pause wrote, and the merged request still records the pause."""
+    received: list[list[ModelMessage]] = []
+    agent = _mixed_pause_agent(received)
+    paused = await agent.run('Do it.')
+    assert isinstance(paused.output, DeferredToolRequests)
+
+    repaired = repair_messages(paused.all_messages(), repair_last_response=False)
+    assert len(repaired) == len(paused.all_messages()) - 1
+
+    resumed = await agent.run(message_history=repaired)
+
+    assert isinstance(resumed.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in resumed.output.approvals] == ['call_file']
+    assert len(received) == 1
+
+
+@pytest.mark.moves_cache_prefix(reason='The requests recorded at the pause carry their own instructions.')
 async def test_approving_after_a_resume_ran_another_call_skips_every_answered_call():
     """Results the history holds after the response, in any of its requests, aren't run again or asked for."""
     received: list[list[ModelMessage]] = []
@@ -883,8 +967,12 @@ async def test_approving_after_a_resume_ran_another_call_skips_every_answered_ca
     # Requests with different instructions stay separate when the history is cleaned.
     message_history = [
         *first.all_messages(),
-        ModelRequest(parts=[UserPromptPart('Queued.')], instructions='A', run_id=response.run_id),
-        ModelRequest(parts=[UserPromptPart('Queued too.')], instructions='B', run_id=response.run_id),
+        ModelRequest(
+            parts=[UserPromptPart('Queued.')], instructions='A', run_id=response.run_id, metadata=PAUSE_RECORD
+        ),
+        ModelRequest(
+            parts=[UserPromptPart('Queued too.')], instructions='B', run_id=response.run_id, metadata=PAUSE_RECORD
+        ),
     ]
     send_ready = True
     second = await agent.run(message_history=message_history)
@@ -918,6 +1006,7 @@ async def test_new_message_after_a_mixed_deferred_pause_continues_the_run():
             parts=[ToolReturnPart('get_data', 'data', tool_call_id='call_data', timestamp=TS)],
             timestamp=TS,
             run_id='run_1',
+            metadata=PAUSE_RECORD,
         ),
         ModelRequest(parts=[UserPromptPart('Never mind.', timestamp=TS)], timestamp=TS),
     ]

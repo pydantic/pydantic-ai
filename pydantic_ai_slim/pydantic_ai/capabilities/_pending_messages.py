@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pydantic_ai._agent_graph import ModelRequestNode
-from pydantic_ai._enqueue import deliver_asap_messages, run_queue, stamped_messages
+from pydantic_ai._agent_graph import ModelRequestNode, mark_deferred_pause
+from pydantic_ai._enqueue import PendingMessage, deliver_asap_messages, run_queue, stamped_messages
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import EnqueuedMessagesEvent, ModelRequest
@@ -68,6 +68,24 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
         return deliver_asap_messages(ctx, request_context)
 
 
+def _record_at_pause(ctx: RunContext[Any], recorded: list[PendingMessage]) -> None:
+    """Append what was queued to the history of a run pausing for deferred tools, marked as part of the pause.
+
+    Resuming the history then pauses again rather than sending the recorded content to the model.
+    """
+    for pending in recorded:
+        pending_messages = stamped_messages(
+            pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
+        )
+        for message in pending_messages:
+            assert isinstance(message, ModelRequest)  # `drain_at_pause` leaves a queued response queued.
+            mark_deferred_pause(message)
+        ctx.messages.extend(pending_messages)
+        ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
+            EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
+        )
+
+
 def drain_pending_messages_at_end(
     ctx: RunContext[Any],
     result: _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]],
@@ -98,14 +116,7 @@ def drain_pending_messages_at_end(
     if isinstance(result.data.output, DeferredToolRequests) and isinstance(ctx.messages[-1], ModelRequest):
         recorded = run_queue(ctx).drain_at_pause()
         if recorded is not None:
-            for pending in recorded:
-                pending_messages = stamped_messages(
-                    pending, fallback_run_id=ctx.run_id, fallback_conversation_id=ctx.conversation_id
-                )
-                ctx.messages.extend(pending_messages)
-                ctx._emit_event(  # pyright: ignore[reportPrivateUsage]
-                    EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=tuple(pending_messages))
-                )
+            _record_at_pause(ctx, recorded)
             return result
 
     # Pi-mono parity: drain `'asap'` first so anything that arrived during the
