@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import ssl
 import sys
 import threading
@@ -3987,10 +3988,14 @@ def _otlp(values: Mapping[str, Mapping[str, object]]) -> list[dict[str, object]]
     return [{'key': key, 'value': value} for key, value in values.items()]
 
 
-def test_agent_start_recheck_exports_its_decision_into_the_agent_job_trace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize('job', ['agent', 'provider_health'])
+def test_each_decision_exports_one_span_with_both_accounts_quota(
+    job: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A backup-account decision reaches the OTLP endpoint as one span with both accounts' quota windows."""
+    """A backup-account decision reaches the OTLP endpoint as one span with both accounts' quota windows.
+
+    The agent-start recheck joins gh-aw's agent-job trace. The gate runs before that trace exists and starts its own.
+    """
     _stub_account_quotas(
         monkeypatch, _parse_zai_quota(_quota_response(interval_percentage=100)), _parse_zai_quota(_quota_response())
     )
@@ -3999,9 +4004,13 @@ def test_agent_start_recheck_exports_its_decision_into_the_agent_job_trace(
     monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS', 'Authorization=logfire%20fixture-token')
     monkeypatch.setenv('OTEL_SERVICE_NAME', 'gh-aw.pydantic-ai-pr-review')
     monkeypatch.setenv('OTEL_RESOURCE_ATTRIBUTES', 'gh-aw.workflow.name=CI%20Review,github.run_id=43')
-    monkeypatch.setenv('GITHUB_JOB', 'agent')
-    monkeypatch.setenv('GITHUB_AW_OTEL_TRACE_ID', 'a' * 32)
-    monkeypatch.setenv('GITHUB_AW_OTEL_PARENT_SPAN_ID', 'b' * 16)
+    monkeypatch.setenv('GITHUB_JOB', job)
+    if job == 'agent':
+        monkeypatch.setenv('GITHUB_AW_OTEL_TRACE_ID', 'a' * 32)
+        monkeypatch.setenv('GITHUB_AW_OTEL_PARENT_SPAN_ID', 'b' * 16)
+    else:
+        monkeypatch.delenv('GITHUB_AW_OTEL_TRACE_ID', raising=False)
+        monkeypatch.delenv('GITHUB_AW_OTEL_PARENT_SPAN_ID', raising=False)
 
     with _http_server(_Collector) as endpoint:
         monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', endpoint + '/')
@@ -4016,7 +4025,7 @@ def test_agent_start_recheck_exports_its_decision_into_the_agent_job_trace(
         'weekly_reset_at': {'stringValue': '2026-10-08T14:54:29Z'},
     }
     attributes = {
-        'github.job': {'stringValue': 'agent'},
+        'github.job': {'stringValue': job},
         'provider_health.ready': {'boolValue': True},
         'provider_health.reason': {'stringValue': decision.reason},
         'provider_health.workflow': {'stringValue': 'CI Review'},
@@ -4041,18 +4050,24 @@ def test_agent_start_recheck_exports_its_decision_into_the_agent_job_trace(
         'gh-aw.workflow.name': {'stringValue': 'CI Review'},
         'github.run_id': {'stringValue': '43'},
     }
+    exported = json.loads(body)
+    trace_id = exported['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['traceId']
+    if job == 'agent':
+        trace = {'traceId': 'a' * 32, 'parentSpanId': 'b' * 16}
+    else:
+        assert re.fullmatch('[0-9a-f]{32}', trace_id)
+        trace = {'traceId': trace_id}
     span = {
-        'traceId': 'a' * 32,
+        **trace,
         'spanId': ANY,
         'name': 'Z.AI provider health decision',
         'kind': 1,
         'startTimeUnixNano': ANY,
         'endTimeUnixNano': ANY,
         'attributes': _otlp(attributes),
-        'parentSpanId': 'b' * 16,
     }
     scope = {'scope': {'name': 'agent_provider_health'}, 'spans': [span]}
-    assert json.loads(body) == {'resourceSpans': [{'resource': {'attributes': _otlp(resource)}, 'scopeSpans': [scope]}]}
+    assert exported == {'resourceSpans': [{'resource': {'attributes': _otlp(resource)}, 'scopeSpans': [scope]}]}
 
 
 @pytest.mark.parametrize(

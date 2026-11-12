@@ -27,6 +27,8 @@ API_ROOT = 'https://api.github.com'
 ZAI_QUOTA_URL = 'https://api.z.ai/api/monitor/usage/quota/limit'
 MARKER_PREFIX = '<!-- pydantic-ai-provider-health:v1 '
 MARKER_RE = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
+_TRACE_ID_RE = re.compile('[0-9a-f]{32}')
+_SPAN_ID_RE = re.compile('[0-9a-f]{16}')
 REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
 # The recheck, artifact-replacement and two stop steps `shared/provider-health.md` adds to each agent job.
@@ -1409,7 +1411,7 @@ def _export_decision_span(health: Health, started_ns: int) -> None:
     # gh-aw starts the run's trace, and starts its own.
     trace_id = os.environ.get('GITHUB_AW_OTEL_TRACE_ID', '')
     parent_span_id = os.environ.get('GITHUB_AW_OTEL_PARENT_SPAN_ID', '')
-    joins_trace = bool(re.fullmatch('[0-9a-f]{32}', trace_id) and re.fullmatch('[0-9a-f]{16}', parent_span_id))
+    joins_trace = bool(_TRACE_ID_RE.fullmatch(trace_id) and _SPAN_ID_RE.fullmatch(parent_span_id))
     span: dict[str, object] = {
         'traceId': trace_id if joins_trace else secrets.token_hex(16),
         'spanId': secrets.token_hex(8),
