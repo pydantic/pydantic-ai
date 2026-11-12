@@ -274,6 +274,19 @@ class TestComputerUse:
         ]
         assert tool_return.content == ['Ran 5 actions. Screenshot attached.', SCREENSHOT]
 
+    async def test_a_grid_model_call_a_hook_corrected_points_on_its_grid(self) -> None:
+        # An option the `computer` tool lacks keeps the call a plain `ToolCallPart`; the hook takes it out.
+        provider = ScreenProvider()
+        model = _scripted([{'type': 'click', 'x': 500, 'y': 500, 'extra': 'bad'}], profile=_GRID)
+
+        async def correct(ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any) -> Any:
+            return {'actions': [{'type': 'click', 'x': 500, 'y': 500}]}
+
+        agent = Agent(model, capabilities=[provider.capability(), ComputerUse(), Hooks(before_tool_validate=correct)])
+        await agent.run('Go.')
+
+        assert provider.actions == [Click(x=640, y=400)]
+
     async def test_a_grid_model_is_told_its_grid_in_the_tool_description(self) -> None:
         seen: list[AgentInfo] = []
 
@@ -1325,8 +1338,10 @@ def test_the_call_helpers_fall_back_when_the_messages_lack_what_they_look_for() 
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), messages=messages, tool_call_id='missing')
     # A call that isn't in the run's messages, so there is no screenshot it was made on.
     assert _the_call(ctx) is None
-    # Arguments that no longer validate don't match any actions.
-    assert _changed(other, []) is True
+    # A call whose arguments no longer validate is read with no actions, so they don't match any.
+    found = _the_call(replace(ctx, tool_call_id='other'))
+    assert found is not None and found[1].actions is None
+    assert _changed(found[1], []) is True
     # A realtime model has no profile, so its screenshots aren't limited.
     assert _model_limit(_Realtime()) is None
 
