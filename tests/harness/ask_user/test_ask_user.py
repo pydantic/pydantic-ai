@@ -1334,7 +1334,8 @@ class TestAnswerNotes:
         compacted = await compact_now(
             SummarizingCompaction(
                 max_messages=3,
-                keep_messages=2,
+                # Leave room for the note copy: with two slots the newer 'next' turn displaces it.
+                keep_messages=3,
                 preserve_first_user_message=False,
                 keep_user_messages=keep_user_messages,
                 bridge_prefix=False,

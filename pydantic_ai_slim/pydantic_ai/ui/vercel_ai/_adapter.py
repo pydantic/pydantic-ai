@@ -6,7 +6,7 @@ import json
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, InitVar, dataclass
-from functools import cached_property
+from functools import cached_property, partial
 from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
 
 from pydantic import TypeAdapter, ValidationError
@@ -83,7 +83,7 @@ from .._adapter import (
     tool_availability_delta_payload,
     tool_retry_payload,
 )
-from .._utils import get_ui_message_id, set_ui_message_id
+from .._utils import client_error_text, get_ui_message_id, set_ui_message_id, without_internal_text_metadata
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
@@ -1047,7 +1047,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 approval=ToolApprovalResponded(
                                     id=str(uuid.uuid4()),
                                     approved=False,
-                                    reason=builtin_return.model_response_str(wrap_if_error=False),
+                                    reason=client_error_text(builtin_return),
                                 ),
                             )
                         )
@@ -1056,9 +1056,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         or builtin_return.model_response_object(wrap_if_error=False).get('is_error') is True
                     ):
                         response_obj = builtin_return.model_response_object(wrap_if_error=False)
-                        error_text = response_obj.get(
-                            'error_text', builtin_return.model_response_str(wrap_if_error=False)
-                        )
+                        error_text = response_obj.get('error_text', client_error_text(builtin_return))
                         ui_parts.append(
                             ToolOutputErrorPart(
                                 type=tool_name,
@@ -1181,7 +1179,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         approval=ToolApprovalResponded(
                             id=str(uuid.uuid4()),
                             approved=False,
-                            reason=tool_result.model_response_str(wrap_if_error=False),
+                            reason=client_error_text(tool_result),
                         ),
                     )
                 )
@@ -1194,7 +1192,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         type=tool_type,
                         tool_call_id=part.tool_call_id,
                         input=part.args_as_dict(),
-                        error_text=tool_result.model_response_str(wrap_if_error=False),
+                        error_text=client_error_text(tool_result),
                         provider_executed=False,
                         call_provider_metadata=call_provider_metadata,
                     )
@@ -1390,7 +1388,9 @@ def _with_text_citations(
         result.append(ui_part)
         if isinstance(ui_part, TextUIPart):
             text_parts = text_runs[index]
-            ui_part.provider_metadata = dump_text_metadata(text_parts, response=response)
+            ui_part.provider_metadata = dump_text_metadata(
+                text_parts, canonical_system_for=partial(part_canonical_system, response)
+            )
             result.extend(
                 SourceUrlUIPart(source_id=chunk.source_id, url=chunk.url, title=chunk.title)
                 for chunk in iter_citation_source_chunks(merged_text_citations(text_parts), source_urls)
@@ -1522,7 +1522,8 @@ def _retried_structured_content(tool_result: ToolReturnPart | None) -> list[Any]
     content: object = None if tool_result is None or tool_result.outcome != 'retried' else tool_result.content
     if not isinstance(content, list):
         return None
-    return tool_return_ta.dump_python(content, mode='json', by_alias=True)
+    items = cast(list[Any], content)
+    return tool_return_ta.dump_python(without_internal_text_metadata(items), mode='json', by_alias=True)
 
 
 def _validate_tool_output(output: Any) -> Any:
