@@ -11,7 +11,6 @@ from pydantic_ai.computer_use import Click, ComputerReturnPart
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef
-from pydantic_ai_harness._x11 import STARTED
 from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
@@ -32,10 +31,8 @@ class FakeDisplay:
     def __call__(self, command: str, timeout: float | None) -> tuple[str, str, int]:
         if 'Xvfb' in command:
             self.starts.append(command)
-            if self.up:
-                return '', '', 0
             self.up = True
-            return STARTED, '', 0
+            return '', '', 0
         elif 'xwininfo -root' in command:
             self.xdotool.append('xwininfo -root')
             # The backend reads the size only from a display it started.

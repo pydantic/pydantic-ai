@@ -161,12 +161,6 @@ _STOP_INPUT = (
 A cancelled command can keep running in the environment after the call that started it returns, and could press
 keys again after they were released."""
 
-STARTED = 'pydantic-ai-display-started'
-"""What a start script prints when it started a new X server, rather than finding one running."""
-
-RECORD_START = f'echo {STARTED}; '
-"""What a start script runs once a new X server answers: prints `STARTED`."""
-
 
 def _keysym(key: str) -> str:
     if key in _KEYSYMS:
@@ -215,8 +209,8 @@ _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY[1:]}'
 def start_x_server(log: str, *, then: str = '') -> str:
     """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
 
-    It gives up as soon as the X server exits, or after 10 seconds, with the end of `log` as the reason, and runs
-    `RECORD_START` once a new X server answers. `then` runs then, such as to start a panel.
+    It gives up as soon as the X server exits, or after 10 seconds, with the end of `log` as the reason. `then` runs
+    once a new X server answers, such as to start a panel.
 
     It holds `START_LOCK` while it checks for and starts the X server, so a second start of the display waits and
     finds the first one's.
@@ -232,7 +226,7 @@ def start_x_server(log: str, *, then: str = '') -> str:
         'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
         f"echo 'the X server did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "
         # Let go of the lock before starting anything else, which would otherwise hold it as long as it runs.
-        f'sleep 0.1; i=$((i+1)); done; {RECORD_START}exec 9>&-; {then} fi; exec 9>&-; '
+        f'sleep 0.1; i=$((i+1)); done; exec 9>&-; {then} fi; exec 9>&-; '
     )
 
 
@@ -244,10 +238,10 @@ def x11_display(
 ) -> LazyDisplay:
     """A backend's display on an X server that `script` starts at the size `$1` names, unless one answers.
 
-    `script` runs `RECORD_START` when it starts a new X server. `where` names the environment in errors.
+    `where` names the environment in errors.
     """
 
-    async def start() -> bool:
+    async def start() -> None:
         width, height = size
         # On `DISPLAY` whatever the backend's own env says, so it checks the X server the actions go to.
         result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env=_ENV, timeout=30)
@@ -256,7 +250,6 @@ def x11_display(
                 f'Could not start the display in {where()}: it needs Xvfb, xdotool, xwininfo, scrot and setsid '
                 f'({(result.stderr or result.stdout).strip()})'
             )
-        return STARTED in result.stdout.splitlines()
 
     return LazyDisplay(X11Computer(backend), start)
 

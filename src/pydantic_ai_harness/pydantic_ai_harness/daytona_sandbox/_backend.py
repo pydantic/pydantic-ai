@@ -873,15 +873,14 @@ class DaytonaSandboxBackend(
         assert self._sandbox is not None
         return self._sandbox.computer_use
 
-    async def _start_display(self) -> bool:
-        """Start the desktop unless it's running, and return whether it was down, so its windows are gone."""
+    async def _start_display(self) -> None:
+        """Start the desktop unless it's running."""
         sandbox = await self.get_sandbox()
         computer_use = sandbox.computer_use
         try:
             status = await computer_use.get_status(request_timeout=_REQUEST_TIMEOUT)
-            if status.status == 'active':
-                return False
-            await computer_use.start(request_timeout=_REQUEST_TIMEOUT)
+            if status.status != 'active':
+                await computer_use.start(request_timeout=_REQUEST_TIMEOUT)
         except daytona.DaytonaServiceUnavailableError as error:
             if not _desktop_broken(error):
                 raise
@@ -889,7 +888,6 @@ class DaytonaSandboxBackend(
                 f"The Daytona sandbox {sandbox.id!r}'s desktop stopped answering; stopping and starting the "
                 f'sandbox brings it back. ({error})'
             ) from error
-        return True
 
     async def live_view_url(self, *, expires_in: int = 3600) -> str:
         """A link to watch the desktop, and use it, in a browser, valid for `expires_in` seconds.
