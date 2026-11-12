@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -11,6 +12,9 @@ from publish_douwebot_review import ReviewResult
 from pydantic import TypeAdapter, ValidationError
 
 _EVENT = TypeAdapter(dict[str, object])
+# Some models write prose, then the requested JSON object in a Markdown code fence, despite the prompt.
+# The last fenced block is the answer when it ends the text; text after it still fails.
+_FENCE = re.compile(r'\A(?:.*\n)?[ \t]*```[\w+-]*[ \t]*\n(.*?)\n[ \t]*```\s*\Z', re.DOTALL)
 
 
 def final_text(path: Path) -> str:
@@ -40,6 +44,11 @@ def final_text(path: Path) -> str:
                 raise ValueError('Invalid OpenCode text event')
             return content
     raise ValueError('OpenCode review did not return text')
+
+
+def unfenced(text: str) -> str:
+    """Return the fenced block that ends `text`, or `text` itself when no fence ends it."""
+    return fenced[1] if (fenced := _FENCE.match(text)) else text
 
 
 def rejection_reason(error: ValueError) -> str:
