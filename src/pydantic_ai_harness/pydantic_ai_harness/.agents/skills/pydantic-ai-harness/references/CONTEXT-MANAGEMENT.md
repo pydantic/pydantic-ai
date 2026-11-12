@@ -7,6 +7,9 @@ stores `StepPersistence` uses. None needs an extra, except `MongoMediaStore`, wh
 `pydantic-ai-harness[mongodb]` (`PostgresMediaStore` takes your own `asyncpg` pool and needs no
 harness extra). All compaction strategies keep tool-call /
 tool-return pairs intact, and their edits persist into the run's message history.
+Across runs, `result.conversation` holds the uncompacted history (so a `ConversationStore` keeps every
+message) and is compacted again on the next run, an extra summarizer call for LLM-backed strategies;
+`result.all_messages()` holds the compacted one, to carry with `message_history=` when that isn't wanted.
 
 ## Pick a capability
 
