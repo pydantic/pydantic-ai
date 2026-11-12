@@ -68,7 +68,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerAction, ComputerUse
+from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, DisplayAction
 from pydantic_ai_harness.computer_use._capability import (
     _changed,  # pyright: ignore[reportPrivateUsage]
     _model_limit,  # pyright: ignore[reportPrivateUsage]
@@ -206,7 +206,7 @@ class TestComputerUse:
         ],
     )
     async def test_a_failed_action_stops_the_rest_and_still_returns_a_screenshot(
-        self, actions: list[dict[str, Any]], ran: list[ComputerAction], summary: str
+        self, actions: list[dict[str, Any]], ran: list[DisplayAction], summary: str
     ) -> None:
         provider = ScreenProvider()
         agent = Agent(_scripted(actions), capabilities=[provider.capability(), ComputerUse()])
@@ -620,7 +620,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                 self.started = True
                 return await super().display_size()
 
-            async def act(self, action: ComputerAction) -> None:
+            async def act(self, action: DisplayAction) -> None:
                 raise WorkspaceUnavailableError('the environment is gone')
 
             async def screenshot(self) -> bytes:
@@ -752,7 +752,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
     async def test_a_configuration_error_ends_a_durable_run(self, where: str, message: str) -> None:
         # Rather than telling the model to look again, which would meet the same error.
         class Misconfigured(ScreenBackend):
-            async def act(self, action: ComputerAction) -> None:
+            async def act(self, action: DisplayAction) -> None:
                 raise UserError('the display is misconfigured')
 
         class Provider(ScreenProvider):
@@ -1013,7 +1013,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         waited: list[bool] = []
 
         class OneScreen(ScreenBackend):
-            async def act(self, action: ComputerAction) -> None:
+            async def act(self, action: DisplayAction) -> None:
                 await super().act(action)
                 if action == Click(x=1, y=1):
                     holding.set()
@@ -1053,7 +1053,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         waited: list[bool] = []
 
         class Holding(ScreenBackend):
-            async def act(self, action: ComputerAction) -> None:
+            async def act(self, action: DisplayAction) -> None:
                 await super().act(action)
                 if action == Click(x=1, y=1):
                     first_acting.set()
@@ -1230,7 +1230,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
 
     async def test_a_button_whose_press_took_effect_but_failed_is_released(self) -> None:
         class LostReply(ScreenBackend):
-            async def act(self, action: ComputerAction) -> None:
+            async def act(self, action: DisplayAction) -> None:
                 await super().act(action)
                 if isinstance(action, MouseDown):
                     raise WorkspaceError('the reply was lost')
@@ -1311,7 +1311,7 @@ class _Turns:
         self.holding = holding
 
         class HoldsItsFirstAction(ScreenBackend):
-            async def act(self, action: ComputerAction) -> None:
+            async def act(self, action: DisplayAction) -> None:
                 await super().act(action)
                 if not holding.is_set():
                     holding.set()
