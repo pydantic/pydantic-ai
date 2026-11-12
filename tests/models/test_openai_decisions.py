@@ -1565,6 +1565,40 @@ async def test_failed_tool_return_image_keeps_order_and_one_error_wrapper(allow_
     assert ModelMessagesTypeAdapter.dump_json(history) == original_history
 
 
+async def test_failed_tool_return_keeps_a_structured_item_beside_an_image(allow_model_requests: None):
+    """A dict in a failed return with an image goes in the error wrapper as the JSON object it is without the image."""
+    image = BinaryContent(b'tool-image', media_type='image/png')
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Check the weather.'),
+        ModelResponse(parts=[ToolCallPart('weather', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('weather', [{'temp': 20}, image], tool_call_id='tool-1', outcome='failed')]),
+    ]
+    captured = Captured(boolean_answers)
+
+    await Agent(mock_model(captured), output_type=bool, instructions='Is it warm?').run(
+        'Is it warm?', message_history=history
+    )
+
+    request_body: JsonValue = json.loads(captured.requests[0].content)
+    assert isinstance(request_body, dict)
+    assert request_body['input'] == snapshot(
+        [
+            {'role': 'user', 'content': 'Check the weather.'},
+            {'type': 'function_call', 'call_id': 'tool-1', 'name': 'weather', 'arguments': '{}'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'tool-1',
+                'output': [
+                    {'type': 'input_text', 'text': '{"error":"[{\\"temp\\":20},\\"<image 1>\\"]"}'},
+                    {'type': 'input_text', 'text': '<image 1>:'},
+                    {'type': 'input_image', 'image_url': 'data:image/png;base64,dG9vbC1pbWFnZQ==', 'detail': 'auto'},
+                ],
+            },
+            {'role': 'user', 'content': 'Is it warm?'},
+        ]
+    )
+
+
 def pick_first_route(body: DecisionCreateParams) -> httpx2.Response | None:
     for question in body['questions']:
         if question.get('name') == 'route' and question['type'] == 'choice':

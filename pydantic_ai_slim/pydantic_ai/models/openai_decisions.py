@@ -42,6 +42,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
+    is_multi_modal_content,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..profiles.decision import decision_model_profile
@@ -402,10 +403,10 @@ class _Conversation:
         """
         output: ResponseFunctionCallOutputItemListParam = []
         if part.outcome in ERROR_OUTCOMES:
-            labelled: list[str] = []
+            labelled: list[object] = []
             images: ResponseFunctionCallOutputItemListParam = []
-            for item in part.content_items(mode='str', wrap_if_error=False):
-                if isinstance(item, str):
+            for item in part.content_items(mode='jsonable', wrap_if_error=False):
+                if not is_multi_modal_content(item):
                     labelled.append(item)
                 else:
                     index, image, detail = self._image()
