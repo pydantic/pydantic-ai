@@ -204,7 +204,7 @@ print(await backend.live_view_url())  # starts the sandbox, its desktop and the 
 result = await agent.run('Open the terminal from the dock, run `uname -a` and tell me what it printed.', workspace=backend)
 ```
 
-The link includes the viewer's password, so anyone with it can see and use the desktop while the sandbox runs. A custom `template` needs `x11vnc` and noVNC in `/opt/noVNC` for the link to work.
+The link includes the viewer's password, so anyone with it can see and use the desktop while the sandbox runs: don't log it or share it. The password is after the `#`, so the browser doesn't send it to E2B's servers. A custom `template` needs `x11vnc` and noVNC in `/opt/noVNC` for the link to work.
 
 ## Clean up
 
