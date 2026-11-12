@@ -23,7 +23,7 @@ on the sandbox's display. Re-check these before changing the mapping, by running
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING
 
@@ -135,10 +135,18 @@ def _keys(keys: Sequence[str]) -> list[str]:
 
 
 class DaytonaDesktop:
-    """Controls a Daytona sandbox's desktop, which must already be started, with its computer-use API."""
+    """Controls a Daytona sandbox's desktop, which must already be started, with its computer-use API.
 
-    def __init__(self, computer_use: AsyncComputerUse):
-        self._computer_use = computer_use
+    `computer_use` returns the API of the sandbox the backend has attached, read on every call: the backend attaches
+    again with a new client after closing its old one.
+    """
+
+    def __init__(self, computer_use: Callable[[], AsyncComputerUse]):
+        self._attached = computer_use
+
+    @property
+    def _computer_use(self) -> AsyncComputerUse:
+        return self._attached()
 
     async def _check_running(self) -> None:
         """Refuse an action on a desktop that stopped, before sending it any input.
