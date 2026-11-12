@@ -128,7 +128,7 @@ async def test_ending_with_output_waits_for_the_first_result_and_gives_the_model
     agent = Agent(FunctionModel(model_fn))
 
     @agent.tool
-    async def start(ctx: RunContext[None], name: str) -> str:
+    async def start(ctx: RunContext, name: str) -> str:
         async def work() -> None:
             # `a` finishes once the run first waits to end, `b` once it waits again.
             await emitted.until('draining', 1 if name == 'a' else 2)
@@ -172,7 +172,7 @@ async def test_ending_with_queued_content_gives_the_model_a_turn_before_waiting(
     agent = Agent(FunctionModel(model_fn))
 
     @agent.tool
-    async def start(ctx: RunContext[None]) -> str:
+    async def start(ctx: RunContext) -> str:
         async def work() -> None:
             await emitted.until('draining')
             ctx.enqueue('result')
@@ -207,7 +207,7 @@ async def test_deferred_pause_waits_for_all_work_and_records_its_results(emitted
     agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    async def start(ctx: RunContext[None], name: str) -> str:
+    async def start(ctx: RunContext, name: str) -> str:
         async def work() -> None:
             await emitted.until('draining')
             if name == 'b':
@@ -236,7 +236,7 @@ async def test_cancelling_the_run_cancels_all_but_detached_work(emitted: _Emitte
     """Cancelling the run, here while it waits to end, cancels its work, except work built to outlive it."""
     handles: dict[str, InFlightWork[Any]] = {}
     cancelled: list[str] = []
-    contexts: list[RunContext[None]] = []
+    contexts: list[RunContext] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -246,7 +246,7 @@ async def test_cancelling_the_run_cancels_all_but_detached_work(emitted: _Emitte
     agent = Agent(FunctionModel(model_fn))
 
     @agent.tool
-    async def start(ctx: RunContext[None]) -> str:
+    async def start(ctx: RunContext) -> str:
         async def forever() -> None:
             await asyncio.Event().wait()
 
@@ -309,7 +309,7 @@ async def test_work_failing_at_a_step_boundary_ends_the_run():
     agent = Agent(FunctionModel(model_fn))
 
     @agent.tool
-    async def start(ctx: RunContext[None]) -> str:
+    async def start(ctx: RunContext) -> str:
         nonlocal work
 
         async def fail() -> None:
@@ -334,7 +334,7 @@ async def test_work_failing_while_the_run_waits_ends_the_run(emitted: _Emitted):
     agent = Agent(FunctionModel(model_fn))
 
     @agent.tool
-    async def start(ctx: RunContext[None]) -> str:
+    async def start(ctx: RunContext) -> str:
         async def fail() -> None:
             await emitted.until('draining')
             raise ValueError('boom')
@@ -359,7 +359,7 @@ async def test_registered_work_handles_and_waiting_for_idle():
     agent = Agent(FunctionModel(model_fn))
 
     @agent.tool
-    async def use_registry(ctx: RunContext[None]) -> str:
+    async def use_registry(ctx: RunContext) -> str:
         registry = ctx.in_flight
         job = registry.register(kind='job', name='job', id='job', on_end='drain')
         handles['server'] = registry.register(kind='job', name='server', id='server')
@@ -433,7 +433,7 @@ async def test_adding_work_off_the_event_loop_raises(method: str):
     agent = Agent(FunctionModel(model_fn))
 
     @agent.tool
-    def add_in_thread(ctx: RunContext[None]) -> str:
+    def add_in_thread(ctx: RunContext) -> str:
         if method == 'start':
             ctx.in_flight.start(lambda: asyncio.sleep(0), kind='test', name='work', id='work')
         else:
@@ -472,16 +472,11 @@ async def test_concurrent_runs_track_their_own_work():
 
 async def test_events_reach_the_event_stream():
     """Work starting during a step is reported in that step's event stream."""
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart(tool_name='start', args={})])
-        return ModelResponse(parts=[TextPart('done')])
-
-    agent = Agent(FunctionModel(model_fn))
+    # `TestModel` calls the tool, then answers; unlike a plain `FunctionModel`, it streams.
+    agent = Agent(TestModel())
 
     @agent.tool
-    async def start(ctx: RunContext[None]) -> str:
+    async def start(ctx: RunContext) -> str:
         ctx.in_flight.start(asyncio.Event().wait, kind='test', name='work', id='work', on_end='cancel')
         return 'started'
 
@@ -502,11 +497,11 @@ async def test_events_reach_the_event_stream():
 
 
 def test_in_flight_needs_a_run_outside_durable_units():
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     with pytest.raises(UserError, match=r'`ctx\.in_flight` is only available during an agent run'):
         _ = ctx.in_flight
 
-    in_activity = RunContext[None](
+    in_activity = RunContext(
         deps=None, model=TestModel(), usage=RunUsage(), pending_messages=EnqueueGuard('activity', 'workflow')
     )
     with pytest.raises(

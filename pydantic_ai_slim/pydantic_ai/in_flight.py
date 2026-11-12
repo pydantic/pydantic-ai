@@ -290,9 +290,11 @@ class InFlightRegistry:
             UserError: If the run has ended, live work already has this `id`, `on_end` is `'detach'`, or this
                 isn't called from the event loop running the agent.
         """
-        if on_end not in ('drain', 'cancel'):
+        # Checked on a `str`, so the check doesn't narrow `on_end` for type checkers that trust the annotation.
+        requested: str = on_end
+        if requested not in ('drain', 'cancel'):
             raise UserError(
-                f'`ctx.in_flight.start()` takes `on_end` of `drain` or `cancel`, not {on_end!r}: the run owns the work '
+                f'`ctx.in_flight.start()` takes `on_end` of `drain` or `cancel`, not {requested!r}: the run owns the work '
                 'it starts. Run work that should outlive the run yourself, and `register()` it.'
             )
         self._check_can_add(id, 'start')
