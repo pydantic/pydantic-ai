@@ -160,7 +160,7 @@ class ImageInput:
         return max(0, self._error[1] - self._error_clock())
 
     def resume_notice(self, app: Application[str]) -> None:
-        """Re-arm the remaining error lifetime when a line prompt starts again."""
+        """Schedule remaining paste-error expiry on `app`, on failure and each line-prompt reset."""
         self.expire_notice()
         if self._error is None:
             return

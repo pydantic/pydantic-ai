@@ -627,6 +627,8 @@ class LivePrompt:
         Every `ANIMATED_REPAINT` seconds while a turn runs, the panel shows forks or tasks, or for
         `IDLE_REPAINT` after either; `IDLE_REPAINT` seconds after the last frame otherwise. A spinner
         faster than that gets a repaint per frame, but only while it shows.
+        The paste-error deadline also caps the wait; expiry repaints an unsuspended editor through this
+        existing loop, without adding periodic polling.
         """
         now = self.clock()
         if self.interrupts.active or self._panel_shown:
