@@ -374,13 +374,17 @@ class AnthropicStreamedResponse(StreamedResponse):
                             yield event_
                     if native_computer and native_computer.answers(current_block):
                         computer_input_json = ''.join(computer_input) or '{}'
+                        computer_args: Any
                         try:
                             computer_args = pydantic_core.from_json(computer_input_json)
                         except ValueError:
                             # Cut off mid-input, as at `max_tokens`: what parsed is kept to send back, but none of
                             # it runs, as a missing field such as a held key would change what the rest does.
-                            computer_args = pydantic_core.from_json(computer_input_json, allow_partial=True)
                             incomplete.add(current_block.id)
+                            try:
+                                computer_args = pydantic_core.from_json(computer_input_json, allow_partial=True)
+                            except ValueError:  # not even the start of a value, such as `n` of `null`
+                                computer_args = {}
                         block = {'id': current_block.id, 'name': current_block.name, 'input': computer_args}
                         if native_computer.is_toolset:
                             computer_blocks.append(block)
