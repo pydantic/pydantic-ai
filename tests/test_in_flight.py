@@ -221,7 +221,7 @@ async def test_ending_with_output_gives_the_model_a_turn_once_work_queues_a_resu
 async def test_work_settling_without_queuing_doesnt_end_the_wait(emitted: _Emitted):
     """Ending with output, the run keeps waiting when work settles without queuing anything while other draining work runs."""
     seen: list[list[str]] = []
-    handles: dict[str, InFlightWork[Any]] = {}
+    handles: dict[str, InFlightWork[None]] = {}
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen.append(_user_texts(messages))
@@ -255,7 +255,7 @@ async def test_work_settling_without_queuing_doesnt_end_the_wait(emitted: _Emitt
 
 async def test_run_stream_waits_for_work_but_doesnt_deliver_its_result(emitted: _Emitted):
     """`run_stream()` waits once its output has been consumed, but the output was already streamed, so the result goes nowhere."""
-    handles: dict[str, InFlightWork[Any]] = {}
+    handles: dict[str, InFlightWork[None]] = {}
     # `TestModel` calls the tool, then streams its answer.
     agent = Agent(TestModel(custom_output_text='final answer'))
 
@@ -279,7 +279,7 @@ async def test_run_stream_waits_for_work_but_doesnt_deliver_its_result(emitted: 
 async def test_deferred_pause_waits_for_all_work_and_records_its_results(emitted: _Emitted):
     """A pause waits for every piece of `'drain'` work, records what it queued after the paused step, and stands."""
     model_calls = 0
-    handles: dict[str, InFlightWork[Any]] = {}
+    handles: dict[str, InFlightWork[None]] = {}
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal model_calls
@@ -322,7 +322,7 @@ async def test_deferred_pause_waits_for_all_work_and_records_its_results(emitted
 
 async def test_cancelling_the_run_cancels_all_but_detached_work(emitted: _Emitted):
     """Cancelling the run, here while it waits to end, cancels its work, except work built to outlive it."""
-    handles: dict[str, InFlightWork[Any]] = {}
+    handles: dict[str, InFlightWork[None]] = {}
     cancelled: list[str] = []
     contexts: list[RunContext] = []
 
@@ -412,6 +412,31 @@ async def test_a_failing_cancel_callback_doesnt_keep_other_work_running():
     assert handles['task'].state == 'cancelled'
 
 
+async def test_a_failing_cancel_callback_doesnt_replace_the_runs_own_error():
+    """When the run fails anyway, the caller gets its error, not the one a `cancel` callback raised while it ended."""
+    handles: dict[str, InFlightWork[None]] = {}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='start', args={})])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    def fail_to_cancel() -> None:
+        raise RuntimeError('process already gone')
+
+    @agent.tool
+    async def start(ctx: RunContext) -> str:
+        handles['job'] = ctx.in_flight.register(
+            kind='test', name='job', id='job', on_end='cancel', cancel=fail_to_cancel
+        )
+        raise ValueError('the run fails')
+
+    with pytest.raises(ValueError, match='the run fails'):
+        await agent.run('go')
+
+    assert handles['job'].state == 'cancelled'
+
+
 async def test_work_failing_at_a_step_boundary_ends_the_run():
     """An error raised by started work ends the run at the next step boundary, as a failing tool would."""
     model_called = asyncio.Event()
@@ -469,7 +494,7 @@ async def test_work_failing_while_the_run_waits_ends_the_run(emitted: _Emitted):
 
 async def test_registered_work_handles_and_waiting_for_idle():
     """Registered work settles when its producer says so, an error it settles with doesn't end the run, and detached work isn't waited for."""
-    handles: dict[str, InFlightWork[Any]] = {}
+    handles: dict[str, InFlightWork[None]] = {}
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -565,6 +590,14 @@ async def test_adding_work_off_the_event_loop_raises(method: str):
 
     with pytest.raises(UserError, match=rf'`ctx\.in_flight\.{method}\(\)` must be called from the event loop'):
         await agent.run('go')
+
+
+@pytest.mark.parametrize('anyio_backend', ['trio'])
+async def test_adding_work_requires_asyncio():
+    """The registry's tasks and events are asyncio's, so another backend gets an error that says so."""
+    registry = InFlightRegistry([])
+    with pytest.raises(UserError, match=r'`ctx\.in_flight\.register\(\)` requires the asyncio event loop'):
+        registry.register(kind='test', name='work', id='work')
 
 
 async def test_concurrent_runs_track_their_own_work():

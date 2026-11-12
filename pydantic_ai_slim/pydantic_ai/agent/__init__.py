@@ -5012,7 +5012,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             stack.callback(pending_message_queue.close)
             # However the run ends, cancel the in-flight work that doesn't outlive it. A normal run already did, below,
             # before its toolset exited; this covers a run that fails before entering its toolset.
-            stack.push_async_callback(graph_deps.in_flight._aclose)  # pyright: ignore[reportPrivateUsage]
+            stack.push_async_exit(graph_deps.in_flight._close_on_exit)  # pyright: ignore[reportPrivateUsage]
             if self.cancellation_token is not None:
                 graph_deps.cancellation.attach_token(self.cancellation_token)
             if (deadline := graph_deps.deadline) is not None:
@@ -5138,7 +5138,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # __aenter__/__aexit__ run inside the run span context.
                 await stack.enter_async_context(self.toolset)
                 # Exits before the toolset, which in-flight work may still be calling.
-                stack.push_async_callback(graph_deps.in_flight._aclose)  # pyright: ignore[reportPrivateUsage]
+                stack.push_async_exit(graph_deps.in_flight._close_on_exit)  # pyright: ignore[reportPrivateUsage]
                 try:
                     yield agent_run
                 finally:

@@ -4944,6 +4944,44 @@ async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
     await agent.run('run')
 
 
+async def test_prefect_rejects_in_flight_in_flow_code_and_tasks() -> None:
+    """`ctx.in_flight` raises in a task, and in flow code, such as a capability hook, until durable runs can use it."""
+    errors: list[str] = []
+
+    def record(ctx: RunContext[object]) -> None:
+        with pytest.raises(UserError) as exc_info:
+            _ = ctx.in_flight
+        errors.append(str(exc_info.value))
+
+    class InFlightInFlowCode(AbstractCapability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            record(ctx)
+
+    async def in_task(ctx: RunContext[object]) -> str:
+        record(ctx)
+        return 'checked'
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='prefect_in_flight',
+        tools=[in_task],
+        capabilities=[InFlightInFlowCode(), PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    await run_agent()
+    assert errors == snapshot(
+        [
+            '`ctx.in_flight` is not supported in a durable run yet: when the run ends would depend on the order its in-flight work finished in, which durable execution engines do not all replay. Until it is, use `ctx.in_flight` only in runs without a durability capability.',
+            "`ctx.in_flight` is not supported inside a durable task: the durable runtime replays the task's recorded result without re-running your code, so work it started or registered would be lost.",
+        ]
+    )
+
+
 @dataclass(kw_only=True)
 class PrefectToolProgressEvent(CustomEvent, name='prefect_tool_progress'):
     attempt: int

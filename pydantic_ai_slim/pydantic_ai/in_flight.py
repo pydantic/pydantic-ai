@@ -226,10 +226,19 @@ def _check_on_loop(method: str) -> asyncio.AbstractEventLoop:
     try:
         return asyncio.get_running_loop()
     except RuntimeError:
+        pass
+    try:
+        anyio.get_current_task()
+    except RuntimeError:
         raise UserError(
             f'`ctx.in_flight.{method}()` must be called from the event loop running the agent, such as from an async '
             'tool or a capability hook.'
         ) from None
+    # Running on another async backend, which the registry's tasks and events don't support.
+    raise UserError(
+        f'`ctx.in_flight.{method}()` requires the asyncio event loop and is not supported under other async backends, '
+        'such as Trio.'
+    )
 
 
 def _snapshot(work: InFlightWork[Any]) -> InFlightWorkSnapshot:
@@ -351,7 +360,9 @@ class InFlightRegistry:
                 step or task. The run doesn't act on it yet.
             cancel: Stops the work, when the run or a call to
                 [`InFlightWork.cancel()`][pydantic_ai.in_flight.InFlightWork.cancel] cancels it. Without one,
-                cancelling the work only stops tracking it.
+                cancelling the work only stops tracking it. If it raises when the run cancels the work, the run
+                still cancels its other work, then raises the error, unless the run is failing or being cancelled
+                anyway, in which case the caller gets that instead.
 
         Returns:
             A handle on the work.
@@ -510,7 +521,15 @@ class InFlightRegistry:
             self._emit('drained', waiting)
         return result
 
-    async def _aclose(self) -> None:
+    async def _close_on_exit(self, exc_type: type[BaseException] | None, *_: object) -> None:
+        """Close the registry as the run exits, raising a `cancel` callback's error only if the run itself didn't fail.
+
+        A failure of the run, or its cancellation, stays what the caller gets, so a cancellation is still classified as
+        one.
+        """
+        await self._aclose(raise_callback_errors=exc_type is None)
+
+    async def _aclose(self, *, raise_callback_errors: bool) -> None:
         """Cancel the work that doesn't outlive the run, and wait for it to stop."""
         self._closed = True
         ending = [work for work in self._live.values() if work.on_end != 'detach']
@@ -527,5 +546,5 @@ class InFlightRegistry:
         with anyio.CancelScope(shield=True):
             for work in ending:
                 await work.wait()
-        if errors:
+        if errors and raise_callback_errors:
             raise errors[0]
