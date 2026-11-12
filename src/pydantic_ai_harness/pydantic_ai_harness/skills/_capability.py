@@ -325,17 +325,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         if any(source.workspace is None for source in self._sources):
             require_workspace(ctx.workspace, 'Skills', ctx.messages)
         catalog, lowered = await self._load(ctx.workspace)
-        for skipped in catalog.skipped:
-            if skipped.scan is not None:
-                record_flagged(
-                    ctx.tracer,
-                    skipped.scan,
-                    artifact='skill',
-                    action='skipped',
-                    include_content=ctx.trace_include_content,
-                )
-        for message in (*(skipped.message for skipped in catalog.skipped), *self._advice(catalog.skills)):
-            warnings.warn(message, UserWarning, stacklevel=2)
+        self._report_skipped(ctx, catalog)
         return self._offer(catalog, lowered)
 
     def _offer(self, catalog: SkillCatalog, lowered: frozenset[str]) -> AbstractCapability[AgentDepsT]:
@@ -391,9 +381,25 @@ class Skills(AbstractCapability[AgentDepsT]):
             self._toolset = UntrustedSkillsToolset[AgentDepsT](self._untrusted_skills, id=self.id)
         return self._toolset
 
-    async def _untrusted_skills(self, run_workspace: Workspace) -> list[SkillDefinition]:
-        catalog, lowered = await self._load(run_workspace)
+    async def _untrusted_skills(self, ctx: RunContext[Any]) -> list[SkillDefinition]:
+        """The lowered skills, read again for a `list_skills` or `load_skill` call, reporting skips as `for_run` does."""
+        catalog, lowered = await self._load(ctx.workspace)
+        self._report_skipped(ctx, catalog)
         return [skill for skill in catalog.skills if skill.name in lowered and skill.model_invocable]
+
+    def _report_skipped(self, ctx: RunContext[Any], catalog: SkillCatalog) -> None:
+        """Record each flagged skill on the run's trace and warn about each skipped `SKILL.md` or library path."""
+        for skipped in catalog.skipped:
+            if skipped.scan is not None:
+                record_flagged(
+                    ctx.tracer,
+                    skipped.scan,
+                    artifact='skill',
+                    action='skipped',
+                    include_content=ctx.trace_include_content,
+                )
+        for message in (*(skipped.message for skipped in catalog.skipped), *self._advice(catalog.skills)):
+            warnings.warn(message, UserWarning, stacklevel=3)
 
     async def _load(self, run_workspace: Workspace | None) -> tuple[SkillCatalog, frozenset[str]]:
         """The selected skills, and the names of those whose `SKILL.md` is below `'operator'` authority.
