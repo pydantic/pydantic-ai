@@ -27,7 +27,7 @@ Agentic Workflow.
 A model error's `retry_after` (a provider's `Retry-After`) is waited durably before the engine's next attempt at
 the model request: on AWS Lambda as the step retry's timed suspension, on Azure Durable Task as a durable timer
 within the model `RetryPolicy`, on Absurd and pgtask as a recorded failed attempt and a `sleep_for` that suspends
-the task, counted against its remaining attempts. Render Workflows can't, so its task `Retry` applies. Set
+the task, at most as many times per model request as the task has attempts left. Render Workflows can't, so its task `Retry` applies. Set
 `model_settings={'max_retries': 0}` so the provider SDK doesn't also retry inside the durable unit.
 
 ## AzureDurableTaskDurability

@@ -864,3 +864,36 @@ class TestRetryAfter:
         stored = await checkpoints(absurd, ctx.task_id)
         assert list(stored) == ['suspended__model.request', 'suspended__model.request.retry_after']
         assert counter['calls'] == 1
+
+    async def test_model_step_wait_is_capped_at_the_retry_strategy_maximum(self, absurd: AsyncAbsurd) -> None:
+        counter = {'calls': 0}
+        agent = Agent(_rate_limited_once(counter, 30.0), name='capped', capabilities=[AbsurdDurability()])
+
+        async with running_task_context(
+            absurd, 'capped', retry_strategy={'kind': 'fixed', 'base_seconds': 1, 'max_seconds': 2}
+        ) as ctx:
+            with pytest.raises(SuspendTask):
+                await agent.run('hi')
+        stored = await checkpoints(absurd, ctx.task_id)
+        assert stored['capped__model.request'] == {'__pydantic_ai_harness_retry_after__': 2.0}
+
+    @pytest.mark.parametrize(
+        ('retry_after', 'max_attempts'),
+        [pytest.param(5.0, 1, id='no-attempts-left'), pytest.param(None, 2, id='no-retry-after')],
+    )
+    async def test_model_error_fails_the_run_without_a_wait(
+        self, absurd: AsyncAbsurd, retry_after: float | None, max_attempts: int
+    ) -> None:
+        """A model error that asks for no wait, or comes with no attempts left, fails the run for Absurd's task retry."""
+
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise ModelHTTPError.for_category(
+                ModelRateLimitError, status_code=429, model_name='fn', retry_after=retry_after
+            )
+
+        agent = Agent(FunctionModel(fn, model_name='fn'), name='failing', capabilities=[AbsurdDurability()])
+
+        async with running_task_context(absurd, 'failing', max_attempts=max_attempts) as ctx:
+            with pytest.raises(ModelRateLimitError):
+                await agent.run('hi')
+        assert await checkpoints(absurd, ctx.task_id) == {}

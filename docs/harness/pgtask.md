@@ -90,6 +90,7 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
 |---|---|
 | `{name}__model.request` | a model request |
 | `{name}__model.request_stream` | a streamed model request |
+| `{name}__model.request.retry_after` | the wait a model error's `retry_after` asked for, before the request runs again |
 | `{name}__model.compact_messages` | a request asking the model to shorten the message history |
 | `{name}__model.cancel_suspended_response` | cancelling a response the model provider is still working on in the background |
 | `{name}__capability__{capability_id}.{operation}` | work added by another capability |
@@ -135,12 +136,13 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   it already did.
 - A model request that fails with a model error that has a `retry_after` (read from a provider's
   `Retry-After` header, for example) is saved as a failed attempt. The task then sleeps that long
-  with pgtask's durable `sleep_for`, which suspends it until then, and the request runs again as the
-  next occurrence of its step. The task's `retry_delay` is set where its handler is registered and
-  isn't available to the run, so the wait is capped at a minute. Each wait counts against the
-  task's remaining attempts: once they are used up, the model error fails the attempt and pgtask's
-  own retry applies. The suspension leaves `agent.run` as pgtask's own signal, so an
-  `on_model_request_error` hook that handles every exception has to re-raise it.
+  with pgtask's durable `sleep_for` (the `{name}__model.request.retry_after` step), which suspends
+  it until then, and the request runs again as the next occurrence of its step. The task's
+  `retry_delay` is set where its handler is registered and isn't available to the run, so the wait
+  is capped at a minute. Each model request waits at most as many times as the task has attempts
+  left after the current one; after that, the model error fails the attempt and pgtask's own retry
+  applies. The suspension leaves `agent.run` as pgtask's own signal, so an `on_model_request_error`
+  hook that handles every exception has to re-raise it.
 
 ## Running tools at the same time
 

@@ -272,7 +272,10 @@ the wait, and the orchestration waits it and calls the activity again with the a
 left: the history shows the completed activity, a timer, and the activity again. The wait is capped at
 `max_retry_interval`, or without one at the policy's own backoff for that attempt or a minute,
 whichever is longer. Once the policy allows no more attempts, or without `model_options`, the
-orchestration gets the activity's failure as a `TaskFailedError`, as before. Set
+orchestration gets a `TaskFailedError` with the model error's type, message and cause, rebuilt from
+the activity's result. The activity shows as completed in the history rather than failed, its message
+names the activity rather than its task number, and properties from a worker's
+`exception_properties_provider` aren't included. Set
 `model_settings={'max_retries': 0}` on the agent so the provider SDK doesn't also retry inside the
 activity.
 
