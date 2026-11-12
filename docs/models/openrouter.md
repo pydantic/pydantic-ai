@@ -120,6 +120,12 @@ A [mid-conversation system prompt](../message-history.md#mid-conversation-system
 
 Other routes get a `<system>`-tagged user message instead. This keeps prompt caching effective: on Gemini and older Claude models, a native mid-conversation `system` message doesn't stay where it was sent, which would invalidate the cached prefix after it.
 
+## File input
+
+OpenRouter rejects a request that sends a model a kind of file it doesn't take, such as an image to a text-only model. To know which files a model takes, an agent run on an `OpenRouterModel` fetches [OpenRouter's model list](https://openrouter.ai/api/v1/models) when it starts, and sets the model's [file-input flags](overview.md#inspecting-a-models-profile) from its `input_modalities`: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input] from `image`, [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] from `audio` and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input] from `video`. A file a tool returns that the model can't take is then [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance) instead of failing the request. [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input] is left as it is: OpenRouter [accepts PDFs on any model](https://openrouter.ai/docs/guides/overview/multimodal/pdfs), and turns them into text for a model that doesn't read files.
+
+The list is fetched once per process for each base URL, and not inside a durable execution workflow or when [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] is `False`. A flag the upstream provider's profile sets itself, or that you set with `profile=`, is kept. If the fetch fails or the list doesn't have the model, the profile stays as it would be without the list.
+
 ## Prompt Caching
 
 OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it.

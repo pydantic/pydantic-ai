@@ -1011,6 +1011,26 @@ def fresh_cache_mark_store(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(instrumentation_capability, '_conversation_cache_marks', ConversationCacheMarkStore())
 
 
+class _EveryBaseUrlFetched(dict[str, Any]):
+    """Stands in for the OpenRouter provider's model list cache, as a process that has already fetched every base URL."""
+
+    def __contains__(self, key: object) -> bool:
+        return True
+
+
+@pytest.fixture(autouse=True)
+def no_openrouter_model_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep `OpenRouterModel` runs from fetching OpenRouter's model list, which recorded runs don't hold.
+
+    A test of that fetch replaces the module's `_input_modalities_by_base_url` with an empty dict.
+    """
+    try:
+        from pydantic_ai.providers import openrouter
+    except ImportError:  # pragma: no cover
+        return
+    monkeypatch.setattr(openrouter, '_input_modalities_by_base_url', _EveryBaseUrlFetched())
+
+
 try:
     import logfire
     from opentelemetry import context as otel_context
