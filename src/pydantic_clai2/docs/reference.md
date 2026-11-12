@@ -1348,7 +1348,9 @@ can edit them and press Enter to send them. Queued slash commands and `!` shell
 commands stay queued and run in order, since joined with the lines after them they
 would treat those as part of the command. While you edit a queued message, the
 first Esc stops editing instead of interrupting; Ctrl-C interrupts, keeping your edit in the
-input with the draft you had before pressing Up after it. Turns cancelled from elsewhere, such as
+input with the draft you had before pressing Up after it. An edit into a slash command or `!` shell
+command only runs once you press Enter, so Ctrl-C leaves the queued message unchanged; Up finds the
+edit in history. Turns cancelled from elsewhere, such as
 the web UI or a plugin's `host.interrupt()`, leave the queue to run as before.
 Tool cleanup finishes before the next prompt starts. Esc does not request
 exit, even when pressed repeatedly. Arrow keys and Alt-key shortcuts keep their

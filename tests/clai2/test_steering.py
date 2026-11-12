@@ -649,21 +649,6 @@ async def test_interrupt_keeps_queued_commands_and_shell_lines_apart_from_prompt
         assert [await live.read() for _ in kept] == list(kept)
 
 
-async def test_interrupt_keeps_a_queued_prompt_edited_into_a_shell_line_queued() -> None:
-    async with editor() as (live, _, _):
-        async with running(live):
-            queue(live, 'first', 'second')
-            live.buffer.replace('draft')
-            live.feed('up')
-            live.buffer.replace('!pwd')
-            live.feed('ctrl-c')
-        assert (live.buffer.text, live.queued_messages) == ('first\ndraft', ('!pwd',))
-
-
-@pytest.mark.parametrize(
-    ('queued', 'ups', 'expected'),
-    [(('b',), 1, 'b2\ndraft'), (('a', 'b'), 1, 'a\nb2\ndraft'), (('a', 'b', 'c'), 2, 'a\nb2\nc\ndraft')],
-)
 async def test_ctrl_c_while_editing_a_queued_prompt_keeps_the_edit_in_order_and_the_draft(
     queued: tuple[str, ...], ups: int, expected: str
 ) -> None:
@@ -891,3 +876,16 @@ async def test_removing_the_prompt_before_the_one_being_edited_keeps_its_place()
             live.feed('escape')
             assert live.queued_messages == ('a', 'c')
             live.feed('ctrl-c')
+
+
+@pytest.mark.parametrize('edit', ['!printf injected', '!'])
+async def test_ctrl_c_never_queues_an_edit_that_was_not_sent(edit: str) -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, 'follow up')
+            live.feed('up')
+            live.buffer.replace(edit)
+            live.feed('ctrl-c')
+        # Only Enter makes an edit runnable: the queued prompt returns unchanged, and Up finds the edit in history.
+        assert (live.buffer.text, live.queued_messages) == ('follow up', ())
+        assert live.buffer.history[-1] == edit

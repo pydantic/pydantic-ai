@@ -389,16 +389,13 @@ class LivePrompt:
         Only prompts move, one per line ahead of the draft: a `/command` or `!` shell line would make the lines
         after it part of the command, so those stay queued, as Claude Code keeps queued shell commands. So do
         control signals, and a prompt such as a bare `!` that would turn the joined text into a command.
-        A prompt being edited keeps its place with the edit, and the draft set aside to edit it comes last.
+        A prompt being edited keeps its place with the edit, unless the edit is a command or shell line, and the
+        draft set aside to edit it comes last.
         """
         draft = self.buffer.text
         if (editing := self._editing) is not None:
             draft = self._shelved_draft
-            self._editing = None
-            if edit := self.buffer.text.strip():
-                editing.text, editing.recorded = expand_bare_command(edit), edit
-                self._put_back(editing)
-            self.queue_changed()
+            self._end_edit(editing)
         moved = [entry for entry in self.queued_prompts() if input_kind(entry.text) == 'prompt']
         # A bare `!` is a prompt alone, but would send the lines after it to the shell: it stays queued.
         while moved and input_kind('\n'.join([*(entry.text for entry in moved), draft])) != 'prompt':
@@ -413,6 +410,21 @@ class LivePrompt:
         self.refresh_completions()
         if moved:
             self.notice = 'Queued messages moved to the input. Press Enter to send them.'
+
+    def _end_edit(self, editing: QueuedPrompt) -> None:
+        """Return the prompt being edited to the queue with the edit in the draft, or remove it if that is empty."""
+        self._editing = None
+        if edit := self.buffer.text.strip():
+            command = expand_bare_command(edit)
+            if input_kind(command) == 'prompt' and not command.startswith('!'):
+                editing.text, editing.recorded = command, edit
+            else:
+                # Only Enter makes a command or shell line runnable, and one would not join the input either:
+                # the prompt returns unchanged, as Esc returns it, and Up finds the edit in history.
+                self.history.append_string(edit)
+                self.buffer.history.append(edit)
+            self._put_back(editing)
+        self.queue_changed()
 
     def restore_draft(self, text: str) -> None:
         """Replace the draft after a rewind, without editing a queued submission."""
