@@ -9,13 +9,13 @@ session no one can be asked in, is denied by `DenyUnanswered`. A `SubAgents` del
 
 import difflib
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HandleDeferredToolCalls
 from pydantic_ai.exceptions import SkipToolExecution
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import (
@@ -71,9 +71,10 @@ def permissions_command(context: CommandContext, args: list[str]) -> str:
 def session_permissions(
     mode: Callable[[], PermissionMode],
 ) -> 'tuple[Permissions[AgentDepsT], DenyUnanswered[AgentDepsT], KeepDelegatesChecked[AgentDepsT]]':
-    """What every run of a session binds: `Permissions` reading `mode` on each call, and its two backstops.
+    """What a session binds: `Permissions` reading `mode` on each call, and its two backstops.
 
-    The runtime keeps them for the session, so approvals remembered for its conversations end with it.
+    The runtime keeps them for the session, so approvals remembered for its conversations end with it. It binds the
+    `DenyUnanswered` backstop only to runs no one can be asked in: see `unattended_only`.
     """
     permissions = Permissions[AgentDepsT](lambda ctx: mode())
     return (
@@ -134,13 +135,29 @@ class KeepDelegatesChecked(AbstractCapability[AgentDepsT]):
         return any(capability is self.permissions for capability in bound)
 
 
-def approval_handler(approve: Approver) -> HandleDeferredToolCalls[AgentDepsT]:
+class ApprovalHandler(HandleDeferredToolCalls[AgentDepsT]):
+    """Answers the calls `Permissions` holds by asking someone; a session that binds one is attended."""
+
+
+def approval_handler(approve: Approver) -> ApprovalHandler[AgentDepsT]:
     """Answer the calls `Permissions` holds with `approve`, leaving other deferred calls to later handlers."""
 
     async def handle(ctx: RunContext[AgentDepsT], requests: DeferredToolRequests) -> DeferredToolResults | None:
         return await ask_permissions(requests, approve)
 
-    return HandleDeferredToolCalls[AgentDepsT](handler=handle)
+    return ApprovalHandler[AgentDepsT](handler=handle)
+
+
+def unattended_only(
+    permissions: Sequence[AgentCapability[AgentDepsT]], bound: Sequence[AgentCapability[AgentDepsT]]
+) -> tuple[AgentCapability[AgentDepsT], ...]:
+    """`permissions` without the session's `DenyUnanswered` when `bound` has an `ApprovalHandler` to ask someone.
+
+    An attended session leaves calls nobody handles, and questions, as they were, instead of denying them.
+    """
+    if not any(isinstance(capability, ApprovalHandler) for capability in bound):
+        return tuple(permissions)
+    return tuple(capability for capability in permissions if not isinstance(capability, DenyUnanswered))
 
 
 def approval_question(request: PermissionRequest) -> AskUserRequest:
