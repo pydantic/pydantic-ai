@@ -172,8 +172,9 @@ def run_with_fallback(
     its job matrix, picks the account tried first: the primary when the sum is even, the backup when it is odd.
     `launch` runs the command in the environment it is given and writes the event stream to the stream it is given,
     which `output` holds after each run. Each run gets a config that allows only its provider,
-    and an environment whose only provider key is that account's. A run whose process fails prints its model and
-    OpenCode error type. Each run appends an `Attempt` to `attempts`, so a caller can report a chain that raised.
+    and an environment whose only provider key is that account's. A run whose process fails prints its model, OpenCode
+    error type, status and provider code. Each run appends an `Attempt` to `attempts`, so a caller can report a chain
+    that raised.
 
     With `LOGFIRE_TOKEN` set, OpenCode exports its spans and logs to Logfire over OTLP/HTTP. Their resource attributes
     name the repository, the workflow run, its attempt and job, then `attributes`, then the run's plan and its place in
@@ -250,7 +251,7 @@ def run_with_fallback(
         except ValidationError:
             code = ''
         # Job logs are public, and the error's message and response body can repeat the provider's response.
-        # OpenCode names its own error types; print only a value shaped like one, and only an all-digit code.
+        # OpenCode names its own error types; print only a value shaped like one, and only a code of one to six digits.
         kind, status = error.get('type'), error.get('status')
         attempt.error_type = kind if isinstance(kind, str) and ERROR_TYPE.fullmatch(kind) else None
         attempt.status = status if isinstance(status, int) else None
