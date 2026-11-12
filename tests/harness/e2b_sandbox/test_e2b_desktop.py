@@ -55,11 +55,19 @@ async def test_the_live_view_url_opens_the_viewer_with_its_password(fake_e2b: Fa
 
 async def test_a_viewer_that_does_not_start_is_an_error(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
     backend = E2BSandboxBackend(desktop=True)
-    await screen(backend).display_size()
-    display.up = False  # the start script's own failure, as the fake answers it
+    display.viewer_fails = True
 
     with pytest.raises(WorkspaceError, match=r'Could not start the desktop viewer.*the viewer did not start'):
         await backend.live_view_url()
+
+
+async def test_the_live_view_starts_an_x_server_that_stopped(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+    backend = E2BSandboxBackend(desktop=True)
+    await screen(backend).display_size()
+    display.up = False  # the X server stopped since the last call
+
+    assert (await backend.live_view_url()).endswith('password=Pass1234')
+    assert len(display.starts) == 2
 
 
 async def test_commands_see_the_desktop(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
