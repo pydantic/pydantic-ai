@@ -544,8 +544,8 @@ it which capability is loaded. Set `exclude_tools` to a set of tool names whose 
 cleared, or `tools` to the names whose results are the only ones cleared; setting both raises a
 `UserError`. The `keep_pairs` window counts every tool's calls before `tools` picks which results are
 cleared, so other tools' recent calls can push an older result of a listed tool out of it; `keep_turns`
-keeps by turn instead. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
-left intact (a small token floor), because their structured content is re-parsed on later requests and
+keeps by turn instead. Framework-typed tool results -- core's `search_tools` and `load_capability`
+returns -- are left intact (a small token floor), because their structured content is re-parsed on later requests and
 rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. `FileSystem`'s typed
 `read_file` results (`ReadFileReturnPart`) are cleared like any other result and keep their type, unless
 their `metadata` is something other than `None` or a `dict`: a cleared result is marked in its
@@ -565,7 +565,8 @@ results while a quiet one keeps several turns'. Set `keep_turns` instead to keep
 the last `keep_turns` completed user turns, plus the current one. A user turn starts at a request
 carrying the user's prompt and runs until the next one; prompts added by harness capabilities, such as
 pinned messages and compaction receipts, don't start one, and neither does user content sent with
-tool results, such as a `ToolReturn`'s `content`. The current turn, the one the model is answering, is never cleared, so `keep_turns=0` clears every earlier turn's results. A run resumed
+tool results, such as a `ToolReturn`'s `content`. The current turn, the one the model is answering,
+is never cleared, so `keep_turns=0` clears every earlier turn's results. A run resumed
 without a new prompt answers the history's last turn, so that turn counts as the current one.
 `keep_turns` replaces the pair count when set; passing a `keep_pairs` other than its default of 3
 along with it raises a `UserError`.

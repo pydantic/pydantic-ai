@@ -84,16 +84,16 @@ def _recording_agent(capability: ClearToolResults[None]) -> tuple[Agent[None, st
 
 class TestClearToolResultsTargeting:
     def test_tools_and_exclude_tools_are_exclusive(self):
-        with pytest.raises(UserError, match='Set at most one of tools or exclude_tools'):
+        with pytest.raises(UserError, match='Set at most one of `tools` or `exclude_tools`'):
             ClearToolResults(max_tokens=1, tools=['search'], exclude_tools=frozenset({'fetch'}))
 
     def test_tools_rejects_a_bare_string(self):
         # A `str` is a `Sequence[str]`, so `tools='search'` typechecks but would test substrings.
-        with pytest.raises(UserError, match='tools takes a sequence of tool names'):
+        with pytest.raises(UserError, match='`tools` takes a sequence of tool names'):
             ClearToolResults(max_tokens=1, tools='search')
 
     def test_keep_pairs_and_keep_turns_are_exclusive(self):
-        with pytest.raises(UserError, match='Set at most one of keep_pairs or keep_turns'):
+        with pytest.raises(UserError, match='Set at most one of `keep_pairs` or `keep_turns`'):
             ClearToolResults(max_tokens=1, keep_pairs=2, keep_turns=1)
 
     async def test_keep_turns_replaces_the_default_pair_count(self):

@@ -153,12 +153,12 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         if isinstance(self.tools, str):
-            raise UserError(f'tools takes a sequence of tool names, not a string: use tools=[{self.tools!r}].')
+            raise UserError(f'`tools` takes a sequence of tool names, not a string: use `tools=[{self.tools!r}]`.')
         if self.tools is not None and self.exclude_tools:
-            raise UserError('Set at most one of tools or exclude_tools.')
+            raise UserError('Set at most one of `tools` or `exclude_tools`.')
         # The field's own default, read off the class, so the two can't drift apart.
         if self.keep_turns is not None and self.keep_pairs != ClearToolResults.keep_pairs:
-            raise UserError('Set at most one of keep_pairs or keep_turns.')
+            raise UserError('Set at most one of `keep_pairs` or `keep_turns`.')
         if self.max_messages is None and self.max_tokens is None and self.max_fraction is None:
             raise ValueError('At least one of max_messages, max_tokens, or max_fraction must be set.')
         if self.max_messages is not None and self.max_messages < 1:
