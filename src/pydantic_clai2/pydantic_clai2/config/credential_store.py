@@ -52,7 +52,10 @@ def _set_password(service: str, account: str, value: str) -> None:
 @cache
 def _warn_plaintext_fallback() -> None:
     """Log a single warning per process when falling back to plaintext credential files."""
-    _logger.warning('No OS keyring is available; falling back to 0600 plaintext credential files.')
+    _logger.warning(
+        'OS keyring is unavailable or has no saved entry; using 0600 plaintext credential files. '
+        'Configure an OS keyring backend to encrypt credentials at rest.'
+    )
 
 
 def credentials_path(*, account: str = _ACCOUNT) -> Path:
@@ -260,7 +263,7 @@ def _join_chunks(*, root: str, account: str) -> str:
         return root
     chunks: list[str] = []
     for service in services:
-        chunk = keyring.get_password(service, account)
+        chunk = _get_password(service, account)
         if chunk is None:
             raise UserError(
                 'Stored credentials are incomplete. Reconnect through /model add; for Codex run /login openai-codex.'

@@ -28,7 +28,10 @@ from tests.clai2.conftest import stored_accounts
 Vault = dict[tuple[str, str], str]
 KEY = ('pydantic-clai2', 'encryption-key')
 LEGACY = ('pydantic-clai2', 'openai-codex')
-PLAINTEXT_WARNING = 'No OS keyring is available; falling back to 0600 plaintext credential files.'
+PLAINTEXT_WARNING = (
+    'OS keyring is unavailable or has no saved entry; using 0600 plaintext credential files. '
+    'Configure an OS keyring backend to encrypt credentials at rest.'
+)
 
 
 def fake_browser(url: str) -> bool:
