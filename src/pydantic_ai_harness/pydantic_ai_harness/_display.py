@@ -51,11 +51,10 @@ class DisplayDriver(Protocol):
 class LazyDisplay:
     """The display a backend hands out for its lifetime: started on first use, and again after a failure.
 
-    Like the backend, it does nothing when built. `driver` drives the display once it runs. `start` brings the
-    display up, doing nothing to one that's running.
+    Building it does nothing. `start` brings the display up and leaves a running one alone; `driver` then drives it.
 
-    A call that only looks, such as a screenshot, is retried once after a failure, which starts a display that was
-    lost; an action isn't, so nothing is done twice.
+    A call that only looks, such as a screenshot, is retried once after a failure, which restarts a lost display. An
+    action isn't retried, so nothing is done twice.
 
     It implements [`Display`][pydantic_ai_harness.computer_use.Display] and every optional ability.
     """
