@@ -118,9 +118,16 @@ _TYPING_DELAY_MS = '12'
 _KEY_SECONDS = int(_TYPING_DELAY_MS) / 1000
 """The pause one typed character or one key press asks for."""
 
-_TYPED_PER_COMMAND = 2_000
-"""Characters typed by one command. Modal refuses a command over 64 KB, and each character is a keysym of about six
-bytes: 15,000 characters in one command failed there, 2,000 at a time type in about 27 s."""
+_COMMAND_BYTES = 60_000
+"""How long one input command's steps may be, each argument counted as its bytes plus `_ARGUMENT_BYTES`; a longer
+input, such as long text or a drag along many points, is split into several commands.
+
+Sprites takes a command's arguments in its exec URL and refuses one over 64 KiB (HTTP 414): a command of one
+64,984-byte argument ran and one of 65,019 bytes was refused. Modal refuses a command whose arguments pass 65,536
+bytes (both measured 2026-11-12). The rest is room for the command's own start and the URL's other parameters."""
+
+_ARGUMENT_BYTES = 6
+"""What a transport adds to each argument, such as the `&cmd=` Sprites' exec URL puts before each."""
 
 _LEVEL_SHIFTS = ('Shift_L', 'ISO_Level3_Shift')
 """The modifiers `xdotool` presses to reach a character on a key's other levels, released after a failed typing."""
@@ -206,9 +213,23 @@ def _character(character: str) -> str:
     return f'U{ord(character):04X}'
 
 
-def _drag_moves(path: Sequence[Point]) -> list[str]:
-    """`xdotool` arguments that move along `path` from its first point, in short steps with pauses between them."""
-    return [arg for point in drag_steps(path) for arg in ['sleep', str(DRAG_STEP_PAUSE), *_move(point.x, point.y)]]
+def _drag_moves(path: Sequence[Point]) -> list[list[str]]:
+    """The `xdotool` steps that move along `path` from its first point, in short moves with pauses between them."""
+    return [['sleep', str(DRAG_STEP_PAUSE), *_move(point.x, point.y)] for point in drag_steps(path)]
+
+
+def _commands(steps: Sequence[list[str]]) -> list[list[str]]:
+    """`steps`, each arguments that go together, packed in order into as few commands as keep within `_COMMAND_BYTES`."""
+    commands: list[list[str]] = [[]]
+    size = 0
+    for step in steps:
+        step_size = sum(len(arg) + _ARGUMENT_BYTES for arg in step)
+        if commands[-1] and size + step_size > _COMMAND_BYTES:
+            commands.append([])
+            size = 0
+        commands[-1] += step
+        size += step_size
+    return commands
 
 
 def _move(x: int | None, y: int | None) -> list[str]:
@@ -264,7 +285,9 @@ def start_x_server(log: str, *, then: str = '') -> str:
         # belongs to another process. A running X server's lock stays, whichever server it is, such as `Xvnc`.
         f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
         f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
-        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp >/dev/null 2>{log} 9>&- & '
+        # Without `-noreset` an X server resets when its last client exits, such as each `xdotool` command while no
+        # window manager runs: the pointer goes back to the middle and held buttons are let go (seen on a plain Xvfb).
+        f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -noreset >/dev/null 2>{log} 9>&- & '
         + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
         + f'{then} fi; '
     )
@@ -320,22 +343,30 @@ class X11Computer:
         return result
 
     async def _xdotool(
-        self, args: list[str], *, hold: tuple[str, ...] = (), release: tuple[str, ...] = (), pauses: float = 0
+        self, *chains: list[str], hold: tuple[str, ...] = (), release: tuple[str, ...] = (), pauses: float = 0
     ) -> None:
-        """Run one `xdotool` command chain with `hold` held down; if it fails or is cancelled, let go of everything."""
+        """Run `xdotool` command chains in turn with `hold` held down; if one fails or is cancelled, let go of everything.
+
+        Several chains are one input split by `_commands`: what it holds stays down from the first to the last.
+        """
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
         keydown = ['keydown', *keysyms] if keysyms else []
-        await self._input(['xdotool', *_RELEASE_MODIFIERS, *keydown, *args, *keyup], [list(release), keyup], pauses)
+        commands = [['xdotool', *chain] for chain in chains]
+        commands[0][1:1] = [*_RELEASE_MODIFIERS, *keydown]
+        commands[-1] += keyup
+        await self._input(commands, [list(release), keyup], pauses)
 
-    async def _input(self, command: list[str], releases: list[list[str]], pauses: float = 0) -> None:
-        """Run an input command; if it fails or is cancelled, stop it and let go of what it may hold.
+    async def _input(self, commands: Sequence[list[str]], releases: list[list[str]], pauses: float = 0) -> None:
+        """Run input commands in turn; if one fails or is cancelled, stop it and let go of what they may hold.
 
-        Each of `releases` is an `xdotool` chain, run on its own so one that fails doesn't keep the others from
-        running.
+        Each command may take `pauses` on top of the usual time limit. Each of `releases` is an `xdotool` chain, run
+        on its own so one that fails doesn't keep the others from running.
         """
+        stderr = ''
         try:
-            result = await self._run(['sh', '-c', _INPUT, 'sh', *command], pauses=pauses)
+            for command in commands:
+                stderr += (await self._run(['sh', '-c', _INPUT, 'sh', *command], pauses=pauses)).stderr
         except BaseException:
             with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
                 # Before letting go, or the command could press again what was just released.
@@ -347,8 +378,8 @@ class X11Computer:
                             await self._run(['xdotool', *release])
             raise
         # xdotool skips a key name the display doesn't know and still succeeds.
-        if 'No such key name' in result.stderr:
-            raise UnsupportedActionError(f'The display cannot press that key: {result.stderr.strip()}')
+        if 'No such key name' in stderr:
+            raise UnsupportedActionError(f'The display cannot press that key: {stderr.strip()}')
 
     async def _capture(self, script: str, *args: str) -> bytes:
         """Run a capture script with `args` and read the PNG it prints as base64."""
@@ -389,9 +420,11 @@ class X11Computer:
                 await self._xdotool(_move(x, y), hold=modifiers)
             case Drag(path=path, modifiers=modifiers):
                 start = path[0]
+                chains = _commands(_drag_moves(path))
+                chains[0][:0] = [*_move(start.x, start.y), 'mousedown', '1', 'sleep', str(DRAG_PRESS_PAUSE)]
+                chains[-1] += ['sleep', str(DRAG_PRESS_PAUSE), 'mouseup', '1']
                 await self._xdotool(
-                    [*_move(start.x, start.y), 'mousedown', '1', 'sleep', str(DRAG_PRESS_PAUSE), *_drag_moves(path)]
-                    + ['sleep', str(DRAG_PRESS_PAUSE), 'mouseup', '1'],
+                    *chains,
                     hold=modifiers,
                     release=('mouseup', '1'),
                     pauses=2 * DRAG_PRESS_PAUSE + len(drag_steps(path)) * DRAG_STEP_PAUSE,
@@ -408,19 +441,17 @@ class X11Computer:
                     pauses=amount * _SCROLL_TICK_SECONDS,
                 )
             case TypeText(text=text):
-                keysyms = [_character(character) for character in text]
-                for start in range(0, len(keysyms), _TYPED_PER_COMMAND):
-                    part = keysyms[start : start + _TYPED_PER_COMMAND]
+                for part in _commands([[_character(character)] for character in text]):
                     # A cancel can land between a key's press and release, and X then repeats the key without end.
                     release = ['keyup', *_LEVEL_SHIFTS, *dict.fromkeys(part)]
                     command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--delay', _TYPING_DELAY_MS, '--', *part]
-                    await self._input(command, [release], len(part) * _KEY_SECONDS)
+                    await self._input([command], [release], len(part) * _KEY_SECONDS)
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.
                 release = ['keyup', *reversed(keysyms)]
                 command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--repeat', str(repeat), '--', '+'.join(keysyms)]
-                await self._input(command, [release], repeat * _KEY_SECONDS)
+                await self._input([command], [release], repeat * _KEY_SECONDS)
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys, pauses=seconds)
             case _:
