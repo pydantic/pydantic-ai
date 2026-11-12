@@ -1365,11 +1365,13 @@ ends with &lt;/tool_result
 
         @agent.tool_plain(metadata={'background': True}, retries=0)
         async def guarded() -> str:
-            return 'unreachable'  # pragma: no cover -- the guard rejects every call
+            # The guard rejects every call.
+            return 'unreachable'  # pragma: no cover
 
         @agent.tool_plain(requires_approval=True)
         def needs_approval() -> str:
-            return 'approved'  # pragma: no cover -- never approved in this test
+            # Never approved in this test.
+            return 'approved'  # pragma: no cover
 
         with pytest.raises(UnexpectedModelBehavior, match="Tool 'guarded' exceeded max retries count of 0"):
             await agent.run('go')
