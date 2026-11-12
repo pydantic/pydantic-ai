@@ -388,6 +388,25 @@ async def test_nested_run_in_tool_waits_with_plain_sleep(recorded: bool) -> None
     assert durability.sleeps == []
 
 
+async def test_nested_run_with_own_durability_uses_its_own_sleep() -> None:
+    """A nested run with a durability capability of its own waits with that capability's `durable_sleep`.
+
+    Its own registration shadows the one it inherited from the outer run, whose sleep isn't used.
+    """
+    outer_durability = _UnrecordedToolsDurability()
+    inner_durability = SleepingJournalDurability()
+    outer = Agent(TestModel(call_tools=['delegate']), name='sleeping_outer', capabilities=[outer_durability])
+    inner = Agent(_delayed_continuation_model(), name='sleeping_inner', capabilities=[inner_durability])
+
+    @outer.tool_plain
+    async def delegate() -> str:
+        return (await inner.run('go')).output
+
+    assert (await outer.run('go')).output == snapshot('{"delegate":"The answer is 42."}')
+    assert outer_durability.sleeps == []
+    assert inner_durability.sleeps == [0.01]
+
+
 def test_prepare_run_context_without_agent() -> None:
     durability = JournalDurability()
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
