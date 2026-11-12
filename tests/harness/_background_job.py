@@ -26,5 +26,6 @@ class BackgroundJobModel(FunctionModel):
     def continuation_delay(self, response: ModelResponse) -> float | None:
         return self.delay
 
-    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+    # Only reached if a regression cancels the job, which these tests check is left running for the woken run.
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:  # pragma: no cover
         self.cancelled.append(response.provider_response_id)

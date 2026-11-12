@@ -128,9 +128,9 @@ class FakeDurableContext:
         recorded = self._replay(name)
         if recorded is None:
             self.operations.append(Operation(name=name, status='started', wait_seconds=duration.seconds))
-        elif recorded.status == 'succeeded':
-            return
-        raise SuspendExecution(f'Wait for {duration.seconds} seconds')
+            raise SuspendExecution(f'Wait for {duration.seconds} seconds')
+        # Lambda only invokes the function again once the wait is over.
+        assert recorded.status == 'succeeded', f'wait {name!r} replayed before it elapsed'
 
     def elapse_waits(self) -> None:
         """End every started wait, as Lambda does once its time has passed."""
