@@ -1,4 +1,4 @@
-"""`DynamicWorkflow` under `DBOSDurability`: gathered sub-agents run in parallel, each recorded in a step drawn in dispatch order."""
+"""`DynamicWorkflow` under `DBOSDurability`: gathered sub-agents run one at a time, so recovery replays each its own steps."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai import Agent
 from tests.conftest import detach_dbos_logging, try_import, without_admin_server
 from tests.harness.dynamic_workflow._concurrent_sub_agents import EXPECTED, build_orchestrator, summarize_model
 
@@ -48,13 +47,9 @@ def model_calls() -> list[str]:
 
 
 @pytest.fixture
-def orchestrator(dbos: DBOS, model_calls: list[str]) -> Agent[None, str]:
+def workflow(dbos: DBOS, model_calls: list[str]) -> Callable[[], Awaitable[str]]:
     # Built outside the event loop: registering a DBOS workflow reads its source.
-    return build_orchestrator(DBOSDurability, summarize_model(model_calls))
-
-
-@pytest.fixture
-def workflow(orchestrator: Agent[None, str]) -> Callable[[], Awaitable[str]]:
+    orchestrator = build_orchestrator(DBOSDurability, summarize_model(model_calls, alpha_waits_for_beta=False))
     attempts: list[str] = []
 
     @DBOS.workflow(name='dynamic_workflow_dbos')
@@ -68,32 +63,31 @@ def workflow(orchestrator: Agent[None, str]) -> Callable[[], Awaitable[str]]:
     return run
 
 
-async def test_parallel_sub_agents_get_stable_steps_and_recover(
+async def test_sub_agents_run_one_at_a_time_and_recover_their_own_steps(
     dbos: DBOS, workflow: Callable[[], Awaitable[str]], model_calls: list[str]
 ) -> None:
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
         await workflow()
-    # Alpha, dispatched first, finished last.
-    assert sorted(model_calls) == ['alpha 1', 'alpha 3', 'beta 1', 'beta 3']
-    assert model_calls[-1] == 'alpha 3'
-
-    # Each sub-agent run is one step, numbered in dispatch order rather than completion order.
+    assert model_calls == ['alpha 1', 'alpha 3', 'beta 1', 'beta 3']
+    # Each sub-agent keeps its own model-request checkpoints.
     steps = await dbos.list_workflow_steps_async(workflow_id)
-    sub_agent_steps = [step for step in steps if step['function_name'] == 'run_workflow.summarize']
-    assert [step['output'] for step in sub_agent_steps] == ['summary of alpha', 'summary of beta']
-    assert sub_agent_steps[0]['function_id'] < sub_agent_steps[1]['function_id']
+    assert [step['function_name'] for step in steps] == [
+        'orchestrator__model.request',
+        *['summarize__model.request'] * 4,
+        'orchestrator__model.request',
+    ]
 
-    # Resuming the pending workflow re-executes it the way recovery does: each call replays its own step.
+    # Resuming the pending workflow re-executes it the way recovery does: each sub-agent replays its own steps.
     handle = await DBOS.resume_workflow_async(workflow_id)
     assert await handle.get_result(polling_interval_sec=0.01) == EXPECTED
     assert len(model_calls) == 4
 
 
-async def test_parallel_sub_agents_outside_a_workflow_make_no_steps(
-    orchestrator: Agent[None, str], model_calls: list[str]
-) -> None:
+async def test_sub_agents_outside_a_workflow_run_concurrently(dbos: DBOS) -> None:
+    calls: list[str] = []
+    orchestrator = build_orchestrator(DBOSDurability, summarize_model(calls))
     assert (await orchestrator.run('Summarize alpha and beta')).output == EXPECTED
     # Alpha, dispatched first, finished last.
-    assert sorted(model_calls) == ['alpha 1', 'alpha 3', 'beta 1', 'beta 3']
-    assert model_calls[-1] == 'alpha 3'
+    assert sorted(calls) == ['alpha 1', 'alpha 3', 'beta 1', 'beta 3']
+    assert calls[-1] == 'alpha 3'
