@@ -545,7 +545,8 @@ cleared, or `tools` to the names whose results are the only ones cleared; settin
 `UserError`. The `keep_pairs` window counts every tool's calls before `tools` picks which results are
 cleared, so other tools' recent calls can push an older result of a listed tool out of it; `keep_turns`
 keeps by turn instead. Framework-typed tool results -- core's `search_tools` and `load_capability`
-returns -- are left intact (a small token floor), because their structured content is re-parsed on later requests and
+returns -- are left intact (a small token floor), because their structured content is re-parsed on
+later requests and
 rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. `FileSystem`'s typed
 `read_file` results (`ReadFileReturnPart`) are cleared like any other result and keep their type, unless
 their `metadata` is something other than `None` or a `dict`: a cleared result is marked in its
