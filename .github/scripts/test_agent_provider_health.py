@@ -905,6 +905,23 @@ def test_check_requires_the_actual_run_attempt(tmp_path: Path, monkeypatch: pyte
     assert not output.exists()
 
 
+def test_main_reports_a_github_http_error_and_closes_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A GitHub HTTP error that escapes a command fails the run with its status, and is closed."""
+
+    class _UnreadableIncidents(FakeGitHub):
+        def open_incidents(self) -> list[health.Issue]:
+            raise health.urllib.error.HTTPError('issues', 502, 'Bad Gateway', Message(), None)
+
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: _UnreadableIncidents())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+
+    assert health.main(['monitor']) == 1
+    assert capsys.readouterr().err == 'provider-health failed: HTTP Error 502: Bad Gateway\n'
+
+
 @pytest.mark.parametrize('run_attempt', [None, True, 0, -1, '2'])
 def test_attempt_contract_rejects_missing_or_invalid_values(run_attempt: object, tmp_path: Path) -> None:
     """Health artifacts require positive integer attempts; invalid agent attempts stay untyped."""

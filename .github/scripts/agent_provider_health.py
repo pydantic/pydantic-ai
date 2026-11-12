@@ -1882,6 +1882,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.handler(args)
     except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        if isinstance(exc, urllib.error.HTTPError):
+            exc.close()
         print(f'provider-health failed: {exc}', file=sys.stderr)
         return 1
 
