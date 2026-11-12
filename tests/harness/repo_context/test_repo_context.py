@@ -19,6 +19,7 @@ from pydantic_ai._capability_parts import render_capability_parts
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    Authority,
     CompactionPart,
     ModelMessage,
     ModelRequest,
@@ -1819,13 +1820,15 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
         assert 'takes precedence' not in instructions
 
     @pytest.mark.parametrize('authority', ['operator', 'none'])
-    async def test_the_precedence_sentence_only_ranks_operator_files(self, tmp_path: Path, authority: str) -> None:
+    async def test_the_precedence_sentence_only_ranks_operator_files(
+        self, tmp_path: Path, authority: Authority
+    ) -> None:
         # In operator voice, "the more deeply nested one takes precedence" would rank the repository's files over
         # the operator's, so it's left out once the run reads any instruction file below `'operator'`.
         working_dir = self._repo(tmp_path)
         workspace = AuthorityWorkspace(
             Workspace(LocalWorkspaceBackend(working_dir)),
-            authority='none' if authority == 'none' else 'operator',
+            authority=authority,
             path_authority={str(tmp_path / 'AGENTS.md'): 'operator'},
         )
         instructions, _, _ = await self._run(tmp_path, workspace, nested_traversal=True)

@@ -136,6 +136,7 @@ jobs:
     outputs:
       category: ${{ steps.extract.outputs.category }}
       skip: ${{ steps.check-label.outputs.has_label }}
+      fallback: ${{ steps.usage-limit.outputs.fallback }}
     steps:
       - name: Check if category label already exists
         id: check-label
@@ -165,9 +166,12 @@ jobs:
         if: steps.check-label.outputs.has_label == 'false'
         uses: ./.github/actions/install-subprocess-isolation-deps
 
+      # continue-on-error keeps the job alive only long enough to classify this step.
+      # The next step fails the job unless the execution file is a subscription-limit rejection.
       - name: Classify PR with Claude Code
         if: steps.check-label.outputs.has_label == 'false'
         id: classify
+        continue-on-error: true
         uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -177,7 +181,7 @@ jobs:
           claude_args: |
             --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*)"
             --json-schema '{"type":"object","properties":{"category":{"type":"string"}},"required":["category"]}'
-          prompt: |
+          prompt: &category-prompt |
             Classify PR #${{ github.event.pull_request.number }} in ${{ github.repository }}.
 
             Run `gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }}` for the title and description.
@@ -195,8 +199,20 @@ jobs:
 
             Return your classification as JSON with a "category" field set to one of: bug, feature, docs, chore, dependency.
 
+      - id: usage-limit
+        name: Detect Claude subscription limit
+        if: steps.classify.outcome == 'failure'
+        env:
+          EXECUTION_FILE: ${{ steps.classify.outputs.execution_file }}
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_REF: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh api -H 'Accept: application/vnd.github.raw+json' "repos/${GITHUB_REPOSITORY}/contents/.github/scripts/douwebot_usage_limit.py?ref=${TRUSTED_REF}" > "$RUNNER_TEMP/douwebot_usage_limit.py"
+          python3 -I "$RUNNER_TEMP/douwebot_usage_limit.py"
+
       - name: Extract and validate category
-        if: steps.check-label.outputs.has_label == 'false'
+        if: steps.classify.outcome == 'success'
         id: extract
         run: |
           CATEGORY=$(echo "$STRUCTURED_OUTPUT" | jq -r .category | tr -d '[:space:]')
@@ -210,10 +226,65 @@ jobs:
         env:
           STRUCTURED_OUTPUT: ${{ steps.classify.outputs.structured_output }}
 
+  # Reruns the classification when the Claude subscription refused it. A fresh runner keeps
+  # anything the Claude run wrote out of reach, and OpenCode reads only the prefetched context.
+  category-classify-opencode:
+    name: Category Classify (OpenCode)
+    needs: category-classify
+    if: needs.category-classify.result == 'success' && needs.category-classify.outputs.fallback == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      category: ${{ steps.classify.outputs.category }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Saves the output of each `gh` command the Claude prompt runs, under the names
+      # `category_classify_opencode.py` gives the model.
+      - name: Prefetch PR context
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/category-context"
+          cd "$RUNNER_TEMP/category-context"
+          gh pr view "$PR_NUMBER" --repo "$REPO" > pr-view.txt
+          gh pr diff "$PR_NUMBER" --repo "$REPO" --name-only > changed-files.txt
+          if grep -qE '(^|/)pyproject\.toml$' changed-files.txt; then
+            gh pr diff "$PR_NUMBER" --repo "$REPO" > pr.diff
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+      - name: Set up OpenCode
+        uses: ./.github/actions/setup-douwebot-tools
+
+      - name: Classify PR with OpenCode
+        id: classify
+        run: |
+          export PATH="$RUNNER_TEMP/douwebot-tools/bin:$RUNNER_TEMP/douwebot-tools/opencode/node_modules/.bin:$PATH"
+          python3 .github/scripts/category_classify_opencode.py
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          # Serve the classification on both Coding Plan accounts when OpenCode Go refuses it before its first step.
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
+          CLASSIFY_PROMPT: *category-prompt
+          PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
+
   category-apply:
     name: Category Apply
-    needs: category-classify
-    if: needs.category-classify.outputs.skip != 'true' && needs.category-classify.outputs.category != ''
+    needs: [category-classify, category-classify-opencode]
+    # `!cancelled()` lets this run when the fallback job is skipped because Claude classified the PR.
+    if: >-
+      !cancelled() && needs.category-classify.outputs.skip != 'true'
+      && (needs.category-classify.outputs.category != '' || needs.category-classify-opencode.outputs.category != '')
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -221,7 +292,7 @@ jobs:
     steps:
       - name: Validate and apply category label
         run: |
-          CATEGORY="${NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY}"
+          CATEGORY="${CLASSIFIED_CATEGORY}"
           ALLOWED="bug feature docs chore dependency"
 
           if ! echo "$ALLOWED" | grep -Fqw "$CATEGORY"; then
@@ -234,7 +305,7 @@ jobs:
           echo "Applied label: $CATEGORY"
         env:
           GH_TOKEN: ${{ github.token }}
-          NEEDS_CATEGORY_CLASSIFY_OUTPUTS_CATEGORY: ${{ needs.category-classify.outputs.category }}
+          CLASSIFIED_CATEGORY: ${{ needs.category-classify.outputs.category || needs.category-classify-opencode.outputs.category }}
 
   # A head that already has douwebot findings can never pass `review_gates.py`
   # `douwebot_approval`, so reviewing it again buys no gate value. A head with a
@@ -265,11 +336,12 @@ jobs:
             | [$reviews[0][][]
                 | select(.user.login == "github-actions[bot]" and .user.type == "Bot" and .commit_id == $head)
                 | (.body // "") as $body
-                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + "( engine=(claude|opencode|opencode-deepinfra))? -->\\z"))
-                | (($body | capture(" engine=(?<engine>claude|opencode|opencode-deepinfra) -->\\z") | .engine) // "") as $engine
-                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40}( engine=(claude|opencode|opencode-deepinfra))? -->\\z"; "")) as $marked
+                | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + "( engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\\z"))
+                | (($body | capture(" engine=(?<engine>claude|opencode|opencode-zai|opencode-deepinfra) -->\\z") | .engine) // "") as $engine
+                | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40}( engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\\z"; "")) as $marked
                 | (if $engine == "claude" then "\n\nReviewer: Claude Code (claude-opus-5-5)"
                    elif $engine == "opencode" then "\n\nReviewer: OpenCode (opencode-go/deepseek-v4.1-flash)"
+                   elif $engine == "opencode-zai" then "\n\nReviewer: OpenCode (zai-coding-plan/glm-5.3-flash)"
                    elif $engine == "opencode-deepinfra" then "\n\nReviewer: OpenCode (deepinfra/deepseek-ai/DeepSeek-V4.1-Flash)"
                    else "" end) as $attribution
                 | (if $attribution == "" then $marked
@@ -583,7 +655,7 @@ jobs:
             A Python hunk covers its enclosing function or method, not the whole class.
             When a hunk changes a method of a class in a sibling family, read the full class from `pr-head/` to see its sibling methods.
             The sibling families are `models/`, `providers/`, `profiles/`, `toolsets/`, `native_tools/`, `capabilities/`, `embeddings/`, `images/`, `realtime/`, `ui/` and `durable_exec/` under `pydantic_ai_slim/pydantic_ai/`;
-            under `src/pydantic_ai_harness/pydantic_ai_harness/`, the `*_sandbox/` and `ssh_workspace/` backends and every directory with an `_operation_backend.py`; and `src/pydantic_clai2/pydantic_clai2/builtin_plugins/`.
+            under `src/pydantic_ai_harness/pydantic_ai_harness/`, the `*_sandbox/`, `ssh_workspace/` and `docker_container/` backends and every directory with an `_operation_backend.py`; and `src/pydantic_clai2/pydantic_clai2/builtin_plugins/`.
             Each commentable line in the diff is prefixed with its source line number: `NL:<number>` for new or context lines, `OL:<number>` for deleted lines.
             For newly added files, the diff contains the complete file contents — do not re-read these from disk.
             The diff file paths are listed in the third column of `changed-files.txt`.
@@ -707,8 +779,9 @@ jobs:
           python3 .github/scripts/douwebot_opencode_run.py
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          # Serves the review when OpenCode Go refuses it before its first step.
-          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+          # Serve the review on both Coding Plan accounts when OpenCode Go refuses it before its first step.
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           REVIEW_PROMPT: *douwebot-prompt
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
 

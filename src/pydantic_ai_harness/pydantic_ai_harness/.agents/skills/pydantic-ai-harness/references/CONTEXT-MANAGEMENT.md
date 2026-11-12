@@ -373,7 +373,8 @@ Stores:
 - `LocalFileStore(base_dir=None, cleanup_after=None)` from `pydantic_ai_harness.tool_output_limits`, for runs without a workspace (host temp dir).
 - Anything implementing `OverflowStore` (`async write(key, data) -> handle`, `async read(handle)`).
 
-Gotchas: both `ToolReturn.return_value` and text `content` are reduced; `ModelRetry` and tool errors
+Gotchas: both `ToolReturn.return_value` and text `content` are reduced (a return value holding
+files keeps them; only the data beside them is reduced); `ModelRetry` and tool errors
 are never reduced, nor are core `load_capability` / `search_tools` returns. Keep
 `Shell(max_output_chars=...)` above your thresholds. `Summarize` usage counts toward the run. Under
 durable execution spill writes and built-in summaries are journaled, so a replay reuses the recorded

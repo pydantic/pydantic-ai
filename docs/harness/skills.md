@@ -17,7 +17,21 @@ the `load_capability` tool to receive that skill's instructions.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![At the start of every run, Skills reads each SKILL.md in the configured libraries from the run's workspace, such as .agents/skills/code-review/SKILL.md, and puts a catalog of skill names and descriptions in the model's instructions. When a skill is useful, the model calls load_capability with its name and gets back a "# Skill: code-review" heading, the skill's directory and the Markdown body of SKILL.md.](../img/harness/skills.svg)
+```mermaid
+flowchart TB
+    accTitle: Skills: load SKILL.md instructions on demand
+    accDescr: At run start, the Skills capability reads the workspace files under .agents/skills/, here code-review/SKILL.md and release-notes/SKILL.md. It puts each skill's name and description in the model's instructions. When a skill is needed, the model calls load_capability and gets a heading, the skill directory and the SKILL.md body.
+    subgraph workspace["Workspace"]
+        files[".agents/skills/<br/>code-review/SKILL.md<br/>release-notes/SKILL.md"]
+    end
+    skills["Skills()"]:::capability
+    model(["model"])
+    load["load_capability"]:::capability
+    files -->|"read at run start"| skills
+    skills -->|"instructions: each skill's<br/>name and description"| model
+    model <-->|"when a skill is needed:<br/>heading, skill directory,<br/>SKILL.md body"| load
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## Installation
 
@@ -145,7 +159,7 @@ reads the instructions at run time.
 
 ## Skills from files you didn't write
 
-The model reads the catalog as your instructions, so a skill whose `SKILL.md` is below `'operator'` [authority](../workspace.md#workspace-authority), such as one in a repository the operator doesn't control, stays out of it. The instructions say instead that the workspace has skills, and the model calls `list_skills` for their names and descriptions and `load_skill` for one's instructions. Both reach it as tool output rather than as your instructions. This costs a tool call when a task may need a skill.
+The model reads the catalog as your instructions, so a skill whose `SKILL.md` is below `'operator'` [authority](../workspace.md#workspace-authority), such as one in a repository the operator doesn't control, stays out of it. The instructions point the model at two tools instead: it calls `list_skills` for their names and descriptions and `load_skill` for one's instructions. Both reach it as tool output rather than as your instructions. This costs a tool call when a task may need a skill.
 
 Each skill takes the level of its own file, [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of], in the workspace its library is read from. So with a run workspace at `authority='none'`, `Skills('skills', workspace=LocalWorkspaceBackend('/app'))` keeps its skills in the catalog, while `Skills('skills')`, read from the run's workspace, offers its skills through `list_skills`; and a `path_authority` entry such as `{'skills/vendored': 'none'}` moves just those skills.
 

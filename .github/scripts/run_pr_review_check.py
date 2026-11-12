@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Literal, TextIO
 from urllib.parse import quote
 
-from douwebot_opencode_result import final_text, rejection_reason
+from douwebot_opencode_result import final_text, rejection_reason, unfenced
 from douwebot_opencode_run import check_symlinks, run_with_fallback
 from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
 from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
@@ -34,10 +34,6 @@ _TSV_ESCAPES: dict[str, str] = {'\\': '\\', 't': '\t', 'n': '\n', 'r': '\r'}
 # Slack reads `<url|label>`, `<!channel>` and entities in webhook text as formatting, so model text arrives escaped.
 _SLACK_ESCAPES = str.maketrans({'&': '&amp;', '<': '&lt;', '>': '&gt;'})
 PRIVATE_REPORT_LIMIT = 3000
-# Some models write prose, then the requested JSON object in a Markdown code fence, despite the prompt.
-# The last fenced block is the answer when it ends the text; text after it still fails.
-_FENCE = re.compile(r'\A(?:.*\n)?[ \t]*```[\w+-]*[ \t]*\n(.*?)\n[ \t]*```\s*\Z', re.DOTALL)
-
 _EVENT = TypeAdapter(dict[str, object])
 _TOKENS = TypeAdapter(dict[str, float | dict[str, float]])
 
@@ -231,10 +227,7 @@ def check_result(
         coverage = f'Review stopped at its time budget of {check.max_minutes} minutes.'
     else:
         try:
-            text = final_text(stream)
-            if fenced := _FENCE.match(text):
-                text = fenced[1]
-            result = ModelResult.model_validate_json(text)
+            result = ModelResult.model_validate_json(unfenced(final_text(stream)))
         except (ValueError, ValidationError) as error:
             if not at_step_budget:
                 # The error would repeat the answer, private report included, into the public job log.
@@ -328,7 +321,8 @@ def main() -> None:
     runner_temp = Path(env['RUNNER_TEMP'])
     head = workspace / 'pr-head'
     changes = changed_files(head, env['BASE_SHA'], env['HEAD_SHA'])
-    files = select(changes)[check.name]
+    selected = select(changes)
+    files = selected[check.name]
     strip_instructions(head)
     check_symlinks(workspace, skip_pr_head=True)
     check_symlinks(head)
@@ -366,11 +360,19 @@ def main() -> None:
         output=stream,
         steps=check.max_steps,
         extra_env=telemetry,
+        # The `detect` job builds the matrix in `select` order.
+        matrix_index=list(selected).index(check.name),
     )
     changed = {change.path: change.positions for change in changes}
     result, private_report = check_result(check, files, stream, usage, changed=changed)
     if token:
-        export_span(endpoint, token, result, {**attributes, 'pr_review_checks.provider': provider.name}, started)
+        export_span(
+            endpoint,
+            token,
+            result,
+            {**attributes, 'pr_review_checks.provider': provider.name, 'pr_review_checks.plan': provider.plan},
+            started,
+        )
     else:
         print('::warning::LOGFIRE_TOKEN is empty, so this review exports no telemetry.')
     if private_report:
