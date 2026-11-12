@@ -49,7 +49,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._display import desktop_size
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
-from pydantic_ai_harness._x11 import DISPLAY, RECORD_START, START_LOCK, x11_display
+from pydantic_ai_harness._x11 import DISPLAY, START_LOCK, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 __all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'remove_container')
@@ -256,7 +256,7 @@ _START_DESKTOP = (
     'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
     f"echo 'the X server did not start:' >&2; tail -n 5 {_PID_DIR}/xvfb.log >&2; exit 1; fi; "
     'sleep 0.1; i=$((i+1)); done; '
-    f'{RECORD_START}setsid tint2 >/dev/null 2>&1 9>&- & fi; '
+    'setsid tint2 >/dev/null 2>&1 9>&- & fi; '
     'setsid fluxbox >/dev/null 2>&1 9>&- & wm=$!; i=0; '
     'until ! command -v xprop >/dev/null || xprop -root _NET_SUPPORTING_WM_CHECK 2>/dev/null | grep -q "window id" '
     '|| ! kill -0 $wm 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done'
