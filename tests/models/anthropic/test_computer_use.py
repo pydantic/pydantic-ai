@@ -274,6 +274,64 @@ async def test_a_member_with_a_field_that_does_not_map_runs_nothing(allow_model_
     assert '"loc":["actions",0,"mouse_down","unsupported_fields"]' in retry.model_response_str()
 
 
+async def test_an_earlier_tool_call_naming_its_action_with_something_other_than_text_runs_nothing(
+    allow_model_requests: None,
+) -> None:
+    # The SDK takes any JSON as the input, so a malformed `action` gets a retry rather than ending the run.
+    block = BetaToolUseBlock.model_validate(
+        {
+            'id': 'toolu_1',
+            'type': 'tool_use',
+            'name': 'computer',
+            'input': {'action': ['left_click'], 'coordinate': [5, 6]},
+        }
+    )
+    client = MockAnthropic.create_mock([_turn(block), _turn(BetaTextBlock(text='done', type='text'))])
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+    computer = FakeComputer()
+    result = await _agent(model, computer).run('Go.')
+
+    assert result.output == 'done'
+    assert computer.actions == []
+    (retry,) = [part for part in result.all_messages()[2].parts if isinstance(part, ToolReturnPart)]
+    assert retry.outcome == 'retried'
+    # As for a call without an `action`, the retry shows the fields that didn't map.
+    assert '"unsupported_fields":["action","coordinate"]' in retry.model_response_str()
+
+
+async def test_an_earlier_tool_result_stored_as_a_json_string_keeps_its_screenshot(allow_model_requests: None) -> None:
+    call = ComputerCallPart(
+        'computer',
+        {'actions': [{'type': 'screenshot'}]},
+        tool_call_id='toolu_1',
+        provider_name='anthropic',
+        provider_details={
+            'computer_blocks': [{'id': 'toolu_1', 'name': 'computer', 'input': {'action': 'screenshot'}}],
+            'computer_tool': 'computer_20251124',
+            'computer_action_counts': [1],
+        },
+    )
+    content = json.dumps(['Ran 1 action.', {'kind': 'binary', 'data': 'cG5n', 'media_type': 'image/png'}])
+    result = ToolReturnPart(
+        'computer', content, tool_call_id='toolu_1', metadata={'performed': 1}, tool_kind=COMPUTER_KIND.id
+    )
+    client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+    await model.request(
+        [
+            ModelRequest.user_text_prompt('Look.'),
+            ModelResponse(parts=[call], provider_name='anthropic'),
+            ModelRequest(parts=[result]),
+        ],
+        None,
+        ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
+
+    (body,) = get_mock_chat_completion_kwargs(client)
+    (sent,) = body['messages'][-1]['content']
+    assert [block['type'] for block in sent['content']] == ['text', 'image']
+
+
 async def test_a_deferred_computer_tool_stays_a_deferred_function(allow_model_requests: None) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
