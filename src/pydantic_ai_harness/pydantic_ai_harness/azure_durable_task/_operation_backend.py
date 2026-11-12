@@ -71,7 +71,10 @@ class _ActivityResult:
     value: JsonValue = None
     error: str | None = None
     retry_after: float | None = None
-    """The wait a model error asked for before the model activity is attempted again; see `_BoundOperation._call_waiting_retry_after`."""
+    """The wait a model error asked for before the model activity is attempted again.
+
+    See `_BoundOperation._call_waiting_retry_after`.
+    """
     failure: dict[str, JsonValue] | None = None
     """The `TaskFailureDetails` the model error would have failed the activity with, as JSON."""
 
