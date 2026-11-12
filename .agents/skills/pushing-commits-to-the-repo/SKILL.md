@@ -42,9 +42,10 @@ Set the light model's effort from the PR's complexity.
 Judge an S PR trivial only for string fixes or a clearly positive one-file docs update.
 State that judgment in the PR body.
 Until a size label exists, do not claim the trivial-S exception.
-Clean means douwebot `APPROVE` on the current head, with no douwebot findings on that head except settled optional findings.
+Clean means douwebot's latest non-dismissed completed verdict on the current head is `APPROVE`.
+It also means no douwebot findings on that head except settled optional findings.
 A settled optional finding is an inline comment on that approval that starts with `Optional:` and whose review thread is resolved.
-Blocking findings, unresolved optional findings and review-body findings still block, resolved or not.
+Blocking findings and review-body findings block, resolved or not. An unresolved optional finding blocks.
 Address every douwebot comment, including `Optional:` comments.
 After addressing comments, obtain a clean approval on the resulting head.
 Resolve every review thread.
