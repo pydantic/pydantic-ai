@@ -14259,9 +14259,9 @@ async def _answer_ok(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIte
 @pytest.mark.parametrize(
     ('prompt', 'trim', 'efforts', 'added'),
     [
-        # The system prompt the UI adapter reinjects goes on the trimmed history's first request, a copy of the turn,
-        # so the turn is stored as the run added it and the system prompt stays at the head of the stored history.
-        pytest.param('system_prompt', True, [None, None, None], None, id='trimmed'),
+        # The system prompt the UI adapter reinjects goes on the trimmed history's first request, a copy of the turn
+        # that only adds to it, so the turn is stored as the history holds it, with the system prompt.
+        pytest.param('system_prompt', True, [None, None, None], SystemPromptPart, id='trimmed'),
         pytest.param('instructions', True, ['low', 'low', 'low'], ModelSettingsDeltaPart, id='trimmed-effort'),
         pytest.param('system_prompt', False, ['low', 'low', 'high'], ModelSettingsDeltaPart, id='effort-change'),
         pytest.param('system_prompt', False, ['low', 'low', 'low'], None, id='same-effort'),

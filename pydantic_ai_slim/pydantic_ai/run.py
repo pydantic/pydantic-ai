@@ -206,6 +206,9 @@ class _HistoryMerge:
             return
         self.changed = self.changed or copied or index != self._start
         self.take(index)
+        if id(message) not in self._positions and not copied:
+            # A copy that only fills in or adds to the message stands for it as the history holds it.
+            self.merged[-1] = message
 
     def finish(self) -> None:
         """Merge the recorded messages after the last one the history holds, then the added ones after it."""

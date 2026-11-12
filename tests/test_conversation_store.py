@@ -1046,6 +1046,33 @@ async def test_messages_a_capability_rewrites_or_moves_are_kept_once_as_the_run_
 
 
 @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_request_a_capability_adds_to_in_a_trimmed_history_is_kept_as_the_history_holds_it() -> None:
+    """A copy that only adds to a request stands for it as the history holds it, also when other messages are dropped."""
+
+    def trim_and_annotate(messages: list[ModelMessage]) -> list[ModelMessage]:
+        if len(messages) < 3:
+            return messages
+        last = messages[-1]
+        assert isinstance(last, ModelRequest)
+        return [*messages[1:-1], dataclasses.replace(last, parts=[*last.parts, UserPromptPart('[annotated]')])]
+
+    agent = Agent(FunctionModel(_LookUp(calls=1)), capabilities=[ProcessHistory(trim_and_annotate)])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    result = await agent.run('look it up')
+
+    assert conversation_view(result.all_messages()) == snapshot(
+        ['call call-1', 'return call-1: fact 1', 'user-prompt: [annotated]', 'text: done']
+    )
+    assert conversation_view(result.conversation.messages) == snapshot(
+        ['user-prompt: look it up', 'call call-1', 'return call-1: fact 1', 'user-prompt: [annotated]', 'text: done']
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
 async def test_a_tool_result_a_capability_clears_in_place_is_kept_as_it_was_returned() -> None:
     def clear(messages: list[ModelMessage]) -> list[ModelMessage]:
         return [
