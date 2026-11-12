@@ -14,7 +14,9 @@ points that machinery at a Pydantic AI agent, which can be the
 [`Coder`](coder.md) composition it runs by default, another agent the harness
 ships, or one your own repository defines. The three are laid out in
 [Start from `Coder`, `Researcher`, or your own](#start-from-coder-researcher-or-your-own);
-this page then walks through the last of them end to end.
+this page then walks through the last of them end to end. To run an agent as a step in a
+workflow you already have, on input you trust, use the
+[GitHub Action](../github-actions.md) instead.
 
 This is the agent running **headless**: on a GitHub runner, on the events you choose, with
 nobody at a prompt. Its output is a comment, a pull request or a commit rather than a reply
