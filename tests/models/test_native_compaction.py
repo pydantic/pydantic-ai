@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from cassetter import Cassette
 
 from pydantic_ai import Agent, CompactionPart, ModelMessage, ModelRequest, ModelResponse, RunContext, ToolReturnPart
 from pydantic_ai.capabilities import AbstractCapability, NativeCompaction
@@ -18,6 +19,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.toolsets import FunctionToolset
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import request_json
 from ..conftest import RequestCapture, try_import
 
 with try_import() as openai_available:
@@ -68,7 +70,40 @@ def compaction_part(messages: list[ModelMessage]) -> CompactionPart:
     return part
 
 
-async def test_native_compaction_in_a_run(allow_model_requests: None, compacting_model: Model):
+def compacted_on_the_wire(vcr: Cassette, model: Model) -> dict[str, Any]:
+    """Assert the recorded compaction request went out as the provider's compaction API, and return the follow-up's body.
+
+    The follow-up is the request sent after the compaction, which carries the provider's compaction item first.
+    """
+    bodies = [(request.uri, request_json(request)) for request in vcr.requests]
+    if model.system == 'openai':
+        [compact] = [body for uri, body in bodies if uri.endswith('/responses/compact')]
+        # `/responses/compact` answers with one `CompactedResponse`: the SDK's `responses.compact()` takes no `stream`.
+        assert 'stream' not in compact
+        follow_ups = [
+            body
+            for uri, body in bodies
+            if uri.endswith('/responses') and body['input'] and body['input'][0].get('type') == 'compaction'
+        ]
+    else:
+        [compact] = [body for _, body in bodies if 'compaction' in body]
+        config = compact['compaction']
+        assert config['type'] == 'summarize'
+        # No focus, so Anthropic's own summarization prompt; a focus is asserted in
+        # `test_run_compact_sends_the_conversations_own_request`.
+        assert 'instructions' not in config
+        follow_ups = [
+            body
+            for _, body in bodies
+            if 'compaction' not in body
+            and body['messages'][0]['role'] == 'assistant'
+            and body['messages'][0]['content'][0]['type'] == 'compaction'
+        ]
+    [follow_up] = follow_ups
+    return follow_up
+
+
+async def test_native_compaction_in_a_run(allow_model_requests: None, compacting_model: Model, vcr: Cassette):
     agent = Agent(compacting_model, instructions='Answer in one short sentence.', capabilities=[NativeCompaction()])
     first = await agent.run('My name is Bob and my favorite color is teal.')
 
@@ -85,9 +120,10 @@ async def test_native_compaction_in_a_run(allow_model_requests: None, compacting
     )
     assert record.summarized == first.all_messages()
     assert len(messages) == 3
+    compacted_on_the_wire(vcr, compacting_model)
 
 
-async def test_run_compact(allow_model_requests: None, compacting_model: Model):
+async def test_run_compact(allow_model_requests: None, compacting_model: Model, vcr: Cassette):
     """`compact=True` compacts the history before the run's first request, which is answered from it."""
     agent = Agent(compacting_model, instructions='Answer in one short sentence.', capabilities=[NativeCompaction()])
     first = await agent.run('My name is Bob and my favorite color is teal.')
@@ -106,9 +142,12 @@ async def test_run_compact(allow_model_requests: None, compacting_model: Model):
     )
     assert record.summarized == first.all_messages()
     assert record.part == compaction_part(second.all_messages())
+    compacted_on_the_wire(vcr, compacting_model)
 
 
-async def test_native_compaction_with_a_tool_requesting_it(allow_model_requests: None, compacting_model: Model):
+async def test_native_compaction_with_a_tool_requesting_it(
+    allow_model_requests: None, compacting_model: Model, vcr: Cassette
+):
     """A tool requests compaction mid-run: the provider accepts its compaction item followed by the kept tool turn.
 
     The compacted history is the compaction response, then the response with the tool call and the request with its
@@ -146,6 +185,22 @@ async def test_native_compaction_with_a_tool_requesting_it(allow_model_requests:
     [tool_return] = [part for part in result_request.parts if isinstance(part, ToolReturnPart)]
     assert tool_return.tool_call_id == call_response.tool_calls[0].tool_call_id
     assert isinstance(final_response, ModelResponse)
+    # The provider accepted its compaction followed by the kept tool turn.
+    follow_up = compacted_on_the_wire(vcr, compacting_model)
+    if compacting_model.system == 'openai':
+        assert [item.get('type') for item in follow_up['input']] == [
+            'compaction',
+            'function_call',
+            'function_call_output',
+        ]
+    else:
+        assert [
+            (message['role'], [block['type'] for block in message['content']]) for message in follow_up['messages']
+        ] == [
+            ('assistant', ['compaction']),
+            ('assistant', ['tool_use']),
+            ('user', ['tool_result']),
+        ]
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')

@@ -253,6 +253,46 @@ async def test_native_compaction_keeps_a_tool_call_with_its_result():
     assert result.compactions[0].kept_from == 1
 
 
+async def test_native_compaction_keeps_the_system_prompt_when_a_tool_compacts_the_first_turn():
+    """Compacting on a run's first turn, where only its opening request precedes the tool call, keeps the system prompt."""
+    model = CompactingModel('primary')
+    calls = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart('compact_now', {}, tool_call_id='call')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    model.function = respond
+    agent = Agent(model, system_prompt='You are a pirate.', capabilities=[NativeCompaction()])
+
+    @agent.tool
+    def compact_now(ctx: RunContext[Any]) -> str:
+        ctx.request_compaction()
+        return 'compacting'
+
+    result = await agent.run('Compact, please.')
+
+    [(compacted, _)] = model.compacted
+    [opening_request] = compacted
+    assert isinstance(opening_request, ModelRequest)
+    messages = result.all_messages()
+    assert [type(message).__name__ for message in messages] == [
+        'ModelRequest',
+        'ModelResponse',
+        'ModelResponse',
+        'ModelRequest',
+        'ModelResponse',
+    ]
+    [system_prompt] = messages[0].parts
+    assert isinstance(system_prompt, SystemPromptPart) and system_prompt.content == 'You are a pirate.'
+    assert isinstance(messages[1].parts[0], CompactionPart)
+    assert messages[2].parts == [ToolCallPart('compact_now', {}, tool_call_id='call')]
+    assert result.compactions[0].kept_from == 2
+
+
 async def test_native_compaction_leaves_an_unsupported_model_to_the_next_capability():
     model = CompactingModel('primary', supports=False)
     summarize = Summarize()
