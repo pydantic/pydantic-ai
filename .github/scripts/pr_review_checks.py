@@ -117,7 +117,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         scope='sandboxes, workspaces, shells and Code Mode execution boundaries',
         paths=re.compile(
             r'src/pydantic_ai_harness/pydantic_ai_harness/'
-            r'([^/]*_sandbox|docker_container|code_mode|ipython_code_mode|ssh_workspace|shell)/.*'
+            r'([^/]*_sandbox|code_mode|ipython_code_mode|ssh_workspace|shell)/.*'
         ),
     ),
     SpecialistCheck(
