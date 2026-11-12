@@ -1434,3 +1434,24 @@ async def test_failed_call_submission_is_not_taken_by_a_later_call_with_its_id()
     result = await agent.run('go')
 
     assert result.output == Invoice(order_id='from_model', total=2)
+
+
+async def test_first_of_two_submitting_calls_wins():
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('assemble', {'order_id': 'first'}, tool_call_id='call-1'),
+                ToolCallPart('assemble', {'order_id': 'second'}, tool_call_id='call-2'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model), output_type=Invoice, end_strategy='graceful')
+
+    @agent.tool
+    async def assemble(ctx: RunContext, order_id: str) -> str:
+        await ctx.submit_output('final_result', {'order_id': order_id, 'total': 1})
+        return 'assembled'
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id='first', total=1)
