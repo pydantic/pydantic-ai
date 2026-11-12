@@ -649,8 +649,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
-        durable: bool | None = None,
         include_return_schema: bool | None = None,
+        durable: bool | None = None,
     ) -> Tool[AgentDepsT]:
         """Add a function as a tool to the toolset.
 
