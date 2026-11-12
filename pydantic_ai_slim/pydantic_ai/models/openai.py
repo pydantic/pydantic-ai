@@ -6765,15 +6765,20 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         computer_name := self.model_request_parameters.tool_name_for_kind(COMPUTER_KIND)
                     ):
                         # Its actions arrive whole in its done event, but its place among the other calls is set
-                        # now, as when the response isn't streamed. Until then it reads as cut off, so nothing runs.
+                        # now, as when the response isn't streamed. Until then it has no actions, so nothing runs.
                         call_id = _response_tool_call_id(
                             chunk.item.call_id,
                             self.provider_response_id if self._tool_call_ids_are_response_scoped else None,
                         )
-                        unfinished = chunk.item.model_copy(update={'status': 'incomplete'})
                         yield self._parts_manager.handle_part(
                             vendor_part_id=chunk.item.id,
-                            part=_map_computer_call(unfinished, computer_name, call_id, self.provider_name),
+                            part=ComputerCallPart(
+                                computer_name,
+                                None,
+                                tool_call_id=call_id,
+                                id=chunk.item.id,
+                                provider_name=self.provider_name,
+                            ),
                         )
                     elif isinstance(chunk.item, responses.ResponseReasoningItem | responses.ResponseComputerToolCall):
                         pass
@@ -6875,10 +6880,16 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             chunk.item.call_id,
                             self.provider_response_id if self._tool_call_ids_are_response_scoped else None,
                         )
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=chunk.item.id,
-                            part=_map_computer_call(chunk.item, computer_name, call_id, self.provider_name),
-                        )
+                        call = _map_computer_call(chunk.item, computer_name, call_id, self.provider_name)
+                        if isinstance(self._parts_manager.get_part_by_vendor_id(chunk.item.id), ComputerCallPart):
+                            # Started at its added event: completed as a delta, as a second start would be read as
+                            # another call.
+                            if event := self._parts_manager.handle_tool_call_delta(
+                                vendor_part_id=chunk.item.id, args=call.args, provider_details=call.provider_details
+                            ):
+                                yield event
+                        else:
+                            yield self._parts_manager.handle_part(vendor_part_id=chunk.item.id, part=call)
                     elif isinstance(chunk.item, responses.ResponseFunctionToolCall) and (item_id := chunk.item.id):
                         # The Codex backend can send a call's arguments only in the done events, without deltas.
                         if not isinstance(self._parts_manager.get_part_by_vendor_id(item_id), ToolCallPart):
@@ -8333,146 +8344,168 @@ _BLANK_SCREENSHOT = (
 """A 1x1 PNG for a `computer_call_output` with no screenshot to send, since the API requires one."""
 
 
-_COMPUTER_ACTION_FIELDS: dict[str, frozenset[str]] = {
-    'click': frozenset({'type', 'x', 'y', 'button', 'keys'}),
-    'double_click': frozenset({'type', 'x', 'y', 'keys'}),
-    'drag': frozenset({'type', 'path', 'keys'}),
-    'move': frozenset({'type', 'x', 'y', 'keys'}),
-    'scroll': frozenset({'type', 'x', 'y', 'scroll_x', 'scroll_y', 'keys'}),
-    'keypress': frozenset({'type', 'keys'}),
-    'type': frozenset({'type', 'text'}),
-    'wait': frozenset({'type'}),
-    'screenshot': frozenset({'type'}),
-}
-"""The fields of each OpenAI computer action that map onto the `computer` tool."""
-
-_REQUIRED_COMPUTER_FIELDS: dict[str, frozenset[str]] = {
-    'click': frozenset({'x', 'y', 'button'}),
-    'double_click': frozenset({'x', 'y'}),
-    'drag': frozenset({'path'}),
-    'move': frozenset({'x', 'y'}),
-    'scroll': frozenset({'x', 'y', 'scroll_x', 'scroll_y'}),
-    'keypress': frozenset({'keys'}),
-    'type': frozenset({'text'}),
-}
-"""The fields OpenAI documents as required on each action; one that is missing is refused, not filled in."""
+class _Strict(BaseModel, extra='forbid', strict=True):
+    """OpenAI's own data, checked as is: the SDK builds a response without validating it."""
 
 
-class _OpenAIPoint(TypedDict):
+class _OpenAIPoint(_Strict):
     x: int
     y: int
 
 
-_COMPUTER_FIELD_TYPES: dict[str, TypeAdapter[Any]] = {
-    'x': TypeAdapter(int),
-    'y': TypeAdapter(int),
-    'scroll_x': TypeAdapter(int),
-    'scroll_y': TypeAdapter(int),
-    'button': TypeAdapter(str),
-    'text': TypeAdapter(str),
-    'keys': TypeAdapter(list[str]),
-    'path': TypeAdapter(list[_OpenAIPoint]),
-}
-"""The type of each action field, checked strictly: the SDK builds its items without validating them."""
+class _OpenAIPointerAction(_Strict):
+    x: int
+    y: int
+    keys: list[str] = []
+    """Keys held during the action."""
 
 
-def _unsupported_computer_fields(action: dict[str, Any]) -> list[str] | None:
-    """The fields of an OpenAI action that don't map onto the `computer` tool, or `None` when every one does.
+class _OpenAIClick(_OpenAIPointerAction):
+    type: Literal['click']
+    button: str
 
-    A field that is missing, has the wrong type or isn't one the tool takes doesn't map.
+
+class _OpenAIDoubleClick(_OpenAIPointerAction):
+    type: Literal['double_click']
+
+
+class _OpenAIMove(_OpenAIPointerAction):
+    type: Literal['move']
+
+
+class _OpenAIScroll(_OpenAIPointerAction):
+    type: Literal['scroll']
+    scroll_x: int
+    scroll_y: int
+
+
+class _OpenAIDrag(_Strict):
+    type: Literal['drag']
+    path: list[_OpenAIPoint]
+    keys: list[str] = []
+
+
+class _OpenAIKeypress(_Strict):
+    type: Literal['keypress']
+    keys: list[str]
+
+
+class _OpenAIType(_Strict):
+    type: Literal['type']
+    text: str
+
+
+class _OpenAIWait(_Strict):
+    type: Literal['wait']
+
+
+class _OpenAIScreenshot(_Strict):
+    type: Literal['screenshot']
+
+
+_OPENAI_ACTION: TypeAdapter[
+    _OpenAIClick
+    | _OpenAIDoubleClick
+    | _OpenAIMove
+    | _OpenAIScroll
+    | _OpenAIDrag
+    | _OpenAIKeypress
+    | _OpenAIType
+    | _OpenAIWait
+    | _OpenAIScreenshot
+] = TypeAdapter(
+    Annotated[
+        _OpenAIClick
+        | _OpenAIDoubleClick
+        | _OpenAIMove
+        | _OpenAIScroll
+        | _OpenAIDrag
+        | _OpenAIKeypress
+        | _OpenAIType
+        | _OpenAIWait
+        | _OpenAIScreenshot,
+        Field(discriminator='type'),
+    ]
+)
+"""The OpenAI computer actions the `computer` tool can run, each with only the fields it maps."""
+
+_LIST = TypeAdapter(list[Any], config={'strict': True})
+
+
+def _map_computer_action(raw: Any) -> list[tuple[dict[str, Any], str | None]]:
+    """One OpenAI computer action as `computer` tool actions, each with a note when it runs other than as asked.
+
+    An action that doesn't validate becomes one the tool refuses, naming the fields that didn't, so the model retries
+    and none of it runs.
     """
-    kind = action.get('type')
-    if not isinstance(kind, str) or (fields := _COMPUTER_ACTION_FIELDS.get(kind)) is None:
-        return sorted(action.keys() - {'type'})
-    unsupported = (action.keys() - fields) | (_REQUIRED_COMPUTER_FIELDS.get(kind, frozenset()) - action.keys())
-    for name, value in action.items():
-        if (adapter := _COMPUTER_FIELD_TYPES.get(name)) is not None:
-            try:
-                adapter.validate_python(value, strict=True)
-            except ValidationError:
-                unsupported.add(name)
-    # A path of the wrong type is already refused above, and only a list can be checked point by point.
-    path: list[Any] = [] if 'path' in unsupported else action.get('path') or []
-    if any(not isinstance(point, dict) or cast(dict[str, Any], point).keys() != {'x', 'y'} for point in path):
-        unsupported.add('path')
-    return sorted(unsupported) if unsupported else None
-
-
-def _map_computer_action(action: dict[str, Any]) -> list[dict[str, Any]]:
-    """One OpenAI computer action as `computer` tool actions, mapped field by field.
-
-    An action type or field that doesn't map fails validation, so the model retries; only the names of what didn't
-    map are kept, so the call never runs with part of what the model asked for.
-    """
-    if (unsupported := _unsupported_computer_fields(action)) is not None:
+    try:
+        action = _OPENAI_ACTION.validate_python(raw)
+    except ValidationError as error:
+        # A field's error location starts with the action type. An error with no location is about the action as a
+        # whole: a type that isn't one comes back as the error's tag, and an action that isn't an object has none.
+        details = error.errors()
+        fields = sorted({str(detail['loc'][1]) for detail in details if len(detail['loc']) > 1})
+        kind = details[0]['loc'][0] if details[0]['loc'] else (details[0].get('ctx') or {}).get('tag')
         # Under the tool's own type, so the retry names the fields rather than refusing the type.
-        kind = action.get('type')
-        return [{'type': 'click' if kind == 'double_click' else kind, 'unsupported_fields': unsupported}]
-    modifiers: list[str] = action.get('keys') or []
-    position = {'x': action.get('x'), 'y': action.get('y')}
-    match action['type']:
-        case 'click':
-            button = action['button']
-            return [
-                {
-                    'type': 'click',
-                    **position,
-                    'button': 'middle' if button == 'wheel' else button,
-                    'modifiers': modifiers,
-                }
-            ]
-        case 'double_click':
-            return [{'type': 'click', **position, 'count': 2, 'modifiers': modifiers}]
-        case 'drag':
-            path = [{'x': point['x'], 'y': point['y']} for point in action['path']]
-            return [{'type': 'drag', 'path': path, 'modifiers': modifiers}]
-        case 'move':
-            return [{'type': 'move', **position, 'modifiers': modifiers}]
-        case 'scroll':
+        return [({'type': 'click' if kind == 'double_click' else kind, 'unsupported_fields': fields}, None)]
+    match action:
+        case _OpenAIClick():
+            button = 'middle' if action.button == 'wheel' else action.button
+            return [({'type': 'click', 'x': action.x, 'y': action.y, 'button': button, 'modifiers': action.keys}, None)]
+        case _OpenAIDoubleClick():
+            return [({'type': 'click', 'x': action.x, 'y': action.y, 'count': 2, 'modifiers': action.keys}, None)]
+        case _OpenAIMove():
+            return [({'type': 'move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
+        case _OpenAIDrag():
+            path = [{'x': point.x, 'y': point.y} for point in action.path]
+            return [({'type': 'drag', 'path': path, 'modifiers': action.keys}, None)]
+        case _OpenAIScroll():
             # OpenAI scrolls by pixels on both axes at once; the tool scrolls one way at a time, in wheel clicks.
-            scrolls: list[dict[str, Any]] = []
-            for pixels, direction in (
-                (action['scroll_x'], 'right' if action['scroll_x'] > 0 else 'left'),
-                (action['scroll_y'], 'down' if action['scroll_y'] > 0 else 'up'),
+            scrolls: list[tuple[dict[str, Any], str | None]] = []
+            for axis, pixels, direction in (
+                ('scroll_x', action.scroll_x, 'right' if action.scroll_x > 0 else 'left'),
+                ('scroll_y', action.scroll_y, 'down' if action.scroll_y > 0 else 'up'),
             ):
                 if pixels:
-                    amount = min(50, max(1, round(abs(pixels) / _SCROLL_PIXELS_PER_CLICK)))
-                    scrolls.append(
-                        {'type': 'scroll', **position, 'direction': direction, 'amount': amount, 'modifiers': modifiers}
+                    clicks = max(1, round(abs(pixels) / _SCROLL_PIXELS_PER_CLICK))
+                    scroll = {
+                        'type': 'scroll',
+                        'x': action.x,
+                        'y': action.y,
+                        'direction': direction,
+                        'amount': clicks,
+                        'modifiers': action.keys,
+                    }
+                    note = (
+                        None
+                        if clicks * _SCROLL_PIXELS_PER_CLICK == abs(pixels)
+                        else f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
                     )
+                    scrolls.append((scroll, note))
             # A scroll by nothing only moves the pointer there.
-            return scrolls or [{'type': 'move', **position, 'modifiers': modifiers}]
-        case 'keypress':
-            return [{'type': 'keypress', 'keys': action['keys']}]
-        case 'type':
-            return [{'type': 'type', 'text': action['text']}]
-        case 'wait':
-            return [{'type': 'wait'}]
-        case _:  # `screenshot`, the only type left
-            return [{'type': 'screenshot'}]
+            return scrolls or [({'type': 'move', 'x': action.x, 'y': action.y, 'modifiers': action.keys}, None)]
+        case _OpenAIKeypress():
+            return [({'type': 'keypress', 'keys': action.keys}, None)]
+        case _OpenAIType():
+            return [({'type': 'type', 'text': action.text}, None)]
+        case _OpenAIWait():
+            return [({'type': 'wait'}, None)]
+        case _OpenAIScreenshot():
+            return [({'type': 'screenshot'}, None)]
 
 
-_ACTION_COUNTS = 'computer_action_counts'
-"""The `provider_details` key of how many `computer` tool actions each of a `computer_call`'s actions became."""
+_SCROLL_NOTES = 'computer_scroll_notes'
+"""The `provider_details` key of a note per `computer` tool action, on how a pixel scroll ran in wheel clicks."""
 
-# Every action becomes at least one tool action.
-_ACTION_COUNTS_TA = TypeAdapter(list[Annotated[int, Field(ge=1)]])
-_OBJECT_TA = TypeAdapter(dict[str, Any])
-_OBJECTS_TA = TypeAdapter(list[dict[str, Any]])
-
-
-def _object_or_empty(value: Any) -> dict[str, Any]:
-    try:
-        return _OBJECT_TA.validate_python(value)
-    except ValidationError:
-        return {}
+_SCROLL_NOTES_TA = TypeAdapter(list[str | None])
 
 
 def _map_computer_call(
     item: responses.ResponseComputerToolCall, tool_name: str, tool_call_id: str, provider_name: str
 ) -> ComputerCallPart:
     """A `computer_call` as a call of the `computer` tool, keeping the item to send back as it was."""
-    dumped = item.model_dump(mode='json', exclude_none=True)
+    # The SDK doesn't validate a response, so the item can hold anything; it is kept as sent, without a warning.
+    dumped = item.model_dump(mode='json', exclude_none=True, warnings=False)
     provider_details: dict[str, Any] = {'computer_call': dumped}
     if checks := dumped.get('pending_safety_checks'):
         # Read by `ComputerCallPart.safety_checks`, and sent back as acknowledged once the call is approved.
@@ -8482,16 +8515,19 @@ def _map_computer_call(
         # Cut off mid-generation: like a truncated function call, its arguments don't parse, so none of it runs.
         args = '{"actions": ['
     else:
-        actions: list[Any] = dumped.get('actions') or ([dumped['action']] if dumped.get('action') else [])
-        # The SDK builds a response without validating it, so an action may not be an object: nothing in it maps.
-        mapped = [_map_computer_action(_object_or_empty(action)) for action in actions]
-        # How many tool actions each became, so its result is described without mapping the call again.
-        provider_details[_ACTION_COUNTS] = [len(tool_actions) for tool_actions in mapped]
+        raw = dumped['actions'] if 'actions' in dumped else [dumped['action']] if 'action' in dumped else []
+        try:
+            actions = _LIST.validate_python(raw)
+        except ValidationError:
+            # Not a list, even if it is one action: the call is malformed, so none of it runs.
+            actions = [None]
+        mapped = [tool_action for action in actions for tool_action in _map_computer_action(action)]
+        notes = [note for _, note in mapped]
+        if any(notes):
+            # Written now, while what the model asked for is known, and read when the result is sent back.
+            provider_details[_SCROLL_NOTES] = notes
         # A call with no actions only asks to look.
-        args = {
-            'actions': [tool_action for tool_actions in mapped for tool_action in tool_actions]
-            or [{'type': 'screenshot'}]
-        }
+        args = {'actions': [tool_action for tool_action, _ in mapped] or [{'type': 'screenshot'}]}
     return ComputerCallPart(
         tool_name,
         args,
@@ -8517,42 +8553,20 @@ def _computer_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPar
     }
 
 
-def _scroll_conversions(call: ToolCallPart | None, result: ComputerResult | None) -> list[str]:
-    """How each pixel scroll in the call that ran became wheel clicks, when that differs from what the model asked for.
+def _scroll_notes(call: ToolCallPart | None, result: ComputerResult | None) -> list[str]:
+    """The notes on the pixel scrolls that ran, kept on the call when it was made.
 
     Only the `performed` actions ran; a call changed before it ran ran other actions, which its summary describes, and
-    a result without its outcome doesn't say what ran. The clicks are read from the tool actions the call became, by
-    the counts kept when it was made: a history can come back from storage or a UI, so they are checked, and without
-    them nothing is said.
+    a result without its outcome doesn't say what ran. A history can come back from storage or a UI, so the notes are
+    checked, and without them nothing is said.
     """
     if call is None or result is None or result.get('changed'):
         return []
-    details = call.provider_details or {}
     try:
-        item = _OBJECT_TA.validate_python(details.get('computer_call', {}))
-        actions = _OBJECTS_TA.validate_python(item.get('actions') or ([item['action']] if item.get('action') else []))
-        tool_actions = _OBJECTS_TA.validate_python(call.args_as_dict().get('actions') or [])
-        counts = _ACTION_COUNTS_TA.validate_python(details.get(_ACTION_COUNTS))
+        notes = _SCROLL_NOTES_TA.validate_python((call.provider_details or {}).get(_SCROLL_NOTES, []))
     except ValidationError:
         return []
-    if len(counts) != len(actions) or sum(counts) != len(tool_actions):
-        return []
-    notes: list[str] = []
-    index = 0  # of the tool action
-    for action, count in zip(actions, counts):
-        for tool_action in tool_actions[index : index + count]:
-            ran = index < result['performed']
-            index += 1
-            # Both sides are read from storage, so a pair that isn't a scroll with its fields says nothing.
-            if not (ran and action.get('type') == 'scroll' and tool_action.get('type') == 'scroll'):
-                continue
-            axis = 'scroll_x' if tool_action.get('direction') in ('left', 'right') else 'scroll_y'
-            pixels, clicks = action.get(axis), tool_action.get('amount')
-            if isinstance(pixels, int) and isinstance(clicks, int) and clicks * _SCROLL_PIXELS_PER_CLICK != abs(pixels):
-                notes.append(
-                    f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
-                )
-    return notes
+    return [note for note in notes[: result['performed']] if note]
 
 
 def _needs_summary(result: ComputerResult | None) -> bool:
@@ -8599,7 +8613,7 @@ def _map_computer_call_output(
     # Images before the closing screenshot, such as a zoom, can't go in the output.
     images = [item for item in content if isinstance(item, BinaryImage)]
     others = images[:-1] if image is not None else images
-    conversions = _scroll_conversions(call, computer_return.result) if computer_return else []
+    conversions = _scroll_notes(call, computer_return.result) if computer_return else []
     if image is None or computer_return is None or _needs_summary(computer_return.result) or others or conversions:
         # The output can only carry an image: say what didn't run, or why the image is blank. The note is the tool's
         # result, so it is framed as one on the user channel, as for any tool result that can't go natively.

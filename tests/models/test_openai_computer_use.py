@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import struct
@@ -10,7 +11,9 @@ from collections.abc import Callable
 from typing import Any, cast
 
 import pytest
+from hypothesis import HealthCheck, given, settings, strategies as st
 from inline_snapshot import snapshot
+from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, Tool, ToolCallPart, ToolDenied
 from pydantic_ai.capabilities import NativeTool
@@ -29,6 +32,9 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
+    ToolCallPartDelta,
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
@@ -51,6 +57,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         _map_computer_action,  # pyright: ignore[reportPrivateUsage]
+        _map_computer_call,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -519,11 +526,20 @@ async def test_an_action_with_a_field_that_does_not_map_runs_nothing(allow_model
     assert call.args_as_dict() == {'actions': [{'type': 'click', 'unsupported_fields': ['duration_ms']}]}
 
 
-async def test_an_action_that_is_not_an_object_runs_nothing(allow_model_requests: None) -> None:
+@pytest.mark.parametrize(
+    'actions',
+    [
+        pytest.param([None], id='an-action-not-an-object'),
+        pytest.param(42, id='actions-not-a-list'),
+        # One valid action where the list should be: the call is still malformed.
+        pytest.param({'type': 'click', 'x': 1, 'y': 2, 'button': 'left'}, id='one-action-not-in-a-list'),
+    ],
+)
+async def test_a_malformed_call_runs_nothing(allow_model_requests: None, actions: Any) -> None:
     response = _computer_call({'type': 'screenshot'})
     item = response.output[0]
     assert isinstance(item, resp.ResponseComputerToolCall)
-    item.actions = [None]  # pyright: ignore[reportAttributeAccessIssue]  # the SDK doesn't validate a response
+    item.actions = actions  # the SDK doesn't validate a response
     client = MockOpenAIResponses.create_mock([response, _done()])
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
     provider, computer = InMemoryProvider(), FakeComputer()
@@ -644,15 +660,15 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
         (
             {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': -9000, 'scroll_y': 10},
             [
-                {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'left', 'amount': 50, 'modifiers': cast(list[str], [])},
+                {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'left', 'amount': 90, 'modifiers': cast(list[str], [])},
                 {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 1, 'modifiers': cast(list[str], [])},
             ],
         ),
         ({'type': 'keypress', 'keys': ['CTRL', 'S']}, {'type': 'keypress', 'keys': ['CTRL', 'S']}),
         ({'type': 'type', 'text': 'hi'}, {'type': 'type', 'text': 'hi'}),
         ({'type': 'wait'}, {'type': 'wait'}),
-        ({'type': 'teleport', 'x': 1}, {'type': 'teleport', 'unsupported_fields': ['x']}),
-        ({'type': ['click'], 'x': 1}, {'type': ['click'], 'unsupported_fields': ['x']}),
+        ({'type': 'teleport', 'x': 1}, {'type': 'teleport', 'unsupported_fields': []}),
+        ({'type': ['click'], 'x': 1}, {'type': "['click']", 'unsupported_fields': []}),
         # Under the tool's own type, so the retry names the field rather than refusing the type.
         (
             {'type': 'double_click', 'x': 1, 'y': 2, 'duration_ms': 5},
@@ -678,7 +694,9 @@ def test_openai_actions_map_onto_the_computer_tool(
     action: dict[str, Any], mapped: dict[str, Any] | list[dict[str, Any]]
 ) -> None:
     """Every action OpenAI documents, including ones no recording has: a VCR test would pin only what GPT sent."""
-    assert _map_computer_action(action) == (mapped if isinstance(mapped, list) else [mapped])
+    assert [tool_action for tool_action, _ in _map_computer_action(action)] == (
+        mapped if isinstance(mapped, list) else [mapped]
+    )
 
 
 def _is_a_valid_png(data_uri: str) -> bool:
@@ -772,10 +790,13 @@ async def test_a_pixel_scroll_that_ran_says_how_it_ran_as_wheel_clicks(
     result = ToolReturnPart(
         'computer', [summary, _SCREEN], tool_call_id='call_1', metadata=metadata, tool_kind=COMPUTER_KIND.id
     )
-    mapped = [_map_computer_action(action) for action in actions]
-    tool_actions = [tool_action for tool_actions in mapped for tool_action in tool_actions]
-    counts = [len(tool_actions) for tool_actions in mapped]
-    history = _computer_history({'actions': tool_actions}, item, result, computer_action_counts=counts)
+    mapped = [pair for action in actions for pair in _map_computer_action(action)]
+    history = _computer_history(
+        {'actions': [tool_action for tool_action, _ in mapped]},
+        item,
+        result,
+        computer_scroll_notes=[note for _, note in mapped],
+    )
     computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
     await model.request(
         history,
@@ -790,18 +811,22 @@ async def test_a_pixel_scroll_that_ran_says_how_it_ran_as_wheel_clicks(
     }
 
 
+_KEPT_NOTE = 'scroll_y=340 ran as 5 wheel clicks of about 100 pixels each.'
+
+
 @pytest.mark.parametrize(
-    'counts, notes',
+    'kept, notes',
     [
-        # Mapped by an earlier release at another number of pixels per click: described as it ran.
-        pytest.param([1], ' scroll_y=340 ran as 5 wheel clicks of about 100 pixels each.', id='kept'),
+        # Written by an earlier release at another number of pixels per click: read as it was kept.
+        pytest.param([_KEPT_NOTE], f' {_KEPT_NOTE}', id='kept'),
         # Such as a history a UI rebuilt without them.
         pytest.param(None, '', id='missing'),
-        pytest.param([2], '', id='not-matching-its-actions'),
+        pytest.param('not a list', '', id='not-a-list'),
+        pytest.param([5], '', id='not-text'),
     ],
 )
-async def test_a_pixel_scroll_note_reads_the_clicks_by_the_counts_kept_on_the_call(
-    allow_model_requests: None, counts: list[int] | None, notes: str
+async def test_a_pixel_scroll_note_is_read_as_it_was_kept_on_the_call(
+    allow_model_requests: None, kept: Any, notes: str
 ) -> None:
     client = MockOpenAIResponses.create_mock(_done())
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
@@ -814,7 +839,8 @@ async def test_a_pixel_scroll_note_reads_the_clicks_by_the_counts_kept_on_the_ca
         metadata={'performed': 1},
         tool_kind=COMPUTER_KIND.id,
     )
-    history = _computer_history({'actions': [scroll]}, item, result, computer_action_counts=counts)
+    details = {} if kept is None else {'computer_scroll_notes': kept}
+    history = _computer_history({'actions': [scroll]}, item, result, **details)
     computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
     await model.request(
         history,
@@ -828,52 +854,6 @@ async def test_a_pixel_scroll_note_reads_the_clicks_by_the_counts_kept_on_the_ca
     assert texts == (
         [f'<tool_result tool_name="computer" tool_call_id="call_1">Ran 1 action.{notes}</tool_result>'] if notes else []
     )
-
-
-_STORED_SCROLL: dict[str, Any] = {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 340}
-
-
-@pytest.mark.parametrize(
-    'counts, stored',
-    [
-        # Each action becomes at least one tool action, so these counts came from somewhere else.
-        pytest.param([3, -1], _STORED_SCROLL, id='negative-count'),
-        pytest.param([2, 0], _STORED_SCROLL, id='zero-count'),
-        pytest.param([1, 1], {**_STORED_SCROLL, 'scroll_y': '340'}, id='pixels-not-a-number'),
-        pytest.param([1, 1], None, id='action-not-an-object'),
-    ],
-)
-async def test_a_stored_call_no_mapping_could_make_adds_no_scroll_note(
-    allow_model_requests: None, counts: list[int], stored: Any
-) -> None:
-    client = MockOpenAIResponses.create_mock(_done())
-    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
-    item = {
-        **_COMPUTER_ITEM,
-        'actions': [
-            {'type': 'click', 'button': 'left', 'x': 1, 'y': 2},
-            stored,
-        ],
-    }
-    click: dict[str, Any] = {'type': 'click', 'x': 1, 'y': 2, 'button': 'left', 'modifiers': []}
-    scroll: dict[str, Any] = {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 3, 'modifiers': []}
-    result = ToolReturnPart(
-        'computer',
-        ['Ran 2 actions.', _SCREEN],
-        tool_call_id='call_1',
-        metadata={'performed': 2},
-        tool_kind=COMPUTER_KIND.id,
-    )
-    history = _computer_history({'actions': [click, scroll]}, item, result, computer_action_counts=counts)
-    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
-    await model.request(
-        history,
-        None,
-        ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True),
-    )
-
-    (request,) = get_mock_responses_kwargs(client)
-    assert [item['content'] for item in request['input'] if item.get('role') == 'user'][1:] == []
 
 
 @pytest.mark.parametrize('native', [True, False], ids=['native', 'opted-out-since'])
@@ -952,11 +932,204 @@ async def test_a_streamed_computer_call_keeps_its_place_before_a_later_function_
         None,
         ModelRequestParameters(function_tools=[computer, note], native_tools=[COMPUTER_TOOL], allow_text_output=True),
     ) as streamed:
-        async for _ in streamed:
-            pass
+        streamed_events = [event async for event in streamed]
 
     parts = streamed.get().parts
     assert [part.tool_name for part in parts if isinstance(part, ToolCallPart)] == ['computer', 'note']
     first = parts[0]
     assert isinstance(first, ComputerCallPart)
     assert first.actions == [Screenshot()]
+    # Started once and then filled in, not started again when it ends.
+    starts = [event for event in streamed_events if isinstance(event, PartStartEvent) and event.index == 0]
+    deltas = [event for event in streamed_events if isinstance(event, PartDeltaEvent) and event.index == 0]
+    assert len(starts) == 1
+    assert [getattr(event.delta, 'args_delta', None) for event in deltas] == [{'actions': [{'type': 'screenshot'}]}]
+
+
+async def test_a_streamed_computer_call_starts_once_and_then_gets_its_arguments(allow_model_requests: None) -> None:
+    """In the order OpenAI streams items (each done before the next is added), a UI sees start, arguments, end.
+
+    Starting it again when it ends would make AG-UI open the call twice and send its arguments as two JSON objects.
+    """
+    item = resp.ResponseComputerToolCall.model_validate(
+        {**_COMPUTER_ITEM, 'actions': [{'type': 'screenshot'}], 'pending_safety_checks': []}
+    )
+    response = response_message([])
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=item.model_copy(update={'actions': None, 'status': 'in_progress'}),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=item, output_index=0, type='response.output_item.done', sequence_number=2
+        ),
+        resp.ResponseCompletedEvent(
+            response=response.model_copy(update={'status': 'completed'}), type='response.completed', sequence_number=3
+        ),
+    ]
+    client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    async with model.request_stream(
+        [ModelRequest.user_text_prompt('Go.')],
+        None,
+        ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    ) as streamed:
+        events = [event async for event in streamed]
+
+    assert [type(event).__name__ for event in events] == ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent']
+    start, delta, _ = events
+    assert isinstance(start, PartStartEvent) and isinstance(start.part, ComputerCallPart) and start.part.args is None
+    assert isinstance(delta, PartDeltaEvent) and isinstance(delta.delta, ToolCallPartDelta)
+    assert delta.delta.args_delta == {'actions': [{'type': 'screenshot'}]}
+    final = streamed.get().parts[0]
+    assert isinstance(final, ComputerCallPart) and final.actions == [Screenshot()]
+
+
+# Properties over any value OpenAI could send or a history could hold. The SDK builds response items without
+# validating them, and a stored history can be edited or rebuilt by a UI, so the adapter can be handed anything.
+
+_JSON = st.recursive(
+    st.none() | st.booleans() | st.integers() | st.floats(allow_nan=False) | st.text(max_size=8),
+    lambda children: st.lists(children, max_size=3) | st.dictionaries(st.text(max_size=8), children, max_size=3),
+    max_leaves=8,
+)
+_POINT = st.fixed_dictionaries({'x': st.integers(), 'y': st.integers()})
+_KEYS = st.lists(st.sampled_from(['CTRL', 'SHIFT', 'ALT', 'A', 'ENTER']), max_size=3)
+_MODIFIERS = st.lists(st.sampled_from(['CTRL', 'SHIFT', 'ALT']), max_size=3)
+# Close to an OpenAI action: a documented type (or not), and each field either of its documented type or anything.
+_NEAR_ACTION = st.fixed_dictionaries(
+    {
+        'type': st.sampled_from(
+            ['click', 'double_click', 'drag', 'keypress', 'move', 'screenshot', 'scroll', 'type', 'wait', 'teleport']
+        )
+        | _JSON
+    },
+    optional={
+        'x': st.integers() | _JSON,
+        'y': st.integers() | _JSON,
+        'button': st.sampled_from(['left', 'right', 'wheel', 'back', 'forward']) | _JSON,
+        'keys': _KEYS | _JSON,
+        'scroll_x': st.integers() | _JSON,
+        'scroll_y': st.integers() | _JSON,
+        'path': st.lists(_POINT, max_size=3) | _JSON,
+        'text': st.text(max_size=8) | _JSON,
+        'extra': _JSON,
+    },
+)
+_COORDINATE = st.integers(0, 10_000)
+_VALID_ACTION: st.SearchStrategy[dict[str, Any]] = st.one_of(
+    st.fixed_dictionaries(
+        {
+            'type': st.just('click'),
+            'x': _COORDINATE,
+            'y': _COORDINATE,
+            'button': st.sampled_from(['left', 'right', 'wheel', 'back', 'forward']),
+            'keys': _MODIFIERS,
+        }
+    ),
+    st.fixed_dictionaries(
+        {'type': st.sampled_from(['double_click', 'move']), 'x': _COORDINATE, 'y': _COORDINATE, 'keys': _MODIFIERS}
+    ),
+    st.fixed_dictionaries(
+        {
+            'type': st.just('scroll'),
+            'x': _COORDINATE,
+            'y': _COORDINATE,
+            'scroll_x': st.integers(-100_000, 100_000),
+            'scroll_y': st.integers(-100_000, 100_000),
+            'keys': _MODIFIERS,
+        }
+    ),
+    st.fixed_dictionaries(
+        {
+            'type': st.just('drag'),
+            'path': st.lists(st.fixed_dictionaries({'x': _COORDINATE, 'y': _COORDINATE}), min_size=2, max_size=4),
+            'keys': _MODIFIERS,
+        }
+    ),
+    st.fixed_dictionaries({'type': st.just('keypress'), 'keys': _KEYS.filter(bool)}),
+    st.fixed_dictionaries(
+        {
+            'type': st.just('type'),
+            # The tool refuses control characters other than these, so every backend types the same keys.
+            'text': st.text(st.characters(exclude_categories=['Cc']) | st.sampled_from('\n\t'), min_size=1),
+        }
+    ),
+    st.fixed_dictionaries({'type': st.sampled_from(['wait', 'screenshot'])}),
+)
+_TOOL_ACTION: TypeAdapter[ComputerToolAction] = TypeAdapter(ComputerToolAction)
+
+
+def _accepted(tool_action: dict[str, Any]) -> bool:
+    try:
+        _TOOL_ACTION.validate_python(tool_action)
+    except ValidationError:
+        return False
+    return True
+
+
+@settings(max_examples=500, deadline=None)
+@given(_NEAR_ACTION | _JSON)
+def test_any_action_maps_without_raising_and_a_refusal_is_rejected(raw: Any) -> None:
+    """The tool checks every action before running any, so one it rejects means none of the call runs."""
+    for tool_action, note in _map_computer_action(raw):
+        assert 'unsupported_fields' not in tool_action or not _accepted(tool_action)
+        assert note is None or isinstance(note, str)
+
+
+@settings(max_examples=300, deadline=None)
+@given(_VALID_ACTION)
+def test_every_valid_openai_action_maps_to_actions_the_tool_runs(raw: dict[str, Any]) -> None:
+    mapped = _map_computer_action(raw)
+    assert mapped
+    assert all(_accepted(tool_action) for tool_action, _ in mapped)
+
+
+@settings(max_examples=300, deadline=None)
+@given(st.lists(_NEAR_ACTION | _JSON, max_size=4) | _JSON)
+def test_any_call_maps_with_one_scroll_note_slot_per_tool_action(actions: Any) -> None:
+    item = resp.ResponseComputerToolCall.model_validate({**_COMPUTER_ITEM, 'actions': [], 'pending_safety_checks': []})
+    item.actions = actions  # the SDK doesn't validate a response
+    call = _map_computer_call(item, 'computer', 'call_1', 'openai')
+    args = call.args_as_dict()['actions']
+    assert args
+    notes = (call.provider_details or {}).get('computer_scroll_notes')
+    assert notes is None or len(notes) == len(args)
+
+
+@settings(
+    max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture]
+)
+@given(
+    stored_item=st.fixed_dictionaries({}, optional={'actions': _JSON, 'pending_safety_checks': _JSON, 'extra': _JSON}),
+    details=st.dictionaries(
+        st.sampled_from(['computer_scroll_notes', 'pending_safety_checks', 'other']), _JSON, max_size=3
+    ),
+    metadata=_JSON,
+    args=st.dictionaries(st.text(max_size=8), _JSON, max_size=3) | st.text(max_size=8),
+)
+def test_any_stored_computer_call_replays(
+    allow_model_requests: None,
+    stored_item: dict[str, Any],
+    details: dict[str, Any],
+    metadata: Any,
+    args: dict[str, Any] | str,
+) -> None:
+    """A history holding anything in the call's stored details, arguments or result metadata is sent, not raised on."""
+    item = {**_COMPUTER_ITEM, **stored_item}
+    result = ToolReturnPart(
+        'computer', ['Ran 1 action.', _SCREEN], tool_call_id='call_1', metadata=metadata, tool_kind=COMPUTER_KIND.id
+    )
+    history = _computer_history(args, item, result, **details)
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    client = MockOpenAIResponses.create_mock(_done())
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    parameters = ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True)
+    with asyncio.Runner() as runner:
+        runner.run(model.request(history, None, parameters))
+    (request,) = get_mock_responses_kwargs(client)
+    assert request['input']

@@ -32,8 +32,24 @@ DISPLAY = ':1'
 DISPLAY_NUMBER = DISPLAY[1:]
 
 START_LOCK = f'exec 9>/tmp/.pydantic-ai-display-{DISPLAY_NUMBER}.lock; ! command -v flock >/dev/null || flock 9; '
-"""Starts a start script: waits for another start of the same display to finish, so two don't both find no X
-server and start two. What the script starts in the background must close the lock with `9>&-`, or it holds it."""
+"""Starts a start script: waits for another start of the same display to finish, so two don't both find nothing
+running and start two. The script holds it until it exits; what it starts in the background must close it with
+`9>&-`, or that holds it as long as it runs."""
+
+
+def wait_until_ready(ready: str, pid: str, what: str, log: str) -> str:
+    """A shell fragment that waits until the command `ready` succeeds, for a program just started in the background.
+
+    It gives up as soon as the process `pid` exits, or after 10 seconds, saying `what` didn't start, with the end of
+    `log` as the reason.
+    """
+    return (
+        f'i=0; until {ready}; do '
+        f'if ! kill -0 {pid} 2>/dev/null || [ $i -ge 100 ]; then '
+        f"echo '{what} did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "
+        'sleep 0.1; i=$((i+1)); done; '
+    )
+
 
 _BUTTONS: dict[str, str] = {'left': '1', 'middle': '2', 'right': '3', 'back': '8', 'forward': '9'}
 
