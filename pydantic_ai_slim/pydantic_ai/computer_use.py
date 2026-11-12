@@ -535,6 +535,22 @@ _SAFETY_CHECKS = 'safety_checks'
 
 _SAFETY_CHECKS_TA = pydantic.TypeAdapter(list[SafetyCheck])
 
+
+def _safety_checks(provider_details: dict[str, Any] | None) -> list[SafetyCheck]:
+    """The safety checks kept on a call, read once for everything that asks whether it was flagged.
+
+    A history can come back from storage or a UI; checks kept in a shape that can't be read still flag the call, as
+    one check that says nothing, so it waits for approval rather than running.
+    """
+    checks = (provider_details or {}).get(_SAFETY_CHECKS)
+    if not checks:
+        return []
+    try:
+        return _SAFETY_CHECKS_TA.validate_python(checks)
+    except pydantic.ValidationError:
+        return [SafetyCheck()]
+
+
 _COORDINATE_GRID = 'coordinate_grid'
 """The `provider_details` key under which the agent records the grid a call's positions are on."""
 
@@ -578,8 +594,7 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
     @property
     def safety_checks(self) -> list[SafetyCheck]:
         """The checks the provider asks a person to make before this call runs; empty when there are none."""
-        checks = (self.provider_details or {}).get(_SAFETY_CHECKS)
-        return _SAFETY_CHECKS_TA.validate_python(checks) if checks else []
+        return _safety_checks(self.provider_details)
 
     @property
     def coordinate_grid(self) -> int | None:
