@@ -79,6 +79,7 @@ from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duratio
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RUN_CODE_TOOL_NAME, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
+from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.code_mode._speculation import SpeculationCoordinator
@@ -715,8 +716,9 @@ class RunCodeExecution:
     # Nested `ToolReturn.content` never enters the sandbox; it reaches the model on the `run_code` return.
     # Each call reserves its slot when it starts, so concurrent calls keep call order, as core does.
     user_content: dict[str, list[UserContent]] = field(default_factory=dict[str, list[UserContent]])
-    # Snippet code can catch the error at the call site, so the feed re-raises it once it stops.
-    usage_limit_exceeded: UsageLimitExceeded | None = None
+    # An error that ends the run, like a usage limit a nested call hit or an output guardrail blocking a
+    # submission. Snippet code can catch it at the call site, so the feed re-raises it once it stops.
+    run_ending_error: UsageLimitExceeded | OutputBlocked | None = None
     # Set once the snippet calls an output function (`allow_final_output`): `'accepted'`, or the
     # retry the rejected output answers `run_code` with. The snippet stops there either way.
     output_submission: Literal['accepted'] | ToolReturnPart | None = None
@@ -747,7 +749,7 @@ class RunCodeExecution:
         )
         if outcome.error is not None:
             if outcome.usage_limit_exceeded is not None:
-                self.usage_limit_exceeded = outcome.usage_limit_exceeded
+                self.run_ending_error = outcome.usage_limit_exceeded
             raise outcome.error
         # Serialize to JSON-compatible form so Monty receives only plain data.
         return _jsonable_for_sandbox(_TOOL_RETURN_CONTENT_TA.dump_python(outcome.content, warnings=False))
@@ -784,10 +786,10 @@ def _started_calls_note(execution: RunCodeExecution) -> str:
     return f'\n\n{_describe_started_calls(execution.nested_calls, execution.nested_returns)}'
 
 
-def _raise_usage_limit_exceeded(execution: RunCodeExecution) -> None:
-    """Re-raise the usage limit a nested call hit, which the snippet may have caught at its call site."""
-    if execution.usage_limit_exceeded is not None:
-        raise execution.usage_limit_exceeded
+def _raise_run_ending_error(execution: RunCodeExecution) -> None:
+    """Re-raise the error that ends the run, which the snippet may have caught at its call site."""
+    if execution.run_ending_error is not None:
+        raise execution.run_ending_error
 
 
 def _runtime_failure_retry(error: MontyRuntimeError, execution: RunCodeExecution, *, reset_advice: str) -> ModelRetry:
@@ -820,7 +822,7 @@ def _runtime_failure_retry(error: MontyRuntimeError, execution: RunCodeExecution
             'Check the calls already started before continuing, and do not replay '
             'completed side effects.'
         )
-    _raise_usage_limit_exceeded(execution)
+    _raise_run_ending_error(execution)
     return ModelRetry(message)
 
 
@@ -1401,7 +1403,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 raise
             raise retry from exc
 
-        _raise_usage_limit_exceeded(execution)
+        _raise_run_ending_error(execution)
         result = completed.output
         # Validate result to reconstruct multimodal types (e.g. BinaryContent from
         # serialized dicts) so they flow through to the model natively.
@@ -1477,13 +1479,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # worker transparently. Reset so the retry starts from a fresh,
                 # type-checked session.
                 await run_state.reset()
-                _raise_usage_limit_exceeded(execution)
+                _raise_run_ending_error(execution)
                 return ModelRetry(f'{self._worker_failure_message(error)}{_started_calls_note(execution)}')
             case Exception():
                 # The session may have been invalidated by a host-side binding or protocol failure.
                 # Make the reset visible so the model can rebuild state on its next attempt.
                 await run_state.reset()
-                _raise_usage_limit_exceeded(execution)
+                _raise_run_ending_error(execution)
                 error_text = (
                     type(error).__name__ if self.monty_sandbox is not None else f'{type(error).__name__}: {error}'
                 )
@@ -1499,7 +1501,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 await run_state.reset()
                 if not is_sandbox_panic(error):
                     return None
-                _raise_usage_limit_exceeded(execution)
+                _raise_run_ending_error(execution)
                 return ModelRetry(
                     'The code aborted inside the sandbox and the session was reset. Revise the code and try again.'
                     f'{_started_calls_note(execution)}'
@@ -1523,8 +1525,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         Refusing here means no task is created; the executor hands the error to the sandbox at
         the call site, so calls that already completed keep their recorded results.
         """
-        if execution.output_submission is not None:
-            # Code that caught the stop doesn't get to run more tools after submitting.
+        if execution.output_submission is not None or execution.run_ending_error is not None:
+            # Code that caught the stop doesn't get to run more tools after submitting or after the run ended.
             raise RuntimeError('This code already submitted the final output, so it cannot call more functions.')
         original_name = tool.sanitized_to_original.get(sandbox_name, sandbox_name)
         tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
@@ -1589,9 +1591,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 rejection, tool_name=call_part.tool_name, tool_call_id=tool_call_id
             )
             raise RuntimeError('The output was rejected, so the code stopped here.') from None
-        except UsageLimitExceeded as e:
-            # Snippet code can catch it at the call site, so the feed re-raises it once it stops.
-            execution.usage_limit_exceeded = e
+        except (UsageLimitExceeded, OutputBlocked) as e:
+            # Both end the run, as they would outside the sandbox. Snippet code can catch them at the call
+            # site, so the feed re-raises them once it stops.
+            execution.run_ending_error = e
             raise
         execution.output_submission = 'accepted'
         execution.nested_returns[tool_call_id] = ToolReturnPart(

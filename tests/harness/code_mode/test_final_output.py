@@ -20,7 +20,7 @@ from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness import CodeMode, GuardrailResult, InputGuardrail
+from pydantic_ai_harness import CodeMode, GuardrailResult, InputGuardrail, OutputBlocked, OutputGuardrail
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
 
@@ -36,6 +36,8 @@ class Receipt(BaseModel):
 ORDERS = {'ord_8Kq2ZpVxL0mN3rT6yB1c': {'lines': [1250, 4999]}}
 
 
+# `Any` on purpose: with a precise return type, Monty's type checker would reject `total=order['id']` before the code
+# runs, and `test_rejected_output_keeps_the_repl_for_a_fix` needs a value that only output validation rejects, at run time.
 def load_order(order_id: str) -> dict[str, Any]:
     """Load an order by its ID."""
     return {'id': order_id, **ORDERS[order_id]}
@@ -340,6 +342,24 @@ caught: This code already submitted the final output, so it cannot call more fun
         )
 
         with pytest.raises(UsageLimitExceeded, match='went over its limit'):
+            await agent.run('Invoice the order.')
+
+    async def test_output_guardrail_block_ends_the_run_even_if_caught(self):
+        code = (
+            'try:\n    submit_invoice(order_id="ord_1", total=1)\nexcept Exception:\n    pass\n'
+            'await load_order(order_id="ord_8Kq2ZpVxL0mN3rT6yB1c")'
+        )
+        agent = Agent(
+            run_code_model(code),
+            tools=[load_order],
+            output_type=ToolOutput(Invoice, name='submit_invoice'),
+            capabilities=[
+                CodeMode(allow_final_output=True),
+                OutputGuardrail(guard=lambda output: GuardrailResult.block('Invoices need a review.')),
+            ],
+        )
+
+        with pytest.raises(OutputBlocked, match='Invoices need a review'):
             await agent.run('Invoice the order.')
 
     async def test_eager_submission_waits_for_a_parallel_input_guardrail(self, monkeypatch: pytest.MonkeyPatch):

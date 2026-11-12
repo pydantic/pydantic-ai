@@ -212,7 +212,7 @@ submit_agent = Agent(
 
 
 @DBOS.workflow()
-def run_submit_agent(prompt: str) -> dict[str, Any]:
+def run_submit_agent(prompt: str) -> dict[str, int]:
     result = submit_agent.run_sync(prompt)
     return {'total': result.output.total, 'requests': result.usage.requests}
 
