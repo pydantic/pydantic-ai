@@ -6,7 +6,6 @@ import asyncio
 import importlib
 import sys
 from pathlib import Path
-from typing import Any
 
 import anyio
 import pytest
@@ -102,17 +101,26 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
 
 
 def test_from_spec_forwards_the_spec_fields() -> None:
-    spec_fields: dict[str, Any] = {
-        'id': 'kubernetes',
-        'description': 'a sandbox',
-        'warm_pool': 'python-pool',
-        'namespace': 'agents',
-        'connection': 'in-cluster-service',
-        'sandbox_timeout': 600,
-        'working_dir': '/work',
-        'env': {'A': '1'},
-    }
-    assert KubernetesSandbox[None].from_spec(**spec_fields) == KubernetesSandbox(**spec_fields)
+    from_spec = KubernetesSandbox[None].from_spec(
+        id='kubernetes',
+        description='a sandbox',
+        warm_pool='python-pool',
+        namespace='agents',
+        connection='in-cluster-service',
+        sandbox_timeout=600,
+        working_dir='/work',
+        env={'A': '1'},
+    )
+    assert from_spec == KubernetesSandbox(
+        id='kubernetes',
+        description='a sandbox',
+        warm_pool='python-pool',
+        namespace='agents',
+        connection='in-cluster-service',
+        sandbox_timeout=600,
+        working_dir='/work',
+        env={'A': '1'},
+    )
 
 
 async def test_the_sdk_client_matches_the_connection(cluster: FakeCluster) -> None:
@@ -535,6 +543,8 @@ def test_capability_arguments_are_checked() -> None:
         KubernetesSandbox(warm_pool='pool', sandbox_timeout=0)
     with pytest.raises(UserError, match='working_dir'):
         KubernetesSandbox(warm_pool='pool', working_dir='relative')
+    with pytest.raises(UserError, match='`env` keys and values must be strings'):
+        KubernetesSandbox(warm_pool='pool', env={'A': 1})  # type: ignore[dict-item]
     with pytest.raises(UserError, match="connection must be one of 'port-forward'"):
         KubernetesSandbox(warm_pool='pool', connection='gateway')  # type: ignore[arg-type]
     assert KubernetesSandbox(warm_pool='pool', sandbox_timeout=None).sandbox_timeout is None

@@ -11,7 +11,12 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend
-from pydantic_ai_harness._workspace_provider import check_integer, check_working_dir, reject_defer_loading
+from pydantic_ai_harness._workspace_provider import (
+    check_env_types,
+    check_integer,
+    check_working_dir,
+    reject_defer_loading,
+)
 from pydantic_ai_harness.kubernetes_sandbox._backend import (
     DEFAULT_SANDBOX_TIMEOUT,
     PROVIDER,
@@ -85,6 +90,10 @@ class KubernetesSandbox(AbstractCapability[AgentDepsT]):
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_integer('sandbox_timeout', self.sandbox_timeout, optional=True)
         check_working_dir(self.working_dir)
+        try:
+            check_env_types(self.env)
+        except TypeError:
+            raise UserError('`env` keys and values must be strings.') from None
         if problem := connection_problem(self.connection):
             raise UserError(problem)
 
