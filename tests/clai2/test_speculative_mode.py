@@ -22,6 +22,7 @@ from pydantic_ai.capabilities import (
     DynamicCapability,
     Hooks,
     LocalWorkspace,
+    ValidatedToolArgs,
 )
 from pydantic_ai.messages import (
     ModelMessage,
@@ -420,16 +421,20 @@ def allow(call: object) -> GuardrailResult:
     return GuardrailResult.allow()  # pragma: no cover -- only inspected, never run.
 
 
-def hooks(**tool_hooks: Sequence[str]) -> Hooks[None]:
-    """A `Hooks` with a pass-through function registered for each `hook=tools` pair."""
+async def checked(
+    ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+) -> ValidatedToolArgs:
+    return args  # pragma: no cover -- only inspected, never run.
 
-    async def passthrough(ctx: RunContext[None], **kwargs: object) -> object:
-        return kwargs['args']  # pragma: no cover -- only inspected, never run.
 
+def hooks_before_execute(tools: Sequence[str]) -> Hooks[None]:
     capability = Hooks[None]()
-    for name, tools in tool_hooks.items():
-        getattr(capability.on, name)(tools=tools)(passthrough)
+    capability.on.before_tool_execute(tools=tools)(checked)
     return capability
+
+
+def selects(ctx: RunContext[None], tool_def: ToolDefinition) -> bool:
+    return True  # pragma: no cover -- only inspected, never run.
 
 
 def judge(tools: ToolSelector[None] = 'all') -> ToolCallJudge[None]:
@@ -494,16 +499,26 @@ class TestWorkspaceMount:
     @pytest.mark.parametrize(
         ('gate', 'expected'),
         [
-            (hooks(before_tool_execute=['write_file']), 'read-only'),
-            (hooks(before_tool_validate=['run_code']), 'read-only'),
+            (hooks_before_execute(['write_file']), 'read-only'),
+            (hooks_before_execute(['run_code']), 'read-only'),
             # Registered hook functions aren't public, so any `Hooks` may hold one that checks a write.
             (Hooks[None](), 'read-only'),
             (judge(), 'read-only'),
             (judge(['edit_file']), 'read-only'),
             (judge({'kind': 'write'}), 'read-only'),
+            (judge(selects), 'read-only'),
             (judge(['grep']), 'read-write'),
         ],
-        ids=['hooks_writes', 'hooks_run_code', 'hooks', 'judge_all', 'judge_writes', 'judge_metadata', 'judge_other'],
+        ids=[
+            'hooks_writes',
+            'hooks_run_code',
+            'hooks',
+            'judge_all',
+            'judge_writes',
+            'judge_metadata',
+            'judge_function',
+            'judge_other',
+        ],
     )
     def test_write_gates_mount_read_only(self, gate: AbstractCapability[None], expected: str) -> None:
         """A `Hooks` or `ToolCallJudge` that may stop a write keeps `pathlib` from making it unchecked."""

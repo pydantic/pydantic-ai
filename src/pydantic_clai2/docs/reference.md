@@ -1868,8 +1868,8 @@ not the filesystem the file tools act on there.
   `read_only_patterns` set, a `ToolGuardrail` (a plugin's or the agent's own)
   that checks or hides `write_file`, `edit_file`, `shell`, or `run_code`, or a
   `ToolCallJudge` that may judge one of them. So does any `Hooks`, such as a
-  `before_tool` hooks table, because which tools its functions check can't be
-  read before the run. A `Permissions` in `read-only` mode, the session's or the
+  `before_tool` or `after_tool` hooks table, because which tools its functions
+  check can't be read before the run. A `Permissions` in `read-only` mode, the session's or the
   agent's own, mounts it read-only for that run.
 - **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, a
   `ToolGuardrail` that checks or hides `read_file`, no `FileSystem`, more than
