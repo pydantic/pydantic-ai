@@ -278,7 +278,7 @@ Answer with [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults], or r
 - `metadata` reaches the tool as [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata].
 - `answered_by` says who answered each call, and is reported in the run's `DeferredToolResultsEvent`.
 
-Whoever can resolve the token decides the calls, including their arguments through `override_args`, the `metadata` tools read and the `answered_by` the run reports, so a tool must not treat either as proof of who approved. Pydantic AI checks only the answer's shape and that it names pending calls. Treat the token as a bearer credential, in process as on an engine, and authorize the approver in the code that resolves it.
+Whoever can resolve the token decides the calls, including their arguments through `override_args`, the `metadata` tools read and the `answered_by` the run reports, so a tool must not treat either as proof of who approved. Pydantic AI checks only the answer's shape and that it names pending calls. In process and on AWS Lambda, treat the token as a bearer credential. On Temporal, the token is in the workflow history, so the boundary is permission to signal the workflow; see [Waiting for approvals and answers](../durable_execution/temporal.md#waiting-for-approvals-and-answers). Either way, authorize the approver in the code that resolves it.
 
 From Python, build the answer as a `DeferredToolResults` and serialize it:
 
