@@ -1,5 +1,6 @@
 """Filesystem capability: gives agents configurable, bounded file system access."""
 
+from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.filesystem._capability import FileSystem
 from pydantic_ai_harness.filesystem._content import Replacement
 from pydantic_ai_harness.filesystem._events import (
@@ -8,7 +9,7 @@ from pydantic_ai_harness.filesystem._events import (
     MAX_EVENT_DIFF_CHARS,
     DirectoryCreatedEvent,
     DirectoryListedEvent,
-    FileChangeRequestEvent,
+    FileChangeRequestedEvent,
     FileEditedEvent,
     FileOperation,
     FileReadEvent,
@@ -82,7 +83,7 @@ __all__ = [
     'DirectoryListedEvent',
     'EditFileArgs',
     'EditFileCallPart',
-    'FileChangeRequestEvent',
+    'FileChangeRequestedEvent',
     'FileEditedEvent',
     'FileInfoArgs',
     'FileInfoCallPart',
@@ -111,3 +112,10 @@ __all__ = [
     'WriteFileArgs',
     'WriteFileCallPart',
 ]
+
+
+def __getattr__(name: str) -> object:
+    if name == 'FileChangeRequestEvent':
+        warn_class_renamed(name, 'FileChangeRequestedEvent', __name__)
+        return FileChangeRequestedEvent
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
