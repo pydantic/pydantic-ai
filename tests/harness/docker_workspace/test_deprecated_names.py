@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import warnings
+from dataclasses import dataclass
 
 import pytest
 
@@ -26,6 +27,35 @@ def test_shim_warns_and_aliases_old_names() -> None:
 
     assert issubclass(shim.DockerSandbox, DockerWorkspace)
     assert shim.DockerSandboxBackend is DockerWorkspaceBackend
+
+
+def test_root_old_names_resolve_to_shim() -> None:
+    import pydantic_ai_harness
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        from pydantic_ai_harness.docker_sandbox import DockerSandbox
+
+        assert pydantic_ai_harness.DockerSandbox is DockerSandbox
+        assert pydantic_ai_harness.DockerSandboxBackend is DockerWorkspaceBackend
+
+
+def test_subclass_of_old_name_keeps_its_own_spec_name() -> None:
+    """As before the rename, a subclass's spec block name is its own class name."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        from pydantic_ai_harness.docker_sandbox import DockerSandbox
+
+    @dataclass(init=False)
+    class MyDocker(DockerSandbox[None]):
+        pass
+
+    assert MyDocker.get_serialization_name() == 'MyDocker'
+    agent = Agent.from_spec(
+        {'model': 'test', 'capabilities': [{'MyDocker': {'image': 'python:3.13-slim'}}]},
+        custom_capability_types=[MyDocker],
+    )
+    assert [type(c) for c in agent.root_capability.capabilities if isinstance(c, DockerWorkspace)] == [MyDocker]
 
 
 def test_old_spec_block_name_loads() -> None:

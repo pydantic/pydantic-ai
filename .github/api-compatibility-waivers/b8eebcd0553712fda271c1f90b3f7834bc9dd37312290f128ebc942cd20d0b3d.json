@@ -1,5 +1,0 @@
-{
-  "against": "v2.68.0",
-  "reason": "Harness 0.x: `pydantic_ai_harness.DockerSandbox` is renamed to `DockerWorkspace`, since a plain container on the host kernel is not a sandbox. The old root name still imports through the root `__getattr__` (`_LAZY_EXPORTS`), with a `HarnessDeprecationWarning`. Under the harness 0.x policy it ships deprecated; the name is kept for a possible future capability built on Docker's microVM-based Docker Sandboxes.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13245"
-}

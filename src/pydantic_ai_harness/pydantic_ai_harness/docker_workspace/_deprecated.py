@@ -12,15 +12,11 @@ from pydantic_ai_harness.docker_workspace._capability import DockerWorkspace
 class DockerSandbox(DockerWorkspace[AgentDepsT]):
     """Deprecated name for `DockerWorkspace`.
 
-    Keeps the pre-rename `'DockerSandbox'` agent-spec block name, so specs saved before the
-    rename still load when this class is passed via `custom_capability_types`. Specs
-    saved through this class keep the old block name; migrate to `DockerWorkspace` to
-    save under the new one.
+    Its class name is its agent-spec block name, so specs saved before the rename, with a
+    `DockerSandbox` block, still load when this class is passed via `custom_capability_types`.
+    Specs saved through this class keep that block name; rename the block to `DockerWorkspace`
+    in the spec to migrate. Subclasses keep their own class name, as before the rename.
 
     `init=False` keeps the inherited `__init__`: one regenerated here would resolve its
     annotations against this module, hiding fields from the `AgentSpec` schema.
     """
-
-    @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return 'DockerSandbox'

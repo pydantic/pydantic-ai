@@ -1,4 +1,4 @@
-"""Docker container capability: runs the agent's commands and file edits in a local Docker (or Podman) container.
+"""Docker workspace capability: runs the agent's commands and file edits in a local Docker (or Podman) container.
 
 `DockerWorkspace` is the supported entry point; build an agent with it and add tools that use the
 workspace, such as `Coder`. `DockerWorkspaceBackend` is the workspace backend itself, public for
