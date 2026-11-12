@@ -237,7 +237,7 @@ def test_a_tool_that_runs_outside_its_task_is_not_held_to_the_toolset_options() 
     Agent(
         TestModel(),
         name='durable-opt-out',
-        toolsets=[FunctionToolset([Tool(slow, metadata={'durable': False})], id='lookup')],
+        toolsets=[FunctionToolset([Tool(slow, durable=False)], id='lookup')],
         capabilities=[
             RenderWorkflows(
                 app,

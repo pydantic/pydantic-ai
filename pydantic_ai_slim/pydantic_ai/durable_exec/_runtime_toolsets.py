@@ -77,16 +77,17 @@ def _all_tools_opt_out(toolset: AbstractToolset[Any], tool_config_key: str | Non
     """Whether every tool of a `FunctionToolset` opts out of durable wrapping, so it needs no registration.
 
     A tool opts out with `False` under the engine's own `tool_config_key`, or, when that isn't set, as an async tool
-    with the engine-neutral `{'durable': False}`.
+    with `durable=False`.
     """
     from ..toolsets.function import FunctionToolset
-    from ._toolset import durable_metadata_opts_out
+    from ._toolset import opts_out_of_durable_unit
 
     assert isinstance(toolset, FunctionToolset)
     return bool(toolset.tools) and all(
         (tool_config_key is not None and (tool.metadata or {}).get(tool_config_key) is False)
         or (
-            durable_metadata_opts_out(tool.metadata, name, engine_key=tool_config_key) and tool.function_schema.is_async
+            opts_out_of_durable_unit(tool.durable, tool.metadata, engine_key=tool_config_key)
+            and tool.function_schema.is_async
         )
         for name, tool in toolset.tools.items()
     )
@@ -103,7 +104,7 @@ def _opt_out_hint(tool_config_key: str | None, unsupported_kinds: frozenset[Runt
     )
     return (
         " Async tools that don't need durable wrapping can opt out with "
-        f"metadata={{'durable': False}}{engine_opt_out} to be allowed at runtime."
+        f'durable=False{engine_opt_out} to be allowed at runtime.'
     )
 
 
@@ -122,7 +123,7 @@ def reject_unsupported_runtime_toolsets(
             function tools inline (DBOS) omit `'function'`.
         engine: Human-readable engine name for the error message (e.g. `'DBOS'`).
         tool_config_key: Metadata key whose explicit `False` value opts async function tools out of wrapping. When
-            it isn't set on a tool, the engine-neutral `{'durable': False}` opts the tool out instead.
+            it isn't set on a tool, the tool's `durable=False` opts it out instead.
     """
     if not toolsets:
         return

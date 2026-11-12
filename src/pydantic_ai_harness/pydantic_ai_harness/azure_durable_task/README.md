@@ -269,7 +269,7 @@ are agent control flow, not activity failures. `UserError` and serialization fai
 `None` to keep `tool_options`, or `False` to run a function tool inline in the orchestrator. A function
 tool can also opt out with `metadata={'azure_durable_task': False}`. Inline tools must be deterministic
 and do no I/O. MCP and dynamic tools always run as activities.
-Async function tools can opt out with the engine-neutral [`metadata={'durable': False}`](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/#running-a-tool-outside-the-durable-unit),
+Async function tools can opt out with the engine-neutral [`durable=False`](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/#running-a-tool-outside-the-durable-unit),
 too, which works on every engine and wins over `resolve_tool_options`; an `'azure_durable_task'` key on
 the same tool wins over it.
 

@@ -126,9 +126,9 @@ from ._toolset import (
     Instructions,
     ToolConfig,
     call_dynamic_tool,
-    durable_metadata_opts_out,
     get_dynamic_tools,
     guard_run_context,
+    opts_out_of_durable_unit,
     resolve_tool_durable_config,
     run_args_validator,
     toolset_for_unit,
@@ -1155,35 +1155,36 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         return resolve
 
-    def _durable_metadata_opts_out(self, tool: ToolsetTool[Any] | None, tool_name: str) -> bool:
-        """Whether the tool's engine-neutral `{'durable': False}` metadata is set and not overridden by the engine's key."""
-        metadata = tool.tool_def.metadata if tool is not None else None
-        return durable_metadata_opts_out(metadata, tool_name, engine_key=self.engine_spec.tool_config_key)
+    def _durable_opts_out(self, tool: ToolsetTool[Any] | None) -> bool:
+        """Whether the tool's `durable=False` is set and not overridden by the engine's own metadata key."""
+        return tool is not None and opts_out_of_durable_unit(
+            tool.tool_def.durable, tool.tool_def.metadata, engine_key=self.engine_spec.tool_config_key
+        )
 
     def _runs_outside_durable_unit(self, tool: ToolsetTool[Any] | None, tool_name: str) -> bool:
-        """Whether a function tool's engine-neutral `{'durable': False}` metadata runs it outside the durable unit.
+        """Whether a function tool's `durable=False` runs it outside the durable unit.
 
-        The metadata wins over the engine backend's per-tool config. Every engine built on this base applies the
+        The field wins over the engine backend's per-tool config. Every engine built on this base applies the
         same rule to the function tools it wraps: only async ones can opt out. An engine that doesn't wrap
-        function tools, such as DBOS, already runs them in workflow code and never reads the metadata for them.
+        function tools, such as DBOS, already runs them in workflow code and never reads the field for them.
         """
-        if not self._durable_metadata_opts_out(tool, tool_name):
+        if not self._durable_opts_out(tool):
             return False
         if not (isinstance(tool, FunctionToolsetTool) and tool.is_async):
             raise UserError(
-                f"Tool {tool_name!r} has `{{'durable': False}}` metadata, but only async tools can run outside a "
+                f'Tool {tool_name!r} has `durable=False`, but only async tools can run outside a '
                 f"durable {self.durable_unit_noun}: a non-async tool runs in a thread, which some engines' workflow "
                 'code cannot use. Make the tool function async instead.'
             )
         return True
 
-    def _refuse_durable_metadata_opt_out(self, tool: ToolsetTool[Any] | None, tool_name: str) -> None:
-        """Raise if an MCP or dynamic toolset tool asks to run outside its durable unit with `{'durable': False}`."""
-        if self._durable_metadata_opts_out(tool, tool_name):
+    def _refuse_durable_opt_out(self, tool: ToolsetTool[Any] | None, tool_name: str) -> None:
+        """Raise if an MCP or dynamic toolset tool asks to run outside its durable unit with `durable=False`."""
+        if self._durable_opts_out(tool):
             raise UserError(
-                f"Tool {tool_name!r} has `{{'durable': False}}` metadata, but only function tools can run outside a "
+                f'Tool {tool_name!r} has `durable=False`, but only function tools can run outside a '
                 f'durable {self.durable_unit_noun}: MCP and dynamic toolset tools may perform I/O. Remove the '
-                'metadata, or move the tool to a static `FunctionToolset`.'
+                'setting, or move the tool to a static `FunctionToolset`.'
             )
 
     async def wrap_run(
@@ -1446,11 +1447,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         validate_args = self._bind_validate_tool_arguments_operation(backend, toolset, 'dynamic')
 
         def resolve_tool_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
-            self._refuse_durable_metadata_opt_out(tool, tool_name)
+            self._refuse_durable_opt_out(tool, tool_name)
             return backend.config_for_tool(call_operation, tool=tool, tool_name=tool_name)
 
         def resolve_validation_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
-            self._refuse_durable_metadata_opt_out(tool, tool_name)
+            self._refuse_durable_opt_out(tool, tool_name)
             return backend.config_for_tool(validate_args.operation, tool=tool, tool_name=tool_name)
 
         async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
@@ -1635,7 +1636,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         f'run outside a durable {self.durable_unit_noun}. Remove the metadata so the call '
                         'stays durable.'
                     )
-            self._refuse_durable_metadata_opt_out(tool, tool_name)
+            self._refuse_durable_opt_out(tool, tool_name)
             return backend.config_for_tool(call_operation, tool=tool, tool_name=tool_name)
 
         async def call_tool_operation(

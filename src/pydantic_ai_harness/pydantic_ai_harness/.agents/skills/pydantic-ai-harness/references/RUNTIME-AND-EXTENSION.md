@@ -42,7 +42,7 @@ Set native retry policies with `model_options`, `tool_options`, `event_options` 
 `resolve_tool_options` returns a native policy, `None` to keep `tool_options`, or `False`
 to run a function tool inline. Function tools can also opt out with
 `metadata={'azure_durable_task': False}`, or async ones with the engine-neutral
-`metadata={'durable': False}`. Inline tools must be deterministic and I/O-free.
+`durable=False`. Inline tools must be deterministic and I/O-free.
 See [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/).
 
 ## StepPersistence
@@ -278,7 +278,7 @@ Parameters: `AWSLambdaDurability(*, models=None, event_stream_handler=None, name
 `models` maps ids to extra models for `agent.run(model='<id>')`. `step_config` sets the base
 `retry_strategy`/`step_semantics`/`serdes` for all steps. Per-tool `metadata={'aws_lambda': {...}}`
 overrides it key by key, and `metadata={'aws_lambda': False}` opts a function tool out (MCP tools cannot
-opt out). The engine-neutral `metadata={'durable': False}` opts an async function tool out on every
+opt out). The engine-neutral `durable=False` opts an async function tool out on every
 engine; an engine's own key on the same tool wins.
 
 Approvals: add core `RequestInput(ask, timeout=timedelta(...))` (`pydantic_ai.capabilities`)

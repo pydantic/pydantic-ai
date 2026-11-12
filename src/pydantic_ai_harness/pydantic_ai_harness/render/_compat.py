@@ -2,7 +2,7 @@
 
 The operation parameters, results and the reconstructed `RunContext` come from the public
 `pydantic_ai.durable_exec` builder surface. Private context attributes, the effective
-tracer lookup and the `durable` tool metadata reader remain here. `test_local_runtime_live.py`
+tracer lookup and the `durable` tool field reader remain here. `test_local_runtime_live.py`
 checks context, usage, events and tracing in separate Render processes.
 
 Public backend contract: https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/
@@ -45,7 +45,7 @@ from pydantic_ai.durable_exec import (
     capability_operation_result_type,
     revalidate_function_call,
 )
-from pydantic_ai.durable_exec._toolset import durable_metadata_opts_out
+from pydantic_ai.durable_exec._toolset import opts_out_of_durable_unit
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -85,7 +85,6 @@ __all__ = (
     'capability_operation_result_type',
     'dump_json_object',
     'dump_operation_params',
-    'durable_metadata_opts_out',
     'function_tool_original_name',
     'load_json_object',
     'load_json_type',
@@ -94,6 +93,7 @@ __all__ = (
     'model_settings_from_json',
     'model_settings_to_json',
     'normalize_json_value',
+    'opts_out_of_durable_unit',
     'operation_run_context',
     'prepare_function_call_params',
     'resolve_mcp_tool_for_definition',

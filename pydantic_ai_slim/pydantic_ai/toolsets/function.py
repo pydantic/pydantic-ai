@@ -78,6 +78,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         *,
         max_retries: int | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -100,6 +101,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             timeout: Timeout in seconds for tool execution. If a tool takes longer than this,
                 a retry prompt is returned to the model. Individual tools can override this with their own timeout.
                 Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs the tools: `False` runs them
+                outside their durable unit, in workflow code, and `True` keeps the engine's default placement.
+                Defaults to `None`, the engine's default placement. Applies to all tools, unless overridden when adding a tool.
             docstring_format: Format of tool docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
                 Applies to all tools, unless overridden when adding a tool.
@@ -135,6 +139,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         """
         self.max_retries = max_retries
         self.timeout = timeout
+        self.durable = durable
         self._id = id
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
@@ -189,6 +194,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
     ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
@@ -212,6 +218,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolPartKind | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
@@ -235,6 +242,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -306,6 +314,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                If `None`, the default value is determined by the toolset.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -334,6 +345,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 metadata=metadata,
                 tool_kind=tool_kind,
                 timeout=timeout,
+                durable=durable,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
@@ -363,6 +375,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
     ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
@@ -386,6 +399,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolPartKind | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
@@ -409,6 +423,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -481,6 +496,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                If `None`, the default value is determined by the toolset.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -510,6 +528,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 metadata=metadata,
                 tool_kind=tool_kind,
                 timeout=timeout,
+                durable=durable,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
@@ -630,6 +649,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         include_return_schema: bool | None = None,
     ) -> Tool[AgentDepsT]:
         """Add a function as a tool to the toolset.
@@ -682,6 +702,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                If `None`, the default value is determined by the toolset.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, the default value is determined by the toolset.
         """
@@ -695,6 +718,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict = self.strict
         if sequential is None:
             sequential = self.sequential
+        if durable is None:
+            durable = self.durable
         if requires_approval is None:
             requires_approval = self.requires_approval
         if defer_loading is None:
@@ -719,6 +744,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             metadata=metadata,
             tool_kind=tool_kind,
             timeout=timeout,
+            durable=durable,
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,
         )

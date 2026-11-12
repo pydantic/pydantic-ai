@@ -448,7 +448,7 @@ changes. Only where the run starts differs: a Temporal workflow class on a worke
 
 Tools use `ctx.workspace` as they would in a plain run. A tool that must run its orchestration in
 the workflow (for example, to approve a file change before writing) can set
-[`metadata={'durable': False}`](durable_execution/overview.md#running-a-tool-outside-the-durable-unit) on its
+[`durable=False`](durable_execution/overview.md#running-a-tool-outside-the-durable-unit) on its
 tool definition; workspace calls it makes still run as the engine's activities, steps or tasks.
 
 - Inside a workflow or flow, a run creates or attaches its environment when it starts, even if no
@@ -477,7 +477,7 @@ tool definition; workspace calls it makes still run as the engine's activities, 
   such as a sandbox image, do not apply: every unit rebuilds the workspace from the agent's. A previous `result.workspace` without a ref starts a fresh workspace. Put policy on the agent's capability instead, such as
   `LocalWorkspace(..., read_only=True)` or `LocalWorkspace(..., authority='none')`.
 - `workspace.backend` is not available in workflow code, which includes DBOS function tools and
-  tools that run outside their durable unit, with `metadata={'durable': False}` or an engine key such as
+  tools that run outside their durable unit, with `durable=False` or an engine key such as
   `metadata={'temporal': False}`. Reach the provider's own API from a tool that
   runs as an activity or task.
 - Inside a workflow or flow, the deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` wrappers

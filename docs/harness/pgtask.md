@@ -110,7 +110,7 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   `agent.run()` called twice, pgtask numbers them 0, 1, 2, and so on, in the order they happen.
   Finish one `agent.run()` before starting the next in the same task, so the numbers come out the
   same after a crash.
-- An async function tool with [`metadata={'durable': False}`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) gets no
+- An async function tool with [`durable=False`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) gets no
   step: it runs in the task on every attempt, so keep it deterministic and free of I/O.
 
 ## Rules
@@ -128,7 +128,7 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   `event_stream_handler` so that running them twice does no harm.
 - Inside a task, passing function, MCP, or dynamic toolsets to a single run with
   `run(toolsets=...)` raises a `UserError`. Add them to the agent instead. `ExternalToolset` is
-  fine, and so is a `FunctionToolset` whose tools are all async and set `metadata={'durable': False}`.
+  fine, and so is a `FunctionToolset` whose tools are all async and set `durable=False`.
 - Streaming inside a task isn't live: the whole model response is received and saved first, and
   then its events are sent to you.
 - Under [`BatchModelRequests`](../batch.md#durable-execution), submitting a request and each check on its batch are
