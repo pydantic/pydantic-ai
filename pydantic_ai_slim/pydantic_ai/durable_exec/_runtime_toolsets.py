@@ -89,7 +89,7 @@ def _all_tools_opt_out(toolset: AbstractToolset[Any], tool_config_key: str | Non
             opts_out_of_durable_unit(tool.durable, tool.metadata, engine_key=tool_config_key)
             and tool.function_schema.is_async
         )
-        for name, tool in toolset.tools.items()
+        for tool in toolset.tools.values()
     )
 
 

@@ -756,8 +756,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
 
-        The toolset's `requires_approval=True` and `metadata` apply to the tool, and so does its `max_retries`
-        when the tool sets none.
+        The toolset's `requires_approval=True` and `metadata` apply to the tool, and so do its `max_retries` and
+        `durable` when the tool sets none.
 
         Args:
             tool: The tool to add.
@@ -766,6 +766,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
         if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
+        if tool.durable is None:
+            tool.durable = self.durable
         if self.requires_approval:
             tool.requires_approval = True
         if self.metadata is not None:

@@ -319,11 +319,13 @@ def test_durable_flows_from_each_tool_setter_into_the_tool_definition() -> None:
     toolset = FunctionToolset[None](durable=False)
     toolset.tool_plain(plain)
     toolset.tool(durable=True)(with_ctx)
-    toolset.add_tool(Tool(plain, name='as_tool', durable=False))
+    toolset.add_tool(Tool(plain, name='as_tool'))
+    toolset.add_tool(Tool(plain, name='kept', durable=True))
     assert {name: tool.tool_def.durable for name, tool in toolset.tools.items()} == {
         'plain': False,
         'with_ctx': True,
         'as_tool': False,
+        'kept': True,
     }
     assert FunctionToolset[None]([plain]).tools['plain'].tool_def.durable is None
 
