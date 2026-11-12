@@ -36,7 +36,7 @@ _logger.addHandler(logging.NullHandler())
 
 @cache
 def _warn_plaintext_fallback() -> None:
-    """Log a single warning per session when falling back to plaintext credential files."""
+    """Log a single warning per process when falling back to plaintext credential files."""
     _logger.warning('No OS keyring backend available; falling back to 0600 plaintext credential files.')
 
 
