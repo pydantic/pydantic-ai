@@ -8,7 +8,7 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 | Name | Where | Runs when |
 |------|-------|-----------|
 | `CI Review` | `pydantic-ai-pr-review.md` | when a user with write access or higher **approves** the PR's current head, on applying the **`final-review` label**, or on dispatch, once `CI` has passed on that head. Never in the merge queue. Z.AI Coding Plan engine, submits formal `REQUEST_CHANGES` for verified HIGH or CRITICAL findings, `COMMENT` for incomplete coverage without those findings, and `APPROVE` after complete coverage without them. Same-repo PRs only. |
-| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`). Claude Opus 5.5 reviews. A rejected Claude subscription window reruns the review with `opencode-go/deepseek-v4.1-flash` and its [DeepInfra fallback](#opencode-falls-back-from-opencode-go-to-deepinfra). Deletes the label when it finishes. A trusted publisher posts structured findings as one formal `APPROVE`, `REQUEST_CHANGES`, or incomplete `COMMENT` review. |
+| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`). Claude Opus 5.5 reviews. A rejected Claude subscription window reruns the review with `opencode-go/deepseek-v4.1-flash` and its [Coding Plan fallback](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan). Deletes the label when it finishes. A trusted publisher posts structured findings as one formal `APPROVE`, `REQUEST_CHANGES`, or incomplete `COMMENT` review. |
 | `douwebot:review-agent-config` | `bots.yml` | one explicit review request for one PR head; the labeling sender must be a `User` with current `write` or `admin` permission. The label is not standing approval. |
 
 `douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It returns `REQUEST_CHANGES` while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It returns `APPROVE` after a complete review with no outstanding blocking findings; optional findings may remain. Incomplete coverage returns `INCOMPLETE`, which the publisher records as `COMMENT`. A host-verified closed PR or moved head needs no publication and ends successfully. A head that already has douwebot findings cannot get a clean approval, so a later request for that head skips the review and comments with a link to the review that left them; a head with a clean approval, an incomplete review or a failed run is reviewed again, an incomplete one to complete its coverage even when its findings already block the head. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review. Both review labels use the OpenCode fallback. It has read, grep and glob tools, but no live GitHub or Git commands. It uses the prefetched review context and returns `INCOMPLETE` if missing information prevents a complete review.
@@ -215,7 +215,7 @@ supersede an empty incomplete review, but cannot erase earlier findings. PR Bots
 reviewer and a trusted publisher that binds the result to its run and head. The gate verifies that
 receipt, so `CI Review` cannot stand in for douwebot even though both can use the same bot account.
 Maintainer-authorized protected-configuration reviews satisfy the same rule.
-A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine that served the review: `engine=claude`, `engine=opencode` for OpenCode Go, or `engine=opencode-deepinfra` for OpenCode on DeepInfra.
+A clean OpenCode fallback approval satisfies the same gate as a Claude approval. The review body and receipt identify the engine that served the review: `engine=claude`, `engine=opencode` for OpenCode Go, or `engine=opencode-zai` for OpenCode on the GLM Coding Plan. Reviews from before the Coding Plan replaced DeepInfra carry `engine=opencode-deepinfra`, which the gate still reads.
 
 `pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews and
 inline-comment changes with a read-only token, including on forks. Its completion wakes
@@ -258,7 +258,7 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   head. A change only to the documentation `is_content` lists selects nothing and passes. Files
   under `.github/` always get a review, a generated `*.lock.yml` included: Actions runs the lock,
   and nothing checks that it matches its `.md` source.
-- Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash`, its [DeepInfra fallback](#opencode-falls-back-from-opencode-go-to-deepinfra), and only read, grep and glob,
+- Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash`, its [Coding Plan fallback](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan), and only read, grep and glob,
   in the douwebot layout: the head is confined to `pr-head/` and its agent instruction files are
   deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts
   and the gathered PR context, so the model can trace callers. The job validates the model's answer
@@ -293,40 +293,71 @@ To add a check, add a `SpecialistCheck` entry in `pr_review_checks.py` and its p
 fragment in `.github/pr-review-checks/prompts/`. The workflow needs no change. Like `bots.yml`, a
 PR cannot test its own change to this workflow or its scripts.
 
-# OpenCode falls back from OpenCode Go to DeepInfra
+# `Category Classify` falls back to OpenCode on a Claude usage limit
+
+`category-classify` in `bots.yml` asks Claude Code for the PR's category, and `category-apply` applies it.
+When the Claude subscription rejects a five-hour or seven-day window, `category-classify-opencode` reruns the
+classification with OpenCode and its [Coding Plan fallback](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan).
+`category-classify` detects that rejection with douwebot's step, `Detect Claude subscription limit`, which runs
+`.github/scripts/douwebot_usage_limit.py`. Every other Claude failure fails `category-classify`, a revoked or expired
+credential included.
+
+- `category-classify-opencode` runs on a fresh runner, so nothing the Claude run wrote reaches it.
+- Its `Prefetch PR context` step saves the output of the `gh` commands the Claude prompt names: `gh pr view`,
+  `gh pr diff --name-only`, and the full `gh pr diff` when a `pyproject.toml` changed.
+- OpenCode runs in that context directory with read, grep and glob only, and without a GitHub token. It receives
+  the Claude prompt, through the `category-prompt` YAML anchor, plus `TOOL_GUIDANCE` from
+  `.github/scripts/category_classify_opencode.py`, which names each prefetched file. Edit the classification rules
+  in the Claude step's prompt only.
+- The answer must be one JSON object whose only field is an allowed `category`. When a Markdown code fence ends the
+  answer, the job validates only that fenced block, as `PR Review Checks` does. Any other answer fails the job, and
+  no label is applied. `category-apply` applies the category from whichever job set it.
+
+# OpenCode falls back from OpenCode Go to the GLM Coding Plan
 
 Every CI OpenCode run starts on `opencode-go/deepseek-v4.1-flash` with `OPENCODE_API_KEY`, a Console key for the Go
-workspace: douwebot's OpenCode fallback, each `PR Review Checks` review and OpenCode threat detection.
-`run_with_fallback` in `.github/scripts/douwebot_opencode_run.py` reruns it on
-`deepinfra/deepseek-ai/DeepSeek-V4.1-Flash` with `DEEPINFRA_API_KEY` only when all of these hold:
+workspace: douwebot's OpenCode fallback, `Category Classify`'s OpenCode fallback, each `PR Review Checks` review and
+OpenCode threat detection. `run_with_fallback` in `.github/scripts/douwebot_opencode_run.py` hands a refused run down
+this chain:
+
+1. `opencode-go/deepseek-v4.1-flash` with `OPENCODE_API_KEY`.
+2. `zai-coding-plan/glm-5.3-flash` with `ZAI_API_KEY`, the primary Z.AI Coding Plan account.
+3. `zai-coding-plan/glm-5.3-flash` with `ZAI_BACKUP_API_KEY`, the backup account.
+
+A run moves to the next provider only when all of these hold:
 
 - OpenCode exited non-zero, and its event stream has no `step_finish` event.
-- The stream's last `error` event has type `provider.go-limit` or `provider.quota`. OpenCode 2.2.5 gives a spent
-  quota these types and does not retry it; see `toSessionError` in
+- The stream's last `error` event has a type the refusing provider hands over: `provider.go-limit` or
+  `provider.quota` from Go, and `provider.quota` from the primary Coding Plan. OpenCode 2.2.5 does not retry these
+  types; see `toSessionError` in
   [`to-session-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts).
-- `DEEPINFRA_API_KEY` is set.
+- The next account's key is set. The chain leaves out a Z.AI account without a key.
 
-Every other failure fails as it does on Go alone, including a rejected key, a provider outage, a time-budget stop, a
-timeout and an invalid answer. The DeepInfra run gets only the rest of the time budget. Each run's config allows
-only its provider and pins the `title`, `compaction` and `summary` agents to its model. Its environment holds only that
-provider's key. The job log names the model that served the run. When a run's process fails, Go or DeepInfra, the
-job log names that run's model and the `type` and `status` of its stream's last `error` event. It prints a type
-only when the type is shaped like OpenCode's own, such as `provider.auth`. It never prints the error message or
-response body, which can repeat the provider's response. When `PR Review Checks` or threat detection rejects a
-run's stream or answer, the job log names the reason: a fixed message from `final_text` in
-`.github/scripts/douwebot_opencode_result.py`, the sorted validation error types, or the exception's class name. It
-never prints model text, because the answer can hold a private report. A DeepInfra run sends DeepInfra the same
-content a Go run sends Go, fork pull request content included. Start any new CI OpenCode run through
-`run_with_fallback`.
+OpenCode 2.2.5 types any HTTP 402, and a Z.AI HTTP 429 whose message names a plan, quota or balance limit,
+`provider.quota`. Those 429s include the 5-hour, weekly and monthly windows (`1308`, `1310`, `1316` to `1321`), an
+expired plan (`1309`), a plan without the model (`1311`) and an empty balance (`1113`), so each hands the run to the
+backup account. OpenCode types every other 429 `provider.rate-limit` and retries it within the run, such as `1302`
+request-rate limits and `1305` overload; see `classify` in
+[`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts). A rate
+limit that outlasts those retries fails the job; the backup account does not serve it.
 
-The DeepInfra run's config sets the model's `reasoningEffort` to `low`; the Go run's config sets no reasoning effort.
-Without [`reasoning_effort`](https://docs.deepinfra.com/chat/reasoning), DeepInfra returned no reasoning for this
-model, and the model wrote its reasoning into its answer, which then failed validation. OpenCode 2.2.5 spells
-DeepInfra's effort as this setting (`deepinfraChat` in
-[`variant.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/variant.ts)), passes it to the
-provider ([`deepinfra.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/providers/deepinfra.ts)),
-and sends it as `reasoning_effort` (`lowerOptions` in
-[`openai-chat.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/protocols/openai-chat.ts)).
+Every other failure fails the job, including a rejected key, a provider outage, a time-budget stop, a timeout and an
+invalid answer. Without `ZAI_BACKUP_API_KEY`, a run the primary Coding Plan refuses fails the job. A fallback run gets
+only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only, so each Z.AI run
+sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
+`compaction` and `summary` agents to its model. Its environment holds only that account's key. The job log names the
+model and the plan that served the run. When a run's process fails, the job log names that run's model, its plan, and the
+`type` and `status` of its stream's last `error` event. It prints a type only when the type is shaped like
+OpenCode's own, such as `provider.auth`. It never prints the error message or response body, which can repeat the
+provider's response. When `PR Review Checks` or threat detection rejects a run's stream or answer, the job log names
+the reason: a fixed message from `final_text` in `.github/scripts/douwebot_opencode_result.py`, the sorted validation
+error types, or the exception's class name. It never prints model text, because the answer can hold a private
+report. A Z.AI run sends Z.AI the same content a Go run sends Go, fork pull request content included. Start any new
+CI OpenCode run through `run_with_fallback`.
+
+The Coding Plan runs draw on the same accounts as the gh-aw agent workflows, and the primary also serves Pydanty; see
+[Shared Z.AI account limits](#shared-zai-account-limits). `PR Review Checks` starts several reviews per pull request
+in parallel, so one Go limit can move all of them onto the Coding Plan at once.
 
 # A copy of the repository picks the `CI` Linux runner
 
@@ -405,7 +436,7 @@ such source with a comment naming that set. Every other workflow gets an unrestr
 
 gh-aw runs threat detection only on its Copilot, Claude and Codex engines.
 `shared/engine-zai.md` sets `safe-outputs.threat-detection.engine: false` and runs our own detector as detection post-steps.
-`.github/scripts/gh_aw_opencode_detect.py` runs OpenCode with `opencode-go/deepseek-v4.1-flash` and its [DeepInfra fallback](#opencode-falls-back-from-opencode-go-to-deepinfra).
+`.github/scripts/gh_aw_opencode_detect.py` runs OpenCode with `opencode-go/deepseek-v4.1-flash` and its [Coding Plan fallback](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan).
 The post-steps check the script out at `github.workflow_sha` and install OpenCode with `setup-douwebot-tools`.
 
 - Keep the detector step's id `detection_agentic_execution`. gh-aw's conclusion step reads that step's outcome.
@@ -413,7 +444,7 @@ The post-steps check the script out at `github.workflow_sha` and install OpenCod
 - OpenCode runs with douwebot's read-only lockdown in `/tmp/gh-aw/threat-detection`. It cannot read the repository workspace.
 - A valid verdict writes `detection_result.json` without reasons and `detection_result_full.json` with them.
 - An invalid verdict writes `THREAT_DETECTION_STATUS: reason=invalid_report_exhausted` to `detection.log`, which concludes as `parse_error`.
-  An OpenCode failure is retried `GH_AW_HARNESS_MAX_RETRIES` times. A DeepInfra fallback runs inside its attempt and does not count as a retry.
+  An OpenCode failure is retried `GH_AW_HARNESS_MAX_RETRIES` times. A Coding Plan fallback runs inside its attempt and does not count as a retry.
   After the last retry fails, the detector writes `reason=engine_error`, which concludes as `agent_failure`.
   An invalid verdict is not retried.
   A run that reaches the script's deadline, two minutes before the step's 15, writes `reason=engine_timeout`, which concludes as `agent_failure`, and stops.
@@ -443,8 +474,10 @@ The validator's regressions live in `.github/scripts/test_weekly_ce_audit.py`; u
 
 ## Shared Z.AI account limits
 
-Treat Pydanty and these workflows as consumers of one Z.AI account.
-The GitHub `ZAI_API_KEY` and Pydanty's production credential use that account.
+Treat Pydanty, these workflows and the [OpenCode fallback](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan)
+as consumers of the primary Z.AI account. The GitHub `ZAI_API_KEY` and Pydanty's production credential use that account.
+`ZAI_BACKUP_API_KEY` holds a second Coding Plan account, the backup account. These workflows and the OpenCode
+fallback use it only when the primary account cannot serve a run. Pydanty never uses it.
 Correlate overlapping workflow and Pydanty requests when investigating rate-limit failures.
 Include delegates and SDK retries in the request timeline.
 
@@ -479,6 +512,18 @@ fabricated agent result. The non-model provider-health monitor owns incident iss
 creation and recovery. Do not enable gh-aw's generic failure-as-issue reporting or its
 failed-job reporting (`report-failed-jobs`) for these workflows.
 
+The gate checks the primary account first. When the primary's own provider incident or its quota
+blocks it, and `ZAI_BACKUP_API_KEY` is set, the gate checks the backup account the same way. A
+workflow or task incident blocks both accounts, so the gate does not check the backup for it. The run
+blocks only when neither account can serve it. A ready decision outputs `account=primary` or
+`account=backup`, and its artifact records each account's own decision when it checked both.
+Without `ZAI_BACKUP_API_KEY`, the gate checks only the primary.
+
+`shared/engine-zai.md` gives the engine `ZAI_BACKUP_API_KEY` when the agent-start recheck below
+outputs `account=backup`, and `ZAI_API_KEY` otherwise. GitHub resolves that expression before
+`awf` starts. The AWF api-proxy receives the selected key, and `awf --exclude-env` keeps it out of
+the agent container. Keep the recheck's step id `agent_start_health`: the expression reads it.
+
 The agent job waits for its engine concurrency slot after `provider_health` decides,
 sometimes for hours. Incidents and quota exhaustion from that wait must still stop
 inference. `shared/provider-health.md` therefore reruns the same check as the agent job's
@@ -488,16 +533,18 @@ first pre-agent step, before any workspace script runs:
   workspace copy: the workspace can hold the PR head or its base branch.
 - It forwards the same environment as the `provider_health` job.
 - It replaces the `provider-health` artifact, so the monitor reconciles the decision the run
-  acted on. The monitor never reads a failure of these steps as a setup failure. A recheck
+  acted on. When that upload fails, the record and the monitor read the gate's decision instead. If the
+  recheck also chose another account than the gate, the agent job stops before inference, so neither
+  attributes the run to the wrong account. The monitor never reads a failure of these steps as a setup failure. A recheck
   that errors opens no incident, like an error in the `provider_health` job.
 - A blocked decision fails the agent job before the engine step. Do not write a `noop`
   instead: `detection` runs on any agent output and would still spend a detection pass.
 
 A blocked recheck concludes the run as `failure`. For **CI Review**, `flag_failed_review`
-then labels the PR `ci-review-failed`. Keep `ZAI_API_KEY` in the `provider_health` job, these
-host steps, and the `record` step of the `provider_health_record` job below. gh-aw allows no
-secret in the agent job's post-steps. The agent container gets no Z.AI credential beyond the
-engine's own.
+then labels the PR `ci-review-failed`. Keep `ZAI_API_KEY` and `ZAI_BACKUP_API_KEY` in the
+`provider_health` job, these host steps, the `record` step of the `provider_health_record` job
+below, and the OpenCode threat detection step. gh-aw allows no secret in the agent job's post-steps. The agent container gets no Z.AI
+credential beyond the engine's own.
 
 The monitor reads a run's terminal result from a record a host job writes, not from the
 agent's own output. After the agent job, including a failed one, `shared/provider-health.md`
@@ -507,6 +554,7 @@ to the `provider-health` artifact. gh-aw's parser wrote that `agent-session.json
 host from the engine's verified recording. The record keeps the failure kind the runner
 reported. It marks a provider-scope kind confirmed only when the job's own Z.ai check observes
 the same condition: the credential rejected with HTTP 401 or 403, or the plan's quota exhausted.
+That check uses the key of the account the run used, which the record reads from the health decision.
 gh-aw runs the job only after threat detection passes cleanly, and detection skips the model
 when the agent left no output or patch. A failed record does not fail the run. Without a valid
 record (the run predates the job, detection did not pass, or the record failed), the monitor
@@ -539,11 +587,15 @@ in place: `pydanty:meta` keeps the automatic `@claude` issue/comment workflow fr
 starting on controller metadata. Do not create a second issue for the same open
 provider, workflow, or task incident.
 
-A provider incident blocks every Z.AI workflow. Open one only on provider-wide evidence:
+Each provider incident belongs to one account: its marker key is `zai` for the primary and
+`zai:backup` for the backup. A provider incident blocks its account for every Z.AI workflow,
+and runs fall back to the other account. Open one only on provider-wide evidence:
 exhausted or unverifiable quota, rejected credentials, or a 429 whose Z.AI code is a
 documented account or plan limit (runner kind `plan_limit`). A rejected credential or plan
 limit from the agent run needs the host record's confirmation; unconfirmed, it opens a
-workflow or task incident like other typed failures. Keep these outcomes local to their run:
+workflow or task incident like other typed failures. Open a quota incident only when no account
+can serve a run. Each account its quota blocks then gets its own incident. One exhausted
+account alone opens no incident. Keep these outcomes local to their run:
 
 - Any other 429 that outlasts the runner's retry window (runner kind `rate_limit`), such as
   `1302` request-rate limits and `1305` overload. A healthy quota check cannot show spare
@@ -560,7 +612,7 @@ no readable incident of any age or scope. Each read writes its pages' HTTP statu
 unreadable counts, request IDs, and the incident numbers it saw to the job log and step summary.
 
 The trusted health check calls `GET https://api.z.ai/api/monitor/usage/quota/limit`
-with the raw `ZAI_API_KEY` value in the `Authorization` header. Recognize
+with the raw key of the account it checks in the `Authorization` header. Recognize
 `TOKENS_LIMIT` and `CREDIT_LIMIT` rows. Both quota windows must be valid:
 unit `3` / number `5` is the 5-hour window, and unit `6` / number `1` is the weekly window.
 `percentage` is the percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
@@ -583,11 +635,11 @@ on the pull request events listed above.
 
 For manual provider recovery, run **Agent Provider Health** with `workflow_dispatch`
 and enter the incident's number as `recover_issue`. The controller finds that one
-open, marked incident whose provider key matches the currently configured provider.
-It never closes another incident in the same run. A fresh health check must pass
-before the controller closes the named incident. The hourly scheduled run closes Z.ai
-plan-limit, quota-exhaustion, and unknown-quota incidents after a fresh healthy check,
-once the recorded reset time has passed or, when none was recorded, once the incident
+open, marked incident whose provider key names a Z.ai account.
+It never closes another incident in the same run. A fresh health check of the incident's own
+account must pass before the controller closes the named incident. The hourly scheduled run closes Z.ai
+plan-limit, quota-exhaustion, and unknown-quota incidents after a fresh healthy check of the
+incident's own account, once the recorded reset time has passed or, when none was recorded, once the incident
 is an hour old. Keep the hour: closes within minutes of opening were followed by a new
 incident within minutes.
 Credential and configuration incidents need operator attention rather than automatic recovery.
@@ -625,7 +677,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | Check | Rejects | Why it matters |
 |---|---|---|
 | `dangling-needs` | any `if:`, `outputs:`, `env:`, `with:` or `run:` referencing `needs.<job>` where `<job>` isn't a dependency of that job (outside `if:`, only inside `${{ }}` — elsewhere the text is literal) | The expression evaluates to empty rather than failing. In `if:` that skips the job or step — and **a job skipped by `if:` reports success**, so the required check stays green while the agent never runs. In `outputs:`/`env:`/`with:`/`run:` nothing skips at all: the step runs with an empty value, so a wrong action call or shell variable goes through looking healthy. This is the mechanical enforcement of ["A custom job named in `if:` must also appear in the prompt"](#a-custom-job-named-in-if-must-also-appear-in-the-prompt) — it reads the recompiled lock, so it catches the missing prompt reference whatever the cause. |
-| `provider-health-*` | a Z.AI source missing the shared gate, generic failure-as-issue or failed-job reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment and stop before its engine step, a workflow without the host job that records the agent job's terminal result, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
+| `provider-health-*` | a Z.AI source missing the shared gate, generic failure-as-issue or failed-job reporting left enabled, a compiled activation graph that cannot see `provider_health`, an agent job that does not rerun the default-branch check with the gate's environment, both Z.AI keys and the step id `agent_start_health`, and stop before its engine step when blocked or when a failed replacement would hide the recheck's account, a workflow without the host job that records the agent job's terminal result, a monitor that accepts unlisted workflows or itself, or a monitor that queues completions `triage` did not hand over | A missing dependency can spend inference budget during a provider incident or make the recovery monitor loop on its own completions. A queue of every completion overflowed at 100 pending runs, dropped reconciliations, and delayed scheduled recovery ([run 39816847357](https://github.com/pydantic/pydantic-ai/actions/runs/39816847357)). |
 | `provider-engine-config` | a shared threat-detection engine other than `false`, or a workflow-local engine override, whose endpoint or credential differs from the shared primary engine, or an empty shared primary endpoint or credential | Engine overrides drift when the provider endpoint or secret changes, which can send requests to the wrong provider or make them fail authentication. |
 | `assigned-alert-metadata-gate` | the `@claude` issue and comment entry points lack an exclusion for `pydanty:meta` issues | Operational incidents may mention `@claude`; assigning or commenting on the alert must not start an agent on controller metadata. |
 | `safe-output-job-max` | a `safe-outputs.jobs.*` entry with no `max:` | The default is 1; extra items land in an `errors` array nothing reads. Set it explicitly even when 1 is right. |
@@ -634,7 +686,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | `job-timeout-env-missing` / `job-timeout-env-mismatch` | a source whose `env.PYDANTIC_AI_JOB_TIMEOUT_MINUTES` is absent, or set to something other than its `timeout-minutes` | The shim derives the agent's own wall-clock budget from that variable, because gh-aw's `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and never reaches the agent container. Drift means the agent either stops early and wastes the time it was granted, or overruns and is killed with nothing emitted. Every new workflow trips this until it declares the pair. |
 | `job-timeout-too-short` | `timeout-minutes:` at or below the shim's teardown headroom (2) | The shim reserves that headroom for container teardown and artifact upload, so it falls back to 30 minutes rather than granting a non-positive budget — the agent then runs far past the point Actions kills the job. |
 | `compiler-version-drift` | locks built by different gh-aw versions | Catches a partial `gh aw compile`. |
-| `compiled-runner-contract` | missing public CLAI execution, runtime pin, workflow policy or Z.ai credential exclusion | The compiled job must install the pinned runtime and preserve the workflow policy and proxy boundary. |
+| `compiled-runner-contract` | missing public CLAI execution, runtime pin, workflow policy, Z.ai credential exclusion, or the engine key the agent-start recheck's `account` selects | The compiled job must install the pinned runtime and preserve the workflow policy and proxy boundary. |
 | `awf-binary-version` | an installer pin differing from the bundled version or generated schema URL | The compiler installs AWF directly. Its binary must match the configuration schema. |
 | `ai-credits-accounting` | an AWF provider overlay with unverified prices or per-million values in per-token fields | GLM accounting uses the verified Z.ai API-equivalent rates. Provider overlays use USD per token; default pricing uses USD per million. AWF retains its fixed 10,000-credit cap independently of configurable budgets. |
 | `daily-aic-guardrail` | a lock that compiles gh-aw's daily AI-credits guardrail step, matched by the script it runs (`check_daily_aic_workflow_guardrail.cjs`) | On every activation the guardrail lists the artifacts of each run from the past 24h to total their AI credits: about 700 REST calls per CI Review activation in [run 39522281523](https://github.com/pydantic/pydantic-ai/actions/runs/39522281523). That spend exhausted the repo's `GITHUB_TOKEN` rate limit. AI credits do not measure the Z.AI Coding Plan quota; provider health gates that quota. Disable the guardrail with `max-daily-ai-credits: -1` in each source's own frontmatter. gh-aw removes the guardrail only for that value. A `-1` in an import such as `shared/engine-zai.md` only drops `GH_AW_MAX_DAILY_AI_CREDITS`: the scan step compiles but skips, and the conclusion job's `if: always()` cache restore, write, save and `aic-usage-cache` upload still run whenever the conclusion job runs. |
