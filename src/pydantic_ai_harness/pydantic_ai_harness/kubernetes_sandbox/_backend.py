@@ -9,7 +9,8 @@ v1.0.7, and a kind cluster running the v1.0.7 controller, and re-checked 2026-11
   fails, so the backend deletes the claims it names. `get_sandbox` attaches to a claim by name, waits
   30 seconds for a claim that does not exist, and raises `SandboxNotFoundError` for any failed lookup;
 * `client.k8s_helper.get_sandbox_claim` and `get_sandbox` return `None` only for a 404, and
-  `delete_sandbox_claim` ignores only a 404; the Sandbox object they read is the one a claim binds;
+  `delete_sandbox_claim` ignores only a 404; `resolve_sandbox_name` reads the name of the Sandbox a
+  claim binds from the claim's status;
 * `AsyncSandbox.commands.start()` runs a string under `/bin/sh -c` over sandboxd's streaming
   `ProcessService.Start`, reached over a `kubectl port-forward` or an in-cluster address depending
   on the connection config, and sends the config's `auth_token`. It restarts a port-forward that
@@ -66,7 +67,11 @@ try:
     from k8s_agent_sandbox.async_sandbox import AsyncSandbox
     from k8s_agent_sandbox.async_sandbox_client import AsyncSandboxClient
     from k8s_agent_sandbox.commands.async_command_executor import AsyncCommandExecutor
-    from k8s_agent_sandbox.exceptions import SandboxClaimFailedError, SandboxWarmPoolNotFoundError
+    from k8s_agent_sandbox.exceptions import (
+        SandboxClaimFailedError,
+        SandboxNotFoundError,
+        SandboxWarmPoolNotFoundError,
+    )
     from k8s_agent_sandbox.models import (
         ProcessExitEvent,
         SandboxdInClusterConnectionConfig,
@@ -94,6 +99,18 @@ _SETUP_TIMEOUT = 60.0
 
 _ARGUMENT_PREFIX = 'PYDANTIC_AI_HARNESS_ARG_'
 """Names the environment variables that carry a command's arguments into its script; unset before it runs."""
+
+# `eval` sees only this text and the loop's own counter, never an argument's value.
+_ARGUMENTS_SCRIPT = f"""set --
+{_ARGUMENT_PREFIX}INDEX=0
+while [ "${_ARGUMENT_PREFIX}INDEX" -lt {{count}} ]; do
+eval "set -- \\"\\$@\\" \\"\\${_ARGUMENT_PREFIX}${_ARGUMENT_PREFIX}INDEX\\""
+unset "{_ARGUMENT_PREFIX}${_ARGUMENT_PREFIX}INDEX"
+{_ARGUMENT_PREFIX}INDEX=$(({_ARGUMENT_PREFIX}INDEX + 1))
+done
+unset {_ARGUMENT_PREFIX}INDEX
+"""
+"""Moves the `count` argument variables into the positional parameters, in order, and unsets them."""
 
 # Output is collected in this process, so `yes` or a large `cat` stops at the cap instead of growing
 # it. sandboxd's own output limits cover only its unary `Execute` RPCs, not the streaming `Start`
@@ -248,7 +265,8 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
                 raise WorkspaceUnavailableError(
                     f'Could not read the sandbox working directory: {result.stderr.strip()}'
                 )
-            self._resolved_working_dir = result.stdout.rstrip('\n')
+            # Only the newline `pwd` adds: a directory's own name may end in one.
+            self._resolved_working_dir = result.stdout.removesuffix('\n')
         return self._resolved_working_dir
 
     async def get_sandbox(self) -> AsyncSandbox:
@@ -275,7 +293,8 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         # `commands.start()` runs one string under sandboxd's `/bin/sh -c`. Each argument goes in its
         # own environment variable, which the script moves into its positional parameters and unsets,
         # so each is still one `execve` string under Linux's 128 KiB limit per string, as it would
-        # be in an argv; quoted into the script, they would share that limit. Workaround: sandboxd's
+        # be in an argv; quoted into the script, they would share that limit. The script reads them
+        # in a loop, so its own size does not grow with the number of arguments. Workaround: sandboxd's
         # `Start` leaves stdin open, where the protocol wants it at EOF, so the exec script redirects
         # it. sandboxd also moves a `cwd` outside its root under the root instead of refusing it, so
         # another directory is entered from the shell. Not tracked upstream yet.
@@ -285,10 +304,12 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             # A missing `working_dir` exits 125 with only the marker on stderr, before the command runs.
             arguments = [self._working_dir, *argv]
             enter = f'cd -- "$1" 2>/dev/null || {{ printf %s {self._missing_cwd_marker} >&2; exit 125; }}\nshift\n'
-        names = [f'{_ARGUMENT_PREFIX}{index}' for index in range(len(arguments))]
-        references = ' '.join(f'"${name}"' for name in names)
-        script = f'set -- {references}\nunset {" ".join(names)}\n{enter}{EXEC_SCRIPT}'
-        command_env = {**self._env, **(env or {}), **dict(zip(names, arguments))}
+        script = _ARGUMENTS_SCRIPT.format(count=len(arguments)) + enter + EXEC_SCRIPT
+        command_env = {
+            **self._env,
+            **(env or {}),
+            **{f'{_ARGUMENT_PREFIX}{index}': argument for index, argument in enumerate(arguments)},
+        }
         async with self._operation():
             async with self._lock:
                 session = await self._acquire()
@@ -365,7 +386,11 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
             return
 
         async def detach_and_close() -> None:
+            # Check and detach together: an operation may start, and take the session, before this task gets the lock.
             async with self._lock:
+                if self._operations:
+                    self._close_requested = True
+                    return
                 client, self._client, self._session = self._client, None, None
             if client is not None:
                 await client.close()
@@ -400,51 +425,79 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands):
         client = self._client
         if self._ref is not None:
             ref = self._ref
-            namespace, claim_name = parse_ref(ref)
-            # Workaround: `get_sandbox` watches a missing claim for 30 seconds before failing, and then
-            # raises the `SandboxNotFoundError` it raises for any failed lookup, an unreachable API server
-            # too. The API server's answer is immediate, and only its 404 means gone for good; any other
-            # failure of `get_sandbox` propagates for the caller to retry. Not tracked upstream yet.
-            if await client.k8s_helper.get_sandbox_claim(claim_name, namespace) is None:
-                raise WorkspaceUnavailableError(f'Kubernetes sandbox {ref.id!r} no longer exists')
-            sandbox = await client.get_sandbox(claim_name, namespace=namespace)
+            sandbox = await self._attach(client, ref)
         else:
-            warm_pool = self._warm_pool
-            assert warm_pool is not None  # `__init__` requires a ref or a warm pool.
-            # Named here rather than by the SDK, so the claim is known whatever ends the claim before it
-            # is Ready, and the backend deletes it if it never becomes Ready.
-            claim_name = f'{_CLAIM_PREFIX}{uuid.uuid4().hex}'
-            ref = WorkspaceRef(provider=PROVIDER, id=f'{self._namespace}/{claim_name}')
-            try:
-                sandbox = await client.create_sandbox(
-                    warm_pool,
-                    namespace=self._namespace,
-                    claim_name=claim_name,
-                    shutdown_after_seconds=self._sandbox_timeout,
-                )
-            except BaseException as error:
-
-                async def delete_unready_claim() -> None:
-                    with anyio.move_on_after(_API_SERVER_TIMEOUT):
-                        try:
-                            await client.k8s_helper.delete_sandbox_claim(claim_name, self._namespace)
-                        except Exception:
-                            logger.warning('Could not delete Kubernetes sandbox claim %s', ref.id, exc_info=True)
-
-                # Not a bare shield: a native `Task.cancel()` gets through one, and a second could cut the delete short.
-                await run_to_completion(delete_unready_claim)
-                if isinstance(error, SandboxWarmPoolNotFoundError | SandboxClaimFailedError):
-                    raise WorkspaceUnavailableError(
-                        f'Could not claim a sandbox from warm pool {warm_pool!r}: {error}'
-                    ) from error
-                raise
+            ref, sandbox = await self._claim(client)
             self._ref = ref
-            # Logged at claim time, so the claim can be found whatever ends the run before its ref is stored.
-            logger.info('Claimed Kubernetes sandbox %s', ref.id)
         commands = sandbox.commands
         assert commands is not None  # The SDK clears a handle's executor only when the handle is closed.
         self._session = _Session(ref=ref, sandbox=sandbox, commands=commands)
         return self._session
+
+    async def _attach(self, client: AsyncSandboxClient[AsyncSandbox], ref: WorkspaceRef) -> AsyncSandbox:
+        """Attach to the claim `ref` names; raise `WorkspaceUnavailableError` only when the API server says it is gone."""
+        namespace, claim_name = parse_ref(ref)
+        # Workaround: `get_sandbox` watches a missing claim for 30 seconds before failing, and then
+        # raises the `SandboxNotFoundError` it raises for any failed lookup, an unreachable API server
+        # too. The API server's answer is immediate, and only its 404 means gone for good; any other
+        # failure of `get_sandbox` propagates for the caller to retry. Not tracked upstream yet.
+        if await client.k8s_helper.get_sandbox_claim(claim_name, namespace) is None:
+            raise WorkspaceUnavailableError(f'Kubernetes sandbox {ref.id!r} no longer exists')
+        try:
+            return await client.get_sandbox(claim_name, namespace=namespace)
+        except SandboxNotFoundError as error:
+            # The claim exists, so ask about the Sandbox it binds: only its 404 means gone for good,
+            # as in `_raise_if_gone`.
+            sandbox_id = await client.k8s_helper.resolve_sandbox_name(
+                claim_name, namespace, timeout=_API_SERVER_TIMEOUT
+            )
+            if await client.k8s_helper.get_sandbox(sandbox_id, namespace) is None:
+                raise WorkspaceUnavailableError(
+                    f'Kubernetes sandbox {ref.id!r} is gone: its Sandbox was deleted'
+                ) from error
+            raise
+
+    async def _claim(self, client: AsyncSandboxClient[AsyncSandbox]) -> tuple[WorkspaceRef, AsyncSandbox]:
+        """Claim a sandbox from the warm pool, deleting the claim if it never becomes Ready."""
+        warm_pool = self._warm_pool
+        assert warm_pool is not None  # `__init__` requires a ref or a warm pool.
+        # Named here rather than by the SDK, so the claim is known whatever ends the claim before it
+        # is Ready, and the backend deletes it if it never becomes Ready.
+        claim_name = f'{_CLAIM_PREFIX}{uuid.uuid4().hex}'
+        ref = WorkspaceRef(provider=PROVIDER, id=f'{self._namespace}/{claim_name}')
+        try:
+            sandbox = await client.create_sandbox(
+                warm_pool,
+                namespace=self._namespace,
+                claim_name=claim_name,
+                shutdown_after_seconds=self._sandbox_timeout,
+            )
+        except BaseException as error:
+
+            async def delete_unready_claim() -> None:
+                with anyio.move_on_after(_API_SERVER_TIMEOUT) as scope:
+                    try:
+                        await client.k8s_helper.delete_sandbox_claim(claim_name, self._namespace)
+                    except Exception:
+                        logger.warning('Could not delete Kubernetes sandbox claim %s', ref.id, exc_info=True)
+                if scope.cancelled_caught:
+                    # The ref is not stored, so this is where the claim can still be found.
+                    logger.warning(
+                        'The API server did not delete Kubernetes sandbox claim %s within %g seconds',
+                        ref.id,
+                        _API_SERVER_TIMEOUT,
+                    )
+
+            # Not a bare shield: a native `Task.cancel()` gets through one, and a second could cut the delete short.
+            await run_to_completion(delete_unready_claim)
+            if isinstance(error, SandboxWarmPoolNotFoundError | SandboxClaimFailedError):
+                raise WorkspaceUnavailableError(
+                    f'Could not claim a sandbox from warm pool {warm_pool!r}: {error}'
+                ) from error
+            raise
+        # Logged at claim time, so the claim can be found whatever ends the run before its ref is stored.
+        logger.info('Claimed Kubernetes sandbox %s', ref.id)
+        return ref, sandbox
 
     async def _raise_if_gone(self, session: _Session, error: Exception | None) -> None:
         """Raise `WorkspaceUnavailableError` if the sandbox is gone; otherwise return, leaving the outcome as it is."""

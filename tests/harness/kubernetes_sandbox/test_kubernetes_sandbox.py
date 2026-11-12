@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
 from pathlib import Path
@@ -167,6 +168,14 @@ async def test_env_is_layered(cluster: FakeCluster) -> None:
     await backend.aclose()
 
 
+async def test_env_reaches_the_program_unchanged_by_the_launcher(cluster: FakeCluster) -> None:
+    """The launcher script runs in the command's environment, so a variable it assigned would replace the caller's."""
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    result = await backend.run(['sh', '-c', 'printf "%s %s" "$p" "$q"'], env={'p': 'first', 'q': 'second'})
+    assert result.stdout == 'first second'
+    await backend.aclose()
+
+
 @pytest.mark.parametrize('working_dir', [None, '/tmp'])
 async def test_each_argument_keeps_its_own_size_limit(cluster: FakeCluster, working_dir: str | None) -> None:
     """Two 100 KB arguments with quotes in them run as given.
@@ -181,6 +190,20 @@ async def test_each_argument_keeps_its_own_size_limit(cluster: FakeCluster, work
     # One argument past the limit fails, as it would in an argv.
     with pytest.raises(RuntimeError, match='argument list too long'):
         await backend.run(['printf', '%s', 'x' * 200_000])
+    await backend.aclose()
+
+
+async def test_many_short_arguments_fit_like_an_argv(cluster: FakeCluster, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The script stays the same size however many arguments there are.
+
+    A script naming each argument's variable would pass the per-string limit with enough of them, while
+    an argv of the same arguments fits. A small limit proves it with few arguments.
+    """
+    monkeypatch.setattr('tests.harness.kubernetes_sandbox.fake_sandboxd._MAX_ARG_STRLEN', 4096)
+    backend = KubernetesSandboxBackend(warm_pool='pool', working_dir='/tmp')
+    numbers = [str(number) for number in range(300)]
+    result = await backend.run(['printf', '%s,', *numbers])
+    assert result.exit_code == 0 and result.stdout == ','.join(numbers) + ','
     await backend.aclose()
 
 
@@ -219,6 +242,17 @@ async def test_commands_start_in_working_dir(cluster: FakeCluster) -> None:
         await each.aclose()
 
 
+async def test_a_working_dir_whose_name_ends_in_a_newline(cluster: FakeCluster) -> None:
+    probe = KubernetesSandboxBackend(warm_pool='pool')
+    named = f'{await probe.working_dir()}/task\n'
+    assert (await probe.run(['mkdir', named])).exit_code == 0
+    backend = KubernetesSandboxBackend(ref=probe.ref, working_dir=named)
+    # Only `pwd`'s own newline is dropped, so file operations resolve against the directory commands run in.
+    assert await backend.working_dir() == named
+    for each in (probe, backend):
+        await each.aclose()
+
+
 async def test_an_unreadable_working_dir_is_unavailable(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     await backend.run(['true'])
@@ -249,6 +283,23 @@ async def test_an_unknown_warm_pool_or_failed_claim_is_unavailable(
     cluster.create_error = None
     assert (await backend.run(['true'])).exit_code == 0
     assert backend.ref is not None and len(cluster.clients) == clients
+    await backend.aclose()
+
+
+async def test_a_claim_the_api_server_does_not_delete_in_time_is_logged(
+    cluster: FakeCluster, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ref is never stored for a claim that failed, so the log is where it can still be found."""
+    monkeypatch.setattr('pydantic_ai_harness.kubernetes_sandbox._backend._API_SERVER_TIMEOUT', 0.1)
+    cluster.create_error = SandboxClaimFailedError('SandboxClaim failed: PodFailed')
+    cluster.delete_gate = anyio.Event()
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    with caplog.at_level('WARNING', logger='pydantic_ai_harness.kubernetes_sandbox._backend'):
+        with pytest.raises(WorkspaceUnavailableError, match='PodFailed'):
+            await backend.run(['true'])
+    [message] = caplog.messages
+    assert message.startswith('The API server did not delete Kubernetes sandbox claim default/pydantic-ai-')
+    assert message.endswith(' within 0.1 seconds') and backend.ref is None
     await backend.aclose()
 
 
@@ -296,6 +347,17 @@ async def test_aclose_waits_for_commands_in_flight(cluster: FakeCluster) -> None
     assert cluster.clients[1].closed
 
 
+async def test_aclose_leaves_the_connection_to_a_command_that_starts_meanwhile(cluster: FakeCluster) -> None:
+    """A command that takes the session after `aclose()` checked for operations, but before it closed, keeps it."""
+    backend = KubernetesSandboxBackend(warm_pool='pool')
+    await backend.run(['true'])
+    _, result = await asyncio.gather(backend.aclose(), backend.run(['echo', 'ran']))
+    assert result.stdout == 'ran\n'
+    # The command closed the connection when it ended, as `aclose()` asked.
+    [client] = cluster.clients
+    assert client.closed
+
+
 async def test_a_closed_connection_mid_command_is_a_connection_error(cluster: FakeCluster) -> None:
     backend = KubernetesSandboxBackend(warm_pool='pool')
     root = Path(await backend.working_dir())
@@ -328,6 +390,17 @@ async def test_a_failed_lookup_of_an_existing_claim_propagates(cluster: FakeClus
     # Not `WorkspaceUnavailableError`: the claim still exists, so a retry may attach to it.
     with pytest.raises(SandboxNotFoundError):
         await KubernetesSandboxBackend(ref=probe.ref).run(['true'])
+    await probe.aclose()
+
+
+async def test_attaching_to_a_claim_whose_sandbox_was_deleted_is_unavailable(cluster: FakeCluster) -> None:
+    probe = KubernetesSandboxBackend(warm_pool='pool')
+    await probe.run(['true'])
+    # The claim remains while the Sandbox it binds is gone, which the SDK reports as any failed lookup.
+    cluster.deleted_sandboxes.add(_sandboxd(cluster, probe.ref).sandbox_id)
+    with pytest.raises(WorkspaceUnavailableError, match='is gone: its Sandbox was deleted') as caught:
+        await KubernetesSandboxBackend(ref=probe.ref).run(['true'])
+    assert isinstance(caught.value.__cause__, SandboxNotFoundError)
     await probe.aclose()
 
 

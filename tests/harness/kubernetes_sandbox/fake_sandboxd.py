@@ -328,7 +328,11 @@ class FakeCluster:
         self.create_started = anyio.Event()
         self.lookup_error = False
         """When set, `get_sandbox` fails although the claim exists, as the SDK reports any failed lookup."""
+        self.deleted_sandboxes: set[str] = set()
+        """Sandbox objects deleted while the claim that binds them remains."""
         self.delete_error: Exception | None = None
+        self.delete_gate: anyio.Event | None = None
+        """When set, deleting a claim waits for the gate, as an API server that does not answer."""
 
     def root(self, namespace: str, claim_name: str) -> Path:
         return (self.base / namespace / claim_name).resolve()
@@ -385,6 +389,8 @@ class FakeClient:
         sandboxd = self.cluster.claims.get((namespace, claim_name))
         if sandboxd is None or self.cluster.lookup_error:
             raise SandboxNotFoundError(f"SandboxClaim '{claim_name}' not found in namespace '{namespace}'")
+        if sandboxd.sandbox_id in self.cluster.deleted_sandboxes:
+            raise SandboxNotFoundError(f"Underlying Sandbox '{sandboxd.sandbox_id}' not found.")
         return self._handle(claim_name, namespace, sandboxd)
 
     def _handle(self, claim_name: str, namespace: str, sandboxd: FakeSandboxd) -> FakeSandbox:
@@ -410,13 +416,21 @@ class FakeK8sHelper:
             await self.cluster.sandbox_lookup_gate.wait()
         if self.cluster.sandbox_lookup_error is not None:
             raise self.cluster.sandbox_lookup_error
+        if name in self.cluster.deleted_sandboxes:
+            return None
         bound = (sandboxd for (ns, _), sandboxd in self.cluster.claims.items() if ns == namespace)
         return {'metadata': {'name': name}} if any(sandboxd.sandbox_id == name for sandboxd in bound) else None
 
     async def get_sandbox_claim(self, name: str, namespace: str) -> dict[str, Any] | None:
         return {'metadata': {'name': name}} if (namespace, name) in self.cluster.claims else None
 
+    async def resolve_sandbox_name(self, claim_name: str, namespace: str, timeout: int) -> str:
+        """The name of the Sandbox a claim binds, from the claim's status."""
+        return self.cluster.claims[namespace, claim_name].sandbox_id
+
     async def delete_sandbox_claim(self, name: str, namespace: str) -> None:
+        if self.cluster.delete_gate is not None:
+            await self.cluster.delete_gate.wait()
         if self.cluster.delete_error is not None:
             raise self.cluster.delete_error
         if (namespace, name) in self.cluster.claims:  # A 404 is ignored.
