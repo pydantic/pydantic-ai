@@ -284,7 +284,9 @@ async def _build_desktop_image(runner: LocalWorkspaceBackend, executable: str) -
     try:
         result = await runner.run([executable, 'build', '--tag', _DESKTOP_IMAGE, '--', directory])
     finally:
-        await anyio.to_thread.run_sync(shutil.rmtree, directory)
+        # Also when the build is cancelled, which would otherwise cancel the cleanup too.
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(shutil.rmtree, directory)
     if result.exit_code != 0:
         raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
 
