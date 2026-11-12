@@ -293,13 +293,18 @@ class PendingMessageQueue(list[PendingMessage]):
             return asap, when_idle
 
     def drain_at_pause(self) -> list[PendingMessage] | None:
-        """Close the queue for a deferred-tool pause and drain it, or leave its messages queued if one is a `ModelResponse`.
+        """Close the queue for a deferred-tool pause and drain it, or leave its messages queued if one can't be recorded.
 
-        A recorded response would read as the paused one when the run resumes.
+        When the run resumes, a recorded `ModelResponse` would read as the paused response, and an interrupted
+        `ModelRequest` as the run stopping partway, which closes out the paused calls.
         """
         with self._lock:
             self._closed = True
-            if any(isinstance(message, ModelResponse) for pending in self for message in pending.messages):
+            if any(
+                isinstance(message, ModelResponse) or message.state != 'complete'
+                for pending in self
+                for message in pending.messages
+            ):
                 return None
             return [*self._pop_priority('asap'), *self._pop_priority('when_idle')]
 
@@ -405,6 +410,15 @@ def _splice_anchor(target: ModelRequest, tool_call_id: str, queue: PendingMessag
     if delivered is not None and any(part is delivered for part in target.parts):
         return delivered
     return next(part for part in target.parts if isinstance(part, ToolReturnPart) and part.tool_call_id == tool_call_id)
+
+
+def resumes_suspended_response(request_context: ModelRequestContext) -> bool:
+    """Whether the request re-sends a history ending in a suspended response, to resume it.
+
+    `'asap'` content can't be delivered into such a request: there's nowhere to put it, so it waits for the next one.
+    """
+    messages = request_context.messages
+    return bool(messages) and isinstance(last := messages[-1], ModelResponse) and last.state == 'suspended'
 
 
 def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:

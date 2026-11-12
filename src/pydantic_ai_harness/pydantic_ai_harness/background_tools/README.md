@@ -136,7 +136,7 @@ A run waits for its background tools to finish, also when it pauses for deferred
 with a [`PendingModelResponse`](https://pydantic.dev/docs/ai/batch/#ending-a-run-while-it-waits).
 A pending call counts toward `tool_calls_limit`. At a deferred-tool pause, the results are added to
 the message history after the paused step, so a resumed run sees them. At a `PendingModelResponse`
-pause, or when other queued content includes a `ModelResponse`, they stay queued on
+pause, or when other queued content includes a `ModelResponse` or an interrupted request, they stay queued on
 `AgentRun.pending_messages` and `BackgroundTools` doesn't queue them again, so pass them to the next
 run yourself. A failed tool still ends the run. A tool's own `timeout` bounds how long the run waits
 for it, and a run's [`timeout`](https://pydantic.dev/docs/ai/timeouts/#bounding-a-whole-run) bounds

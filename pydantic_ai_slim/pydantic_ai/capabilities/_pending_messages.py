@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode
-from pydantic_ai._enqueue import deliver_asap_messages, run_queue, stamped_messages
+from pydantic_ai._enqueue import deliver_asap_messages, resumes_suspended_response, run_queue, stamped_messages
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import EnqueuedMessagesEvent, ModelRequest
@@ -64,8 +64,11 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
 
         Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] per drained
         [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call, in enqueue order, describing the
-        messages exactly as delivered here.
+        messages exactly as delivered here. Not when the request resumes a suspended response, where the
+        messages wait for the next request.
         """
+        if resumes_suspended_response(request_context):
+            return request_context
         return deliver_asap_messages(ctx, request_context)
 
 
@@ -86,7 +89,8 @@ def drain_pending_messages_at_end(
     [`ModelRequestNode`][pydantic_ai._agent_graph.ModelRequestNode]'s request; any
     earlier ones are appended to `ctx.messages` so they appear in history before the
     redirect. A pause always ends the run: when it pauses for deferred tools, every resulting
-    message is appended to `ctx.messages` instead, unless a queued message is a `ModelResponse`;
+    message is appended to `ctx.messages` instead, unless a queued message is a `ModelResponse` or an
+    interrupted `ModelRequest`;
     then, and at a [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] pause, the
     messages stay queued, readable on [`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages].
     Emits one [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] per drained
@@ -97,9 +101,11 @@ def drain_pending_messages_at_end(
 
     # A pause hands control back to the caller and must stand: turning it into another model turn would
     # skip an approval or abandon a provider job. At a deferred-tool pause, queued requests are recorded
-    # after the paused history; resuming it without `deferred_tool_results` raises rather than closing the
-    # paused calls. A queued `ModelResponse` would read as the paused response, so then the messages stay
-    # queued, as they do at a `PendingModelResponse` pause, whose history must end on the pending response.
+    # after the paused history with a run ID, which marks them as part of the pause, so resuming it without
+    # `deferred_tool_results` pauses again rather than closing the paused calls. A queued `ModelResponse`
+    # would read as the paused response, and an interrupted request would close the paused calls, so then
+    # the messages stay queued, as they do at a `PendingModelResponse` pause, whose history must end on the
+    # pending response.
     # Either way the queue is closed, so `enqueue` raises once the run has ended.
     if isinstance(result.data.output, PendingModelResponse):
         run_queue(ctx).close()

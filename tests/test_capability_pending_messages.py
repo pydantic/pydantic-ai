@@ -35,6 +35,7 @@ from pydantic_ai.capabilities.abstract import (
     NodeResult,
 )
 from pydantic_ai.exceptions import (
+    ApprovalRequired,
     ModelRetry,
     UserError,
 )
@@ -2362,6 +2363,94 @@ async def test_enqueue_at_pending_model_response_pause_keeps_the_pause(priority:
     assert [message for pending in run.pending_messages for message in pending.messages] == [
         ModelRequest(parts=[UserPromptPart(content='late content', timestamp=IsDatetime())]),
     ]
+
+
+@pytest.mark.parametrize('source', ['own', 'other_run'])
+async def test_content_recorded_at_a_deferred_pause_keeps_the_pause_on_a_plain_resume(source: str):
+    """Content recorded at a pause carries a run ID, its own or one a producer set, so a plain resume pauses again."""
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(parts=[ToolCallPart(tool_name='gated', tool_call_id='call-gated')])
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def gated(ctx: RunContext[object]) -> str:
+        if source == 'own':
+            ctx.enqueue('noted at the pause')
+        else:
+            ctx.enqueue(ModelRequest(parts=[UserPromptPart('a report')], run_id='source-run'))
+        raise ApprovalRequired
+
+    paused = await agent.run('Hello')
+    assert isinstance(paused.output, DeferredToolRequests)
+    recorded = paused.all_messages()[-1]
+    assert isinstance(recorded, ModelRequest)
+    assert recorded.run_id == (paused.run_id if source == 'own' else 'source-run')
+
+    resumed = await agent.run(message_history=paused.all_messages())
+    assert isinstance(resumed.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in resumed.output.approvals] == ['call-gated']
+    assert call_count == 1
+
+
+async def test_interrupted_request_queued_at_a_deferred_pause_stays_queued():
+    """A queued interrupted request would close the paused calls on resume, so it isn't recorded."""
+    interrupted = ModelRequest(parts=[UserPromptPart('half done')], state='interrupted')
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='gated')])
+
+    agent = Agent(FunctionModel(model_fn), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def gated(ctx: RunContext[object]) -> str:
+        ctx.enqueue(interrupted)
+        raise ApprovalRequired
+
+    async with agent.iter('Hello') as run:
+        async for _ in run:
+            pass
+
+    assert run.result is not None
+    assert isinstance(run.result.output, DeferredToolRequests)
+    assert isinstance(run.result.all_messages()[-1], ModelResponse)
+    assert [message for pending in run.pending_messages for message in pending.messages] == [interrupted]
+
+
+async def test_asap_content_queued_before_resuming_a_suspended_response_waits_for_the_next_request():
+    """Content can't go into the request that resumes a suspended response, so it's delivered in the next one."""
+    received: list[list[ModelMessage]] = []
+
+    class _SuspendingFunctionModel(FunctionModel):
+        def continuation_delay(self, response: ModelResponse) -> float | None:
+            return 0.0 if response.state == 'suspended' else None
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(messages)
+        if len(received) == 1:
+            return ModelResponse(parts=[TextPart(content='working')], state='suspended', provider_response_id='job-1')
+        return ModelResponse(parts=[TextPart(content='finished')])
+
+    agent = Agent(_SuspendingFunctionModel(model_fn), output_type=[str, PendingModelResponse])
+    paused = await agent.run('Hello')
+    assert isinstance(paused.output, PendingModelResponse)
+
+    async with agent.iter(message_history=paused.all_messages()) as run:
+        run.enqueue('left over', priority='asap')
+        async for _ in run:
+            pass
+
+    assert run.result is not None
+    assert run.result.output == 'finished'
+    *_, completed, delivered, last = run.result.all_messages()
+    assert isinstance(completed, ModelResponse) and completed.state == 'complete'
+    assert isinstance(delivered, ModelRequest)
+    assert [part.content for part in delivered.parts if isinstance(part, UserPromptPart)] == ['left over']
+    assert isinstance(last, ModelResponse)
 
 
 async def test_enqueue_when_idle_drains_after_leftover_asap():
