@@ -130,12 +130,22 @@ async def test_settled_histories_stay_in_their_files(tmp_path: Path) -> None:
     first_history = owner.history(record.id)
     assert first_history
     path = tmp_path / f'{record.id}.json'
-    saved_at = path.stat().st_mtime_ns
 
     async with DelegationTasks(directory=tmp_path).opened() as idle:
         assert idle.records[record.id].messages == []
         assert idle.history(record.id) == first_history
+        # Restoring a task the owner holds, without its history, keeps the saved one.
+        assert await idle.restore(idle.records[record.id])
+        assert idle.history(record.id) == first_history
+        saved_at = path.stat().st_mtime_ns
     assert path.stat().st_mtime_ns == saved_at
+
+    async with DelegationTasks(directory=tmp_path).opened() as edited:
+        # A change made to the task itself is still saved on close, with its history.
+        edited.records[record.id].output = 'edited'
+    async with DelegationTasks(directory=tmp_path).opened() as reread:
+        assert reread.records[record.id].output == 'edited'
+        assert reread.history(record.id) == first_history
 
     restored = DelegationTasks(directory=tmp_path)
     with anyio.fail_after(WAIT):
@@ -1268,7 +1278,6 @@ async def test_restore_adds_a_finished_task_unless_it_has_run_since(tmp_path: Pa
         assert await owner.restore(replace(task, output='Again'))
         assert [update.task.output for update in seen] == ['Again']
         owner.records[task.id] = replace(task, run_id='c' * 32, output='Resumed')
-        await owner.save(owner.records[task.id])
         assert not await owner.restore(task)
     # A closed owner finds the later run on disk.
     assert not await DelegationTasks(directory=tmp_path / 'tasks').restore(task)

@@ -283,8 +283,11 @@ class DelegationTasks:
         self._unsteered: dict[str, list[str]] = {}
         self._queued: dict[str, tuple[str, int]] = {}
         self._save_locks: dict[str, anyio.Lock] = {}
-        self._history_on_disk: dict[str, Path] = {}
-        """The saved file of each settled task whose history is kept there only, so idle histories don't fill memory."""
+        self._history_on_disk: dict[str, tuple[Path, bytes]] = {}
+        """Each settled task whose history is kept in its saved file only, so idle histories don't fill memory.
+
+        Maps its ID to that file and to the rest of the task as saved, so closing saves only a task changed since.
+        """
         self._questions: dict[str, _Question] = {}
         self._queued_questions: dict[str, str] = {}
         self._woken = anyio.Event()
@@ -353,8 +356,7 @@ class DelegationTasks:
                     if record.status == 'running':
                         record.status, record.outcome = 'finished', 'cancelled'
                         record.finished_at = time.time()
-                    # One whose history is in its file only was saved when it last changed.
-                    if self._saved_history(record) is None:
+                    if not self._unchanged_since_saved(record):
                         await self.save(record)
             if cleanup.cancel_called:
                 raise RuntimeError('Delegation cleanup timed out; children did not release their resources')
@@ -372,7 +374,7 @@ class DelegationTasks:
             if record.status == 'running':
                 await self._settle_interrupted(record)
             else:
-                self._history_on_disk[record.id] = directory / f'{record.id}.json'
+                self._history_on_disk[record.id] = (directory / f'{record.id}.json', _ADAPTER.dump_json(record))
             self.records[record.id] = record
 
     async def _settle_interrupted(self, record: DelegationTask) -> None:
@@ -428,7 +430,7 @@ class DelegationTasks:
                 await temporary.replace(destination)
                 if record.status == 'finished':
                     record.messages = []
-                    self._history_on_disk[record.id] = Path(destination)
+                    self._history_on_disk[record.id] = (Path(destination), _ADAPTER.dump_json(record))
 
     async def restore(self, record: DelegationTask) -> bool:
         """Add a finished task made elsewhere, such as one imported from another agent's session.
@@ -448,8 +450,6 @@ class DelegationTasks:
         if self.directory is not None:
             await anyio.Path(self.directory).mkdir(parents=True, exist_ok=True)
         self.records[record.id] = record
-        # Its own history replaces the saved one.
-        self._history_on_disk.pop(record.id, None)
         await self.save(record)
         if self._open:
             await self.notify(record)
@@ -729,7 +729,13 @@ class DelegationTasks:
 
         History a caller has set on the record since replaces the saved one.
         """
-        return None if record.messages else self._history_on_disk.get(record.id)
+        saved = None if record.messages else self._history_on_disk.get(record.id)
+        return None if saved is None else saved[0]
+
+    def _unchanged_since_saved(self, record: DelegationTask) -> bool:
+        """Whether `record`'s history is in its saved file only and the rest of it is as saved there."""
+        saved = None if record.messages else self._history_on_disk.get(record.id)
+        return saved is not None and _ADAPTER.dump_json(record) == saved[1]
 
     async def allow_resume(self, task_id: str) -> None:
         """Explicit user authorization to resume a stopped, resumable child."""
