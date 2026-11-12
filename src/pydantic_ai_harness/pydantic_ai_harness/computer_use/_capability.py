@@ -92,11 +92,9 @@ _OBSERVING_ACTIONS = frozenset({'wait', 'screenshot', 'zoom', 'cursor_position'}
 """Action types that change nothing on the screen, so a read-only workspace allows them."""
 
 _DISPLAY_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakValueDictionary()
-"""Locks per display object and per environment ref, and event loop: agents in one process sharing a screen, such as
-parallel sub-agents, take turns at it a whole call at a time, so one's clicks and typing never land between another's.
-A call takes both its display's lock and its ref's, so calls that share either one take turns. A lock can't wake a
-waiter on another loop, so calls on separate event loops, such as durable units on separate loops, don't take turns. A
-lock goes once no call holds or waits for it."""
+"""Locks per event loop, display object and environment ref. Agents sharing a screen, such as parallel sub-agents, take
+turns a whole call at a time, so one's clicks never land between another's. A lock can't wake a waiter on another event
+loop, so calls on separate loops don't take turns. A lock goes once no call holds or waits for it."""
 
 _RELEASE_TIMEOUT = 5
 """Maximum time spent releasing each mouse button a failed or cancelled call left pressed."""
@@ -157,11 +155,7 @@ class _NotRun:
 
 
 def _candidate_models(model: AbstractModel) -> list[Model]:
-    """The models that may answer a request to `model`.
-
-    That's the model itself, a `FallbackModel`'s models, or, for a wrapper without a profile of its own, those of the
-    model it wraps.
-    """
+    """The models that may answer for `model`: itself, a `FallbackModel`'s models, or a profile-less wrapper's."""
     if isinstance(model, FallbackModel):
         return [answering for inner in model.models for answering in _candidate_models(inner)]
     if not isinstance(model, Model):
@@ -240,7 +234,7 @@ def _scale(value: int, to: int, scale_from: int) -> int:
 
 
 def _to_pixels(action: ComputerToolAction, display: tuple[int, int], space: tuple[int, int]) -> ComputerToolAction:
-    """Scale an action's positions from the model's `space`, a grid or a screenshot taken before the display changed size, to display pixels."""
+    """Scale an action's positions from the model's `space` (a grid, or an older screenshot's size) to the display's."""
     (width, height), (space_width, space_height) = display, space
 
     def x(value: int) -> int:
@@ -344,8 +338,7 @@ async def _perform(
 ) -> tuple[int, str | None, list[str | BinaryImage]]:
     """Run the actions in order until one fails: how many ran, why the next one failed, and what they returned.
 
-    The screen settles for `settle_seconds` before anything that looks at it after an action, so a page load or an
-    animation can finish; a `wait` the model asks for comes on top of it.
+    After an action, the screen settles for `settle_seconds` before a zoom or the closing screenshot.
     """
     outputs: list[str | BinaryImage] = []
     unsettled = False
@@ -361,7 +354,7 @@ async def _perform(
     try:
         for action in actions:
             if isinstance(action, MouseDown):
-                # Counted as pressed before it runs: a press can take effect and still fail to report back.
+                # Counted before it runs, since a press can take effect and still fail.
                 held.append(action.button)
             try:
                 match action:
@@ -414,10 +407,10 @@ def _last_screenshot_size(messages: list[ModelMessage]) -> tuple[int, int] | Non
 
 
 def _the_call(ctx: RunContext[Any]) -> tuple[int, ComputerCallPart] | None:
-    """Where in the messages the response that made this call is, and the call as the model made it.
+    """The index of the response that made this call, and the call as the model made it.
 
-    A call whose arguments don't validate, such as one a hook corrected, is a plain `ToolCallPart` that still keeps
-    what the agent recorded on it: it's read as a `ComputerCallPart` too, whose `actions` are then `None`.
+    A call whose arguments didn't validate is a plain `ToolCallPart` that keeps the agent's labels, so it's read as a
+    `ComputerCallPart` whose `actions` are `None`.
     """
     for index in range(len(ctx.messages) - 1, -1, -1):
         message = ctx.messages[index]
@@ -461,8 +454,8 @@ async def _display_size(display: Display) -> tuple[int, int]:
 @asynccontextmanager
 async def _taking_turns(ctx: RunContext[Any], display: Display) -> AsyncGenerator[None]:
     """Hold the screen for one call: its display object's lock, then its environment's, always in that order."""
-    # Backends attached to one environment share its ref, and a backend's display is the same object for its lifetime,
-    # but two environments may also reach one display object, so neither key alone finds every call on a screen.
+    # One environment's backends share its ref, but two environments may reach one display object, so neither key
+    # alone finds every call on a screen.
     token = anyio.lowlevel.current_token()
     keys: list[object] = [(token, 'display', id(display))]
     if (ref := ctx.workspace.ref) is not None:
@@ -486,9 +479,8 @@ def _plural(count: int, noun: str) -> str:
 class ComputerUseActionLimits:
     """The most one action in a `computer` call may ask for. Every limit is off by default.
 
-    A call that asks for more than a limit is refused before any of its actions run, and the model is told which limit
-    it went over. Under durable execution a call runs as one activity, so allow for the longest call when you set the
-    activity's timeout.
+    A call over a limit is refused before any action runs, and the model is told which limit. Under durable execution
+    a call is one activity, so set the activity's timeout for the longest call.
     """
 
     max_wait_seconds: Annotated[float, Field(gt=0)] | None = None
@@ -515,27 +507,26 @@ _ACTION_LIMITS = TypeAdapter(ComputerUseActionLimits)
 
 @dataclass
 class ComputerUse(AbstractCapability[AgentDepsT]):
-    """Lets the agent see and control the display of its workspace with one `computer` tool.
+    """Lets the agent see and control its workspace's display with one `computer` tool.
 
-    The model sends a list of mouse and keyboard actions; they run in order on the workspace's display, and the tool
-    returns a screenshot of the result. The workspace's backend must have a display, such as a sandbox capability
-    started with a desktop; see [`SupportsDisplay`][pydantic_ai_harness.computer_use.SupportsDisplay]. The model must
-    accept images.
+    The model sends mouse and keyboard actions, they run in order, and the tool returns a screenshot. The workspace's
+    backend needs a display ([`SupportsDisplay`][pydantic_ai_harness.computer_use.SupportsDisplay]), such as a sandbox
+    started with a desktop, and the model must accept images.
     """
 
     _: KW_ONLY
 
     settle_seconds: float = 0
-    """Pause after acting before the next zoom or the closing screenshot. Off by default: set it when screenshots show
-    pages still loading or animating. A `wait` the model asks for comes on top of it."""
+    """Pause after acting before the next zoom or the closing screenshot. Set it when screenshots show pages still
+    loading. A `wait` the model asks for adds to it."""
 
     action_limits: ComputerUseActionLimits = ComputerUseActionLimits()
-    """The most one action may ask for, such as the seconds of a `wait`. Off by default."""
+    """The most one action may ask for, such as a `wait`'s seconds."""
 
     native: bool = True
-    """Send the tool as the model's own computer use tool where it has one, such as Claude's or OpenAI's.
+    """Send the tool as the model's own computer tool where it has one, such as Claude's or OpenAI's.
 
-    `False` sends this tool, with its own actions, to every model. OpenAI's native tool can't zoom, triple-click, hold a
+    `False` sends this tool to every model. OpenAI's native tool can't zoom, triple-click, hold a
     key, press or release a mouse button, or read the pointer position; with `False`, GPT can.
     """
 
@@ -581,15 +572,15 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise ToolFailed(refused)
         made = _the_call(ctx)
         call = made[1] if made else None
-        # The agent records on the call the grid and screenshot limit of the model that made it, if it has them.
+        # The grid and screenshot limit of the model that made the call, as the agent recorded them.
         grid, made_limit = (call.coordinate_grid, _call_limit(call)) if call else (None, None)
         plan = _Plan(
             grid=grid,
             # The model pointed on the latest screenshot before its call.
             seen=_last_screenshot_size(ctx.messages[: made[0]]) if made else None,
             changed=actions if call and _changed(call, actions) else None,
-            # The next request starts at the run's model, or with a sticky `ModelFallback` at the model that made the
-            # call, so the screenshot fits both. Another model is refused before its request if it can't see it.
+            # The next request goes to the run's model, or with a sticky `ModelFallback` to the one that made the call,
+            # so the screenshot must fit both. Any other model is refused before its request if it can't see it.
             limit=_min_limit(made_limit, _model_limit(ctx.model)),
             model_name=ctx.model.model_name,
             acts=acts,
@@ -706,12 +697,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         return [self._native_computer] if self.native else []
 
     async def _native_computer(self, ctx: RunContext[AgentDepsT]) -> ComputerTool | None:
-        """The provider's native computer tool, declaring the size of the screenshot the model points on.
+        """The provider's native computer tool, sized to the screenshot the model points on.
 
-        That's the latest screenshot, which the model's positions are scaled from, or before the first one the
-        display's size. Resolved again for each model a step is attempted at, as `ctx.model`.
+        That's the latest screenshot, or the display's size before the first. Resolved for each model a step tries.
         """
-        # Read every step, also with a screenshot, so a durable run reads the display at the same steps on replay.
+        # Read every step, even with a screenshot, so a durable run reads the display at the same steps on replay.
         size = await self._screen_size(ctx)
         if isinstance(size, _NotRun):
             if size.kind == 'tool':
@@ -738,7 +728,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         """Fail the run at its start when its workspace has no display.
 
         Durable workflow code can't reach the backend, so there the first `computer` call or native tool size read
-        reports it instead, from inside its durable unit.
+        reports it instead.
         """
         if not ctx.in_durable_context and _display(ctx) is None:
             raise UserError(_NO_DISPLAY)
@@ -746,11 +736,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     async def prepare_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        """Prepare each attempt for the model about to answer it, which `ModelFallback` can change within a step.
+        """Refuse the model about to answer if it can't see screenshots, or would see the latest one scaled down.
 
-        Refuse a model that can't see screenshots, including one in a `FallbackModel`, which may answer every call.
-        Also refuse one that would see the latest screenshot scaled down, such as after a switch to a model that takes
-        smaller ones: it would point on a smaller image than the size the screenshot's positions are mapped from.
+        Runs per attempt, since `ModelFallback` can change the model within a step. A `FallbackModel` is refused if any
+        of its models can't see images. A scaled-down screenshot would put the model's positions on a smaller image than
+        the one they're mapped from.
         """
         model = request_context.model
         blind = [

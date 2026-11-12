@@ -341,9 +341,8 @@ Gotchas:
 One `computer` tool: the model sends a list of mouse and keyboard actions, they run on
 `ctx.workspace`'s display, and the tool returns a screenshot. Needs a workspace whose backend
 implements `SupportsDisplay` and a model that accepts images. A model without image input fails before
-its request. A workspace without a display fails the run at its start, except under durable execution,
-where workflow code can't reach the backend: there the first `computer` call or native tool size read
-fails it, from inside its durable unit.
+its request. A workspace without a display fails the run at its start; under durable execution, the
+first `computer` call or native tool size read fails it instead.
 
 ```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
@@ -371,19 +370,19 @@ A workspace backend with a screen implements `SupportsDisplay` (a `display` prop
 Gotchas:
 
 - Calls run without asking. A call OpenAI flagged (`ComputerCallPart.safety_checks`, each a `SafetyCheck` with
-  `code` and `message`) waits for approval, following OpenAI's guidance that a person confirms it; resolve it with
+  `code` and `message`) waits for approval, as OpenAI asks; resolve it with
   `HandleDeferredToolCalls` (approve, or `ToolDenied`) or `DeferredToolRequests` output, or the run ends with an
   error. To ask before every action, raise `ApprovalRequired` from a `before_tool_execute` hook when
   `isinstance(call, ComputerCallPart)` and an action isn't `screenshot`, `zoom`, `wait` or `cursor_position`.
 - Gemini 3 models get a 0-999 coordinate grid (profile `computer_use_coordinate_grid`), scaled to
   pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one. Under `ModelFallback`,
   each model that answers is told its own coordinates; one that can't take images, or would see the latest screenshot
-  scaled down, ends the run with a `UserError` before its request. The agent tells a grid model its grid in the tool
-  description and labels each `ComputerCallPart` from the model that made it (`coordinate_grid`,
-  `screenshot_max_side`, `screenshot_max_pixels`); a custom runner reads those instead of the run's model.
-- Screenshots are sent at the screen's size: on a screen larger than the model takes (profile
-  `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`) the run stops with an error naming the
-  largest size that fits, before the call acts. 1280x800 fits every model.
+  scaled down, ends the run with a `UserError` before its request. Each `ComputerCallPart` is labelled with its
+  model's `coordinate_grid`, `screenshot_max_side` and `screenshot_max_pixels`; a custom runner reads those instead of
+  the run's model.
+- Screenshots are sent at the screen's size: a screen larger than the model takes (profile
+  `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`) stops the run before the call acts,
+  with an error naming the largest size that fits. 1280x800 fits every model.
 - Under durable execution each `computer` call's screen work is one unit, so replay and recovery don't repeat a finished
   call. One cut off before it was recorded retries under the engine's config for capability steps; on Temporal set
   `activity_config` with a longer `start_to_close_timeout` and `RetryPolicy(maximum_attempts=1)`. When the engine gives
