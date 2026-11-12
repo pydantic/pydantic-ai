@@ -381,16 +381,17 @@ class EnqueueGuard(list[PendingMessage]):
 
     def in_flight_error(self) -> UserError:
         """The error for `ctx.in_flight` inside the durable unit."""
-        return self._error(
-            '`ctx.in_flight`', 'work it started or registered would be lost', 'Start or register in-flight work'
-        )
+        # No advice to move it to workflow-level code, where `ctx.in_flight` isn't supported yet either.
+        return self._error('`ctx.in_flight`', 'work it started or registered would be lost')
 
-    def _error(self, usage: str, consequence: str, advice: str) -> UserError:
-        return UserError(
+    def _error(self, usage: str, consequence: str, advice: str | None = None) -> UserError:
+        message = (
             f'{usage} is not supported inside a durable {self._unit_noun}: the durable runtime replays '
-            f"the {self._unit_noun}'s recorded result without re-running your code, so {consequence}. "
-            f'{advice} from {self._container_noun}-level code instead.'
+            f"the {self._unit_noun}'s recorded result without re-running your code, so {consequence}."
         )
+        if advice is not None:
+            message += f' {advice} from {self._container_noun}-level code instead.'
+        return UserError(message)
 
 
 def stamped_messages(

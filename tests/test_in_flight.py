@@ -630,7 +630,7 @@ def test_in_flight_needs_a_run_outside_durable_units():
     with pytest.raises(
         UserError,
         match=r'`ctx.in_flight` is not supported inside a durable activity: .* so work it started or registered '
-        r'would be lost\. Start or register in-flight work from workflow-level code instead\.',
+        r'would be lost\.$',
     ):
         _ = in_activity.in_flight
 

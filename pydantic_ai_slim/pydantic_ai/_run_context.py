@@ -1205,12 +1205,20 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
         Raises:
             UserError: If this `RunContext` isn't backed by a running agent in this process (e.g. the synthetic
-                context from `Agent.system_prompt_parts`, or a realtime session), or it runs inside a durable
-                execution unit, where work it starts would be lost on replay.
+                context from `Agent.system_prompt_parts`, or a realtime session), it runs inside a durable
+                execution unit, where work it starts would be lost on replay, or the run is durable (see
+                [`in_durable_context`][pydantic_ai.tools.RunContext.in_durable_context]): when such a run ends
+                would depend on the order its work finished in, which not every engine replays.
         """
         queue = self.pending_messages
         if isinstance(queue, EnqueueGuard):
             raise queue.in_flight_error()
+        if self.in_durable_context:
+            raise UserError(
+                '`ctx.in_flight` is not supported in a durable run yet: when the run ends would depend on the order '
+                'its in-flight work finished in, which durable execution engines do not all replay. Until it is, use '
+                '`ctx.in_flight` only in runs without a durability capability.'
+            )
         # Read via `__dict__`, like `_cancellation` in `cancel`: the registry never crosses a durable boundary.
         registry: InFlightRegistry | None = self.__dict__.get('_in_flight')
         if registry is None:

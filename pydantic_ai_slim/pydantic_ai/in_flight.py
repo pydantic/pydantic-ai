@@ -6,7 +6,6 @@ See [Work that outlives a step](../capabilities/custom.md#in-flight-work).
 from __future__ import annotations
 
 import asyncio
-import threading
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -17,7 +16,7 @@ from typing_extensions import TypeVar
 
 from pydantic_graph import End
 
-from . import _utils
+from . import _durable_replay, _utils
 from ._enqueue import run_queue
 from .exceptions import UserError
 from .messages import AgentStreamEvent, CapabilityEvent
@@ -441,10 +440,16 @@ class InFlightRegistry:
         self._emit('settled', (work,))
         self._notify()
 
-    def _notify_from(self, loop: asyncio.AbstractEventLoop, loop_thread: int) -> None:
-        """`_notify` from the thread content was queued on, as `enqueue` may be called from another thread."""
-        if threading.get_ident() == loop_thread:
-            # Directly, since not every event loop has `call_soon_threadsafe`: Temporal's workflow loop doesn't.
+    def _notify_from(self, loop: asyncio.AbstractEventLoop) -> None:
+        """`_notify` on `loop`, from wherever content was queued, as `enqueue` may be called from another thread."""
+        try:
+            on_loop = asyncio.get_running_loop() is loop
+        except RuntimeError:
+            # A thread with no event loop running, like a sync tool's worker thread.
+            on_loop = False
+        if on_loop:
+            # Directly, since not every event loop has `call_soon_threadsafe`, and one that runs on a pool of
+            # threads, like Temporal's workflow loop, can't be recognized by its thread.
             self._notify()
         else:
             loop.call_soon_threadsafe(self._notify)
@@ -490,13 +495,13 @@ class InFlightRegistry:
         if not pause and queue:
             return result
         loop = asyncio.get_running_loop()
-        loop_thread = threading.get_ident()
         with (
-            ctx.tracer.start_as_current_span(
+            _durable_replay.start_as_current_span(
+                ctx.tracer,
                 'in_flight drain',
                 attributes={'in_flight.waiting': len(waiting), 'in_flight.until': 'all' if pause else 'queued'},
             ),
-            queue.notifying(lambda: self._notify_from(loop, loop_thread)),
+            queue.notifying(lambda: self._notify_from(loop)),
         ):
             self._emit('draining', waiting)
             while self._draining() and (pause or not queue):
