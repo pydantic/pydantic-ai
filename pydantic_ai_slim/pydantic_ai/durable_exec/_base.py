@@ -1128,7 +1128,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         def resolve(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
             if metadata_key is None:
                 # An engine that declares no config key takes no per-tool config at all, so tool
-                # metadata is not consulted. Collapsing `None` to `''` here would instead read the
+                # metadata is not consulted. The one per-tool opt-out such an engine still honors is the
+                # typed `ToolDefinition.durable` field, which `_runs_outside_durable_unit` checks before
+                # this resolver runs. Collapsing `None` to `''` here would instead read the
                 # empty-string key, letting `metadata={'': False}` opt a tool out of its durable
                 # unit -- un-checkpointing the call and shifting the recorded unit sequence, which
                 # is exactly what DBOS's "tool metadata is ignored" contract exists to prevent.
@@ -1142,8 +1144,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 config_type_label=f'{self.engine_name} durable config',
             )
             if config is False:
-                # `fallback_config` is deliberately empty above, so `False` can only come from
-                # metadata on a concrete tool.
+                # `fallback_config` is deliberately empty above, so `False` can only come from a
+                # concrete tool: its engine metadata key, or its typed `durable=False` field.
                 assert tool is not None
                 return False
             if not config:
