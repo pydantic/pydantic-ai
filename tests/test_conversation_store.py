@@ -16,7 +16,8 @@ from pydantic_ai.conversation_store import (
     InMemoryConversationStore,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelSettingsDeltaPart
+from pydantic_ai.messages import ModelMessage, ModelSettingsDeltaPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RunUsage
@@ -790,6 +791,143 @@ async def test_an_edited_serialized_window_branches_inside_the_window(edited: in
     reloaded = await store.load(window.conversation_id)
     assert reloaded is not None
     assert reloaded.messages == [*second.all_messages()[:2], *revived.messages]
+
+
+@dataclasses.dataclass
+class _Answer:
+    text: str
+
+
+def _round_trip(conversation: Conversation) -> Conversation:
+    return ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(conversation))
+
+
+async def test_a_conversation_serialized_between_output_tool_turns_appends_each_turn() -> None:
+    """A run merges the stored output tool result with its new prompt, so the save compares the stored messages as the run cleaned them."""
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=_Answer)
+    added: list[ModelMessage] = []
+    for turn in range(4):
+        loaded = await store.load('c') or Conversation(conversation_id='c')
+        result = await agent.run(f'turn {turn}', conversation=_round_trip(loaded))
+        await store.save(_round_trip(result.conversation))
+        added.extend(result.new_messages())
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == added
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.branches == []
+
+
+class _HistoryReadsStore(InMemoryConversationStore):
+    """Records the `limit` of each history it reads."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.limits: list[int | None] = []
+
+    async def read_history(self, head_id: str | None, *, limit: int | None = None) -> list[ConversationEntry]:
+        self.limits.append(limit)
+        return await super().read_history(head_id, limit=limit)
+
+
+async def _stored_output_tool_turns(store: InMemoryConversationStore) -> Conversation:
+    """Three output tool turns saved in-process, so the store keeps each turn's messages as the run added them."""
+    agent = Agent(TestModel(), output_type=_Answer)
+    conversation = Conversation(conversation_id='c')
+    for turn in range(3):
+        result = await agent.run(f'turn {turn}', conversation=conversation)
+        await store.save(result)
+        conversation = result.conversation
+    stored = await store.load('c')
+    assert stored is not None
+    return stored
+
+
+async def test_a_serialized_window_of_output_tool_turns_appends_to_the_whole_conversation() -> None:
+    store = _HistoryReadsStore()
+    stored = await _stored_output_tool_turns(store)
+    window = await store.load('c', limit=5)
+    assert window is not None
+    result = await Agent(TestModel(), output_type=_Answer).run('turn 3', conversation=_round_trip(window))
+    revived = _round_trip(result.conversation)
+    # The run merged two of the 5 messages it was given.
+    assert revived.new_message_index == 4
+    store.limits.clear()
+
+    await store.save(revived)
+    reads = list(store.limits)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages, *result.new_messages()]
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.branches == []
+    # The save reads stored messages back only until, cleaned the same way, they're as many as the
+    # run was sent, not the whole history.
+    assert reads == [4, 5]
+
+
+def _look_up_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Calls the `look_up` tool, and once it returned, the output tool."""
+    if any(isinstance(part, ToolReturnPart) and part.tool_name == 'look_up' for part in messages[-1].parts):
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'text': 'found'})])
+    return ModelResponse(parts=[ToolCallPart('look_up', {})])
+
+
+async def test_a_serialized_window_starting_inside_a_tool_call_turn_appends_to_the_whole_conversation() -> None:
+    """Reading back two entries can add two cleaned messages: a tool call restores the result the shorter history dropped as orphaned."""
+    agent = Agent(FunctionModel(_look_up_then_answer), output_type=_Answer)
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return 'found'
+
+    store = _HistoryReadsStore()
+    conversation = Conversation(conversation_id='c')
+    for turn in range(4):
+        result = await agent.run(f'turn {turn}', conversation=conversation)
+        await store.save(result)
+        conversation = result.conversation
+    stored = await store.load('c')
+    assert stored is not None
+    window = await store.load('c', limit=9)
+    assert window is not None
+    result = await agent.run('turn 4', conversation=_round_trip(window))
+    revived = _round_trip(result.conversation)
+    assert revived.new_message_index == 8
+    store.limits.clear()
+
+    await store.save(revived)
+    reads = list(store.limits)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == [*stored.messages, *result.new_messages()]
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.branches == []
+    # The last 8 entries clean to 6 messages and the last 10 to 9, so the history the run was sent
+    # starts in between, at the last 9.
+    assert reads == [8, 10]
+
+
+async def test_a_serialized_window_whose_conversation_is_deleted_while_more_of_it_is_read_conflicts() -> None:
+    store = _RacingStore()
+    await _stored_output_tool_turns(store)
+    window = await store.load('c', limit=5)
+    assert window is not None
+    result = await Agent(TestModel(), output_type=_Answer).run('turn 3', conversation=_round_trip(window))
+
+    async def delete_on_the_next_read() -> None:
+        store.race = lambda: store.delete('c')
+
+    store.race = delete_on_the_next_read
+    with pytest.raises(ConversationConflict):
+        await store.save(_round_trip(result.conversation))
 
 
 async def test_a_conversation_copied_after_loading_is_compared_instead() -> None:

@@ -249,9 +249,11 @@ class ConversationStore(ABC):
         messages, up to the last one, as `new_message_index` says it holds, say after the
         conversation was serialized, or with all of them when it's `None`. Those that extend it are
         appended, and if it was rewritten, the messages from the first difference on branch off the
-        last message both share, keeping the old branch stored. Messages are matched with `==`, so a
-        change only to a field message equality ignores, like a file's `media_type` or `identifier`,
-        isn't stored.
+        last message both share, keeping the old branch stored. A run cleans the history it's sent
+        before it sets that index, merging a stored output tool result with its new prompt, say, so
+        the messages before the index also match the stored ones they were cleaned from, however many
+        those are. Messages are matched with `==`, so a change only to a field message equality
+        ignores, like a file's `media_type` or `identifier`, isn't stored.
 
         The save is checked against the conversation's
         [`revision`][pydantic_ai.conversation.Conversation.revision]: it must be the stored one, or
@@ -341,11 +343,44 @@ class ConversationStore(ABC):
             if entry.message != message:
                 break
             shared += 1
+        if (
+            record is not None
+            and window is not None
+            and shared < len(history)
+            and await self._sent_as_cleaned(record, history, messages[:window])
+        ):
+            return record.head_id, messages[window:], branches
         parent_id = history[shared - 1].id if shared else history[0].parent_id if history else None
         if shared < len(history):
             # A rewritten history leaves the stored one as a branch.
             branches = _left(branches, history[-1].id)
         return parent_id, messages[shared:], branches
+
+    async def _sent_as_cleaned(
+        self, record: ConversationRecord, history: list[ConversationEntry], sent: list[_messages.ModelMessage]
+    ) -> bool:
+        """Whether `sent` is the last stored messages as a run cleans the history it's sent, say merging adjacent requests.
+
+        `history` holds the last `len(sent)` stored entries. A history that starts earlier never cleans to
+        fewer messages, so the entries before them are read only until the stored ones clean to more
+        messages than `sent`, not the whole history.
+        """
+        new = 1
+        while True:
+            stored = [entry.message for entry in history]
+            # Each entry read back starts one more history the run could have been sent.
+            if any(
+                _messages.repair_messages(stored[start:], repair_last_response=False) == sent for start in range(new)
+            ):
+                return True
+            cleaned = _messages.repair_messages(stored, repair_last_response=False)
+            if len(cleaned) > len(sent) or history[0].parent_id is None:
+                return False
+            read = await self._history_of(record, limit=len(history) + max(len(sent) - len(cleaned), 1))
+            if read is None:
+                raise ConversationConflict(record.conversation_id)
+            new = len(read) - len(history)
+            history = read
 
     async def branch(
         self,
