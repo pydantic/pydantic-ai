@@ -14,6 +14,7 @@ both histories share. A fork points at an existing entry rather than copying the
 
 from __future__ import annotations as _annotations
 
+import bisect
 import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -144,23 +145,25 @@ def _left(branches: list[str], tip: str) -> list[str]:
     return [*(entry for entry in branches if entry != tip), tip]
 
 
-def _cleaned_shortfall(
-    stored: list[_messages.ModelMessage], starts: int, sent: list[_messages.ModelMessage]
-) -> int | None:
-    """`None` if a history starting at one of the first `starts` of `stored` cleans to `sent`, else how many fewer messages the longest cleans to.
+def _cleans_to(stored: list[_messages.ModelMessage], sent: list[_messages.ModelMessage], starts: int) -> bool:
+    """Whether a history that starts at one of the first `starts` of `stored`, the last stored messages, cleans to `sent`.
 
-    The shortest is checked first. A negative count means one cleans to more messages than `sent`,
-    and so does every history that starts earlier.
+    A history that starts earlier never cleans to fewer messages, so a binary search finds the
+    earliest of those starts whose history cleans to at most as many as `sent`, and only the
+    histories from there that clean to exactly as many are compared.
     """
-    missing = 0
-    for start in reversed(range(starts)):
+    first = bisect.bisect_left(
+        range(starts),
+        -len(sent),
+        key=lambda start: -len(_messages.repair_messages(stored[start:], repair_last_response=False)),
+    )
+    for start in range(first, starts):
         cleaned = _messages.repair_messages(stored[start:], repair_last_response=False)
+        if len(cleaned) < len(sent):
+            return False
         if cleaned == sent:
-            return None
-        missing = len(sent) - len(cleaned)
-        if missing < 0:
-            break
-    return missing
+            return True
+    return False
 
 
 class ConversationStore(ABC):
@@ -383,15 +386,22 @@ class ConversationStore(ABC):
         `history` is the last `len(sent)` stored entries, as the save already read them. A history
         that starts earlier never cleans to fewer messages, so the entries before them are read, each
         once, only until the stored ones clean to more messages than `sent`, not the whole history.
+        Cleaning can also add a message, like a result for a tool call nothing answered, so the
+        history `sent` came from can be shorter than `sent`.
         """
         stored = [entry.message for entry in history]
-        first, unchecked, step = history[0], 1, 0
-        while (missing := _cleaned_shortfall(stored, unchecked, sent)) is not None:
-            if missing < 0 or first.parent_id is None:
+        first, step, unchecked = history[0], 0, len(stored)
+        while True:
+            # Only a history that cleans to at least as many messages as `sent` can clean to it, and
+            # each start is checked once: the ones before `unchecked` were read since the last check.
+            cleaned = _messages.repair_messages(stored, repair_last_response=False)
+            if cleaned == sent or (len(cleaned) >= len(sent) and _cleans_to(stored, sent, unchecked)):
+                return True
+            if len(cleaned) > len(sent) or first.parent_id is None:
                 return False
             # A request that merges into the next one adds no message, so an entry read back can add none:
             # read at least as many as are missing, and twice as many as last time.
-            step = max(missing, 2 * step, 1)
+            step = max(len(sent) - len(cleaned), 2 * step, 1)
             earlier = await self._history_of(record, up_to=first.parent_id, limit=step)
             if earlier is None:
                 raise ConversationConflict(record.conversation_id)
@@ -400,7 +410,6 @@ class ConversationStore(ABC):
                 return False
             first, unchecked = earlier[0], len(earlier)
             stored = [*(entry.message for entry in earlier), *stored]
-        return True
 
     async def branch(
         self,

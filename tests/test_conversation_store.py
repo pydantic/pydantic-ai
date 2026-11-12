@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Awaitable, Callable, Sequence
+from unittest.mock import Mock
 
 import pytest
 from pydantic import TypeAdapter
 
-from pydantic_ai import Agent, AgentRunResult, Conversation, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai import (
+    Agent,
+    AgentRunResult,
+    Conversation,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+    messages as _messages,
+)
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.conversation import ConversationTypeAdapter
 from pydantic_ai.conversation_store import (
@@ -16,7 +26,7 @@ from pydantic_ai.conversation_store import (
     InMemoryConversationStore,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelSettingsDeltaPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelSettingsDeltaPart, ToolCallPart, ToolReturnPart, repair_messages
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests
@@ -968,6 +978,75 @@ async def test_a_store_that_reads_no_earlier_history_branches_as_without_reading
     record = await store.read_record('c')
     assert record is not None
     assert len(record.branches) == 1
+
+
+async def test_a_serialized_window_whose_run_closed_out_a_tool_call_appends_to_the_whole_conversation() -> None:
+    """A run sends a result for a stored tool call nothing answered, so it was sent more messages than the stored ones it came from."""
+    store = InMemoryConversationStore()
+    stored: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('turn 0')]),
+        ModelResponse(parts=[TextPart('answer 0')]),
+        ModelRequest(parts=[UserPromptPart('turn 1')]),
+        ModelResponse(parts=[ToolCallPart('look_up', {}, tool_call_id='unanswered')]),
+        ModelResponse(parts=[TextPart('answer 1')]),
+    ]
+    await store.save(Conversation(messages=stored, conversation_id='c'))
+    window = await store.load('c', limit=3)
+    assert window is not None
+    result = await Agent(TestModel()).run('turn 2', conversation=_round_trip(window))
+    revived = _round_trip(result.conversation)
+    assert revived.new_message_index == 4
+
+    await store.save(revived)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == [*stored, *result.new_messages()]
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.branches == []
+
+
+def _output_tool_turns(turns: int) -> list[ModelMessage]:
+    """`turns` output tool turns as an in-process save stores them, each tool result in a request of its own."""
+    messages: list[ModelMessage] = []
+    for turn in range(turns):
+        messages += [
+            ModelRequest(parts=[UserPromptPart(f'turn {turn}')]),
+            ModelResponse(parts=[ToolCallPart('final_result', {'text': 'a'}, tool_call_id=f'call {turn}')]),
+            ModelRequest(
+                parts=[ToolReturnPart('final_result', 'Final result processed.', tool_call_id=f'call {turn}')]
+            ),
+        ]
+    return messages
+
+
+@pytest.mark.parametrize(('edited', 'cleanings'), [(False, 3), (True, 12)])
+async def test_a_long_serialized_conversation_is_compared_cleaning_few_of_the_histories_it_could_have_been_sent(
+    edited: bool, cleanings: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cleaning a history takes time in its length, so the save cleans only a logarithmic number of the stored histories that end at its last message."""
+    store = InMemoryConversationStore()
+    stored = _output_tool_turns(200)
+    await store.save(Conversation(messages=stored, conversation_id='c'))
+    loaded = await store.load('c')
+    assert loaded is not None
+    sent = repair_messages(loaded.messages, repair_last_response=False)
+    if edited:
+        sent[len(sent) // 2] = ModelResponse(parts=[TextPart('edited')])
+    turn = ModelRequest(parts=[UserPromptPart('turn 200')])
+    serialized = Conversation(
+        messages=[*sent, turn], conversation_id='c', revision=loaded.revision, new_message_index=len(sent)
+    )
+    repair = Mock(wraps=_messages.repair_messages)
+    monkeypatch.setattr(_messages, 'repair_messages', repair)
+
+    await store.save(serialized)
+
+    assert repair.call_count == cleanings
+    record = await store.read_record('c')
+    assert record is not None
+    assert len(record.branches) == edited
 
 
 async def test_a_serialized_window_whose_conversation_is_deleted_while_more_of_it_is_read_conflicts() -> None:
