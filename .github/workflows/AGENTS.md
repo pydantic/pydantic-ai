@@ -13,6 +13,10 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 
 `douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It returns `REQUEST_CHANGES` while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It returns `APPROVE` after a complete review with no outstanding blocking findings; optional findings may remain. Incomplete coverage returns `INCOMPLETE`, which the publisher records as `COMMENT`. A host-verified closed PR or moved head needs no publication and ends successfully. A head that already has douwebot findings cannot get a clean approval, so a later request for that head skips the review and comments with a link to the review that left them; a head with a clean approval, an incomplete review or a failed run is reviewed again, an incomplete one to complete its coverage even when its findings already block the head. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review. Both review labels use the OpenCode fallback. It has read, grep and glob tools, but no live GitHub or Git commands. It uses the prefetched review context and returns `INCOMPLETE` if missing information prevents a complete review.
 
+`.github/scripts/douwebot_opencode_result.py` unwraps a Markdown code fence that ends the OpenCode answer.
+It then validates the answer from its first `{`, so prose before a bare JSON object passes unless that prose holds a `{`.
+Text after the object or the closing fence still fails.
+
 If GitHub rejects inline publication with HTTP 422, retry once with the findings in the review body.
 Recheck the live head before that retry. Preserve the verdict; body findings still prevent a clean approval.
 Cancellation keeps ordinary-label cleanup and ends without a failure notice. Report actual review or publisher failures.
@@ -267,7 +271,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
   tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
-  with its outcome, steps, tokens and duration. OpenCode's spans carry no prompt or completion text
+  with its outcome, steps, tokens, duration and the plan that served it, such as `the backup Coding Plan`.
+  OpenCode's spans carry no prompt or completion text
   and no token counts. A vulnerability that already exists on the default branch goes only to the
   private triage Slack webhook, escaped and quoted in a code block because the model wrote it. Result
   artifacts are public, so they carry no private report. A
@@ -321,35 +326,47 @@ OpenCode threat detection. `run_with_fallback` in `.github/scripts/douwebot_open
 this chain:
 
 1. `opencode-go/deepseek-v4.1-flash` with `OPENCODE_API_KEY`.
-2. `zai-coding-plan/glm-5.3-flash` with `ZAI_API_KEY`, the primary Z.AI Coding Plan account.
-3. `zai-coding-plan/glm-5.3-flash` with `ZAI_BACKUP_API_KEY`, the backup account.
+2. `zai-coding-plan/glm-5.3-flash` on the first Z.AI Coding Plan account: `ZAI_API_KEY`, the primary, or
+   `ZAI_BACKUP_API_KEY`, the backup.
+3. `zai-coding-plan/glm-5.3-flash` on the other account.
+
+The workflow's run number plus the run's place in its job matrix picks the first account: the primary when the sum is
+even, the backup when it is odd. Run numbers count up within a workflow, so consecutive runs alternate accounts. Each
+`PR Review Checks` review passes its check's place in the `detect` matrix, so the checks of one run alternate too.
+Every other caller is a single job and passes 0. Replayed on the 12 `PR Review Checks` runs that started together at
+06:28Z on 2026-11-12, such as [run 43168376242](https://github.com/pydantic/pydantic-ai/actions/runs/43168376242),
+this rule puts 16 of their 33 reviews on the primary first and 17 on the backup. Without `ZAI_BACKUP_API_KEY`, the
+chain is Go, then the primary.
 
 A run moves to the next provider only when all of these hold:
 
 - OpenCode exited non-zero, and its event stream has no `step_finish` event.
 - The stream's last `error` event has a type the refusing provider hands over: `provider.go-limit` or
-  `provider.quota` from Go, and `provider.quota` from the primary Coding Plan. OpenCode 2.2.5 does not retry these
-  types; see `toSessionError` in
+  `provider.quota` from Go, and `provider.quota` or `provider.rate-limit` from the first Coding Plan account. OpenCode
+  2.2.5 retries a rate limit within the run before it writes `provider.rate-limit`, and does not retry the other
+  types; see `isRetryable` in
+  [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts) and
+  `toSessionError` in
   [`to-session-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts).
 - The next account's key is set. The chain leaves out a Z.AI account without a key.
 
 OpenCode 2.2.5 types any HTTP 402, and a Z.AI HTTP 429 whose message names a plan, quota or balance limit,
 `provider.quota`. Those 429s include the 5-hour, weekly and monthly windows (`1308`, `1310`, `1316` to `1321`), an
 expired plan (`1309`), a plan without the model (`1311`) and an empty balance (`1113`), so each hands the run to the
-backup account. OpenCode types every other 429 `provider.rate-limit` and retries it within the run, such as `1302`
+other account. OpenCode types every other 429 `provider.rate-limit` and retries it within the run, such as `1302`
 request-rate limits and `1305` overload; see `classify` in
 [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts). A rate
-limit that outlasts those retries fails the job; the backup account does not serve it.
+limit that outlasts those retries hands the run to the other account too.
 
 Every other failure fails the job, including a rejected key, a provider outage, a time-budget stop, a timeout and an
-invalid answer. Without `ZAI_BACKUP_API_KEY`, a run the primary Coding Plan refuses fails the job. A fallback run gets
+invalid answer. A run the other account also refuses fails the job. A fallback run gets
 only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only, so each Z.AI run
 sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
 `compaction` and `summary` agents to its model. Its environment holds only that account's key. The job log names the
 model and the plan that served the run. When a run's process fails, the job log names that run's model, its plan, and the
 `type` and `status` of its stream's last `error` event. It prints a type only when the type is shaped like
 OpenCode's own, such as `provider.auth`. It never prints the error message or response body, which can repeat the
-provider's response. When `PR Review Checks` or threat detection rejects a run's stream or answer, the job log names
+provider's response. When douwebot, `PR Review Checks` or threat detection rejects a run's stream or answer, the job log names
 the reason: a fixed message from `final_text` in `.github/scripts/douwebot_opencode_result.py`, the sorted validation
 error types, or the exception's class name. It never prints model text, because the answer can hold a private
 report. A Z.AI run sends Z.AI the same content a Go run sends Go, fork pull request content included. Start any new
@@ -357,7 +374,8 @@ CI OpenCode run through `run_with_fallback`.
 
 The Coding Plan runs draw on the same accounts as the gh-aw agent workflows, and the primary also serves Pydanty; see
 [Shared Z.AI account limits](#shared-zai-account-limits). `PR Review Checks` starts several reviews per pull request
-in parallel, so one Go limit can move all of them onto the Coding Plan at once.
+in parallel, so one Go limit can move all of them onto the Coding Plan at once. The alternating first account splits
+them across both accounts.
 
 # A copy of the repository picks the `CI` Linux runner
 
@@ -476,8 +494,8 @@ The validator's regressions live in `.github/scripts/test_weekly_ce_audit.py`; u
 
 Treat Pydanty, these workflows and the [OpenCode fallback](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan)
 as consumers of the primary Z.AI account. The GitHub `ZAI_API_KEY` and Pydanty's production credential use that account.
-`ZAI_BACKUP_API_KEY` holds a second Coding Plan account, the backup account. These workflows and the OpenCode
-fallback use it only when the primary account cannot serve a run. Pydanty never uses it.
+`ZAI_BACKUP_API_KEY` holds a second Coding Plan account, the backup account. These workflows use it only when the
+primary account cannot serve a run. The OpenCode fallback splits its runs across both accounts. Pydanty never uses it.
 Correlate overlapping workflow and Pydanty requests when investigating rate-limit failures.
 Include delegates and SDK retries in the request timeline.
 

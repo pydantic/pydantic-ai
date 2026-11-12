@@ -3288,6 +3288,44 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
+@pytest.mark.subprocess(reason='`-O` strips `assert` statements only when it starts the interpreter')
+def test_args_as_dict_rejects_non_dict_json_under_optimization():
+    """Non-object JSON stays invalid when `python -O` strips `assert` statements."""
+    # Uses no `assert`, which `-O` strips from this script too.
+    script = """
+import json
+import sys
+
+from pydantic_ai.messages import ToolCallPart
+
+results = {}
+for raw in ['[1, 2, 3]', '"text"', '1', 'null']:
+    part = ToolCallPart(tool_name='test_tool', args=raw)
+    try:
+        part.args_as_dict(raise_if_invalid=True)
+        raised = None
+    except Exception as e:
+        raised = type(e).__name__
+    results[raw] = {'args_as_dict': part.args_as_dict(), 'raise_if_invalid': raised}
+print(json.dumps({'optimize': sys.flags.optimize, 'results': results}))
+"""
+    result = subprocess.run(
+        [sys.executable, '-O', '-c', script],
+        capture_output=True,
+        text=True,
+        env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        'optimize': 1,
+        'results': {
+            raw: {'args_as_dict': {INVALID_JSON_KEY: raw}, 'raise_if_invalid': 'AssertionError'}
+            for raw in ['[1, 2, 3]', '"text"', '1', 'null']
+        },
+    }
+
+
 def test_args_as_json_str_valid_json_canonical():
     """args_as_json_str should render valid object JSON compactly, the same as the equivalent dict args.
 
