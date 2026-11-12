@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.skills._loader import SkillDefinition
 
-UntrustedSkillsReader = Callable[[Workspace], Awaitable[list[SkillDefinition]]]
-"""Reads the skills below `'operator'` authority the model may load, given the run's workspace."""
+UntrustedSkillsReader = Callable[[RunContext[Any]], Awaitable[list[SkillDefinition]]]
+"""Reads the skills below `'operator'` authority the model may load, through the run's workspace."""
 
 
 class UntrustedSkillsToolset(FunctionToolset[AgentDepsT]):
@@ -32,7 +32,7 @@ class UntrustedSkillsToolset(FunctionToolset[AgentDepsT]):
 
         The operator did not write these skills. Call `load_skill` to read one's instructions.
         """
-        return {skill.name: skill.description for skill in await self._read(ctx.workspace)}
+        return {skill.name: skill.description for skill in await self._read(ctx)}
 
     async def load_skill(self, ctx: RunContext[AgentDepsT], name: str) -> str:
         """Read the instructions of a skill that `list_skills` lists.
@@ -41,7 +41,7 @@ class UntrustedSkillsToolset(FunctionToolset[AgentDepsT]):
             ctx: Framework-provided run context.
             name: The skill's name, as `list_skills` lists it.
         """
-        for skill in await self._read(ctx.workspace):
+        for skill in await self._read(ctx):
             if skill.name == name:
                 return skill.render()
         raise ModelRetry(f'No skill is named {name!r}. Call `list_skills` to see the skills.')

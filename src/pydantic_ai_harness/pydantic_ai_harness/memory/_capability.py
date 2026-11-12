@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import posixpath
 from collections.abc import Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -23,6 +24,7 @@ from pydantic_ai.messages import (
     TextContent,
     ToolReturnPart,
     UserPromptPart,
+    WorkspaceSource,
     post_compaction_window,
 )
 from pydantic_ai.models import ModelRequestContext
@@ -30,8 +32,9 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
+from pydantic_ai_harness._workspace import secondary_workspace
 from pydantic_ai_harness.artifact_scanning import ArtifactScanner
-from pydantic_ai_harness.memory._file import FileStore, file_source
+from pydantic_ai_harness.memory._file import FileStore
 from pydantic_ai_harness.memory._in_memory import InMemoryStore
 from pydantic_ai_harness.memory._render import injection_listing_limit, list_subfiles, render_memory_prompt
 from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
@@ -406,7 +409,10 @@ class Memory(AbstractCapability[AgentDepsT]):
             store, scope = self.resolve_scope(ctx)
             source = None
             if isinstance(store, FileStore):
-                source = await file_source(store, f'{scope}/{MAIN_FILENAME}')
+                # The store's own `workspace=`, or else the run's, as `FileStore` reads its files.
+                workspace = secondary_workspace(store.workspace, 'FileStore') or ctx.workspace
+                path = posixpath.join(store.directory, scope, MAIN_FILENAME)
+                source = await WorkspaceSource.from_workspace(workspace, path)
             self._run_source = _MEMORY_SOURCE if source is None or source.authority == 'operator' else source
         return self._run_source
 

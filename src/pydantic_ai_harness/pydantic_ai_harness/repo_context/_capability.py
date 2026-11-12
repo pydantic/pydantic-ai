@@ -264,6 +264,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     _ancestors_sent: bool = field(default=False, init=False, repr=False, compare=False)
     """Whether this run has enqueued `_ancestor_parts`."""
 
+    _lowered: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether this run reads instruction files below `'operator'` authority, which leaves out `_NESTED_PRECEDENCE`."""
+
     _pending_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
     """Directories whose Strategy 3 note is enqueued but not yet in history."""
 
@@ -321,6 +324,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         run._window_chars = 0
         run._latest_compaction = None
         run._cached_working_dir = None
+        # Known before `get_instructions`, which runs before `before_run`: in a workspace below `'operator'`, the
+        # precedence sentence mustn't rank its files over the operator's. `before_run` also catches a walk-up file a
+        # `path_authority` entry lowers. The workspace's own level costs no I/O, unlike `authority_of`.
+        run._lowered = ctx.workspace.authority != 'operator'
         return run
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -357,7 +364,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
                 self._context_files.append(context_file)
             elif context_file.directory == working_dir:
                 self._unloaded_file = context_file
+                self._lowered = True
             else:
+                self._lowered = True
                 self._ancestor_parts.append(
                     ContextFilePart(
                         content=context_file_part_content(context_file),
@@ -405,7 +414,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         parts: list[str] = []
         if self.expose_inventory_tool:
             parts.append(self._inventory_hint())
-        if self.nested_traversal:
+        if self.nested_traversal and not self._lowered:
+            # In operator voice, it would rank repository files nested deeper over the operator's own.
             parts.append(_NESTED_PRECEDENCE.format(names=', '.join(f'`{name}`' for name in self.filenames)))
         return parts
 
@@ -438,9 +448,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if self._ancestors_sent:
             return request_context
         self._ancestors_sent = True
-        in_window = _context_files_in_window(ctx.messages)
+        latest = _latest_context_files(ctx.messages)
         for part in self._ancestor_parts:
-            if (part.directory, part.content) not in in_window:
+            if latest.get(part.directory) != part.content:
                 ctx.enqueue(part)
         return request_context
 
@@ -630,10 +640,10 @@ def _walk_up_view(
     return AuthorityWorkspace(workspace, authority='operator', path_authority=dict.fromkeys(paths, 'operator'))
 
 
-def _context_files_in_window(messages: Sequence[ModelMessage]) -> set[tuple[str, str]]:
-    """The directory and text of each `ContextFilePart` in the post-compaction window."""
+def _latest_context_files(messages: Sequence[ModelMessage]) -> dict[str, str]:
+    """The text of the latest `ContextFilePart` for each directory in the post-compaction window."""
     return {
-        (part.directory, part.content)
+        part.directory: part.content
         for message in post_compaction_window(messages)
         if isinstance(message, ModelRequest)
         for part in message.parts
