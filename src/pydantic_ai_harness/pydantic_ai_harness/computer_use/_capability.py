@@ -701,14 +701,16 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
         That's the latest screenshot, or the display's size before the first. Resolved for each model a step tries.
         """
-        # Read every step, even with a screenshot, so a durable run reads the display at the same steps on replay.
+        if (seen := _last_screenshot_size(ctx.messages)) is not None:
+            # The display isn't read once there's a screenshot, so a reply that doesn't use the screen doesn't start
+            # it. Whether it's read depends only on the messages, so a durable run reads it at the same steps on replay.
+            return ComputerTool(display_size=seen, optional=True)
         size = await self._screen_size(ctx)
         if isinstance(size, _NotRun):
             if size.kind == 'tool':
                 return None  # the call itself will report the display's error
             raise size.error()
-        seen = _last_screenshot_size(ctx.messages)
-        return ComputerTool(display_size=seen or size, optional=True)
+        return ComputerTool(display_size=size, optional=True)
 
     @durable_operation('display_size')
     async def _screen_size(self, ctx: RunContext[AgentDepsT]) -> tuple[int, int] | _NotRun:
