@@ -8,7 +8,6 @@ import re
 import secrets
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 import urllib.request
@@ -16,11 +15,11 @@ from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TextIO
 from urllib.parse import quote
 
-from douwebot_opencode_result import final_text
-from douwebot_opencode_run import MODEL, check_symlinks, read_only_config
+from douwebot_opencode_result import final_text, rejection_reason
+from douwebot_opencode_run import check_symlinks, run_with_fallback
 from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
@@ -35,6 +34,8 @@ _TSV_ESCAPES: dict[str, str] = {'\\': '\\', 't': '\t', 'n': '\n', 'r': '\r'}
 # Slack reads `<url|label>`, `<!channel>` and entities in webhook text as formatting, so model text arrives escaped.
 _SLACK_ESCAPES = str.maketrans({'&': '&amp;', '<': '&lt;', '>': '&gt;'})
 PRIVATE_REPORT_LIMIT = 3000
+# Some models wrap the requested JSON object in one Markdown code fence despite the prompt. Text around it still fails.
+_FENCE = re.compile(r'\A\s*```[\w+-]*[ \t]*\n(.*)\n[ \t]*```\s*\Z', re.DOTALL)
 
 _EVENT = TypeAdapter(dict[str, object])
 _TOKENS = TypeAdapter(dict[str, float | dict[str, float]])
@@ -176,9 +177,9 @@ def step_tokens(line: str) -> int | None:
 
 
 def run_opencode(
-    command: list[str], prompt: str, *, cwd: Path, env: dict[str, str], output: Path, minutes: int
+    command: list[str], prompt: str, *, cwd: Path, env: dict[str, str], log: TextIO, seconds: float
 ) -> Usage:
-    """Stream the event log to `output`, counting steps and tokens, and stop the run at its time budget."""
+    """Stream the event log to `log`, counting steps and tokens, and stop the run at its time budget."""
     usage = Usage()
     started = time.monotonic()
     with subprocess.Popen(
@@ -189,20 +190,19 @@ def run_opencode(
             usage.stopped = True
             process.kill()
 
-        timer = threading.Timer(minutes * 60, stop)
+        timer = threading.Timer(seconds, stop)
         timer.start()
         try:
             assert process.stdin is not None and process.stdout is not None
             process.stdin.write(prompt)
             process.stdin.close()
-            with output.open('w', encoding='utf-8') as log:
-                for line in process.stdout:
-                    log.write(line)
-                    tokens = step_tokens(line) if line.strip() else None
-                    if tokens is None:
-                        continue
-                    usage.steps += 1
-                    usage.tokens += tokens
+            for line in process.stdout:
+                log.write(line)
+                tokens = step_tokens(line) if line.strip() else None
+                if tokens is None:
+                    continue
+                usage.steps += 1
+                usage.tokens += tokens
             process.wait()
         finally:
             timer.cancel()
@@ -230,11 +230,14 @@ def check_result(
         coverage = f'Review stopped at its time budget of {check.max_minutes} minutes.'
     else:
         try:
-            result = ModelResult.model_validate_json(final_text(stream))
-        except (ValueError, ValidationError):
+            text = final_text(stream)
+            if fenced := _FENCE.match(text):
+                text = fenced[1]
+            result = ModelResult.model_validate_json(text)
+        except (ValueError, ValidationError) as error:
             if not at_step_budget:
                 # The error would repeat the answer, private report included, into the public job log.
-                raise ValueError('The review answer does not match its schema') from None
+                raise ValueError(f'The review answer was rejected: {rejection_reason(error)}') from None
             coverage = f'Review stopped at its step budget of {check.max_steps}.'
         else:
             # The result artifact is public, and a finding on a line the pull request did not change can describe a
@@ -330,9 +333,6 @@ def main() -> None:
     check_symlinks(head)
     context = write_context(check.name, files, workspace, base=env['BASE_SHA'], head=env['HEAD_SHA'])
     prompt = build_prompt(check, context, workspace, pr_number=pr_number, repository=repository)
-    api_key = env['OPENCODE_API_KEY']
-    if not api_key:
-        raise ValueError('OPENCODE_API_KEY is empty')
     token = env.get('LOGFIRE_TOKEN', '')
     endpoint = (env.get('LOGFIRE_URL') or LOGFIRE_URL).rstrip('/')
     attributes = {
@@ -344,35 +344,32 @@ def main() -> None:
     }
     started = time.time_ns()
     stream = runner_temp / f'pr-review-checks-{check.name}.ndjson'
-    with tempfile.TemporaryDirectory(dir=runner_temp, prefix='pr-review-checks-opencode-') as temp:
-        temp_root = Path(temp)
-        config_dir = temp_root / 'config' / 'opencode'
-        config_dir.mkdir(parents=True)
-        (config_dir / 'opencode.json').write_text(
-            json.dumps(read_only_config(agent='reviewer', steps=check.max_steps)), encoding='utf-8'
-        )
-        opencode_env = {
-            'HOME': str(temp_root),
-            'PATH': env['PATH'],
-            'XDG_CONFIG_HOME': str(temp_root / 'config'),
-            'XDG_DATA_HOME': str(temp_root / 'data'),
-            'XDG_CACHE_HOME': str(temp_root / 'cache'),
-            'OPENCODE_API_KEY': api_key,
+    # OpenCode exports its spans and logs over OTLP/HTTP when the endpoint is set. They carry no prompt
+    # or completion text, so these attributes tie them to this review.
+    telemetry = (
+        {
+            'OTEL_EXPORTER_OTLP_ENDPOINT': endpoint,
+            'OTEL_EXPORTER_OTLP_HEADERS': f'Authorization={token}',
+            'OTEL_RESOURCE_ATTRIBUTES': ','.join(f'{key}={quote(value)}' for key, value in attributes.items()),
         }
-        if token:
-            # OpenCode exports its spans and logs over OTLP/HTTP when the endpoint is set. They carry no prompt
-            # or completion text, so these attributes tie them to this review.
-            opencode_env |= {
-                'OTEL_EXPORTER_OTLP_ENDPOINT': endpoint,
-                'OTEL_EXPORTER_OTLP_HEADERS': f'Authorization={token}',
-                'OTEL_RESOURCE_ATTRIBUTES': ','.join(f'{key}={quote(value)}' for key, value in attributes.items()),
-            }
-        command = ['opencode', 'run', '--standalone', '--model', MODEL, '--agent', 'reviewer', '--format', 'json']
-        usage = run_opencode(command, prompt, cwd=workspace, env=opencode_env, output=stream, minutes=check.max_minutes)
+        if token
+        else {}
+    )
+    # A run on the fallback provider gets only what is left of the time budget.
+    deadline = time.monotonic() + check.max_minutes * 60
+    usage, provider = run_with_fallback(
+        lambda command, opencode_env, log: run_opencode(
+            command, prompt, cwd=workspace, env=opencode_env, log=log, seconds=deadline - time.monotonic()
+        ),
+        agent='reviewer',
+        output=stream,
+        steps=check.max_steps,
+        extra_env=telemetry,
+    )
     changed = {change.path: change.positions for change in changes}
     result, private_report = check_result(check, files, stream, usage, changed=changed)
     if token:
-        export_span(endpoint, token, result, attributes, started)
+        export_span(endpoint, token, result, {**attributes, 'pr_review_checks.provider': provider.name}, started)
     else:
         print('::warning::LOGFIRE_TOKEN is empty, so this review exports no telemetry.')
     if private_report:

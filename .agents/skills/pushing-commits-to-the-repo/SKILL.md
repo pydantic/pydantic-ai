@@ -36,8 +36,8 @@ Set the light model's effort from the PR's complexity.
 
 | Size label | Needs |
 |---|---|
-| S | CI green and a clean douwebot approval. An obviously trivial S PR needs CI green only. |
-| M, L, XL | CI green and a clean douwebot approval. |
+| S | CI green, `PR Review Checks` passed, and a clean douwebot approval. An obviously trivial S PR needs CI green and `PR Review Checks` passed only. |
+| M, L, XL | CI green, `PR Review Checks` passed, and a clean douwebot approval. |
 
 Judge an S PR trivial only for string fixes or a clearly positive one-file docs update.
 State that judgment in the PR body.
@@ -48,7 +48,7 @@ After addressing comments, obtain a clean approval on the resulting head.
 Resolve every review thread.
 
 Douwebot posts as `github-actions[bot]` through the trusted [PR Bots publisher](../../../.github/workflows/bots.yml).
-Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> engine=<claude|opencode> -->` receipt.
+Verify its successful run and `<!-- douwebot:review run=<id> head=<sha> engine=<claude|opencode|opencode-deepinfra> -->` receipt.
 Legacy receipts omit `engine`.
 `CI Review` can use the same bot account but carries a separate gh-aw receipt; it cannot satisfy this bar.
 Associate inline comments with the `head=` in their parent review's receipt, or with the comment's `original_commit_id` when the parent has none, because GitHub can move both a review's and a comment's `commit_id` after a push.
@@ -57,6 +57,15 @@ A human approval does not substitute for douwebot.
 
 `PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
 Size S remains a manual judgment; review enforcement skips merge groups after admission.
+On M, L and XL, the `Gate: clean douwebot approval` status reads `failure` until douwebot approves the head.
+Its description `Requires a marked, successful douwebot approval on the current head.` means douwebot has not approved this head.
+If douwebot already reviewed the head, triage its findings in step 4; otherwise trigger douwebot as step 3 of the loop says. Do not debug that failure as a CI failure.
+
+`PR Review Checks` passed means its commit status reads `success` on the current head.
+[`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
+A maintainer can pass a head despite its findings by applying `pr-review-checks:accepted`. That label covers only the current head; a push removes it.
+Never apply `pr-review-checks:accepted` yourself.
+`PR Review Checks` posts as `github-actions[bot]` with its own `<!-- pr-review-checks run=… head=… -->` receipt. Its comments are not douwebot comments.
 
 ### Who merges
 
@@ -469,6 +478,16 @@ if the head changes, capture the new SHA and restart the loop.
    In every other case, ask the person driving you whether to start a separate worktree and task to fix it.
    Recommend yes.
 3. **Meet the merge bar on the captured SHA.**
+   - **`PR Review Checks`:** required for every PR. It starts on every push without a label, so watch it while CI runs.
+     Its verdict is a commit status on the PR head, not a check run: the `CI` run and
+     `commits/<sha>/check-runs` both miss it. Read it with
+     `gh api repos/pydantic/pydantic-ai/commits/<sha>/status --jq '.statuses[] | select(.context == "PR Review Checks")'`.
+     No status yet, or `pending`, means the review has not finished; wait for `success` or `failure`.
+     When the status reads "Awaiting maintainer", the author lacks write access.
+     Ask a maintainer to apply `pr-review-checks:run`; the label also covers later pushes.
+     A `failure` leaves the gate unsatisfied until a later head passes or a maintainer applies `pr-review-checks:accepted`.
+     A `failure` whose description names `Incomplete`, `No result` or a rerun, and not `Blocking findings`, has no finding to triage. Rerun that `PR Review Checks` run once, then escalate.
+     When the run posted findings, its `target_url` links that review. Triage the findings in step 4.
    - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs
      when a user with write access approves the current head, when someone adds the `final-review`
      label, or on dispatch
@@ -501,6 +520,10 @@ if the head changes, capture the new SHA and restart the loop.
    its severity label carries no authority, so a `HIGH` on a defect that does not reproduce is a 👎.
    For `TestModel` generated values, apply the scope exception in `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`.
    Address every douwebot comment, including non-blocking comments, using the same evidence-based triage.
+   Address every `PR Review Checks` finding the same way, `medium` findings included.
+   Its findings sit inline, keyed `<!-- pr-review-checks finding=… -->`, or in its review body when GitHub rejected inline comments.
+   An inline finding that an earlier run posted is not posted again, but it still counts toward the status. Find it in the earlier `PR Review Checks` threads.
+   After you refute a `critical` or `high` finding, the status still fails. Ask a maintainer to apply `pr-review-checks:accepted` to the current head.
    For each comment:
    - **Valid** → fix it, run targeted verification, commit, apply the pre-push gate and its scope/exemptions, push, and
      complete the current-HEAD gates in steps 2 and 3. Then reply with what changed, react 👍,
