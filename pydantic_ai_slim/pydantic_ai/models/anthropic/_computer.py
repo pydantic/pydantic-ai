@@ -114,9 +114,12 @@ class NativeComputer:
 
         A call in `incomplete`, by ID, didn't arrive whole, such as one cut off at `max_tokens`: none of what it
         asked for runs. `split` names, by call ID, the other tools Claude called just before a call: run as one
-        batch, the call would run before them, so the batch is refused and Claude asked again.
+        batch, the call would run before them, so the batch is refused and Claude asked again. A call whose input
+        isn't an object is incomplete too: nothing in it maps, and Anthropic takes only an object back.
         """
         split = split or {}
+        incomplete = {*incomplete, *(block['id'] for block in blocks if not isinstance(block['input'], dict))}
+        blocks = [block if isinstance(block['input'], dict) else {**block, 'input': {}} for block in blocks]
         member_actions = [
             [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'incomplete_input': True}]
             if block['id'] in incomplete
