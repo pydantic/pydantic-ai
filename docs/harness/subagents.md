@@ -551,17 +551,18 @@ parent's budget. The ordinary unmanaged per-child accounting contract is unchang
 
 A locally run child that inherits `count_tokens_before_request=True` from the run's
 limits checks each child request against the token and cost ceilings before it is
-sent when its model implements `count_tokens`. A child model that does not implement
-it fails with `NotImplementedError` before its first request. The delegation then
-starts the child once more without the up-front count (under a new run ID when the
-delegation is recorded as a task), so those ceilings are checked against each
-response's usage instead. There is no second start once the `usage` the child counts
-into has counted a request since the child started, so a tool that raises
-`NotImplementedError` does not run twice; when `forward_usage=True`, a sibling's
-request in that window also rules it out. A per-child `usage_limits` that sets
-`count_tokens_before_request=True` itself is kept, so on such a model the child fails
-as a top-level run would. A remote worker applies the announced limits as received, so
-on a model without `count_tokens` the remote task fails.
+sent when its model implements `count_tokens`. When a child run raises
+`NotImplementedError` before its first request (such as a child model that does not
+implement `count_tokens`), the delegation starts the child once more without the
+up-front count (under a new run ID when the delegation is recorded as a task), so
+those ceilings are checked against each response's usage instead. There is no second
+start once the `usage` the child counts into has counted a request since the child
+started, so a tool that raises `NotImplementedError` does not run twice; when
+`forward_usage=True`, a sibling's request in that window also rules it out. A
+per-child `usage_limits` that sets `count_tokens_before_request=True` itself is kept,
+so on such a model the child fails as a top-level run would. A remote worker applies
+the announced limits as received, so on a model without `count_tokens` the remote
+task fails.
 
 `agents`, `aliases`, and `instructions` extend the roster and guidance only inside
 the bound scope; they do not add delegation to an agent without `SubAgents`.
