@@ -1209,13 +1209,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     items.extend(self._map_image_generation_call(item))
                 case ResponseCompactionItem():
                     items.append(map_compaction_item(item, self.system))
-                case responses.ResponseComputerToolCall():  # pragma: no cover
+                case responses.ResponseComputerToolCall():  # pragma: lax no cover
                     # Pydantic AI doesn't yet support the ComputerUse built-in tool
                     pass
-                case responses.ResponseCustomToolCall():  # pragma: no cover
+                case responses.ResponseCustomToolCall():  # pragma: lax no cover
                     # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
                     pass
-                case responses.response_output_item.LocalShellCall():  # pragma: no cover
+                case responses.response_output_item.LocalShellCall():  # pragma: lax no cover
                     # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
                     pass
                 case responses.ResponseFileSearchToolCall():
