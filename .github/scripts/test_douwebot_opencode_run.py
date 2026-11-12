@@ -456,6 +456,13 @@ def test_classifier_reads_only_the_prefetched_context(
     assert classify_env.read_text(encoding='utf-8') == 'category=chore\n'
 
 
+def test_classifier_reads_a_fenced_answer(classify_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An answer that ends in a fenced JSON object passes, as it does for `PR Review Checks`."""
+    fake_opencode(monkeypatch, (classifier_answer('The PR fixes a crash.\n```json\n{"category": "bug"}\n```'), None))
+    category_classify_opencode.main()
+    assert classify_env.read_text(encoding='utf-8') == 'category=bug\n'
+
+
 @pytest.mark.parametrize(
     ('events', 'reason'),
     [

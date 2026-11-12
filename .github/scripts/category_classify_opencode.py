@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Literal
 
-from douwebot_opencode_result import final_text, rejection_reason
+from douwebot_opencode_result import final_text, rejection_reason, unfenced
 from douwebot_opencode_run import run_read_only
 from pydantic import BaseModel, ConfigDict
 
@@ -44,7 +44,7 @@ def main() -> None:
         output=stream,
     )
     try:
-        classification = Classification.model_validate_json(final_text(stream))
+        classification = Classification.model_validate_json(unfenced(final_text(stream)))
     except ValueError as exc:
         sys.exit(f'OpenCode returned an invalid category: {rejection_reason(exc)}')
     with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:

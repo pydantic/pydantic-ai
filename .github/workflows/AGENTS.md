@@ -309,7 +309,8 @@ credential included.
   the Claude prompt, through the `category-prompt` YAML anchor, plus `TOOL_GUIDANCE` from
   `.github/scripts/category_classify_opencode.py`, which names each prefetched file. Edit the classification rules
   in the Claude step's prompt only.
-- The answer must be one JSON object whose only field is an allowed `category`. Any other answer fails the job, and
+- The answer must be one JSON object whose only field is an allowed `category`. When a Markdown code fence ends the
+  answer, the job validates only that fenced block, as `PR Review Checks` does. Any other answer fails the job, and
   no label is applied. `category-apply` applies the category from whichever job set it.
 
 # OpenCode falls back from OpenCode Go to the GLM Coding Plan
