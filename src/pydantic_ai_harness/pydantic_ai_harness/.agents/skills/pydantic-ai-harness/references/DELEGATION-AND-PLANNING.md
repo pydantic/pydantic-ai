@@ -171,9 +171,10 @@ Gotchas:
   child left pending (e.g. in a `BatchModelRequests` batch) is cancelled first, best effort, on a
   remote `SubAgentWorker` too; a batch is only cancelled once no other request in it still waits. Child `ModelRetry`/`UnexpectedModelBehavior` becomes a parent `ModelRetry`. Other
   crashes abort the parent unless `contain_errors=True`.
-- Under `DelegationTasks`, a child inheriting `count_tokens_before_request=True` whose model has no
-  `count_tokens` is started once more without it (only if no request was counted yet). A
-  `SubAgent.usage_limits` that sets the flag itself is kept and fails like a top-level run.
+- A child inheriting `count_tokens_before_request=True` from the run's limits whose model has no
+  `count_tokens` is started once more without it (under a new run ID when recorded as a task, and
+  only if no request was counted yet). A `SubAgent.usage_limits` that sets the flag itself is kept
+  and fails like a top-level run.
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartedEvent` (not
   `DelegationStartEvent`) and `DelegationFinishedEvent` (not `DelegationEndEvent`), whose `outcome`

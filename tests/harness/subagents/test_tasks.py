@@ -1268,6 +1268,18 @@ async def test_child_cost_budget_counts_from_the_spend_at_launch() -> None:
             assert record.outcome == 'ok'
 
 
+async def test_unmanaged_child_drops_inherited_token_counting_its_model_cannot_do() -> None:
+    child = Agent(TestModel(custom_output_text='evidence'), deps_type=object, name='worker')
+    usage = RunUsage()
+    parent = Agent(
+        CountingModel(parent_model()),
+        capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
+    )
+    result = await parent.run('go', usage=usage, usage_limits=UsageLimits(count_tokens_before_request=True))
+    assert result.output == 'parent finished'
+    assert usage.requests == 3
+
+
 @pytest.mark.parametrize('contain_errors', [False, True])
 async def test_child_drops_inherited_token_counting_its_model_cannot_do(tmp_path: Path, contain_errors: bool) -> None:
     # The fallback runs ahead of containment, so the child completes instead of becoming a contained crash.
