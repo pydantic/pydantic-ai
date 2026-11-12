@@ -72,6 +72,11 @@ _DEFAULT_GUIDANCE = (
 )
 
 
+_MEMORY_SOURCE: Final = ModelSource('agent in an earlier run')
+"""Who wrote a memory snapshot: the agent, through its memory tools, in earlier runs: another model's text, with no
+authority. Stores don't record which entries a user edited."""
+
+
 # The slash is inside the optional group so the two `\s*` never compete for one run of spaces.
 @dataclass(kw_only=True)
 class MemorySnapshotPart(DataCapabilityPart[str], namespace='memory', name='snapshot', tag='memory'):
@@ -183,8 +188,8 @@ class Memory(AbstractCapability[AgentDepsT]):
     _run_snapshot: str | None = field(default=None, init=False, repr=False, compare=False)
     """The snapshot the model reads as current during this run, kept so compaction can't take it away."""
 
-    _run_source: CapabilityPartSource | None = field(default=None, init=False, repr=False, compare=False)
-    """Who wrote the snapshot this run records, worked out on first use: see `_snapshot_source`."""
+    _run_source: CapabilityPartSource = field(default=_MEMORY_SOURCE, init=False, repr=False, compare=False)
+    """Who wrote the snapshot this run records, worked out by `_load_snapshot` with the read: see `_store_source`."""
 
     _run_started: bool = field(default=False, init=False, repr=False, compare=False)
     """Whether this run's first `before_model_request` call ran, which an earlier hook's retry can postpone."""
@@ -214,7 +219,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         clone = copy(self)
         clone._resolved_scope = None
         clone._run_snapshot = None
-        clone._run_source = None
+        clone._run_source = _MEMORY_SOURCE
         clone._run_started = False
         clone._run_continues = False
         store, scope = clone._resolve_scope(ctx)
@@ -232,7 +237,10 @@ class Memory(AbstractCapability[AgentDepsT]):
         # The latest snapshot recorded in the history the run starts with, before any compaction hook runs, so a run
         # that continues earlier work can put back the same one after the boundary. Taken from the whole history:
         # a provider can compact in the very response that asked for the approval being resumed.
-        self._run_snapshot = _latest_snapshot(ctx.messages, snapshot_metadata(scope, self.id))
+        metadata = snapshot_metadata(scope, self.id)
+        self._run_snapshot = _latest_snapshot(ctx.messages, metadata)
+        # Put back with the source it was recorded with, read from history rather than the store, without I/O.
+        self._run_source = _latest_snapshot_source(ctx.messages, metadata)
         if isinstance(store, FileStore) and store.workspace is None and not ctx.workspace.attached:
             raise UserError(
                 "`Memory(store=FileStore(...))` keeps memory files in the run's workspace, but none is attached "
@@ -356,7 +364,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             if self._run_snapshot is not None and latest != self._run_snapshot:
                 # Compaction dropped it: what the provider is sent after the boundary is the request being sent,
                 # so it goes there, after any tool results, rather than anywhere the provider would trim.
-                ctx.enqueue(_snapshot_part(self._run_snapshot, metadata, await self._snapshot_source(ctx)))
+                ctx.enqueue(_snapshot_part(self._run_snapshot, metadata, self._run_source))
             return request_context
         self._run_snapshot = latest
         with ctx.tracer.start_as_current_span(
@@ -370,7 +378,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                     }
                 )
             try:
-                main, subfiles, files_truncated, error_type = await self._load_snapshot(ctx)
+                main, subfiles, files_truncated, error_type, self._run_source = await self._load_snapshot(ctx)
             except Exception as exc:
                 _record_load_error(span, type(exc).__name__)
                 if self.injection_errors == 'raise':
@@ -393,28 +401,10 @@ class Memory(AbstractCapability[AgentDepsT]):
             if appended is not None:
                 # When an earlier hook retried the first request, this lands after its retry feedback: still
                 # ahead of any response, so nothing the model has seen changes.
-                ctx.enqueue(_snapshot_part(appended, metadata, await self._snapshot_source(ctx)))
+                ctx.enqueue(_snapshot_part(appended, metadata, self._run_source))
                 self._run_snapshot = appended
             self._record_injection(span, main, subfiles, files_truncated, snapshot, appended, withheld)
         return request_context
-
-    async def _snapshot_source(self, ctx: RunContext[AgentDepsT]) -> CapabilityPartSource:
-        """Who wrote the run's snapshot: the agent in an earlier run, unless the store's files could be someone else's.
-
-        A `FileStore` whose `MEMORY.md` is below `'operator'` [authority][pydantic_ai.workspaces.Workspace.authority_of],
-        such as one in a repository the operator doesn't control, can hold text the agent never wrote, so the snapshot
-        is attributed to that file's author instead. Either way it's data with no authority.
-        """
-        if self._run_source is None:
-            store, scope = self.resolve_scope(ctx)
-            source = None
-            if isinstance(store, FileStore):
-                # The store's own `workspace=`, or else the run's, as `FileStore` reads its files.
-                workspace = secondary_workspace(store.workspace, 'FileStore') or ctx.workspace
-                path = posixpath.join(store.directory, scope, MAIN_FILENAME)
-                source = await WorkspaceSource.from_workspace(workspace, path)
-            self._run_source = _MEMORY_SOURCE if source is None or source.authority == 'operator' else source
-        return self._run_source
 
     def _record_injection(
         self,
@@ -494,10 +484,12 @@ class Memory(AbstractCapability[AgentDepsT]):
     @durable_operation('load_snapshot')
     async def _load_snapshot(
         self, ctx: RunContext[AgentDepsT]
-    ) -> tuple[MemoryFile | None, list[str], bool, str | None]:
+    ) -> tuple[MemoryFile | None, list[str], bool, str | None, CapabilityPartSource]:
         store, scope = self.resolve_scope(ctx)
         try:
             main = await store.read(f'{scope}/{MAIN_FILENAME}', max_chars=self.max_memory_size)
+            # Asked with the read, and journaled with it, so a replay attributes the snapshot the same way.
+            source = await _store_source(ctx, store, scope)
             subfiles, files_truncated = await list_subfiles(
                 store,
                 scope,
@@ -508,9 +500,9 @@ class Memory(AbstractCapability[AgentDepsT]):
                 raise
             # Best-effort injection must not inherit an engine's retry policy and stall a
             # workflow. Return content-safe failure metadata as the durable result instead.
-            return None, [], False, type(exc).__name__
+            return None, [], False, type(exc).__name__, _MEMORY_SOURCE
         # Injection uses only the content, so write metadata, which can name a user, stays out of the journal.
-        return None if main is None else replace(main, metadata=None), subfiles, files_truncated, None
+        return None if main is None else replace(main, metadata=None), subfiles, files_truncated, None, source
 
     @classmethod
     def from_spec(
@@ -574,9 +566,19 @@ class Memory(AbstractCapability[AgentDepsT]):
         return 'Memory'
 
 
-_MEMORY_SOURCE: Final = ModelSource('agent in an earlier run')
-"""Who wrote a memory snapshot: the agent, through its memory tools, in earlier runs: another model's text, with no
-authority. Stores don't record which entries a user edited."""
+async def _store_source(ctx: RunContext[AgentDepsT], store: MemoryStore, scope: str) -> CapabilityPartSource:
+    """Who wrote the store's snapshot: the agent in an earlier run, unless the store's files could be someone else's.
+
+    A `FileStore` whose `MEMORY.md` is below `'operator'` [authority][pydantic_ai.workspaces.Workspace.authority_of],
+    such as one in a repository the operator doesn't control, can hold text the agent never wrote, so the snapshot
+    is attributed to that file's author instead. Either way it's data with no authority.
+    """
+    if not isinstance(store, FileStore):
+        return _MEMORY_SOURCE
+    # The store's own `workspace=`, or else the run's, as `FileStore` reads its files.
+    workspace = secondary_workspace(store.workspace, 'FileStore') or ctx.workspace
+    source = await WorkspaceSource.from_workspace(workspace, posixpath.join(store.directory, scope, MAIN_FILENAME))
+    return _MEMORY_SOURCE if source.authority == 'operator' else source
 
 
 def _snapshot_part(content: str, metadata: dict[str, str], source: CapabilityPartSource) -> MemorySnapshotPart:
@@ -605,6 +607,20 @@ def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> 
             if (snapshot := _part_snapshot(part, metadata, legacy)) is not None:
                 return snapshot
     return None
+
+
+def _latest_snapshot_source(messages: list[ModelMessage], metadata: dict[str, str]) -> CapabilityPartSource:
+    """The source of the latest `MemorySnapshotPart` for this scope in history, or the agent's when there is none."""
+    for message in reversed(messages):
+        if isinstance(message, ModelRequest):
+            for part in reversed(message.parts):
+                if (
+                    isinstance(part, MemorySnapshotPart)
+                    and part.scope_hash == metadata['scope']
+                    and part.memory_id == metadata['id']
+                ):
+                    return part.source
+    return _MEMORY_SOURCE
 
 
 def _snapshot_to_append(

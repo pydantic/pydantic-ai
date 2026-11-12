@@ -1806,6 +1806,18 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
             ['<context_file path="../../AGENTS.md">repo rules</context_file>']
         )
 
+    async def test_a_lowered_subdirectory_leaves_out_the_precedence_sentence(self, tmp_path: Path) -> None:
+        # Every walk-up file is the operator's, but nested traversal can surface `vendor/AGENTS.md` below it.
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(working_dir)),
+            authority='operator',
+            path_authority={str(tmp_path / 'AGENTS.md'): 'operator', 'vendor': 'none'},
+        )
+        instructions, parts, _ = await self._run(tmp_path, workspace, nested_traversal=True)
+        assert 'repo rules' in instructions and parts == []
+        assert 'takes precedence' not in instructions
+
     @pytest.mark.parametrize('authority', ['operator', 'none'])
     async def test_the_precedence_sentence_only_ranks_operator_files(self, tmp_path: Path, authority: str) -> None:
         # In operator voice, "the more deeply nested one takes precedence" would rank the repository's files over
