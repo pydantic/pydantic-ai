@@ -48,16 +48,42 @@ def final_text(path: Path) -> str:
 
 
 def unfenced(text: str) -> str:
-    """Return the fenced block that ends `text`, or `text` itself when no fence ends it.
+    """Return the JSON object that ends the answer in `text`.
 
-    One pass over the lines: the answer is model-controlled, and a backtracking regex over it is quadratic.
+    The answer is the fenced block that ends `text`, or `text` itself when no fence ends it. Some models write prose
+    before a bare JSON object, and that prose can hold a `{`, so the object starts at the `{` that matches the answer's
+    final `}`. An answer that does not end with an object is returned whole, and fails validation.
+
+    One pass over the text: the answer is model-controlled, and a backtracking regex over it is quadratic.
     """
     *lines, closing = text.rstrip().split('\n')
     if _CLOSING_FENCE.fullmatch(closing):
         # The block between the opening and the closing fence has at least one line, possibly empty.
         for index in range(len(lines) - 2, -1, -1):
             if _OPENING_FENCE.fullmatch(lines[index]):
-                return '\n'.join(lines[index + 1 :])
+                text = '\n'.join(lines[index + 1 :])
+                break
+    answer = text.rstrip()
+    if not answer.endswith('}'):
+        return text
+    depth = 0
+    in_string = False
+    for index in range(len(answer) - 1, -1, -1):
+        char = answer[index]
+        if char == '"':
+            # A quote after an odd run of backslashes is escaped. Only the quote right after a run counts it, so the
+            # scan stays linear.
+            backslashes = 0
+            while backslashes < index and answer[index - backslashes - 1] == '\\':
+                backslashes += 1
+            if backslashes % 2 == 0:
+                in_string = not in_string
+        elif not in_string and char == '}':
+            depth += 1
+        elif not in_string and char == '{':
+            depth -= 1
+            if not depth:
+                return answer[index:]
     return text
 
 
@@ -72,9 +98,7 @@ def rejection_reason(error: ValueError) -> str:
 
 def review_result(path: Path) -> ReviewResult:
     """Return the final assistant result only after a normal completed stream."""
-    text = unfenced(final_text(path))
-    # glm-5.3-flash also writes prose before a bare JSON object. That prose still fails when it holds a `{`.
-    return ReviewResult.model_validate_json(text[max(text.find('{'), 0) :])
+    return ReviewResult.model_validate_json(unfenced(final_text(path)))
 
 
 def main() -> None:
