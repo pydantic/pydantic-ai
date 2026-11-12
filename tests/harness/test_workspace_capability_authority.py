@@ -43,6 +43,6 @@ def test_constructor_and_spec_take_authority(name: str) -> None:
 
 
 def test_modal_keeps_authority_through_its_own_init() -> None:
-    modal_sandbox = _capability('ModalSandbox')
-    sandbox: Any = modal_sandbox(authority='none', path_authority={'docs': 'user'})
+    modal_sandbox: Any = _capability('ModalSandbox')
+    sandbox = modal_sandbox(authority='none', path_authority={'docs': 'user'})
     assert (sandbox.authority, sandbox.path_authority) == ('none', {'docs': 'user'})
