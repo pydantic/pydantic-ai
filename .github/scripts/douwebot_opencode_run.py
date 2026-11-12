@@ -4,21 +4,26 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TextIO, TypeVar
+from typing import Literal, TextIO, TypeVar
 
 from publish_douwebot_review import ReviewEngine, ReviewResult
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 
 T = TypeVar('T')
 _EVENT = TypeAdapter(dict[str, object])
 # `provider.go-limit` is a spent OpenCode Go usage window; `provider.quota` is a quota error OpenCode cannot name.
 QUOTA_ERRORS = frozenset({'provider.go-limit', 'provider.quota'})
+# The shape of every error type OpenCode 2.2.5 sets, such as `provider.auth` or `unknown`.
+ERROR_TYPE = re.compile(r'[a-z][a-z.-]*')
+# The values DeepInfra documents for `reasoning_effort`: https://docs.deepinfra.com/chat/reasoning
+ReasoningEffort = Literal['none', 'low', 'medium', 'high']
 
 
 @dataclass(frozen=True)
@@ -29,11 +34,14 @@ class Provider:
     model: str
     key_variable: str
     review_engine: ReviewEngine
+    reasoning_effort: ReasoningEffort | None = None
+    """The model's `reasoningEffort` setting in the OpenCode config; unset leaves the provider's default."""
 
 
 OPENCODE_GO = Provider('opencode-go', 'opencode-go/deepseek-v4.1-flash', 'OPENCODE_API_KEY', 'opencode')
+# Without `reasoning_effort`, DeepInfra returns no reasoning for this model, which can then reason in its answer.
 DEEPINFRA = Provider(
-    'deepinfra', 'deepinfra/deepseek-ai/DeepSeek-V4.1-Flash', 'DEEPINFRA_API_KEY', 'opencode-deepinfra'
+    'deepinfra', 'deepinfra/deepseek-ai/DeepSeek-V4.1-Flash', 'DEEPINFRA_API_KEY', 'opencode-deepinfra', 'low'
 )
 
 
@@ -78,7 +86,7 @@ def read_only_config(*, agent: str, provider: Provider, steps: int | None = None
     agent_config: dict[str, object] = {'mode': 'primary', 'permissions': permissions}
     if steps is not None:
         agent_config['steps'] = steps
-    return {
+    config: dict[str, object] = {
         'plugins': ['-opencode.browser'],
         'snapshots': False,
         'default_agent': agent,
@@ -87,9 +95,16 @@ def read_only_config(*, agent: str, provider: Provider, steps: int | None = None
             agent: agent_config,
             'title': {'model': provider.model},
             'compaction': {'model': provider.model},
+            'summary': {'model': provider.model},
         },
         'policies': policies,
     }
+    if provider.reasoning_effort is not None:
+        # OpenCode 2.2.5 sends a model's `reasoningEffort` setting to DeepInfra as `reasoning_effort`.
+        model = provider.model.removeprefix(f'{provider.name}/')
+        settings = {'reasoningEffort': provider.reasoning_effort}
+        config['providers'] = {provider.name: {'models': {model: {'settings': settings}}}}
+    return config
 
 
 def run_with_fallback(
@@ -104,7 +119,7 @@ def run_with_fallback(
 
     `launch` runs the command in the environment it is given and writes the event stream to the stream it is given,
     which `output` holds after each run. Each run gets a config that allows only its provider, and an environment
-    that holds only that provider's key.
+    that holds only that provider's key. A run whose process fails prints its model and OpenCode error type.
     """
 
     def run_on(provider: Provider, api_key: str) -> tuple[T, Provider]:
@@ -141,33 +156,47 @@ def run_with_fallback(
         print(f'OpenCode run served by {provider.model}.')
         return result, provider
 
+    def report_failure(provider: Provider) -> tuple[str | None, bool]:
+        """Print the failed run's model, error type and status; return that type and whether the run finished a step."""
+        try:
+            # Only LF ends an event, as in `douwebot_opencode_result.final_text`.
+            events = [_EVENT.validate_json(line) for line in output.read_text(encoding='utf-8').split('\n') if line]
+            errors = [_EVENT.validate_python(event.get('error')) for event in events if event.get('type') == 'error']
+        except ValueError:
+            # A malformed or undecodable stream names no error, and the caller re-raises the process failure.
+            # A validation error would copy the stream into the public log.
+            events, errors = [], []
+        error = errors[-1] if errors else {}
+        # Job logs are public, and the error's message and response body can repeat the provider's response.
+        # OpenCode names its own error types; print only a value shaped like one.
+        kind, status = error.get('type'), error.get('status')
+        if not isinstance(kind, str) or not ERROR_TYPE.fullmatch(kind):
+            kind = None
+        described = f'error type {kind}' if kind else 'no error type'
+        if isinstance(status, int):
+            described += f', status {status}'
+        print(f'OpenCode run on {provider.model} failed with {described}.')
+        return kind, any(event.get('type') == 'step_finish' for event in events)
+
     go_key = os.environ[OPENCODE_GO.key_variable]
     if not go_key:
         raise ValueError(f'{OPENCODE_GO.key_variable} is empty')
     try:
         return run_on(OPENCODE_GO, go_key)
     except subprocess.CalledProcessError:
+        kind, finished = report_failure(OPENCODE_GO)
         fallback_key = os.environ.get(DEEPINFRA.key_variable, '')
         # OpenCode 2.2.5 does not retry a quota rejection. It writes `step_start`, then an `error` event whose type
         # `toSessionError` sets, and no `step_finish`:
         # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
-        try:
-            # Only LF ends an event, as in `douwebot_opencode_result.final_text`.
-            events = [_EVENT.validate_json(line) for line in output.read_text(encoding='utf-8').split('\n') if line]
-            kinds = [
-                _EVENT.validate_python(event.get('error')).get('type')
-                for event in events
-                if event.get('type') == 'error'
-            ]
-        except ValidationError:
-            # A malformed stream is no refusal. Its validation error would copy the stream into the public log.
-            events, kinds = [], []
-        kind = kinds[-1] if kinds else None
-        finished = any(event.get('type') == 'step_finish' for event in events)
-        if not fallback_key or finished or not isinstance(kind, str) or kind not in QUOTA_ERRORS:
+        if not fallback_key or finished or kind not in QUOTA_ERRORS:
             raise
-        print(f'OpenCode Go refused the run before its first step ({kind}); retrying on DeepInfra.')
-    return run_on(DEEPINFRA, fallback_key)
+        print('OpenCode Go refused the run before its first step; retrying on DeepInfra.')
+    try:
+        return run_on(DEEPINFRA, fallback_key)
+    except subprocess.CalledProcessError:
+        report_failure(DEEPINFRA)
+        raise
 
 
 def run_read_only(prompt: str, *, cwd: Path, agent: str, output: Path, timeout: float | None = None) -> Provider:

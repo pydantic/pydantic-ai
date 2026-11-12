@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -17,7 +18,7 @@ from pydantic import BaseModel, TypeAdapter
 sys.path.insert(0, str(Path(__file__).parent))
 
 import douwebot_opencode_run
-from douwebot_opencode_run import DEEPINFRA, OPENCODE_GO, Provider, check_symlinks
+from douwebot_opencode_run import DEEPINFRA, OPENCODE_GO, Provider, check_symlinks, read_only_config
 
 # What OpenCode 2.2.5 writes when OpenCode Go's usage limit refuses the first request: a step starts, none finishes.
 LIMIT = 'OpenCode Go weekly usage limit reached. Switch to a free model, or turn on Extra Usage on the Go page.'
@@ -118,7 +119,7 @@ class Launch:
 
 
 def fake_opencode(
-    monkeypatch: pytest.MonkeyPatch, *runs: tuple[Sequence[Mapping[str, object] | str], BaseException | None]
+    monkeypatch: pytest.MonkeyPatch, *runs: tuple[Sequence[Mapping[str, object] | str | bytes], BaseException | None]
 ) -> list[Launch]:
     """Make each OpenCode launch write its event lines and then raise its error, recording each launch."""
     invoked: list[Launch] = []
@@ -132,7 +133,12 @@ def fake_opencode(
         events, error = runs[len(invoked) - 1]
         stdout = kwargs['stdout']
         assert isinstance(stdout, io.TextIOBase)
-        stdout.write(''.join((event if isinstance(event, str) else json.dumps(event)) + '\n' for event in events))
+        # OpenCode writes bytes to the stream's descriptor, so an event can be invalid UTF-8.
+        lines = [
+            event if isinstance(event, bytes) else (event if isinstance(event, str) else json.dumps(event)).encode()
+            for event in events
+        ]
+        os.write(stdout.fileno(), b''.join(line + b'\n' for line in lines))
         if error is not None:
             raise error
         return subprocess.CompletedProcess(args, 0)
@@ -146,6 +152,7 @@ def assert_runs_on(launch: Launch, provider: Provider) -> None:
     assert launch.args[launch.args.index('--model') + 1] == provider.model
     assert launch.config.agents['title']['model'] == provider.model
     assert launch.config.agents['compaction']['model'] == provider.model
+    assert launch.config.agents['summary']['model'] == provider.model
     assert [policy for policy in launch.config.policies if policy['action'] == 'provider.use'] == [
         {'action': 'provider.use', 'resource': '*', 'effect': 'deny'},
         {'action': 'provider.use', 'resource': provider.name, 'effect': 'allow'},
@@ -155,6 +162,15 @@ def assert_runs_on(launch: Launch, provider: Provider) -> None:
         provider.key_variable: keys[provider.key_variable]
     }
     assert 'GH_TOKEN' not in launch.env
+
+
+def test_only_deepinfra_sets_a_reasoning_effort() -> None:
+    """DeepInfra returns no reasoning for the model unless asked; the Go config stays without a provider override."""
+    settings = {'settings': {'reasoningEffort': 'low'}}
+    assert read_only_config(agent='reviewer', provider=DEEPINFRA)['providers'] == {
+        'deepinfra': {'models': {'deepseek-ai/DeepSeek-V4.1-Flash': settings}}
+    }
+    assert 'providers' not in read_only_config(agent='reviewer', provider=OPENCODE_GO)
 
 
 def test_launcher_sends_shared_review_and_restricts_environment(
@@ -200,49 +216,75 @@ def test_go_refusal_reruns_the_review_on_deepinfra(
     assert_runs_on(invoked[1], DEEPINFRA)
     assert review_env.read_text(encoding='utf-8') == 'engine=opencode-deepinfra\n'
     assert capsys.readouterr().out == (
-        f'OpenCode Go refused the run before its first step ({kind}); retrying on DeepInfra.\n'
+        f'OpenCode run on opencode-go/deepseek-v4.1-flash failed with error type {kind}, status 429.\n'
+        'OpenCode Go refused the run before its first step; retrying on DeepInfra.\n'
         'OpenCode run served by deepinfra/deepseek-ai/DeepSeek-V4.1-Flash.\n'
     )
 
 
+GO_LIMIT_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash failed with error type provider.go-limit, status 429.'
+NO_TYPE_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash failed with no error type.'
+
+
 @pytest.mark.parametrize(
-    ('deepinfra_key', 'events', 'error'),
+    ('deepinfra_key', 'events', 'error', 'log'),
     [
-        pytest.param(None, REFUSED, subprocess.CalledProcessError(1, 'opencode'), id='no-deepinfra-key'),
-        pytest.param('', REFUSED, subprocess.CalledProcessError(1, 'opencode'), id='empty-deepinfra-key'),
+        pytest.param(None, REFUSED, subprocess.CalledProcessError(1, 'opencode'), GO_LIMIT_LOG, id='no-deepinfra-key'),
+        pytest.param('', REFUSED, subprocess.CalledProcessError(1, 'opencode'), GO_LIMIT_LOG, id='empty-deepinfra-key'),
         pytest.param(
-            'deepinfra-key', [*FINISHED, REFUSED[1]], subprocess.CalledProcessError(1, 'opencode'), id='after-a-step'
+            'deepinfra-key',
+            [*FINISHED, REFUSED[1]],
+            subprocess.CalledProcessError(1, 'opencode'),
+            GO_LIMIT_LOG,
+            id='after-a-step',
         ),
-        pytest.param('deepinfra-key', [], subprocess.CalledProcessError(1, 'opencode'), id='no-error-event'),
+        pytest.param(
+            'deepinfra-key', [], subprocess.CalledProcessError(1, 'opencode'), NO_TYPE_LOG, id='no-error-event'
+        ),
         pytest.param(
             'deepinfra-key',
             [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.auth', 'message': 'Invalid', 'status': 401}}],
             subprocess.CalledProcessError(1, 'opencode'),
+            'OpenCode run on opencode-go/deepseek-v4.1-flash failed with error type provider.auth, status 401.',
             id='rejected-key',
         ),
         pytest.param(
             'deepinfra-key',
             [REFUSED[0], {'type': 'error', 'error': {'type': ['provider.go-limit'], 'status': 429}}],
             subprocess.CalledProcessError(1, 'opencode'),
+            'OpenCode run on opencode-go/deepseek-v4.1-flash failed with no error type, status 429.',
             id='error-type-not-a-string',
         ),
         pytest.param(
             'deepinfra-key',
             [REFUSED[0], '{"type": "text", "part"'],
             subprocess.CalledProcessError(1, 'opencode'),
+            NO_TYPE_LOG,
             id='cut-off-event',
         ),
-        pytest.param('deepinfra-key', REFUSED[:1], subprocess.TimeoutExpired('opencode', 1), id='timeout'),
+        pytest.param(
+            'deepinfra-key',
+            [REFUSED[0], b'\xff'],
+            subprocess.CalledProcessError(1, 'opencode'),
+            NO_TYPE_LOG,
+            id='undecodable',
+        ),
+        pytest.param('deepinfra-key', REFUSED[:1], subprocess.TimeoutExpired('opencode', 1), None, id='timeout'),
     ],
 )
 def test_go_failure_stays_on_go(
     review_env: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
     deepinfra_key: str | None,
-    events: Sequence[Mapping[str, object] | str],
+    events: Sequence[Mapping[str, object] | str | bytes],
     error: BaseException,
+    log: str | None,
 ) -> None:
-    """Only a refusal before the first step falls back, and only with a DeepInfra key; the job fails as before."""
+    """Only a refusal before the first step falls back, and only with a DeepInfra key; the job fails as before.
+
+    A failed process names its error type in the job log. A timeout is not a failed process.
+    """
     if deepinfra_key is None:
         monkeypatch.delenv('DEEPINFRA_API_KEY')
     else:
@@ -253,3 +295,44 @@ def test_go_failure_stays_on_go(
     [call] = invoked
     assert_runs_on(call, OPENCODE_GO)
     assert review_env.read_text(encoding='utf-8') == ''
+    assert capsys.readouterr().out == ('' if log is None else log + '\n')
+
+
+@pytest.mark.parametrize(
+    ('error', 'described'),
+    [
+        pytest.param(
+            {'type': 'provider.auth', 'message': 'Invalid key', 'status': 401, 'response': {'body': 'Invalid key'}},
+            'error type provider.auth, status 401',
+            id='type-and-status',
+        ),
+        pytest.param({'type': 'unknown', 'message': 'Model not found'}, 'error type unknown', id='no-status'),
+        pytest.param(
+            {'type': 'provider.auth: Invalid key', 'status': 401},
+            'no error type, status 401',
+            id='type-not-shaped-like-opencodes',
+        ),
+    ],
+)
+def test_deepinfra_failure_names_its_error_type(
+    review_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: dict[str, object],
+    described: str,
+) -> None:
+    """A failed DeepInfra run fails the job and names its error type and status, never its message or body."""
+    invoked = fake_opencode(
+        monkeypatch,
+        (REFUSED, subprocess.CalledProcessError(1, 'opencode')),
+        ([REFUSED[0], {'type': 'error', 'error': error}], subprocess.CalledProcessError(1, 'opencode')),
+    )
+    with pytest.raises(subprocess.CalledProcessError):
+        douwebot_opencode_run.main()
+    assert_runs_on(invoked[1], DEEPINFRA)
+    assert review_env.read_text(encoding='utf-8') == ''
+    assert capsys.readouterr().out == (
+        f'{GO_LIMIT_LOG}\n'
+        'OpenCode Go refused the run before its first step; retrying on DeepInfra.\n'
+        f'OpenCode run on deepinfra/deepseek-ai/DeepSeek-V4.1-Flash failed with {described}.\n'
+    )

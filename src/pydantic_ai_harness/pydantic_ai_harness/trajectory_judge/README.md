@@ -47,7 +47,7 @@ print(result.output)
 
 ## How steering is framed
 
-The judge's message is user-channel data, not a system prompt, because a model wrote it after reading the run's tool results. Any `judge_feedback` tag in it, and any framing tag Pydantic AI writes (`<system>`, `<tool_result>` and the rest), opening or closing, is escaped, so it can't end the element early or imitate the `<system>` text that framework notes become on models without inline system prompts.
+The judge's message is user-channel data, not a system prompt, because a model wrote it after reading the run's tool results. Any `judge_feedback` tag in it, and any framing tag Pydantic AI writes (`<system>`, `<pyai:tool_result>` and the rest), opening or closing, is escaped, so it can't end the element early or imitate the `<system>` text that framework notes become on models without inline system prompts.
 
 The note names its element by a random `ref`, made once when the steer is built and stored with it, so later requests resend both parts unchanged. A `<judge_feedback>` element forged earlier in the run, for example in a tool result, has no ref or a different one, and the note disowns any element whose ref no trajectory judge's note names. Only the first element with a named ref counts, so a later copy by content that saw the ref is disowned too. Naming the element by ref rather than by position works whatever order a provider sends the two parts in (Anthropic sends a request's user content before its system entry).
 

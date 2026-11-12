@@ -9,9 +9,9 @@ import time
 from pathlib import Path
 from typing import Annotated
 
-from douwebot_opencode_result import final_text
+from douwebot_opencode_result import final_text, rejection_reason
 from douwebot_opencode_run import check_symlinks, run_read_only
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 DETECTION_DIR = Path('/tmp/gh-aw/threat-detection')
 RESULT_PREFIX = 'THREAT_DETECTION_RESULT:'
@@ -77,9 +77,10 @@ def main() -> None:
                 text = final_text(stream)
                 break
             except (ValueError, subprocess.CalledProcessError) as exc:
+                reason = rejection_reason(exc) if isinstance(exc, ValueError) else type(exc).__name__
+                print(f'OpenCode threat detection attempt {attempt} failed: {reason}')
                 if attempt > retries:
                     raise
-                print(f'OpenCode threat detection attempt {attempt} failed: {type(exc).__name__}; retrying')
                 attempt += 1
     except subprocess.TimeoutExpired:
         report_status('engine_timeout', 2)
@@ -90,10 +91,8 @@ def main() -> None:
     try:
         verdict = parse_verdict(text)
     except ValueError as exc:
-        # The model's text is untrusted: a ValidationError message would echo it into the job log.
         report_status('invalid_report_exhausted', 1)
-        detail = sorted({error['type'] for error in exc.errors()}) if isinstance(exc, ValidationError) else exc
-        sys.exit(f'OpenCode returned an invalid threat detection result: {detail}')
+        sys.exit(f'OpenCode returned an invalid threat detection result: {rejection_reason(exc)}')
     # Only the uploaded result drops the model-authored reasons; `conclude` reads them from the full result.
     full_path.write_text(verdict.model_dump_json(indent=2), encoding='utf-8')
     result_path.write_text(verdict.model_copy(update={'reasons': []}).model_dump_json(indent=2), encoding='utf-8')

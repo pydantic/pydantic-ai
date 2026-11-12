@@ -302,24 +302,26 @@ With task control, every step of a task is a typed capability event in the `sub_
 
 | Event | When | A listener can |
 |---|---|---|
-| `TaskAssignedEvent`, `TaskFollowUpEvent` (`TaskRequestEvent` matches both) | a task is about to start, or to resume | rewrite `prompt`, or `veto()` it |
+| `TaskAssignedEvent`, `TaskResumedEvent` (`TaskRequestEvent` matches both) | a task is about to start, or to resume | rewrite `prompt`, or `veto()` it |
 | `TaskStartedEvent` | the task's run is starting, locally or on a worker | |
 | `TaskBackgroundedEvent` | the task moved to the background; `reason` is `requested`, `auto`, or `question` | |
 | `TaskProgressEvent` | an event of the task's own run, with `TaskControl(forward_events=True)` | |
-| `TaskQuestionEvent` | the task asked a question | set `answer`, so the model is not asked |
-| `TaskAnswerEvent` | an answer is about to reach the task | rewrite `answer`, or `veto()` it |
-| `TaskMessageEvent` | a steering message is about to reach the task | rewrite `message`, or `veto()` it |
-| `TaskCancelRequestEvent`, `TaskForceCancelEvent` | a cancellation is about to reach the task | `veto()` it |
-| `TaskRetryEvent` | a worker is running a failed remote task again | |
+| `TaskQuestionAskedEvent` | the task asked a question | set `answer`, so the model is not asked |
+| `TaskAnsweredEvent` | an answer is about to reach the task | rewrite `answer`, or `veto()` it |
+| `TaskSteeredEvent` | a steering message is about to reach the task | rewrite `message`, or `veto()` it |
+| `TaskCancelRequestedEvent`, `TaskForceCancelRequestedEvent` | a cancellation is about to reach the task | `veto()` it |
+| `TaskRetriedEvent` | a worker is running a failed remote task again | |
 | `TaskCompletedEvent`, `TaskFailedEvent`, `TaskCancelledEvent` | the task settled | rewrite `output` of a completed task |
 
 Unlike `DelegationStartedEvent` and `DelegationFinishedEvent`, these events are not cut at `MAX_EVENT_TEXT_CHARS`: each is the message itself, which a transport carries to the other side, so a prompt, question, answer, or output arrives whole. Nor is `AgentCreatedEvent`. A listener that persists or forwards them bounds them itself.
 
 Events listeners can change are dispatched immediately, so their decisions take effect. A vetoed message is not sent, and the model is told why. With a bound `DelegationTasks`, `DelegationStartedEvent` and `DelegationFinishedEvent` go to its observer only, as in [Managed delegation sessions](#managed-delegation-sessions); with the run's own owner, they go to the run as before.
 
+Earlier releases named some of these differently. The old class names still import, with a `HarnessDeprecationWarning`: `SubAgentMessage`, `ParentMessage` and `ChildMessage` (each now ends in `Event`), `TaskFollowUpEvent` (`TaskResumedEvent`), `TaskMessageEvent` (`TaskSteeredEvent`), `TaskAnswerEvent` (`TaskAnsweredEvent`), `TaskCancelRequestEvent` (`TaskCancelRequestedEvent`), `TaskForceCancelEvent` (`TaskForceCancelRequestedEvent`), `TaskQuestionEvent` (`TaskQuestionAskedEvent`) and `TaskRetryEvent` (`TaskRetriedEvent`). Each event's `kind` is unchanged. `AgentCreatedEvent.name` is now `agent_name`, and `parent_id` on `DelegationStartedEvent` and `DelegationFinishedEvent` is now `parent_task_id`: the old attributes still read, with the same warning, and an event serialized under an old key still loads. Constructing one of these events takes the new keyword only. They serialize under the new keys: update code that reads a serialized event by key, and upgrade any process that loads events this release writes.
+
 ```python
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai_harness.subagents import TaskAssignedEvent, TaskQuestionEvent
+from pydantic_ai_harness.subagents import TaskAssignedEvent, TaskQuestionAskedEvent
 
 
 class DelegationPolicy(AbstractCapability):
@@ -328,8 +330,8 @@ class DelegationPolicy(AbstractCapability):
         if 'production' in event.prompt:
             event.veto('ask the user before touching production')
 
-    @on_event(TaskQuestionEvent)
-    async def answer_known(self, ctx, event: TaskQuestionEvent) -> None:
+    @on_event(TaskQuestionAskedEvent)
+    async def answer_known(self, ctx, event: TaskQuestionAskedEvent) -> None:
         if event.question == 'Which branch?':
             event.answer = 'main'
 ```
@@ -365,12 +367,12 @@ orchestrator = Agent(
 )
 ```
 
-- **A transport is a set of mailboxes.** Implement `send`, `receive`, and optionally `release` over a WebSocket, a Redis list, or anything else that moves bytes, using `serialize_message` and `deserialize_message` at the boundary. Every message is one of the `SubAgentMessage` events above. `InMemoryTransport` serves a worker in the same process.
+- **A transport is a set of mailboxes.** Implement `send`, `receive`, and optionally `release` over a WebSocket, a Redis list, or anything else that moves bytes, using `serialize_message` and `deserialize_message` at the boundary. Every message is one of the `SubAgentMessageEvent`s above. `InMemoryTransport` serves a worker in the same process.
 - **The transport is the trust boundary.** Anyone who can send to it can run the served agents, with their tools and `deps`, and read what they return. Put authentication, authorization, and network binding in your transport. A worker's output and errors reach the delegating model like a local delegate's: in the foreground as tool results, in the background as framed reports.
 - **A transport reports a lost worker.** A worker that stops sends `TaskFailedEvent` for the tasks it was running. One that dies without doing so can't: the delegating run then waits for its report until the run is cancelled, unless `receive` raises when the worker is gone. Heartbeats are not part of the protocol.
 - **The worker runs the agent** with its own model, tools, and `deps`, which never cross the transport. It takes the agents it serves by name, without per-delegate run controls: those belong to the delegating side's `SubAgents`. It applies the delegating run's usage limits to the task's own usage, and continues the delegating run's trace. The usage it reports with the settled event is added to the delegating run's usage, unless `forward_usage=False`.
 - **A task nobody picks up fails.** The worker sends `TaskStartedEvent` when it starts a task. A remote task that no worker picks up within `TaskControl.accept_timeout` seconds (default `30`) fails, and a remote task that stops without its worker's report, for example because its delegating run ended, is force-cancelled on the worker.
-- `SubAgentWorker(retries=...)` runs a failed task again from its prompt, with a `TaskRetryEvent`. The worker keeps up to `max_conversations` task conversations (default `1000`) so they can be resumed. The conversation stays in that worker, so serve each remote agent name from one worker: a follow-up that reaches another worker fails, since it has no conversation to resume.
+- `SubAgentWorker(retries=...)` runs a failed task again from its prompt, with a `TaskRetriedEvent`. The worker keeps up to `max_conversations` task conversations (default `1000`) so they can be resumed. The conversation stays in that worker, so serve each remote agent name from one worker: a follow-up that reaches another worker fails, since it has no conversation to resume.
 - A remote agent runs on its worker's model, so `delegate_task` refuses a `model` for it, and its delegations emit no `DelegationStartedEvent` or `DelegationFinishedEvent`.
 
 ### Agents the model creates
@@ -399,7 +401,7 @@ is implemented.
 Use `DelegationReports` on the parent run to deliver settled background reports through core's
 queued-message API. Each report is the child's output in a `UserPromptPart`, framed as
 `<task_output task_id="..." agent_name="...">` data, with `outcome="..."` added when the task
-didn't succeed, like a background tool's `<tool_result>`. The output was written by a model, so it
+didn't succeed, like a background tool's `<pyai:tool_result>`. The output was written by a model, so it
 never enters system voice, and a closing tag inside it can't end the frame early. Nothing precedes
 the frame: the acceptance receipt the parent got at launch already said a report would follow.
 
@@ -480,7 +482,7 @@ An observer receives `DelegationTaskEvent`, with the task identity and an option
 correlated child stream event. Events from the child's own stream also carry the
 `model_name` and `context_window` of the model streaming that request, so a UI can
 show the child's context usage. Managed start/end events carry `task_id` and
-`parent_id`. Managed cancellation and uncontained exceptions produce terminal
+`parent_task_id`. Managed cancellation and uncontained exceptions produce terminal
 outcomes; unmanaged events and exception propagation keep their original contract.
 Metadata and final/interrupted histories are atomically saved under `directory`.
 Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
@@ -488,6 +490,30 @@ child's latest frontier. Loading an interrupted record never executes its tools.
 Inspect possible partial effects before an explicit resume. A resume closes out tool
 calls the interruption left unanswered with an `interrupted` tool return, so the child
 sees they did not complete.
+
+Each saved file loads on its own. A file that cannot be read or validated, whose name
+does not match its task ID, or whose saved ancestry loops is skipped and left on disk:
+`opened()` logs a warning and lists it in `problems` as a `SavedTaskProblem` (its path
+and the reason), and the other tasks still load. To list a saved task tree without
+opening an owner or resuming anything, for example from a dashboard or another process,
+call `DelegationTasks.discover(directory)`. It returns `SavedTasks`, with the loaded
+`tasks` by ID (follow `parent_id` for the tree) and the same `problems`. `discover()`
+writes nothing, and returns a task saved as `running` unchanged, since the process that
+owns it may still be running it.
+
+```python
+from pathlib import Path
+
+from pydantic_ai_harness.subagents import DelegationTasks
+
+
+async def show_saved_tasks():
+    saved = await DelegationTasks.discover(Path('.task-history'))
+    for task in saved.tasks.values():
+        print(task.id, task.parent_id, task.agent_name, task.status, task.outcome)
+    for problem in saved.problems:
+        print(f'Skipped {problem.path}: {problem.reason}')
+```
 
 Managed children with `forward_usage=True` share live usage accounting and inherit
 parent ceilings. A per-child budget is converted to an absolute ceiling at launch;

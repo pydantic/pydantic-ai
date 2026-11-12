@@ -31,6 +31,7 @@ from . import _function_schema, _utils, messages as _messages
 from ._deferred import (
     DeferredToolApprovalResult as DeferredToolApprovalResult,
     DeferredToolCallResult as DeferredToolCallResult,
+    DeferredToolKind as DeferredToolKind,
     DeferredToolRequests as DeferredToolRequests,
     DeferredToolResult as DeferredToolResult,
     DeferredToolResults as DeferredToolResults,

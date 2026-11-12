@@ -42,7 +42,8 @@ if __name__ == '__main__':
 - `LocalWorkspace('.')` gives every run the current directory. Commands start there, and relative
   paths resolve against it.
 - `ctx.workspace.run(...)` returns the command's `exit_code`, `stdout` and `stderr`. A failing command
-  is a normal result, so the model sees what went wrong and can fix it.
+  is a normal result, so the model sees what went wrong and can fix it. Pass `cwd='subdir'` to start a
+  command in another directory, relative to the working directory; it must already exist.
 - `timeout=60` stops a stuck command with a
   [`WorkspaceTimeoutError`][pydantic_ai.workspaces.WorkspaceTimeoutError]. Turning any
   [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] into `ModelRetry` lets the model try
@@ -255,7 +256,8 @@ For a single run, wrap its workspace in `ReadOnlyWorkspace` and pass it as `work
 [reviewer above](#hand-the-workspace-to-another-agent) does. To write your own policy, subclass
 [`WrapperWorkspace`][pydantic_ai.workspaces.WrapperWorkspace], override the operations you want to
 change, and call `self.wrapped` for the rest. `run()` bypasses file-method policies (including
-shell/grep tools built on it) unless the wrapper also overrides or refuses commands. Symlinks can
+shell/grep tools built on it) unless the wrapper also overrides or refuses commands; a `run()` override
+takes and forwards `cwd` too. Symlinks can
 also lead outside a file root; check `realpath` before a write, for example:
 
 ```python
@@ -699,6 +701,9 @@ class MySandbox(WorkspaceBackend, SupportsCommands):
   replacement for it.
 - The backend never destroys the environment when a run ends. Whoever holds the ref decides when to
   delete it; see [Cleaning up](#cleaning-up).
+- The backend never stops a process that a command detached into its own session, neither when the
+  command returns nor when a backend attaches by the same ref later.
+  [`Shell`](harness/shell.md) background jobs depend on it. A provider's own idle pause or stop is separate.
 - A non-zero exit is a result, not an exception. A program that can't start is exit 127 (not found)
   or 126 (not executable), as in `sh`. A path-level failure raises the builtin file error, and a
   timeout raises `WorkspaceTimeoutError`. Let a provider SDK's own transient errors propagate, so a
@@ -731,8 +736,8 @@ and Trio when installed). For an asyncio-only SDK, override the `anyio_backend` 
 `'asyncio'`, class-scoped when your `backend` fixture is. A class-scoped fixture starts one environment for the whole
 suite instead of one per rule. Under durable execution every workspace call rebuilds your backend from
 its ref, so provide `attach_backend`, a factory that builds a backend for a ref the way your capability's
-`get_workspace` does: it enables the rule that a backend attached by ref reaches the same files and
-commands and keeps that ref. To check destruction,
+`get_workspace` does: it enables the rules that a backend attached by ref reaches the same files and
+commands, keeps that ref, and finds a process that an earlier command detached still running. To check destruction,
 also provide `destroy_environment` and `destructive_backend`, a factory for an independent environment.
 The latter defaults to `fresh_backend` when supplied. The destructive rule never uses the shared `backend` fixture.
 
@@ -746,7 +751,8 @@ Before shipping a backend, use the suite to check:
 - File operations preserve bytes, follow symlinks where appropriate, and report path errors;
   understand containment limits: a working directory is not a jail, and symlinks may cross roots.
 - Supply `attach_backend`, `destroy_environment`, and an independent `destructive_backend` to check
-  reattachment, a destroyed reference, and destruction during a command. These optional rules
+  reattachment, a detached process that a backend attached by ref must find still running, a
+  destroyed reference, and destruction during a command. These optional rules
   skip when their fixtures are absent.
 
 A skipped rule is not a passed rule: run pytest with `-rs` to see what went unchecked. Four boolean

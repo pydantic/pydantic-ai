@@ -261,7 +261,9 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
 - Each review job runs OpenCode with `opencode-go/deepseek-v4.1-flash`, its [DeepInfra fallback](#opencode-falls-back-from-opencode-go-to-deepinfra), and only read, grep and glob,
   in the douwebot layout: the head is confined to `pr-head/` and its agent instruction files are
   deleted. The prompt lists and diffs only its check's files; the read tools reach both checkouts
-  and the gathered PR context, so the model can trace callers. The check's `max_steps` and
+  and the gathered PR context, so the model can trace callers. The job validates the model's answer
+  against its schema. When a Markdown code fence ends the answer, the job validates only that fenced
+  block, so prose before the fence passes; text after it still fails. The check's `max_steps` and
   `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
   tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
@@ -306,10 +308,25 @@ workspace: douwebot's OpenCode fallback, each `PR Review Checks` review and Open
 
 Every other failure fails as it does on Go alone, including a rejected key, a provider outage, a time-budget stop, a
 timeout and an invalid answer. The DeepInfra run gets only the rest of the time budget. Each run's config allows
-only its provider and pins the `title` and `compaction` agents to its model. Its environment holds only that
-provider's key. The job log names the model that served the run, and on a fallback the error type. It never prints
-the error message, which can repeat the provider's response. A DeepInfra run sends DeepInfra the same content a
-Go run sends Go, fork pull request content included. Start any new CI OpenCode run through `run_with_fallback`.
+only its provider and pins the `title`, `compaction` and `summary` agents to its model. Its environment holds only that
+provider's key. The job log names the model that served the run. When a run's process fails, Go or DeepInfra, the
+job log names that run's model and the `type` and `status` of its stream's last `error` event. It prints a type
+only when the type is shaped like OpenCode's own, such as `provider.auth`. It never prints the error message or
+response body, which can repeat the provider's response. When `PR Review Checks` or threat detection rejects a
+run's stream or answer, the job log names the reason: a fixed message from `final_text` in
+`.github/scripts/douwebot_opencode_result.py`, the sorted validation error types, or the exception's class name. It
+never prints model text, because the answer can hold a private report. A DeepInfra run sends DeepInfra the same
+content a Go run sends Go, fork pull request content included. Start any new CI OpenCode run through
+`run_with_fallback`.
+
+The DeepInfra run's config sets the model's `reasoningEffort` to `low`; the Go run's config sets no reasoning effort.
+Without [`reasoning_effort`](https://docs.deepinfra.com/chat/reasoning), DeepInfra returned no reasoning for this
+model, and the model wrote its reasoning into its answer, which then failed validation. OpenCode 2.2.5 spells
+DeepInfra's effort as this setting (`deepinfraChat` in
+[`variant.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/variant.ts)), passes it to the
+provider ([`deepinfra.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/providers/deepinfra.ts)),
+and sends it as `reasoning_effort` (`lowerOptions` in
+[`openai-chat.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/protocols/openai-chat.ts)).
 
 # A copy of the repository picks the `CI` Linux runner
 
