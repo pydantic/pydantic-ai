@@ -244,14 +244,11 @@ async def test_an_action_after_the_sandbox_restarted_starts_the_desktop_before_a
     sandbox.computer_use.stop_with_sandbox()
     with pytest.raises(WorkspaceError):
         await screen(backend).act(Click(x=1, y=1))
-    # The next action starts the desktop again, and doesn't run on the new screen until a screenshot shows it.
-    with pytest.raises(WorkspaceError, match='The display was not running and started since the last screenshot'):
-        await screen(backend).act(Click(x=1, y=1))
-    await screen(backend).screenshot()
+    # The next action starts the desktop again and runs on it.
     await screen(backend).act(Click(x=1, y=1))
 
     assert not sandbox.computer_use.broken
-    assert sandbox.desktop_calls[-3:] == ['start', 'take_full_screen', 'click 1 1 left clicks=1 modifiers=[]']
+    assert sandbox.desktop_calls[-2:] == ['start', 'click 1 1 left clicks=1 modifiers=[]']
 
 
 async def test_after_aclose_the_desktop_is_started_again_before_any_input(fake_daytona: FakeDaytona) -> None:
@@ -260,10 +257,9 @@ async def test_after_aclose_the_desktop_is_started_again_before_any_input(fake_d
     await backend.aclose()
     sandbox.computer_use.stop_with_sandbox()
 
-    with pytest.raises(WorkspaceError, match='The display was not running and started since the last screenshot'):
-        await screen(backend).act(Click(x=1, y=1))
+    await screen(backend).act(Click(x=1, y=1))
     assert not sandbox.computer_use.broken
-    assert sandbox.desktop_calls == ['start']
+    assert sandbox.desktop_calls == ['start', 'click 1 1 left clicks=1 modifiers=[]']
 
 
 async def test_every_action_checks_that_the_desktop_runs(fake_daytona: FakeDaytona) -> None:
