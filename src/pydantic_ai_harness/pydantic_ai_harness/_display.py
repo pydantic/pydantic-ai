@@ -43,7 +43,6 @@ class DisplayDriver(Protocol):
 
     async def display_size(self) -> tuple[int, int]: ...
     async def screenshot(self) -> bytes: ...
-    async def scaled_screenshot(self, width: int, height: int) -> bytes: ...
     async def act(self, action: DisplayAction) -> None: ...
     async def zoom(self, region: Region) -> bytes: ...
     async def cursor_position(self) -> Point: ...
@@ -113,13 +112,6 @@ class ManagedDisplay:
 
     async def screenshot(self) -> bytes:
         return await self._look(lambda driver: driver.screenshot())
-
-    async def scaled_screenshot(self, width: int, height: int) -> bytes:
-        """The whole display scaled to `width` by `height`, for a model that can't take it at full size.
-
-        This is [`SupportsScaledScreenshot`][pydantic_ai_harness.computer_use.SupportsScaledScreenshot].
-        """
-        return await self._look(lambda driver: driver.scaled_screenshot(width, height))
 
     async def act(self, action: DisplayAction) -> None:
         async def act(driver: DisplayDriver) -> bool:

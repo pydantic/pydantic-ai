@@ -137,19 +137,12 @@ _CAPTURES = '/tmp/pydantic-ai-captures'
 """Where screenshots are captured before they are printed. Each capture removes captures older than a few minutes
 there, such as one a cancel stopped before it removed its own file, so they don't pile up."""
 
-_CAPTURE_INTO = (
+_CAPTURE = (
     f'd={_CAPTURES}; mkdir -p "$d" && find "$d" -type f -mmin +5 -exec rm -f {{}} + 2>/dev/null; f="$d/$$.png"; '
+    'scrot "$@" "$f" && base64 < "$f"; status=$?; rm -f "$f"; exit $status'
 )
-
-_CAPTURE = _CAPTURE_INTO + 'scrot "$@" "$f" && base64 < "$f"; status=$?; rm -f "$f"; exit $status'
 """Captures to a file of its own (scrot picks the format from the `.png` name) and prints it as base64; arguments
 go to scrot, such as `-a x,y,width,height` for a region."""
-
-_CAPTURE_SCALED = (
-    _CAPTURE_INTO + 'scrot -t "$1" "$f" && base64 < "$d/$$-thumb.png"; status=$?; rm -f "$f" "$d/$$-thumb.png"; '
-    'exit $status'
-)
-"""Captures the whole screen and prints a copy scaled to the `WIDTHxHEIGHT` in `$1`, which scrot writes beside it."""
 
 _INPUT_PID = f'/tmp/.pydantic-ai-input-{DISPLAY_NUMBER}'
 """Holds the process id of the input command running on the display. Only one runs at a time, since `ComputerUse`
@@ -313,10 +306,6 @@ class X11Computer:
 
     async def screenshot(self) -> bytes:
         return await self._capture(_CAPTURE)
-
-    async def scaled_screenshot(self, width: int, height: int) -> bytes:
-        """The whole display scaled to `width` by `height`."""
-        return await self._capture(_CAPTURE_SCALED, f'{width}x{height}')
 
     async def zoom(self, region: Region) -> bytes:
         geometry = f'{region.left},{region.top},{region.right - region.left},{region.bottom - region.top}'
