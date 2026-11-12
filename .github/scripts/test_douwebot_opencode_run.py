@@ -569,9 +569,16 @@ def test_classifier_reads_only_the_prefetched_context(
     assert classify_env.read_text(encoding='utf-8') == 'category=chore\n'
 
 
-def test_classifier_reads_a_fenced_answer(classify_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An answer that ends in a fenced JSON object passes, as it does for `PR Review Checks`."""
-    fake_opencode(monkeypatch, (classifier_answer('The PR fixes a crash.\n```json\n{"category": "bug"}\n```'), None))
+@pytest.mark.parametrize(
+    'text',
+    [
+        pytest.param('The PR fixes a crash.\n```json\n{"category": "bug"}\n```', id='fenced'),
+        pytest.param('The PR fixes `f"{x}"`.\n\n{"category": "bug"}', id='prose-before-bare-json'),
+    ],
+)
+def test_classifier_reads_an_answer_after_prose(classify_env: Path, monkeypatch: pytest.MonkeyPatch, text: str) -> None:
+    """Prose before the JSON object, bare or fenced, passes, as it does for `PR Review Checks`."""
+    fake_opencode(monkeypatch, (classifier_answer(text), None))
     category_classify_opencode.main()
     assert classify_env.read_text(encoding='utf-8') == 'category=bug\n'
 
