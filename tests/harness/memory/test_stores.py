@@ -82,14 +82,19 @@ def pixeltable_catalog() -> None:
     pxt.list_tables()  # Its first call in a process starts the catalog.
 
 
+_PIXELTABLE_INDEX = 3  # `_local_store` gives this index the Pixeltable store.
+
+
 @pytest.fixture(autouse=True)
 def _start_pixeltable_before_its_store(request: pytest.FixtureRequest) -> None:
     """Have `pixeltable_catalog` start Pixeltable before a test that `_local_store` gives the Pixeltable store."""
-    if 'index' in request.fixturenames and request.getfixturevalue('index') == 3:
+    if 'index' in request.fixturenames and request.getfixturevalue('index') == _PIXELTABLE_INDEX:
         request.getfixturevalue('pixeltable_catalog')
 
 
-_PIXELTABLE = pytest.param(3, marks=pytest.mark.skipif(find_spec('pixeltable') is None, reason='pixeltable extra'))
+_PIXELTABLE = pytest.param(
+    _PIXELTABLE_INDEX, marks=pytest.mark.skipif(find_spec('pixeltable') is None, reason='pixeltable extra')
+)
 _STORE_INDEXES = (0, 1, 2, _PIXELTABLE)
 _VERSION_INDEXES = (0, 2, _PIXELTABLE)
 
@@ -103,7 +108,7 @@ def _local_stores(tmp_path: Path) -> list[Store]:
 
 
 def _local_store(tmp_path: Path, index: int) -> Store:
-    if index < 3:
+    if index != _PIXELTABLE_INDEX:
         return _local_stores(tmp_path)[index]
     from pydantic_ai_harness.memory import PixeltableMemoryStore
 
