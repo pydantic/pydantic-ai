@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from hypothesis import given, settings, strategies as st
@@ -1201,3 +1201,44 @@ async def test_a_toolset_call_whose_name_isnt_text_is_refused(allow_model_reques
     assert isinstance(call, ComputerCallPart)
     assert call.actions is None
     assert call.tool_call_id == 'toolu_1'
+
+
+@pytest.mark.parametrize('outcome, is_error', [('denied', False), ('interrupted', False), ('failed', True)])
+async def test_only_a_failed_toolset_call_is_a_tool_error(
+    allow_model_requests: None, outcome: Literal['denied', 'interrupted', 'failed'], is_error: bool
+) -> None:
+    client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    call = ComputerCallPart(
+        'computer',
+        {'actions': [{'type': 'click', 'x': 1, 'y': 2}, {'type': 'screenshot'}]},
+        tool_call_id='toolu_1',
+        provider_name='anthropic',
+        provider_details={
+            'computer_blocks': [
+                {'id': 'toolu_1', 'name': 'left_click', 'input': {'coordinate': [1, 2]}},
+                {'id': 'toolu_2', 'name': 'screenshot', 'input': {}},
+            ],
+            'computer_tool': 'computer_toolset_20260801',
+            'computer_action_counts': [1, 1],
+        },
+    )
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Click.'),
+        ModelResponse(parts=[call], provider_name='anthropic'),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('computer', 'No.', tool_call_id='toolu_1', tool_kind=COMPUTER_KIND.id, outcome=outcome)
+            ]
+        ),
+    ]
+    await model.request(
+        history,
+        None,
+        ModelRequestParameters(function_tools=[COMPUTER], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
+    results = get_mock_chat_completion_kwargs(client)[0]['messages'][-1]['content']
+    assert [(result['tool_use_id'], result['is_error']) for result in results] == [
+        ('toolu_1', is_error),
+        ('toolu_2', is_error),
+    ]
