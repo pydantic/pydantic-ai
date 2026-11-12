@@ -185,7 +185,7 @@ def load_codex_credentials(*, account: str = _ACCOUNT, fallback: Path | None = N
     except _NO_KEYRING:
         root = None
     if root is not None:
-        return _migrate(root=root, account=account, encrypted=encrypted)
+        return _migrate(root=root, account=account, encrypted=encrypted, plaintext=plaintext)
     if not plaintext.is_file():
         return None
     _warn_plaintext_fallback()
@@ -232,11 +232,18 @@ def delete_credentials(*, account: str = _ACCOUNT, fallback: Path | None = None)
     plaintext.unlink(missing_ok=True)
 
 
-def _migrate(*, root: str, account: str, encrypted: Path) -> str:
+def _migrate(*, root: str, account: str, encrypted: Path, plaintext: Path) -> str:
     """Move an older per-entry login into its encrypted file, so the next session reads no entry but the key."""
     value = _join_chunks(root=root, account=account)
     try:
-        write_private(path=encrypted, value=_create_cipher().encrypt(value.encode()).decode(), replace=False)
+        cipher = _create_cipher()
+    except _NO_KEYRING:
+        _warn_plaintext_fallback()
+        write_private(path=plaintext, value=value)
+        _delete_entries(root=root, account=account)
+        return value
+    try:
+        write_private(path=encrypted, value=cipher.encrypt(value.encode()).decode(), replace=False)
     except (FileExistsError, FileNotFoundError):
         # Another process saved or moved it first; its stale-file sweep may even have taken this staging file.
         return _decrypt(encrypted) if encrypted.is_file() else value

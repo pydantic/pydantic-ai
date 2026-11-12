@@ -260,6 +260,7 @@ def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None, caplog:
 
 @pytest.mark.parametrize('error', [NoKeyringError, RuntimeError, None])
 def test_file_fallback_when_set_password_has_no_keyring(
+    vault: Vault,
     fallback: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -271,6 +272,13 @@ def test_file_fallback_when_set_password_has_no_keyring(
 
     monkeypatch.setattr(keyring, 'set_password', fail_set)
     assert_plaintext_fallback_round_trip(fallback, caplog)
+    fallback.unlink()
+    new_session()
+    vault[LEGACY] = '{"access_token":"migrated"}'
+    with caplog.at_level('WARNING', logger=credential_store.__name__):
+        assert load_codex_credentials(fallback=fallback) == '{"access_token":"migrated"}'
+    assert LEGACY not in vault
+    assert list(fallback.parent.glob('credentials.*')) == [fallback]
 
 
 def test_planted_staging_symlink_is_not_followed(
