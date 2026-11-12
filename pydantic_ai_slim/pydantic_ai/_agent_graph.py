@@ -1128,7 +1128,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
 
         messages[:] = _repair_interrupted_tail(messages, has_new_prompt=self.user_prompt is not None)
-        _reject_unanswered_calls_before_tail(messages)
 
         next_message: _messages.ModelRequest | None = None
         is_resuming_without_prompt = False
@@ -1136,6 +1135,16 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         run_context: RunContext[DepsT] | None = None
 
         if messages and (last_message := messages[-1]):
+            if (
+                isinstance(last_message, _messages.ModelRequest)
+                and self.user_prompt is None
+                and (answered := _calls_answered_at_pause(messages))
+            ):
+                # A run that paused for deferred tool calls after the same step ran other calls left the
+                # history ending on a request with only those results. Run the response's other calls
+                # again, as a history ending on the response would, so deferred ones pause the run again.
+                response, _ = await self._adopt_resumed_response(ctx, messages, len(messages) - 2)
+                return CallToolsNode[DepsT, NodeRunEndT](response, _answered_tool_call_ids=answered)
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
@@ -1158,19 +1167,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         request=_messages.ModelRequest(parts=[]), _resume_suspended=last_message
                     )
                 if self.user_prompt is None:
-                    # The response may later be stamped with the run's workspace ref; don't mutate the caller's copy.
-                    if ctx.deps.workspace.attached or ctx.deps.workspace_ref is not None:
-                        last_message = replace(last_message)
-                        messages[-1] = last_message
-                        ctx.deps.adopted_response = last_message
-                    # Align with the upcoming request step so we don't resolve dynamic toolsets twice.
-                    run_context = replace(
-                        build_run_context(ctx),
-                        run_step=ctx.state.run_step + 1,
-                        retry=ctx.state.output_retries_used,
-                        max_retries=ctx.deps.tool_manager.default_max_retries,
-                    )
-                    ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+                    last_message, run_context = await self._adopt_resumed_response(ctx, messages, len(messages) - 1)
                     if last_message.tool_calls:
                         # Pending tool calls must be processed before any new ModelRequest, regardless
                         # of instructions.  Instructions will be applied by ModelRequestNode.run() on
@@ -1222,6 +1219,30 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         return ModelRequestNode[DepsT, NodeRunEndT](
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
         )
+
+    async def _adopt_resumed_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        messages: list[_messages.ModelMessage],
+        index: int,
+    ) -> tuple[_messages.ModelResponse, RunContext[DepsT]]:
+        """Prepare to process the history's response at `index` again, and return it with the step's run context."""
+        response = messages[index]
+        assert isinstance(response, _messages.ModelResponse)
+        # The response may later be stamped with the run's workspace ref; don't mutate the caller's copy.
+        if ctx.deps.workspace.attached or ctx.deps.workspace_ref is not None:
+            response = replace(response)
+            messages[index] = response
+            ctx.deps.adopted_response = response
+        # Align with the upcoming request step so we don't resolve dynamic toolsets twice.
+        run_context = replace(
+            build_run_context(ctx),
+            run_step=ctx.state.run_step + 1,
+            retry=ctx.state.output_retries_used,
+            max_retries=ctx.deps.tool_manager.default_max_retries,
+        )
+        ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+        return response, run_context
 
     async def _handle_deferred_tool_results(
         self,
@@ -1346,37 +1367,27 @@ def _repair_interrupted_tail(
     return messages
 
 
-def _reject_unanswered_calls_before_tail(messages: list[_messages.ModelMessage]) -> None:
-    """Raise when the history ends on a request that answers only some of the final response's tool calls.
+def _calls_answered_at_pause(messages: list[_messages.ModelMessage]) -> frozenset[str]:
+    """The tool calls a trailing request answered, when it answered only some of the final response's calls.
 
     A run paused for `DeferredToolRequests` leaves this history when the same step also executed other
     calls: the trailing request holds their results, and the deferred calls are still waiting for theirs.
-    Sending it would close the deferred calls with synthesized returns in the request only, while the stored
-    history keeps them open, so a later run could no longer answer them with `deferred_tool_results`.
+    Returns an empty set for any other history, including a trailing request that answers none of the
+    calls, such as a new user message a UI adapter put in the history.
     Calls of an interrupted request were already closed out by `_repair_interrupted_tail`.
-
-    A trailing request that answers none of the calls, such as a new user message a UI adapter put in the
-    history, isn't a pause and is still repaired at send time.
     """
     if not (
         len(messages) >= 2
-        and isinstance(messages[-2], _messages.ModelResponse)
-        and isinstance(messages[-1], _messages.ModelRequest)
+        and isinstance(response := messages[-2], _messages.ModelResponse)
+        and isinstance(request := messages[-1], _messages.ModelRequest)
+        and _dangling_tool_calls_by_response(messages).get(len(messages) - 2)
     ):
-        return
-    unanswered = _dangling_tool_calls_by_response(messages).get(len(messages) - 2)
-    if not unanswered:
-        return
-    call_ids = {call.tool_call_id for call in messages[-2].tool_calls}
-    if not any(
-        isinstance(part, _messages.ToolReturnPart) and part.tool_call_id in call_ids for part in messages[-1].parts
-    ):
-        return
-    raise exceptions.UserError(
-        'Cannot run the agent on this message history: it contains tool calls without results: '
-        f'{[call.tool_call_id for call in unanswered]}. If they were deferred, pass `deferred_tool_results` '
-        'with a result for each of them; otherwise call `pydantic_ai.messages.repair_messages()` on the '
-        'history first to close them out.'
+        return frozenset()
+    call_ids = {call.tool_call_id for call in response.tool_calls}
+    return frozenset(
+        part.tool_call_id
+        for part in request.parts
+        if isinstance(part, _messages.ToolReturnPart) and part.tool_call_id in call_ids
     )
 
 
@@ -3831,6 +3842,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     If the `model_response` has final output instead, this user prompt is ignored.
     The user prompt will be appended after all tool return parts in the next model request.
     """
+    _answered_tool_call_ids: frozenset[str] = field(default=frozenset[str](), repr=False)
+    """Calls of `model_response` that a request already in the history answered, so they aren't run again."""
 
     _wrapped_events_iterator: AsyncIterator[_messages.AgentStreamEvent] | None = field(
         default=None, init=False, repr=False
@@ -4099,6 +4112,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.failed_tool_nodes[id(self)] = self
             raise
 
+    def _unanswered(self, tool_calls: list[_messages.ToolCallPart]) -> list[_messages.ToolCallPart]:
+        """The calls a request already in the history didn't answer, which are the ones to run."""
+        return [call for call in tool_calls if call.tool_call_id not in self._answered_tool_call_ids]
+
     async def _handle_tool_calls(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
@@ -4106,6 +4123,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
     ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
+        tool_calls = self._unanswered(tool_calls)
         # Re-derive reveals now that the response is in history: a provider-side tool search
         # reveals a tool *inside* the response that goes on to call it, and the model saw that
         # schema before emitting the call. The step-start refresh ran before the response existed.
