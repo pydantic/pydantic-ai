@@ -1139,7 +1139,7 @@ For application code that just needs to plug in a handler, use the dedicated [`H
 
 ## Work that outlives a step {#in-flight-work}
 
-A tool or hook can start work that finishes after the step that started it, like a slow tool running in the background, and deliver its result later with [`ctx.enqueue()`](../message-history.md#injecting-messages-mid-run). Track that work with [`ctx.in_flight`][pydantic_ai.tools.RunContext.in_flight], so the run doesn't end without it:
+A tool or hook can start work that finishes after the step that started it, like a slow tool running in the background, and deliver its result later by [injecting it](../message-history.md#injecting-messages-mid-run) with [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue]. Track that work with [`ctx.in_flight`][pydantic_ai.tools.RunContext.in_flight], so the run doesn't end without it:
 
 ```python {title="in_flight_work.py"}
 import asyncio
@@ -1181,7 +1181,7 @@ agent = Agent(TestModel(), capabilities=[BackgroundResearch()])
 
 Its `on_end` decides what happens when the run ends, and follows from where the work lives:
 
-- `'drain'`, the default for `start()`: for work whose result belongs to this run. The run waits for it. When the model ends the run with output, the run waits until content has been queued or all draining work has finished, and then the model gets another turn on what was queued. Work that queues a result and keeps running doesn't hold that turn back, and work that finishes without queuing anything doesn't end the wait while other draining work is still running. When the run pauses with [`DeferredToolRequests`](../deferred-tools.md) or a [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits), it waits for all draining work, so its results are queued before the run ends; [Injecting messages mid-run](../message-history.md#injecting-messages-mid-run) says what happens to content queued at a pause.
+- `'drain'`, the default for `start()`: for work whose result belongs to this run. The run waits for it. When the model ends the run with output, the run waits until content has been queued or all draining work has finished, and then the model gets another turn on what was queued. Work that queues a result and keeps running doesn't hold that turn back, and work that finishes without queuing anything doesn't end the wait while other draining work is still running. When the run [pauses for deferred tools](../deferred-tools.md) with [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests], or [ends while a response is pending](../batch.md#ending-a-run-while-it-waits) with a [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse], it waits for all draining work, so its results are queued before the run ends; [Injecting messages mid-run](../message-history.md#injecting-messages-mid-run) says what happens to content queued at a pause.
 - `'cancel'`: for best-effort work that is worthless once the run is over. The run cancels it when it ends.
 - `'detach'`, the default for `register()`: for work that lives in a resource that outlives the run, like a shell job, a process in a workspace that is kept, or a task an application-owned object runs. The run lists it while it lives, but never waits for it or cancels it. Only registered work can be detached, since the run owns the work it starts. Pass `on_end='drain'` or `'cancel'` to `register()` for work that something else runs on the run's behalf.
 

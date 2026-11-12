@@ -141,22 +141,21 @@ async def test_ending_with_output_waits_for_the_first_result_and_gives_the_model
 
     assert result.output == 'done 4'
     assert seen == [['go'], ['go'], ['go', 'result a'], ['go', 'result a', 'result b']]
+    # The run stops waiting as soon as `a` has queued its result, before `a` itself has finished.
     assert emitted.phases == [
         'started',
         'started',
         'draining',
-        'settled',
         'drained',
+        'settled',
         'draining',
-        'settled',
         'drained',
+        'settled',
     ]
     assert emitted.events[2] == InFlightWorkEvent(
         phase='draining', work=(_snapshot('a', 'running'), _snapshot('b', 'running')), live=2
     )
-    assert emitted.events[4] == InFlightWorkEvent(
-        phase='drained', work=(_snapshot('a', 'succeeded'), _snapshot('b', 'running')), live=1
-    )
+    assert emitted.events[4] == InFlightWorkEvent(phase='settled', work=(_snapshot('a', 'succeeded'),), live=1)
 
 
 async def test_ending_with_queued_content_gives_the_model_a_turn_before_waiting(emitted: _Emitted):
@@ -185,7 +184,7 @@ async def test_ending_with_queued_content_gives_the_model_a_turn_before_waiting(
 
     assert result.output == 'done 4'
     assert seen == [['go'], ['go'], ['go', 'note'], ['go', 'note', 'result']]
-    assert emitted.phases == ['started', 'draining', 'settled', 'drained']
+    assert emitted.phases == ['started', 'draining', 'drained', 'settled']
 
 
 async def test_ending_with_output_gives_the_model_a_turn_once_work_queues_a_result(emitted: _Emitted):
@@ -251,7 +250,7 @@ async def test_work_settling_without_queuing_doesnt_end_the_wait(emitted: _Emitt
     assert result.output == 'done 3'
     assert seen == [['go'], ['go'], ['go', 'result']]
     assert handles['work'].state == 'succeeded'
-    assert emitted.phases == ['started', 'started', 'draining', 'settled', 'settled', 'drained']
+    assert emitted.phases == ['started', 'started', 'draining', 'settled', 'drained', 'settled']
 
 
 async def test_run_stream_waits_for_work_but_doesnt_deliver_its_result(emitted: _Emitted):
@@ -274,7 +273,7 @@ async def test_run_stream_waits_for_work_but_doesnt_deliver_its_result(emitted: 
 
     assert handles['work'].state == 'succeeded'
     assert 'late result' not in _user_texts(result.all_messages())
-    assert emitted.phases == ['started', 'draining', 'settled', 'drained']
+    assert emitted.phases == ['started', 'draining', 'drained', 'settled']
 
 
 async def test_deferred_pause_waits_for_all_work_and_records_its_results(emitted: _Emitted):
