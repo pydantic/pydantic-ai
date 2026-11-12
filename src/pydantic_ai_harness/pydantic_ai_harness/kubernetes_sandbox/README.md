@@ -295,7 +295,7 @@ Removing a capability while workflows using it are still running changes their r
 
 ## Telemetry
 
-`KubernetesSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span. Claiming a sandbox logs its ref at `INFO` (`Claimed Kubernetes sandbox <namespace>/<claim name>`) on the `pydantic_ai_harness.kubernetes_sandbox._backend` logger, so a sandbox that outlives its run can still be found.
+`KubernetesSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Claiming a sandbox logs its ref at `INFO` (`Claimed Kubernetes sandbox <namespace>/<claim name>`) on the `pydantic_ai_harness.kubernetes_sandbox._backend` logger, so a sandbox that outlives its run can still be found.
 
 ## Limitations
 
