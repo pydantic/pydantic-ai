@@ -408,7 +408,7 @@ replay.
 
 ## Edge cases
 
-- Binary returns spill verbatim and are never stringify-truncated; `Truncate` / `Summarize`
+- Raw `bytes` returns spill verbatim and are never stringify-truncated; `Truncate` / `Summarize`
   on binary fall through to `then`.
 - A return value holding files (`BinaryContent` or a file URL, alone or in a list) keeps every
   file as it is; only the items beside them are measured and reduced.
