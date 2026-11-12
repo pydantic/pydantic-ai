@@ -4004,6 +4004,10 @@ def test_each_decision_exports_one_span_with_both_accounts_quota(
     monkeypatch.setenv('OTEL_SERVICE_NAME', 'gh-aw.pydantic-ai-pr-review')
     monkeypatch.setenv('OTEL_RESOURCE_ATTRIBUTES', 'gh-aw.workflow.name=CI%20Review,github.run_id=43')
     monkeypatch.setenv('GITHUB_JOB', job)
+    # A default-branch dispatch with a recovery issue, which the span also records.
+    monkeypatch.setenv('PYDANTIC_AI_RECOVERY_ISSUE', '7')
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'workflow_dispatch')
+    monkeypatch.setenv('GITHUB_REF', 'refs/heads/main')
     if job == 'agent':
         monkeypatch.setenv('GITHUB_AW_OTEL_TRACE_ID', 'a' * 32)
         monkeypatch.setenv('GITHUB_AW_OTEL_PARENT_SPAN_ID', 'b' * 16)
@@ -4032,6 +4036,7 @@ def test_each_decision_exports_one_span_with_both_accounts_quota(
         'provider_health.trigger_event': {'stringValue': 'workflow_run'},
         'provider_health.run_attempt': {'intValue': '1'},
         'provider_health.account': {'stringValue': 'backup'},
+        'provider_health.recovery_issue': {'intValue': '7'},
         'provider_health.primary.ready': {'boolValue': False},
         'provider_health.primary.reason': {'stringValue': 'Z.ai quota is exhausted'},
         'provider_health.primary.quota.status': {'stringValue': 'exhausted'},
