@@ -536,21 +536,21 @@ a minimum amount of original message text rather than a message count. By defaul
 turn even when it falls outside the window, so the agent does not lose the original task. `keep_messages=0` still keeps
 the newest message, the request being answered.
 
-`ClearToolResults` keeps the last `keep_pairs` intact. A retried return, which asks the model to make
-the call again, is never cleared and doesn't count toward `keep_pairs`. Set `clear_tool_inputs=True` to also blank the
-arguments of the cleared calls. A cleared call also loses its item ID (`ToolCallPart.id`), for the same
-reason a clamped part does. A `load_capability` call keeps its argument, because Pydantic AI reads from
-it which capability is loaded. Set `exclude_tools` to a set of tool names whose results are never
-cleared, or `tools` to the names whose results are the only ones cleared; setting both raises a
-`UserError`. The `keep_pairs` window counts every tool's calls before `tools` picks which results are
-cleared, so other tools' recent calls can push an older result of a listed tool out of it; `keep_turns`
-keeps by turn instead. Framework-typed tool results -- core's `search_tools` and `load_capability`
-returns -- are left intact (a small token floor), because their structured content is re-parsed on
-later requests and
-rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. `FileSystem`'s typed
-`read_file` results (`ReadFileReturnPart`) are cleared like any other result and keep their type, unless
-their `metadata` is something other than `None` or a `dict`: a cleared result is marked in its
-`metadata`, so one whose metadata can't hold the mark is left uncleared.
+`ClearToolResults` keeps the last `keep_pairs` intact. A retried return, which asks the model to
+make the call again, is never cleared and doesn't count toward `keep_pairs`. Set
+`clear_tool_inputs=True` to also blank the arguments of the cleared calls. A cleared call also loses
+its item ID (`ToolCallPart.id`), for the same reason a clamped part does. A `load_capability` call
+keeps its argument, because Pydantic AI reads from it which capability is loaded. Set
+`exclude_tools` to a set of tool names whose results are never cleared, or `tools` to the names
+whose results are the only ones cleared; setting both raises a `UserError`. The `keep_pairs` window
+counts every tool's calls before `tools` picks which results are cleared, so other tools' recent
+calls can push an older result of a listed tool out of it; `keep_turns` keeps by turn instead.
+Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are left
+intact (a small token floor), because their structured content is re-parsed on later requests and
+rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. `FileSystem`'s
+typed `read_file` results (`ReadFileReturnPart`) are cleared like any other result and keep their
+type, unless their `metadata` is something other than `None` or a `dict`: a cleared result is marked
+in its `metadata`, so one whose metadata can't hold the mark is left uncleared.
 
 With `max_messages`, the count starts after the last cleared result, because clearing blanks content
 but removes no messages. Clearing then happens in batches: after a clear, the next one waits until

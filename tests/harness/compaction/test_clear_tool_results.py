@@ -202,6 +202,24 @@ class TestClearToolResultsTargeting:
         assert twice == once
         assert _contents(twice) == {'a': '[a cleared]', 'b': '[b cleared]'}
 
+    async def test_callable_placeholder_with_min_clear_tokens_drops_a_small_clear(self):
+        """A clear that reclaims too little is dropped, so the function runs again for the same results later."""
+        calls: list[str] = []
+
+        def placeholder(part: ToolReturnPart) -> str:
+            calls.append(part.tool_call_id)
+            return _first_line(part)
+
+        cap = ClearToolResults[None](max_tokens=1, keep_pairs=0, placeholder=placeholder, min_clear_tokens=1_000)
+        messages = [_user('go'), _call('search', 'a'), _return('search', 'a', 'id=1\nbody')]
+        assert await cap.compact(messages, _ctx()) is messages
+        assert calls == ['a']
+
+        messages += [_call('search', 'b'), _return('search', 'b', 'id=2\n' + 'body ' * 2_000)]
+        cleared = await cap.compact(messages, _ctx())
+        assert calls == ['a', 'a', 'b']
+        assert _contents(cleared) == {'a': 'id=1', 'b': 'id=2'}
+
     async def test_callable_placeholder_skips_results_that_cannot_be_marked(self):
         """A result whose metadata can't hold the clear mark would be cleared again from its own placeholder."""
         calls: list[str] = []
@@ -419,6 +437,11 @@ class TestClearToolResultsTargeting:
         history: list[ModelMessage] = []
         for prompt in ['one', 'two', 'three', 'four']:
             history = (await agent.run(prompt, message_history=history)).all_messages()
+
+        # Each run clears at its first request, so its second request extends the first.
+        assert len(sent) == 8
+        for first, second in zip(sent[::2], sent[1::2]):
+            assert second[: len(first)] == first
 
         # The fourth run keeps the third turn and its own; the first two turns' results are cleared.
         assert _contents(sent[-1]) == snapshot(
