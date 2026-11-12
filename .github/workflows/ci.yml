@@ -468,11 +468,14 @@ jobs:
         continue-on-error: true
         env:
           PYRIGHT: ${{ steps.pyright-rs.outputs.path }}
-          # pyright-rs checked both projects in 35.0 s on a GitHub runner where pyright took 185.8 s
-          # (https://github.com/dsfaccini/pyright-rs/actions/runs/43305070216). A run 1.5x that
-          # fails 50, and a failure only hands the check to pyright and its own budget below, so a
-          # slowdown fails the pull request only when pyright shows it too.
-          PYRIGHT_TIME_BUDGET: "50"
+          # A failure here only hands the check to pyright and its own budget below, so a slowdown
+          # fails the pull request only when pyright shows it too. On 2026-11-12 eight runners each
+          # checked one pull request with both (https://github.com/pydantic/pydantic-ai/actions/runs/43321752660):
+          # pyright-rs took 35.3 to 47.6 s (median 40.0 s), and pyright 6.0 to 6.6 times as long. 55
+          # is pyright's 370 s budget divided by the highest of those ratios, so a pyright-rs run that
+          # points to a pyright run over that budget hands the check to pyright. It is about 1.15x the
+          # slowest of those pyright-rs runs, and a run 1.5x their median exceeds it.
+          PYRIGHT_TIME_BUDGET: "55"
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
