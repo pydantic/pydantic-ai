@@ -24,9 +24,19 @@ from pydantic_ai.realtime.codec import (
     OutputTranscript,
     RealtimeCodecEvent,
     ResponseDone,
+    SessionUsage,
     ToolCall,
+    ToolCallCancelled,
+    ToolResult,
 )
-from pydantic_ai.realtime.lifecycle import InferredLifecycle, LifecycleEvent, RealtimeFrame
+from pydantic_ai.realtime.lifecycle import (
+    AnswersRevised,
+    InferredLifecycle,
+    LifecycleEvent,
+    RealtimeFrame,
+    ResponseStarted,
+)
+from pydantic_ai.usage import RequestUsage
 
 
 def lifecycle(frame: RealtimeFrame | Sequence[LifecycleEvent]) -> list[str]:
@@ -172,3 +182,145 @@ def test_words_after_a_second_commit_close_the_turn_the_first_commit_joined() ->
     assert lifecycle(tracker.frame_for([InputTranscript('Again')])) == snapshot(
         ['UserTurnClosed', 'UserTurnStarted', 'UserTurnEnded']
     )
+
+
+class _CutOffLifecycle(InferredLifecycle):
+    inputs_cut_off_replies = True
+
+
+def revisions(frame: RealtimeFrame | Sequence[LifecycleEvent]) -> list[AnswersRevised]:
+    return [event for event in frame if isinstance(event, AnswersRevised)]
+
+
+def test_an_input_that_cuts_a_reply_off_is_left_to_the_next() -> None:
+    """With nothing but typed turns going in, only an input can have cut the reply off: the later one did."""
+    tracker = _CutOffLifecycle(transcribes=False)
+    tracker.input_sent('Tell me a story.')
+    tracker.input_sent('What is 2 plus 2?')
+    tracker.take_pending()
+    tracker.frame_for([OutputTranscript('Once upon')])
+    assert revisions(tracker.frame_for([RealtimeResponseInterruptedEvent(), ResponseDone(interrupted=True)])) == [
+        AnswersRevised(response_id='pydantic_ai_response_1', released=(1,))
+    ]
+
+
+def test_a_reply_the_user_speaks_over_keeps_every_input_it_answers() -> None:
+    """The provider heard the user start speaking after the inputs went out: that cut the reply off, not an input."""
+    tracker = _CutOffLifecycle(transcribes=False)
+    tracker.input_sent('Tell me a story.')
+    tracker.input_sent('What is 2 plus 2?')
+    tracker.take_pending()
+    tracker.frame_for([OutputTranscript('Once upon')])
+    tracker.speech_heard()
+    assert revisions(tracker.frame_for([RealtimeResponseInterruptedEvent(), ResponseDone(interrupted=True)])) == []
+
+
+def test_a_cancellation_revises_only_the_response_whose_calls_it_names() -> None:
+    tracker = _CutOffLifecycle(transcribes=False)
+    tracker.input_sent('First.')
+    tracker.take_pending()
+    tracker.frame_for([ToolCall(tool_call_id='a', tool_name='lookup', args='{}')])
+    tracker.input_sent('Second.')
+    tracker.input_sent('Third.')
+    tracker.take_pending()
+    tracker.frame_for([ToolCall(tool_call_id='b', tool_name='lookup', args='{}')])
+    # A late cancellation of the first response's call says nothing about the second's inputs...
+    assert revisions(tracker.frame_for([ToolCallCancelled(['a'])])) == []
+    # ...and leaves the second response's own cancellation to revise it.
+    assert revisions(tracker.frame_for([ToolCallCancelled(['b'])])) == [
+        AnswersRevised(response_id='pydantic_ai_response_2', released=(2,))
+    ]
+
+
+def test_a_microphone_streaming_silence_is_no_sign_the_user_spoke() -> None:
+    """Audio going out says nothing: an always-on microphone streams silence through a typed turn too."""
+    tracker = _CutOffLifecycle(transcribes=False)
+    tracker.input_sent(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    tracker.input_sent('Tell me a story.')
+    tracker.input_sent(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    tracker.input_sent('What is 2 plus 2?')
+    tracker.input_sent(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    tracker.take_pending()
+    tracker.frame_for([OutputTranscript('Once upon')])
+    tracker.input_sent(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    assert revisions(tracker.frame_for([RealtimeResponseInterruptedEvent(), ResponseDone(interrupted=True)])) == [
+        AnswersRevised(response_id='pydantic_ai_response_1', released=(3,))
+    ]
+
+
+def test_a_turn_that_ends_silently_after_a_tool_result_completes() -> None:
+    """Once every result of a response its usage report ended is out, the next terminal answers them.
+
+    Gemini Live closes a tool-call frame with an (empty) usage report and sends no terminal of its own for it: a
+    model with nothing to say about the result just ends its turn (#12765).
+    """
+    tracker = InferredLifecycle()
+    tracker.frame_for(
+        [
+            ToolCall(tool_call_id='call-1', tool_name='save', args='{}', response_usage_follows=True),
+            SessionUsage(RequestUsage()),
+        ]
+    )
+    tracker.input_sent(ToolResult('call-1', output='saved'))
+    tracker.take_pending()
+    frame = tracker.frame_for([SessionUsage(RequestUsage(input_tokens=10)), ResponseDone()])
+    assert lifecycle(frame) == snapshot(['ResponseStarted', 'ResponseEnded'])
+    started = [event for event in frame if isinstance(event, ResponseStarted)][0]
+    assert started.answers == (0,)
+
+
+def test_a_terminal_between_the_results_of_parallel_calls_answers_none_of_them() -> None:
+    """With a result still owed, a terminal is the tool-call response's own (Vertex `gemini-live-2.5-flash` sends one).
+
+    The model answers the calls once all their results are in.
+    """
+    tracker = InferredLifecycle()
+    tracker.frame_for(
+        [
+            ToolCall(tool_call_id='c1', tool_name='fast', args='{}', response_usage_follows=True),
+            ToolCall(tool_call_id='c2', tool_name='slow', args='{}', response_usage_follows=True),
+            SessionUsage(RequestUsage()),
+        ]
+    )
+    tracker.input_sent(ToolResult('c1', output='fast result'))
+    tracker.take_pending()
+    assert lifecycle(tracker.frame_for([SessionUsage(RequestUsage(input_tokens=7)), ResponseDone()])) == snapshot([])
+    tracker.input_sent(ToolResult('c2', output='slow result'))
+    tracker.take_pending()
+    frame = tracker.frame_for([SessionUsage(RequestUsage(input_tokens=10)), ResponseDone()])
+    assert [event.answers for event in frame if isinstance(event, ResponseStarted)] == [(0, 1)]
+
+
+def test_the_terminal_a_usage_report_came_with_ends_nothing_more_after_a_fast_result() -> None:
+    """A usage report on the provider's terminal (OpenAI's `response.done`) ends the calls' response there.
+
+    The result of a fast tool may go out before that terminal: it is still the calls' response's.
+    """
+    tracker = InferredLifecycle()
+    assert lifecycle(
+        tracker.frame_for([ToolCall(tool_call_id='c1', tool_name='save', args='{}', response_usage_follows=True)])
+    ) == snapshot(['ResponseStarted'])
+    tracker.input_sent(ToolResult('c1', output='saved'))
+    tracker.take_pending()
+    assert lifecycle(tracker.frame_for([SessionUsage(RequestUsage(input_tokens=10)), ResponseDone()])) == snapshot(
+        ['ResponseEnded', 'InputAdded']
+    )
+    frame = tracker.frame_for([OutputTranscript('Saved.')])
+    assert [event.answers for event in frame if isinstance(event, ResponseStarted)] == [(0,)]
+
+
+def test_a_late_terminal_of_a_response_its_call_ended_answers_nothing() -> None:
+    """A response with no usage report to come ends at its call: a terminal that comes later is still its own.
+
+    Even after the call's result went out, and with session usage reported in between.
+    """
+    tracker = InferredLifecycle()
+    assert lifecycle(tracker.frame_for([ToolCall(tool_call_id='c1', tool_name='save', args='{}')])) == snapshot(
+        ['ResponseStarted', 'ResponseEnded']
+    )
+    tracker.input_sent(ToolResult('c1', output='saved'))
+    tracker.take_pending()
+    assert lifecycle(tracker.frame_for([SessionUsage(RequestUsage(), response_scoped=False)])) == snapshot([])
+    assert lifecycle(tracker.frame_for([ResponseDone()])) == snapshot([])
+    frame = tracker.frame_for([OutputTranscript('Saved.')])
+    assert [event.answers for event in frame if isinstance(event, ResponseStarted)] == [(0,)]

@@ -23,7 +23,7 @@ from pydantic_clai2.ui.menus.custom_params import edit_custom_params
 from pydantic_clai2.ui.menus.dialogs import run_settings_menu
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldRow, Runners, first_error, shown
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 
 _HINT = 'type to filter - Enter add and use model - Ctrl+S settings - Esc close'
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
@@ -56,6 +56,8 @@ class ModelSettingsSource:
         """Every form field with its description and any fixed choices."""
         rows: list[FieldRow] = []
         options = model_options(model=self._settings_as)
+        if self.model != self._settings_as:  # A chain, or a plugin model shown with another's controls.
+            options.pop('base_url', None)
         saved = self._store.model_settings(self.model)
         for key, info in ModelSettingsForm.model_fields.items():
             if key not in options and key not in saved:
@@ -144,6 +146,7 @@ def setting_label(key: str) -> str:
         'max_tokens': 'Max Output Tokens',
         'top_p': 'Top-P (Nucleus Sampling)',
         'cache': 'Prompt Caching',
+        'base_url': 'Base URL',
         'openai_text_verbosity': 'Verbosity',
         'anthropic_thinking_mode': 'Extended Thinking',
         'anthropic_thinking_budget': 'Thinking Budget',
@@ -348,21 +351,36 @@ async def open_add_model_menu(
             continue
         except _ConnectProvider as request:
             accumulated.extend(request.messages)
-            if request.provider == 'github-copilot':
-                await github_copilot.ensure_login(console=console)
-                models = await github_copilot_models()
-                provider_menu = ModelMenu(context, provider='github-copilot', discovered=models)
-                if await _browse(provider_menu, runners, accumulated):
-                    return '\n'.join(accumulated) or 'No changes.'
-                continue
-            if request.provider == 'openrouter':
-                result = await openrouter.connect(context, [], console=console)
-            else:
-                result = await vllm.connect(context, [])
-            if result == 'Connection cancelled.':
-                continue
-            return '\n'.join([*accumulated, result])
+            connected = await _connect(
+                context, request.provider, console=console, runners=runners, messages=accumulated
+            )
+            if connected is not None:
+                return connected
+            continue
         return '\n'.join([*accumulated, *messages]) or 'No changes.'
+
+
+async def _connect(
+    context: CommandContext, provider: str, *, console: Console, runners: Runners, messages: list[str]
+) -> str | None:
+    """Connect `provider` and pick one of its models; what `/model add` returns, or `None` to reopen the providers."""
+    if provider == 'github-copilot':
+        signed_in = await github_copilot.ensure_login(console=console)
+        models = await github_copilot_models()
+        if signed_in:
+            for model in models:
+                context.store.add_model(name=model.name)
+        provider_menu = ModelMenu(context, provider='github-copilot', discovered=models)
+        if await _browse(provider_menu, runners, messages):
+            return '\n'.join(messages) or 'No changes.'
+        return None
+    if provider == 'openrouter':
+        result = await openrouter.connect(context, [], console=console)
+    else:
+        result = await vllm.connect(context, [])
+    if result == 'Connection cancelled.':
+        return None
+    return '\n'.join([*messages, result])
 
 
 async def _browse(menu: ModelMenu, runners: Runners, messages: list[str], *, focus: str | None = None) -> bool:

@@ -16,6 +16,8 @@
 
 ::: pydantic_ai.providers.openai
 
+::: pydantic_ai.providers.openai_compatible
+
 ::: pydantic_ai.providers.openai_codex
     options:
       inherited_members: true

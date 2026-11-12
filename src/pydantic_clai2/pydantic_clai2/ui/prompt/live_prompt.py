@@ -6,7 +6,6 @@ import time
 from collections import deque
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from itertools import islice
 
 import anyio
@@ -18,15 +17,15 @@ from termflow.ansi.utils import visible_length
 from termflow.tui.completion import CompleteEvent, Completion, Document
 from termflow.tui.layout import truncate
 
-from pydantic_clai2.cli.shell_passthrough import shell_command
 from pydantic_clai2.commands import Commands, expand_bare_command, is_command_input
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import holding_output
-from pydantic_clai2.ui.prompt.image_input import ImageInput, clipboard_images, pasted_paths, read_images
+from pydantic_clai2.ui.prompt.image_input import ATTACHED, ImageInput, clipboard_images, pasted_paths, read_images
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
+from pydantic_clai2.ui.prompt.prompt_queue import QueuedPrompt, can_steer, input_kind
 from pydantic_clai2.ui.prompt.prompt_resize import resize_notifications
 from pydantic_clai2.ui.prompt.prompt_surface import TRANSCRIPT_KEYS, PromptSurface
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
@@ -38,17 +37,12 @@ IDLE_REPAINT = 1.0
 """Seconds between timed repaints of an idle editor, and how long it keeps repainting fast after animating.
 
 Timed repaints pick up status that no key, output, or resize announces, such as a plugin's status
-segment. They run ten times a second while a turn runs or the panel shows forks or tasks.
+segment. They run every `ANIMATED_REPAINT` seconds while a turn runs or the panel shows forks or tasks;
+an idle editor sleeps between them.
 """
 
-
-@dataclass(eq=False)
-class _Queued:
-    """A queued prompt compared by identity, so an edit finds it even after the queue shifts."""
-
-    text: str
-    recorded: str = ''
-    """The raw draft `accept` saved to history for this prompt, before command expansion."""
+ANIMATED_REPAINT = 0.1
+"""Seconds between timed repaints while the editor animates, unless the spinner is faster."""
 
 
 class PromptWakeup(Exception):
@@ -59,7 +53,7 @@ class PromptRewind(Exception):
     """Open the rewind picker without submitting or clearing the draft."""
 
 
-_Submission = _Queued | KeyboardInterrupt | EOFError | PromptRewind
+_Submission = QueuedPrompt | KeyboardInterrupt | EOFError | PromptRewind
 
 
 class LivePrompt:
@@ -82,6 +76,7 @@ class LivePrompt:
         pinned: Callable[[], str] = lambda: '',
         spinner: Callable[[], Spinner] = lambda: BUILTIN_SPINNERS[DEFAULT_SPINNER],
         panel: Callable[[str], Sequence[str]] = lambda _: (),
+        queue_changed: Callable[[], None] = lambda: None,
     ) -> None:
         """Bind editing state, terminal ownership and per-session services.
 
@@ -91,6 +86,7 @@ class LivePrompt:
         `spinner` returns the working animation; it is read on every frame, so a new choice shows at once.
         `panel` receives the current spinner frame and returns styled rows painted above the queue,
         such as running forks; it is read on every repaint, including between turns.
+        `queue_changed` is told whenever a prompt joins, leaves, or is rewritten in the queue.
         """
         self.console = console
         self.commands = commands
@@ -105,6 +101,7 @@ class LivePrompt:
         self.pinned = pinned
         self.spinner = spinner
         self.panel = panel
+        self.queue_changed = queue_changed
         self.notice = ''
         self._chord_prefix = ''
         self._last_escape: float | None = None
@@ -118,13 +115,15 @@ class LivePrompt:
         self._submissions: deque[_Submission] = deque()
         # The queued prompt taken out of the queue while the draft edits it, the submission it returns after
         # (`None` for the front), and the draft from before the recall that took it, which Esc restores.
-        self._editing: _Queued | None = None
+        self._editing: QueuedPrompt | None = None
         self._editing_after: _Submission | None = None
         self._shelved_draft = ''
-        self._recall_queue: list[_Queued] = []
-        self._recall_target: _Queued | None = None
-        self._search_target: _Queued | None = None
+        self._recall_queue: list[QueuedPrompt] = []
+        self._recall_target: QueuedPrompt | None = None
+        self._search_target: QueuedPrompt | None = None
         self._submitted = asyncio.Event()
+        self._animate = asyncio.Event()
+        """Set to cut short the timed repaint's idle sleep, as work starts."""
         self._wake_pending = False
         self._suspended = False
         self._completions: list[Completion] = []
@@ -145,7 +144,7 @@ class LivePrompt:
     @property
     def queued_messages(self) -> tuple[str, ...]:
         """Pending text, excluding control signals, including the queued prompt being edited."""
-        return tuple(item.text for item in self._pending())
+        return tuple(item.text for item in self.queued_prompts())
 
     @property
     def drafts(self) -> tuple[str, ...]:
@@ -158,22 +157,22 @@ class LivePrompt:
         walked = (self.buffer.saved_draft,) if self.buffer.history_index is not None else ()
         return (self.buffer.text, *shelved, *walked, *self.queued_messages)
 
-    def _queued(self) -> list[_Queued]:
-        return [item for item in self._submissions if isinstance(item, _Queued)]
+    def queued_prompts(self) -> list[QueuedPrompt]:
+        """The queued prompts, oldest first, without control signals.
 
-    def _pending(self) -> list[_Queued]:
-        """Queued prompts in order, with the one being edited at the place it returns to."""
+        The one being edited is out of the queue so it cannot run, but is listed at the place it returns to.
+        """
         items = list(self._submissions)
         if self._editing is not None:
             items.insert(self._return_index(), self._editing)
-        return [item for item in items if isinstance(item, _Queued)]
+        return [item for item in items if isinstance(item, QueuedPrompt)]
 
     def _return_index(self) -> int:
         after = self._editing_after
         # Once the submission before it has run, so has everything ahead of it: it goes first.
         return self._submissions.index(after) + 1 if after is not None and after in self._submissions else 0
 
-    def _edit(self, entry: _Queued | None) -> None:
+    def _edit(self, entry: QueuedPrompt | None) -> None:
         """Take `entry` out of the queue while the draft edits it, returning the one edited before unchanged.
 
         A prompt being edited cannot run, so a turn that ends meanwhile starts the next one instead.
@@ -187,30 +186,57 @@ class LivePrompt:
             return
         index = self._submissions.index(entry)
         self._editing_after = self._submissions[index - 1] if index else None
-        self._discard(entry)
+        self._submissions.remove(entry)
+        if not self._submissions and not self._wake_pending:
+            self._submitted.clear()
         self._editing = entry
 
-    def _put_back(self, entry: _Queued) -> None:
+    def _put_back(self, entry: QueuedPrompt) -> None:
         """Return the prompt taken out to edit to its place in the queue."""
         self._submissions.insert(self._return_index(), entry)
         self._editing = None
         self._submitted.set()
 
-    def take_queued(self) -> list[str]:
-        """Remove the queued prompts and return their text, as when another session reads this editor next."""
+    def _drop_editing(self) -> None:
+        """Forget the prompt being edited, which leaves the queue for good, telling `queue_changed`."""
+        if self._editing is not None:
+            self._editing = None
+            self.queue_changed()
+
+    def take_queued(self) -> list[QueuedPrompt]:
+        """Remove the queued prompts and return them, as when another session reads this editor next."""
         self._edit(None)
-        queued = self._queued()
+        queued = self.queued_prompts()
         for entry in queued:
             self._discard(entry)
-        return [entry.text for entry in queued]
+        return queued
 
-    def submit(self, value: str | KeyboardInterrupt | EOFError | PromptRewind) -> None:
+    def submit(self, value: str | QueuedPrompt | KeyboardInterrupt | EOFError | PromptRewind) -> None:
         """Publish a submission without ending or replacing the editor."""
-        self._enqueue(_Queued(value) if isinstance(value, str) else value)
+        self._enqueue(QueuedPrompt(value) if isinstance(value, str) else value)
+
+    def rewrite(self, entry: QueuedPrompt, text: str) -> None:
+        """Replace a queued prompt's text, keeping its place, as Enter on a recalled one does."""
+        entry.text = text
+        self.queue_changed()
+        self.paint()
+
+    def discard(self, entry: QueuedPrompt) -> None:
+        """Drop a queued prompt, as clearing a recalled one before Enter does.
+
+        Dropping the one being edited ends the edit: the draft stays, and Enter queues it as a new prompt.
+        """
+        if entry is self._editing:
+            self._drop_editing()
+        else:
+            self._discard(entry)
+        self.paint()
 
     def _enqueue(self, value: _Submission) -> None:
         self._submissions.append(value)
         self._submitted.set()
+        if isinstance(value, QueuedPrompt):
+            self.queue_changed()
         self.paint()
 
     def wake(self) -> None:
@@ -218,10 +244,11 @@ class LivePrompt:
         self._wake_pending = True
         self._submitted.set()
 
-    def _discard(self, entry: _Queued) -> None:
+    def _discard(self, entry: QueuedPrompt) -> None:
         self._submissions.remove(entry)
         if not self._submissions and not self._wake_pending:
             self._submitted.clear()
+        self.queue_changed()
 
     async def read(self) -> str:
         """Consume queued submissions in order, first showing the status the shell set up for this read.
@@ -229,11 +256,14 @@ class LivePrompt:
         With nothing else queued the shell is idle, so a queued prompt being edited is just the draft now.
         """
         if not self._submissions:
-            self._editing = None
+            self._drop_editing()
         self.paint()
         await self._submitted.wait()
+        # What a read returns starts work, whose spinner animates from its first frame, not the next idle one.
+        self._animated_at = self.clock()
+        self._animate.set()
         if not self._submissions:
-            self._editing = None
+            self._drop_editing()
             self._wake_pending = False
             self._submitted.clear()
             raise PromptWakeup
@@ -255,8 +285,9 @@ class LivePrompt:
                 self.buffer.insert(text, paste=True)
             else:
                 self.buffer.insert(self.images.attach(read_images(paths) if text is not None else clipboard_images()))
+                self.images.notice = ATTACHED
         except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
-            self.images.notice = f'Image paste failed: {exc}. Linux requires wl-paste (Wayland) or xclip (X11).'
+            self.images.paste_failed(exc, clock=self.clock)
 
     def feed(self, key: str, data: str = '') -> None:
         """Route editing, completion and interrupts without rendering a widget tree."""
@@ -275,36 +306,37 @@ class LivePrompt:
 
     def _route(self, key: str, data: str) -> None:
         cycles = key in ('up', 'down') and self._arrows_cycle_completions()
-        if key == 'ctrl-c':
-            self.interrupt()
-        elif key == 'escape':
-            self.escape()
-        elif key == 'ctrl-d':
-            if self.buffer.text:
-                self.buffer.edit('delete')
-            else:
-                self.submit(EOFError())
-        elif key == 'ctrl-l':
-            # As in Claude Code: a clean screen; the conversation, draft, and queue stay.
-            self.output.clear(keep_current=self.interrupts.active)
-        elif key in ('paste', 'ctrl-v', 'alt-v'):
-            self.paste(data if key == 'paste' else None)
-        elif key == 'ctrl-r' or self.buffer.search is not None:
-            self.search(key)
-        elif key in ('tab', 'backtab'):
-            self.complete(backwards=key == 'backtab')
-        elif key == 'enter':
-            self.accept()
-        elif key == 'alt-enter':
-            self.steer_draft() if self.buffer.text.strip() else self.steer_queued()
-        elif key in ('shift-enter', 'ctrl-j'):
-            self.buffer.insert('\n')
-        elif cycles:
-            self.complete(backwards=key == 'up', accept_single=False)
-        elif key in ('up', 'down'):
-            self.recall(backwards=key == 'up')
-        else:
-            self.buffer.edit(key)
+        match key:
+            case 'ctrl-c':
+                self.interrupt()
+            case 'escape':
+                self.escape()
+            case 'ctrl-d':
+                if self.buffer.text:
+                    self.buffer.edit('delete')
+                else:
+                    self.submit(EOFError())
+            case 'ctrl-l':
+                # As in Claude Code: a clean screen; the conversation, draft, and queue stay.
+                self.output.clear(keep_current=self.interrupts.active)
+            case 'paste' | 'ctrl-v' | 'alt-v':
+                self.paste(data if key == 'paste' else None)
+            case _ if key == 'ctrl-r' or self.buffer.search is not None:
+                self.search(key)
+            case 'tab' | 'backtab':
+                self.complete(backwards=key == 'backtab')
+            case 'enter':
+                self.accept()
+            case 'alt-enter':
+                self.steer_draft() if self.buffer.text.strip() else self.steer_queued()
+            case 'shift-enter' | 'ctrl-j':
+                self.buffer.insert('\n')
+            case 'up' | 'down' if cycles:
+                self.complete(backwards=key == 'up', accept_single=False)
+            case 'up' | 'down':
+                self.recall(backwards=key == 'up')
+            case _:
+                self.buffer.edit(key)
         if key not in ('tab', 'backtab', 'escape') and not cycles:
             self.refresh_completions()
 
@@ -339,7 +371,7 @@ class LivePrompt:
         if self.buffer.text.strip():
             self._put_back(self._editing)
         else:
-            self._editing = None
+            self._drop_editing()
             self.notice = 'Removed the queued message.'
             telemetry.record('prompt submitted', route='discarded queued')
         self.buffer.search = None
@@ -350,23 +382,30 @@ class LivePrompt:
     def _unqueue(self) -> None:
         """Move queued prompts into the draft after an interrupt, as Claude Code and Codex do, so none runs on its own.
 
-        Control signals stay queued. A prompt being edited keeps its place with the edit from the draft, and
-        the draft set aside to edit it comes last; otherwise the draft does.
+        Only prompts move, one per line ahead of the draft: a `/command` or `!` shell line would make the lines
+        after it part of the command, so those stay queued, as Claude Code keeps queued shell commands, and so
+        do control signals. A prompt being edited keeps its place with the edit, and the draft set aside to edit
+        it comes last.
         """
-        editing = self._editing
-        texts = [self.buffer.text if entry is editing else entry.text for entry in self._pending()]
-        draft = self._shelved_draft if editing is not None else self.buffer.text
-        self._editing = None
-        queued = self._queued()
-        if editing is None and not queued:
+        draft = self.buffer.text
+        if (editing := self._editing) is not None:
+            draft = self._shelved_draft
+            self._editing = None
+            if edit := self.buffer.text.strip():
+                editing.text, editing.recorded = expand_bare_command(edit), edit
+                self._put_back(editing)
+            self.queue_changed()
+        moved = [entry for entry in self.queued_prompts() if input_kind(entry.text) == 'prompt']
+        if editing is None and not moved:
             return
-        for entry in queued:
+        for entry in moved:
             self._discard(entry)
         self.buffer.search = None
         self.buffer.history_index = None
-        self.buffer.replace('\n'.join(filter(None, [*texts, draft])))
+        self.buffer.replace('\n'.join(filter(None, [*(entry.text for entry in moved), draft])))
         self.refresh_completions()
-        self.notice = 'Queued messages moved to the input. Press Enter to send them.'
+        if moved:
+            self.notice = 'Queued messages moved to the input. Press Enter to send them.'
 
     def restore_draft(self, text: str) -> None:
         """Replace the draft after a rewind, without editing a queued submission."""
@@ -439,6 +478,7 @@ class LivePrompt:
         self.buffer.history_index = None
         self.buffer.reset()
         if target is not None and not text:
+            self.queue_changed()
             telemetry.record('prompt submitted', route='discarded queued')
             return
         command = expand_bare_command(text)
@@ -448,16 +488,23 @@ class LivePrompt:
         self.output.view.follow()
         self.history.append_string(text)
         self.buffer.history.append(text)
-        if self.run_now is not None and self.run_now(command):
-            route = 'run now'
-        elif target is not None:
-            route = 'edited queued'
-            target.text, target.recorded = command, text
-            self._put_back(target)
-        else:
-            route = 'queued' if self.interrupts.active else 'submitted'
-            self._enqueue(_Queued(command, recorded=text))
+        route = self._deliver(command, recorded=text, target=target)
         telemetry.record('prompt submitted', route=route, recalled=recalled, **_submission(command, self.commands))
+
+    def _deliver(self, command: str, *, recorded: str, target: QueuedPrompt | None) -> str:
+        """Run, rewrite, or queue an accepted draft, returning the route telemetry records."""
+        if self.run_now is not None and self.run_now(command):
+            if target is not None:
+                self.queue_changed()
+            return 'run now'
+        if target is not None:
+            target.text, target.recorded = command, recorded
+            self._put_back(target)
+            self.queue_changed()
+            return 'edited queued'
+        route = 'queued' if self.interrupts.active else 'submitted'
+        self._enqueue(QueuedPrompt(command, recorded=recorded))
+        return route
 
     def recall(self, *, backwards: bool) -> None:
         """Walk queued prompts, newest first, before command history.
@@ -467,7 +514,7 @@ class LivePrompt:
         place: Enter puts it back rewritten, Esc unchanged, and clearing the draft removes it.
         """
         if self.buffer.history_index is None:
-            self._recall_queue = self._pending()
+            self._recall_queue = self.queued_prompts()
             self._recall_target = self._editing
             if self._editing is None:
                 self._shelved_draft = self.buffer.text
@@ -485,12 +532,7 @@ class LivePrompt:
     def _steered(self, text: str) -> bool:
         """Hand prompt text to the active run; commands and shell lines never steer."""
         command = expand_bare_command(text)
-        return (
-            self.steer is not None
-            and not is_command_input(command)
-            and shell_command(command) is None
-            and self.steer(command)
-        )
+        return self.steer is not None and can_steer(command) and self.steer(command)
 
     def steer_draft(self) -> None:
         """Send the draft to the active run now, or accept it as Enter would when it cannot steer."""
@@ -499,7 +541,7 @@ class LivePrompt:
             self.accept()
             return
         # The steered text may be an edit of a queued prompt, which then no longer waits for its own turn.
-        self._editing = None
+        self._drop_editing()
         # Steered text joins the running turn, so show its response, as submitting does.
         self.output.view.follow()
         self.history.append_string(text)
@@ -513,7 +555,7 @@ class LivePrompt:
         if not self._submissions or self.steer is None:
             return
         head = self._submissions[0]
-        if not isinstance(head, _Queued) or not self._steered(head.text):
+        if not isinstance(head, QueuedPrompt) or not self._steered(head.text):
             telemetry.record('prompt steer', steered=False, source='queue')
             return
         self.output.view.follow()
@@ -643,12 +685,12 @@ class LivePrompt:
                 width,
             )
             + reset
-            for entry in self._pending()
+            for entry in self.queued_prompts()
         ]
         rows += _capped(queued, limit=limit, room=room - len(rows), more=muted + '+{} more queued' + reset)
         title = ''
         if self.interrupts.active:
-            head, glyph = ' Working ', self.spinner().frame(self.clock())
+            head, glyph = '─ Working ', self.spinner().frame(self.clock())
             # Queue and steer hints only matter once there is something to send, matching pi and Claude Code.
             if self._editing is not None:
                 hints = '| Enter: save | Esc: stop editing | Clear it to remove '
@@ -680,22 +722,25 @@ class LivePrompt:
         rows.append(muted + '─' * width + reset)
         if pinned:
             rows.append(truncate(pinned, width) + reset)
-        if self.buffer.search is not None:
-            footer = f'reverse-i-search: {self.buffer.search}'
-        else:
-            notice = self.notice or self.images.notice or self._completion_error
-            footer = (
-                ' '.join(terminal_text(notice).split())
-                if notice
-                else ''.join(
-                    (theme.sgr(style) if style else muted) + ' '.join(terminal_text(text).splitlines())
-                    for style, text in self.toolbar()
-                )
-            )
-            if self.queued_messages:
-                footer += f' | queued: {len(self.queued_messages)}'
-        rows.append(muted + truncate(footer, width) + reset)
+        rows.append(muted + truncate(self._footer(muted=muted), width) + reset)
         return tuple(rows)
+
+    def _footer(self, *, muted: str) -> str:
+        """The bottom row: the history search, or else a notice or the toolbar, with the queue's length."""
+        if self.buffer.search is not None:
+            return f'reverse-i-search: {self.buffer.search}'
+        notice = self.notice or self.images.notice or self._completion_error
+        footer = (
+            ' '.join(terminal_text(notice).split())
+            if notice
+            else ''.join(
+                (theme.sgr(style) if style else muted) + ' '.join(terminal_text(text).splitlines())
+                for style, text in self.toolbar()
+            )
+        )
+        if self.queued_messages:
+            footer += f' | queued: {len(self.queued_messages)}'
+        return footer
 
     def paint(self) -> None:
         """Draw only when the editor owns the terminal."""
@@ -707,15 +752,19 @@ class LivePrompt:
     def tick(self) -> float:
         """Repaint for status changes when due, returning the seconds until the next tick.
 
-        Ten times a second while a turn runs, the panel shows forks or tasks, or for `IDLE_REPAINT`
-        after either; every `IDLE_REPAINT` seconds otherwise. A spinner faster than that gets a
-        repaint per frame, but only while it shows.
+        Every `ANIMATED_REPAINT` seconds while a turn runs, the panel shows forks or tasks, or for
+        `IDLE_REPAINT` after either; `IDLE_REPAINT` seconds after the last frame otherwise. A spinner
+        faster than that gets a repaint per frame, but only while it shows.
+        The paste-error deadline also caps the wait; expiry repaints an unsuspended editor through this
+        existing loop, without adding periodic polling.
         """
         now = self.clock()
         if self.interrupts.active or self._panel_shown:
             self._animated_at = now
+        expired = self.images.expire_notice()
         if not self._suspended and (
-            now - self._animated_at < IDLE_REPAINT
+            expired
+            or now - self._animated_at < IDLE_REPAINT
             or now - self._painted_at >= IDLE_REPAINT
             # Hosts without SIGWINCH find a resize only here.
             or self.console.size != self._painted_size
@@ -724,7 +773,14 @@ class LivePrompt:
         else:
             # Output written too soon after the last frame waits for this, idle or not.
             self.output.refresh()
-        return min(0.1, self.spinner().interval) if self.interrupts.active else 0.1
+        if self.interrupts.active:
+            return min(ANIMATED_REPAINT, self.spinner().interval, self.images.notice_remaining())
+        # The frame just painted may have found the panel's first fork or task.
+        if self._panel_shown or now - self._animated_at < IDLE_REPAINT:
+            return min(ANIMATED_REPAINT, self.images.notice_remaining())
+        due = self._painted_at + IDLE_REPAINT - now
+        # A menu owning the screen leaves the last frame behind; nothing is due until it closes.
+        return min(due if due > 0 else IDLE_REPAINT, self.images.notice_remaining())
 
     @asynccontextmanager
     async def suspended(self) -> AsyncGenerator[None]:
@@ -755,7 +811,9 @@ class LivePrompt:
 
         async def refresh() -> None:
             while True:
-                await anyio.sleep(self.tick())
+                with anyio.move_on_after(self.tick()):
+                    await self._animate.wait()
+                self._animate.clear()
 
         loop = asyncio.get_running_loop()
 
@@ -804,9 +862,10 @@ def _submission(text: str, commands: Commands) -> dict[str, telemetry.Attribute]
     records only its registered name, never its arguments: any plugin can add a command, and arguments such as
     `/plugins add` settings JSON or an MCP server's headers can hold a secret CLAI cannot recognize.
     """
-    if is_command_input(text):
+    kind = input_kind(text)
+    if kind == 'command':
         name = text.split(maxsplit=1)[0].removeprefix('/')
-        return {'kind': 'command', 'command': name if name in commands else 'unknown', 'chars': len(text)}
-    if shell_command(text) is not None:
-        return {'kind': 'shell', 'chars': len(text)}
-    return {'kind': 'prompt', 'chars': len(text), **telemetry.prompt_text(text)}
+        return {'kind': kind, 'command': name if name in commands else 'unknown', 'chars': len(text)}
+    if kind == 'shell':
+        return {'kind': kind, 'chars': len(text)}
+    return {'kind': kind, 'chars': len(text), **telemetry.prompt_text(text)}

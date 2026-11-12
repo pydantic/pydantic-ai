@@ -1,0 +1,85 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "150"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: Find Pydantic AI's GitHub repository and cite it in one sentence.
+        model: gpt-5-search-api
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "5110"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-8cd94dad-b1bd-4cf0-be2e-4b1789f0f9f0
+        object: chat.completion
+        created: 1790763527
+        model: gpt-5-search-api-2025-10-14
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: >-
+              The GitHub repository for Pydantic AI is **pydantic/pydantic-ai**, located at
+              https://github.com/pydantic/pydantic-ai.
+              ([github.com](https://github.com/pydantic/pydantic-ai?ref=peerlist&utm_source=openai))
+            refusal: null
+            annotations:
+            - type: url_citation
+              url_citation:
+                end_index: 205
+                start_index: 119
+                title: GitHub - pydantic/pydantic-ai at peerlist · GitHub
+                url: https://github.com/pydantic/pydantic-ai?ref=peerlist&utm_source=openai
+          finish_reason: stop
+        usage:
+          prompt_tokens: 16582
+          completion_tokens: 58
+          total_tokens: 16640
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        system_fingerprint: null
+  recorded_at: 2026-09-30T10:18:47.632631+00:00

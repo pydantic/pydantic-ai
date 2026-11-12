@@ -22,6 +22,10 @@ When the model calls a deferred tool, there are two ways to resolve it:
 
 The two flows compose: a handler can resolve a subset of calls and let the rest bubble up as `DeferredToolRequests` output for an outer caller to handle.
 
+To ask for an answer inside the run instead, use [`RequestInput`](capabilities/request-input.md): it passes the pending calls and a resume token to your `ask` function, which either answers right away or hands the token to the approver and lets your approval endpoint resolve it with the decision. A wait happens in your process by default; in a [durable execution](durable_execution/overview.md) run on an engine that supports it, currently [AWS Lambda durable functions](harness/aws-lambda.md#approvals), the engine records it and suspends the run until the decision arrives.
+
+Each pending call says what it waits for: [`DeferredToolRequests.kind()`][pydantic_ai.tools.DeferredToolRequests.kind] returns `'approval'` for a call in `approvals`, and `'question'` or `'external'` for one in `calls`. A tool marks a call as a question for the user, rather than work done elsewhere, with `raise CallDeferred(kind='question')`; Pydantic AI Harness's [`AskUser`](harness/ask-user.md) does. The answer can say who gave it in [`DeferredToolResults.answered_by`][pydantic_ai.tools.DeferredToolResults.answered_by], which Pydantic AI reports but doesn't check.
+
 The stop-the-world flow requires `DeferredToolRequests` to be in the `Agent`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred. If your agent can also be used in a context where no deferred tools are available and you don't want to deal with that type everywhere you use the agent, you can instead pass the `output_type` argument when you run the agent using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.agent.Agent.iter]. Note that the run-time `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output type explicitly.
 
 ## Resolving deferred calls with a handler
@@ -96,6 +100,8 @@ The sections below describe the two kinds of deferred tools the handler can reso
 
 If a tool function always requires approval, you can pass the `requires_approval=True` argument to the [`@agent.tool`][pydantic_ai.agent.Agent.tool] decorator, [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator, [`Tool`][pydantic_ai.tools.Tool] class, [`FunctionToolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] decorator, or [`FunctionToolset.add_function()`][pydantic_ai.toolsets.FunctionToolset.add_function] method. Inside the function, you can then assume that the tool call has been approved.
 
+To require approval for every tool in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], pass `requires_approval=True` to its constructor. It applies to `Tool` instances too; only a function added with `requires_approval=False` opts out.
+
 In a [realtime session](realtime/tools.md#deferred-and-approval-required-tools), approval must be resolved inline, typically by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler (a capability hook can resolve it too); a call nothing resolves is refused every time.
 
 If approval depends on the tool call's arguments or the agent [run context][pydantic_ai.tools.RunContext], such as [dependencies](dependencies.md) or message history, raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] from the tool function. The [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] property will be `True` if the tool call has already been approved.
@@ -107,7 +113,9 @@ To require approval for calls to tools provided by a [toolset](toolsets.md) (lik
 !!! warning "Approval is not an authorization boundary against an untrusted client"
     When you serve an agent over a [UI adapter](ui/overview.md#trust-model-for-client-submitted-messages), the approval decision is submitted by the client along with the rest of the request, and the adapter has no server-side record of which tool calls it issued. A client that can reach the endpoint can approve a tool call of its own making. Human-in-the-loop approval protects against the *model* acting without human sign-off; it does not replace authenticating the adapter endpoint and enforcing authorization for sensitive actions inside the tool function itself, which runs regardless of how the call entered the history. This applies to any endpoint that accepts a client's `message_history`, not just the adapters — see [Trust boundary for client-supplied history](message-history.md#trust-boundary-for-client-supplied-history) and [Trust model for client-submitted messages](ui/overview.md#trust-model-for-client-submitted-messages).
 
-When the model calls a tool that requires approval, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with an `approvals` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID.
+When the model calls a tool that requires approval, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with an `approvals` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, the arguments as the model sent them, and a unique tool call ID.
+
+If a capability's [tool validation hook](hooks.md#tool-validation-hooks), such as `after_tool_validate`, rewrites a tool's arguments, the approval request still shows the model's arguments, but the tool runs with the rewritten ones: validation, hooks included, runs again when the approved call resumes. To make the change after approval instead, rewrite the arguments in [`before_tool_execute`](hooks.md#tool-execution-hooks), which for a `requires_approval=True` tool runs only once the call is approved. To let whoever approves the call change its arguments, approve it with [`ToolApproved(override_args=...)`][pydantic_ai.tools.ToolApproved]; validation, hooks included, then runs on those arguments instead of the model's.
 
 Once you've gathered the user's approvals or denials, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with an `approvals` dictionary that maps each tool call ID to a boolean, a [`ToolApproved`][pydantic_ai.tools.ToolApproved] object (with optional `override_args`), or a [`ToolDenied`][pydantic_ai.tools.ToolDenied] object (with an optional custom `message` to provide to the model). You can also provide a `metadata` dictionary on `DeferredToolResults` that maps each tool call ID to a dictionary of metadata that will be available in the tool's [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata] attribute. This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md) or its [conversation](#pausing-a-conversation), which also keeps the requests for when the answers come later.
 
@@ -226,6 +234,7 @@ print(result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.000336'), input_tokens=63, output_tokens=21),
         model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -277,6 +286,7 @@ print(result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.000482'), input_tokens=86, output_tokens=31),
         model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -302,6 +312,7 @@ print(result.all_messages())
         ],
         usage=RequestUsage(cost=Decimal('0.001076'), input_tokens=93, output_tokens=89),
         model_name='{{ openai:medium.name }}',
+        model_id='{{ openai:medium }}',
         timestamp=datetime.datetime(...),
         run_id='...',
         conversation_id='...',
@@ -443,6 +454,7 @@ async def main():
                 cost=Decimal('0.000256'), input_tokens=63, output_tokens=13
             ),
             model_name='{{ openai:medium.name }}',
+            model_id='{{ openai:medium }}',
             timestamp=datetime.datetime(...),
             run_id='...',
             conversation_id='...',
@@ -470,6 +482,7 @@ async def main():
                 cost=Decimal('0.000408'), input_tokens=64, output_tokens=28
             ),
             model_name='{{ openai:medium.name }}',
+            model_id='{{ openai:medium }}',
             timestamp=datetime.datetime(...),
             run_id='...',
             conversation_id='...',
@@ -547,7 +560,7 @@ Like any other tool call, a deferred tool call emits a [`FunctionToolCallEvent`]
 - [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] — emitted once per batch of deferred calls, carrying the [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests]. It's emitted before any [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler runs, so a consumer can for example notify a frontend that input is needed while the handler waits for it. If no handler resolves all of the requests, the run ends with the pending requests as its `DeferredToolRequests` output.
 - [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] — emitted when a handler resolves (some of) the requests, carrying the [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]. The resolved calls then execute through the regular pipeline, emitting a [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] each. No event is emitted when results are instead provided to a new run via `deferred_tool_results`, as in that case the caller already knows them.
 
-This keeps resolution and presentation decoupled: a handler can contain pure resolution logic (e.g. waiting for a signal in a [durable execution](durable_execution/overview.md) workflow), while a stream consumer owns all communication with the frontend, without maintaining its own mapping of which tools are interactive.
+This keeps resolution and presentation decoupled: a handler can contain pure resolution logic (e.g. waiting for a person's decision with [`RequestInput`](capabilities/request-input.md)), while a stream consumer owns all communication with the frontend, without maintaining its own mapping of which tools are interactive.
 
 Continuing the [handler example](#resolving-deferred-calls-with-a-handler) from above:
 

@@ -15,7 +15,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -71,7 +70,7 @@ def coder_host(*, terminal: bool = False, **settings: JsonValue) -> PluginHost[o
 def test_settings_source_validates_saves_and_resets() -> None:
     host = coder_host(sub_agents=False, instructions='Keep this guidance.')
     source = CoderSource(host)
-    unrestricted, sub_agents, folders, _skill_folders, skills = source.rows()
+    unrestricted, sub_agents, folders, _skill_folders, skills, _delegate_models, _review_agent = source.rows()
     assert (source.current(skills), skills.display(source.current(skills))) == ('[]', 'All on')
     assert source.current(unrestricted) == 'false'
     assert source.apply(unrestricted, 'true') == 'Saved Unrestricted filesystem.'
@@ -193,7 +192,7 @@ async def test_unrestricted_filesystem_setting_controls_paths_outside_the_projec
         for message in result.all_messages()
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, (ToolReturnPart, RetryPromptPart))
+        if isinstance(part, ToolReturnPart)
     ]
     assert any('reachable-content' in content for content in returns) is unrestricted
 

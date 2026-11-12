@@ -302,6 +302,8 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
 
+When the Gemini API omits token usage, [`result.usage.unmeasured_requests`][pydantic_ai.usage.UsageBase.unmeasured_requests] is `1`, so instrumentation omits an automatic `operation.cost` estimate. Explicit [`result.cost()`][pydantic_ai.embeddings.EmbeddingResult.cost] uses the zero token counts and can return a zero estimate when pricing data is available.
+
 ##### Google Cloud
 
 To use Google's embedding models via Google Cloud (formerly known as Vertex AI) instead of the Gemini API, use the `google-cloud:` provider prefix:
@@ -830,6 +832,15 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
+## Handling Errors
+
+When a request to an embedding provider fails, Pydantic AI raises the same errors as when a
+[model request fails](models/overview.md#handling-model-api-errors): a
+[`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] that is also an instance of an error category like
+[`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] or
+[`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] when the provider says what went wrong, so
+the same `except` clauses handle failures from agents and embedders alike.
+
 ## Testing
 
 Use [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] for testing without making API calls:
@@ -875,7 +886,7 @@ embedder = Embedder('{{ openai:embedding }}', instrument=True)
 Embedder.instrument_all()
 ```
 
-See the [Debugging and Monitoring guide](logfire.md) for more details on using Logfire with Pydantic AI.
+See the [Debugging and Monitoring guide](logfire.md#using-logfire) for Logfire setup and more details on using it with Pydantic AI.
 
 ## Two-stage retrieval with rerankers
 

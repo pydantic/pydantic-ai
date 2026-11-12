@@ -6,7 +6,7 @@ the link on any device. The client registers itself (RFC 7591) and uses PKCE; th
 is discovered from the MCP URL (RFC 9728), so self-hosted Logfire works too.
 
 Tokens are kept per MCP URL in CLAI's credential store (the OS keyring, or a private file) and refreshed
-when they expire. A run never starts a sign-in: `DeviceAuth` raises `SignInRequired` instead, and
+when they expire. A run never starts a sign-in: `DeviceAuth` raises `SignInRequiredError` instead, and
 `LogfireSignIn` signs in when the user asks, from `/logfire login` or the settings menu.
 """
 
@@ -39,7 +39,7 @@ from pydantic import (
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
-from pydantic_clai2.plugins.sign_in import SignInRequired
+from pydantic_clai2.plugins.sign_in import SignInRequiredError
 from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
@@ -422,7 +422,7 @@ def _http() -> httpx.AsyncClient:
 # rejects another family's `Auth` as an invalid `auth`. The flows below serve either, so be both; the
 # unused `auth_flow` the two declare for their own `Request` is what Pyright objects to.
 class DeviceAuth(httpx.Auth, httpx2.Auth):  # pyright: ignore[reportIncompatibleMethodOverride]
-    """Bearer tokens from a stored sign-in, refreshed when they expire; `SignInRequired` when there is none."""
+    """Bearer tokens from a stored sign-in, refreshed when they expire; `SignInRequiredError` when there is none."""
 
     def __init__(self, *, resource: str, read_only: bool, http: Callable[[], httpx.AsyncClient] = _http) -> None:
         """Tokens for `resource`, the MCP URL."""
@@ -450,13 +450,13 @@ class DeviceAuth(httpx.Auth, httpx2.Auth):  # pyright: ignore[reportIncompatible
         async with self._lock:
             tokens = await to_thread.run_sync(load, self._resource)
             if tokens is None or not tokens.serves(read_only=self._read_only):
-                raise SignInRequired(NOT_SIGNED_IN)
+                raise SignInRequiredError(NOT_SIGNED_IN)
             if tokens != rejected and tokens.fresh():
                 return tokens  # Another request, or another CLAI process, may have refreshed it already.
             async with self._http() as http:
                 refreshed = await _refresh(http, resource=self._resource, tokens=tokens)
             if refreshed is None:
-                raise SignInRequired(NOT_SIGNED_IN)
+                raise SignInRequiredError(NOT_SIGNED_IN)
             return refreshed
 
 

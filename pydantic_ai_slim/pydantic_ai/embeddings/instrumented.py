@@ -5,6 +5,7 @@ import warnings
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from opentelemetry.util.types import AttributeValue
@@ -65,6 +66,11 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
             finish(result)
             return result
 
+    @staticmethod
+    def _recorded_settings(settings: EmbeddingSettings | None) -> dict[str, object]:
+        """The settings recorded on the span: all but the request header and body overrides."""
+        return {key: value for key, value in (settings or {}).items() if key not in ('extra_headers', 'extra_body')}
+
     @contextmanager
     def _instrument(
         self,
@@ -84,8 +90,8 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
             'inputs_count': inputs_count,
         }
 
-        if settings:
-            attributes['embedding_settings'] = json.dumps(self.serialize_any(settings))
+        if recorded_settings := self._recorded_settings(settings):
+            attributes['embedding_settings'] = json.dumps(self.serialize_any(recorded_settings))
 
         if self.instrumentation_settings.include_content:
             attributes['inputs'] = json.dumps(inputs)
@@ -121,40 +127,18 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                     provider_name = attributes[GEN_AI_PROVIDER_NAME_ATTRIBUTE]
                     request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
                     response_model = result.model_name or request_model
-                    price_calculation = None
+                    cost = result.usage.cost
 
                     def _record_metrics():
-                        metric_attributes = {
-                            GEN_AI_PROVIDER_NAME_ATTRIBUTE: provider_name,
-                            'gen_ai.operation.name': operation,
-                            GEN_AI_REQUEST_MODEL_ATTRIBUTE: request_model,
-                            'gen_ai.response.model': response_model,
-                        }
-                        token_attributes = {
-                            **metric_attributes,
-                            'gen_ai.token.type': 'input',
-                        }
-                        tokens = result.usage.input_tokens or 0
-                        if tokens:  # pragma: no branch
-                            self.instrumentation_settings.tokens_histogram.record(tokens, token_attributes)
-                            if price_calculation is not None:
-                                self.instrumentation_settings.cost_histogram.record(
-                                    float(price_calculation.total_price),
-                                    metric_attributes,
-                                )
+                        # Reads `cost` when it runs, after it has been estimated below.
+                        self._record_result_metrics(
+                            result, provider_name, operation, request_model, response_model, cost
+                        )
 
                     nonlocal record_metrics
                     record_metrics = _record_metrics
 
-                    try:
-                        price_calculation = result.cost()
-                    except LookupError:
-                        # The cost of this provider/model is unknown, which is common.
-                        pass
-                    except Exception as e:  # pragma: no cover
-                        warnings.warn(
-                            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
-                        )
+                    cost = _embedding_cost(result)
 
                     if not span.is_recording():
                         return  # pragma: lax no cover
@@ -164,14 +148,14 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                         'gen_ai.response.model': response_model,
                     }
 
-                    if price_calculation:
-                        attributes_to_set['operation.cost'] = float(price_calculation.total_price)
+                    if cost is not None:
+                        attributes_to_set['operation.cost'] = float(cost)
 
                     embeddings = result.embeddings
                     if embeddings:  # pragma: no branch
                         attributes_to_set['gen_ai.embeddings.dimension.count'] = len(embeddings[0])
                         if self.instrumentation_settings.include_content:
-                            attributes['embeddings'] = json.dumps(embeddings)
+                            attributes_to_set['embeddings'] = json.dumps(embeddings)
 
                     if result.provider_response_id is not None:
                         attributes_to_set['gen_ai.response.id'] = result.provider_response_id
@@ -183,6 +167,31 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
             if record_metrics:  # pragma: no branch
                 # Record metrics after the span finishes to avoid duplication.
                 record_metrics()
+
+    def _record_result_metrics(
+        self,
+        result: EmbeddingResult,
+        provider_name: AttributeValue,
+        operation: str,
+        request_model: AttributeValue,
+        response_model: AttributeValue,
+        cost: Decimal | None,
+    ) -> None:
+        metric_attributes = {
+            GEN_AI_PROVIDER_NAME_ATTRIBUTE: provider_name,
+            'gen_ai.operation.name': operation,
+            GEN_AI_REQUEST_MODEL_ATTRIBUTE: request_model,
+            'gen_ai.response.model': response_model,
+        }
+        token_attributes = {
+            **metric_attributes,
+            'gen_ai.token.type': 'input',
+        }
+        tokens = result.usage.input_tokens or 0
+        if tokens:  # pragma: no branch
+            self.instrumentation_settings.tokens_histogram.record(tokens, token_attributes)
+            if cost is not None:
+                self.instrumentation_settings.cost_histogram.record(float(cost), metric_attributes)
 
     @staticmethod
     def model_attributes(model: EmbeddingModel) -> dict[str, AttributeValue]:
@@ -201,3 +210,21 @@ class InstrumentedEmbeddingModel(WrapperEmbeddingModel):
                 return str(value)
             except Exception as e:
                 return f'Unable to serialize: {e}'
+
+
+def _embedding_cost(result: EmbeddingResult) -> Decimal | None:
+    """The cost the usage reports, else the estimate: `None` when it's unknown, or when unmeasured usage estimates to zero."""
+    cost = result.usage.cost
+    try:
+        # A cost already on the usage, e.g. reported by the Pydantic AI Gateway, wins over the estimate.
+        price = cost if cost is not None else result.cost().total_price
+        # Match best_effort_price's policy while retaining embedding-specific lookup and warnings.
+        return None if cost is None and result.usage.unmeasured_requests and price == 0 else price
+    except LookupError:
+        # The cost of this provider/model is unknown, which is common.
+        return cost
+    except Exception as e:
+        warnings.warn(
+            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning, stacklevel=2
+        )
+        return cost

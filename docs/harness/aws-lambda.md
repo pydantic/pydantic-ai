@@ -15,13 +15,29 @@ Lambda keeps a log of durable operations. When an execution resumes, the handler
 the top and completed steps return their stored results rather than executing. Without
 checkpointing, a resumed run would repeat every model request and tool call.
 
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+
+```mermaid
+sequenceDiagram
+    accTitle: AWS Lambda Durability: resume an agent run from its last completed step
+    accDescr: AWSLambdaDurability runs each model request and tool call as a durable step. Invocation 1 records a model request and a get_weather call in the checkpoint log, then its next model request times out. Invocation 2 gets both replayed from the log without running them again, then a model request runs now and is recorded.
+    participant one as Invocation 1
+    participant log as Checkpoint log
+    participant two as Invocation 2
+    Note over one,two: AWSLambdaDurability() runs each model request<br/>and tool call as a durable step
+    one->>log: model request<br/>recorded
+    one->>log: get_weather call<br/>recorded
+    one->>one: model request<br/>times out
+    log-->>two: model request<br/>replayed, not run again
+    log-->>two: get_weather call<br/>replayed, not run again
+    two->>log: model request<br/>runs now and is recorded
+```
+
 ## Installation
 
 ```bash
 pip/uv-add "pydantic-ai-harness[aws-lambda]"
 ```
-
-The AWS Durable Execution SDK requires Python 3.11 or newer.
 
 The quick start below uses a Bedrock provider model, which needs the Bedrock SDK from
 `pydantic-ai-slim[bedrock]`:
@@ -44,7 +60,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, durable_agent_handler
 
 agent = Agent(
-    'bedrock:us.amazon.nova-pro-v1:0',
+    '{{ bedrock:medium }}',
     name='support',
     capabilities=[AWSLambdaDurability()],
 )
@@ -62,9 +78,8 @@ async def handler(event: dict[str, Any], context: DurableContext) -> str:
     return result.output
 ```
 
-Attach the capability at construction rather than per run. Per-run attachment does work (the
-capability binds and wraps toolsets either way), but attaching once keeps the wrapping and the
-deployed step shape stable across invocations, and it matches the other durability integrations.
+Attach the capability at construction rather than per run, so the toolset wrapping and the
+deployed step shape stay the same across invocations.
 
 Deploy with a durable configuration and invoke a published version, since in-flight executions are
 pinned to the version that started them:
@@ -106,12 +121,14 @@ on the Lambda handler thread, so all steps are created in one continuous sequenc
 hands its work back to the agent loop and blocks until it finishes, which keeps the loop free while
 the handler thread waits.
 
-The async body can await two agent runs, use `asyncio.gather`, or perform async post-processing
-between runs, and all of those sections share the same bridge and step sequence. A synchronous
-handler must call `run_durable` separately for each async section, and concurrent calls are
-rejected.
+The async body can await several agent runs and do async work between them, and all of those
+sections share the same bridge and step sequence. Await the runs one after another, not
+concurrently with `asyncio.gather` or tasks: a resumed execution matches checkpoints by the order
+steps are reached, so concurrent runs that reach their steps in a different order on replay are
+served each other's recorded results. A synchronous handler must call `run_durable` separately for
+each async section, and concurrent calls are rejected.
 
-Three consequences are worth knowing:
+Rules for the handler:
 
 - `@durable_execution` must be the outermost decorator because its wrapper is what Lambda invokes.
   Reversing the order raises a `UserError` when the handler is defined.
@@ -132,9 +149,113 @@ to a store, releasing a shared lock, or emitting a metric, can also land during 
 Loop-bound resources are isolated: the next invocation gets a fresh loop, so the abandoned cleanup
 cannot touch resources such as that invocation's provider HTTP client.
 
+At the end of the grace period the abandoned cleanup is cancelled again, and the retired loop stops
+a few iterations later (on Python 3.11, after jobs already submitted to its default executor
+finish). A cleanup still running by then is left unfinished. A cleanup that cancels every task on
+its loop is not cancelled again; the loop stops at the deadline either way.
+
 Loop reuse has one more consequence: do not detach background work from a tool with
 `asyncio.create_task()` or by leaving executor work unawaited. Detached work is not checkpointed and
 is not covered by durable execution's guarantees, and it can outlive the invocation that started it.
+
+## Approvals
+
+To have a person approve a tool call, add [`RequestInput`](../capabilities/request-input.md) next to `AWSLambdaDurability`.
+When the model calls a tool that needs approval (`requires_approval=True` or `ApprovalRequired`),
+external execution (`CallDeferred`) or an answer to a question, the run creates a Lambda callback and
+calls your `ask` function with the callback ID inside a step. `ask` can answer right away, and the
+step records its answer, so the run continues without suspending and a replay reuses the answer. To
+let a person answer, `ask` writes the callback ID where the approver will see it and returns `None`,
+and the run suspends: the invocation returns, and no compute is billed while the execution waits.
+The answer comes back through your approval endpoint, which sends the decision to the callback.
+Lambda then invokes the function again, the handler replays from its checkpoints without calling the
+model or `ask` again, and the run continues with the approved calls executed and the denied ones
+reported to the model.
+
+```python {title="approvals_handler.py"}
+import json
+from datetime import timedelta
+from typing import Any
+
+import boto3
+from aws_durable_execution_sdk_python import DurableContext, durable_execution
+
+from pydantic_ai import Agent, DeferredToolRequests, RunContext
+from pydantic_ai.capabilities import RequestInput
+from pydantic_ai_harness.aws_lambda import AWSLambdaDurability, durable_agent_handler
+
+lambda_client = boto3.client('lambda')
+
+
+def ask(ctx: RunContext, requests: DeferredToolRequests, callback_id: str) -> None:
+    ...  # Write the callback ID and `requests` where the approver will see them.
+
+
+agent = Agent(
+    '{{ bedrock:medium }}',
+    name='support',
+    capabilities=[AWSLambdaDurability(), RequestInput(ask, timeout=timedelta(days=1))],
+)
+
+
+@agent.tool_plain(requires_approval=True)
+def issue_refund(order_id: str, amount: int) -> str:
+    return f'Refunded ${amount} for order {order_id}'
+
+
+@durable_execution
+@durable_agent_handler
+async def handler(event: dict[str, Any], context: DurableContext) -> str:
+    result = await agent.run(str(event['prompt']))
+    return result.output
+
+
+def decide(callback_id: str, tool_call_ids: list[str], approved: bool) -> None:
+    # Runs in your approval endpoint, with permission to call `lambda:SendDurableExecutionCallbackSuccess`.
+    decision = {'approvals': {tool_call_id: approved for tool_call_id in tool_call_ids}}
+    lambda_client.send_durable_execution_callback_success(
+        CallbackId=callback_id, Result=json.dumps(decision)
+    )
+```
+
+From the command line, send the same decision with:
+
+```bash
+aws lambda send-durable-execution-callback-success \
+  --callback-id <CALLBACK_ID> \
+  --cli-binary-format raw-in-base64-out \
+  --result '{"approvals": {"<TOOL_CALL_ID>": true}}'
+```
+
+The decision is the JSON form of `DeferredToolResults` keyed by tool call ID: an approval can also
+deny the call with a message for the model, or approve it with different arguments, and
+[The answer](../capabilities/request-input.md#the-answer) lists every form. `send-durable-execution-callback-failure` ends
+the wait without a decision, like a timeout: every pending approval is denied and every pending
+external call fails, with a message saying why, and the run continues.
+
+The callback's `timeout` is set from `RequestInput(timeout=...)`, rounded up to whole seconds, and
+counts from when the callback is created, just before `ask` runs. Without one, the execution waits
+until its `ExecutionTimeout`. When `ask` answers right away, nothing waits on the callback: it stays
+open until its timeout, and resolving it has no effect on the run. Without a `timeout`, that callback
+has none, so it is never closed; when `ask` may answer in place, set `timeout` so it expires. The `ask` step is a step like any
+other: it is not run again on replay, `step_config` applies to it, and the default retry policy can
+run it again when it fails, so make it idempotent. Both are named after `RequestInput(name=...)`,
+`deferred_tool_calls` by default. An approved call's tool appears twice in the history as
+`call_tool:<tool>` steps: once for the attempt that asked for approval, and once for the approved
+run. A decision must cover every pending call unless `DeferredToolRequests` is in the agent's
+`output_type`. A checkpointed tool cannot wait for a decision itself, because it runs inside a step;
+that is rejected with a `UserError`.
+
+Questions from Pydantic AI Harness's [`AskUser`](ask-user.md) wait the same way: its answerer runs in the `ask`
+step, and an answerer that takes a resume token can hand the question on and let the answer arrive
+through the callback.
+
+Outside a durable handler, as in local development, the same agent waits in process instead, and
+`resolve_external_event` from `pydantic_ai.external_events` resolves its token: see
+[A round trip in one process](../capabilities/request-input.md#a-round-trip-in-one-process). A `HandleDeferredToolCalls` handler
+that waited for the approver itself would hold the invocation, and its 15-minute timeout, for the
+whole wait, and would ask again on every replay; ending the run with `DeferredToolRequests` output and
+starting a second run with the results also still works.
 
 ## What gets checkpointed
 
@@ -156,10 +277,19 @@ Step names are built from the agent's `name` and each toolset's `id`:
 | `{name}__dynamic_toolset__{id}.validate_args` | validating a dynamic toolset call's arguments |
 | `{name}__dynamic_toolset__{id}.call_tool:{tool}` | a dynamic toolset's tool call |
 | `{name}__event_stream_handler` | one event delivered to an `event_stream_handler` |
+| `{name}__external_event.deferred_tool_calls` | the callback a [`RequestInput`](#approvals) wait suspends on |
+| `{name}__external_event.deferred_tool_calls.ask` | calling `ask` with that callback's ID, and its answer |
+| `{name}__external_event.ask_user_question` | the callback an `AskUser` question waits on |
+| `{name}__external_event.ask_user_question.ask` | calling the `AskUser` answerer, and its answer |
 
 A model operation that does not use the agent's default model records its model id in the step name
-(for example, `{name}__model.request.{model_id}`), so a resumed execution maps each checkpoint back
-to the model it was recorded for. The default model keeps the plain, suffix-less name.
+(for example, `{name}__model.request.{model_id}`), so the execution history shows which model each
+checkpoint came from. The default model keeps the plain, suffix-less name.
+
+A step served from its checkpoint emits no telemetry: [instrumentation](https://pydantic.dev/docs/ai/integrations/logfire/)
+records a model request's or tool call's span, and a model request's token and cost metrics, in the
+invocation that ran it, and an agent run's span in each invocation that did work for it. A resumed
+execution's traces show only the work that invocation did, and costs are counted once.
 
 ## Constraints
 
@@ -186,13 +316,21 @@ to the model it was recorded for. The default model keeps the plain, suffix-less
   concurrently scheduled tool calls could claim each other's checkpoints when the execution
   resumes. Inside a durable handler the run is switched to sequential tool execution. Outside one
   the agent keeps its configured parallelism.
+  [`DynamicWorkflow`](dynamic-workflow.md#running-under-other-durable-engines) sub-agents are the
+  exception: they run concurrently, each in a branch of a Lambda `parallel` operation, which numbers
+  its steps on its own.
 - **Changing the shape of the run breaks in-flight executions.** A resumed execution matches
   checkpoints by the order operations are reached, so anything that changes the number or order of
   steps breaks executions started under the old code: adding or removing a tool or MCP server,
-  flipping a `metadata={'aws_lambda': False}` opt-out, adding an `event_stream_handler` (which
-  switches the model step to `model.request_stream` and adds handler steps), or changing the model
-  so the step-name suffix changes. Renaming the agent or a toolset `id` changes the recorded names
-  too. Deploy under a new published version and let in-flight executions drain on the old one.
+  flipping a `metadata={'aws_lambda': False}` opt-out, or adding an `event_stream_handler` (which
+  switches the model step to `model.request_stream` and adds handler steps). SDK 2.0 and later
+  compare each step's type and name on replay, so these changes, and renaming the agent, a toolset
+  `id` or a tool, or changing the id a non-default model runs under (a `models=` key or the `model=`
+  passed to `agent.run`), which is [part of its step names](#what-gets-checkpointed), fail the
+  execution with `NonDeterministicExecutionError`. On SDK 1.x a mismatch is not detected: a step is
+  served another step's recorded result, which usually fails to decode but can return the wrong
+  data. Either way, deploy under a new published version and let in-flight executions drain on the
+  old one.
 - **Step results must survive the SDK serializer.** Results are checkpointed through the Lambda
   SDK's serializer. Tool results are encoded by Pydantic first, so structured returns such as
   `ToolReturn` and `BinaryContent` round-trip; a value Pydantic cannot serialize does not.
@@ -205,10 +343,18 @@ to the model it was recorded for. The default model keeps the plain, suffix-less
   `event_stream_handler` (which runs inside the model step for model events and its own step for
   agent events), because a resumed execution serves the recorded step output and would drop the
   enqueued messages. Enqueue from handler-level code instead.
-- **Budgets.** A durable execution allows 3,000 operations and 100 MB of cumulative checkpointed
+- **Checkpoints hold run data.** Model responses, tool results, and the error messages of failed
+  steps (which can include a provider's error response body) are stored in the execution's durable
+  state for the `RetentionPeriodInDays` of the durable configuration. Anyone who can read the
+  execution history can read them, so keep the retention period short for sensitive workloads.
+- **Budgets.** A durable execution allows 30,000 operations and 100 MB of cumulative checkpointed
   state. A turn costs one model step plus one step per tool call, so the operation budget is
   generous, but large tool results consume the state budget: return a reference (an S3 key, say)
   rather than a blob.
+- **Batched requests wait in the invocation.** Under [`BatchModelRequests`](../batch.md#durable-execution), submitting a
+  request and each check on its batch are durable steps, but the waits between checks are plain
+  sleeps: the invocation has to stay up for as long as the batch takes, within its timeout, and a
+  recovered run sleeps again through the waits it already did.
 
 ## Per-tool configuration
 
@@ -241,9 +387,10 @@ request is already applied inside the durable step. Attach it alongside other ca
 
 ## Further reading
 
+- [Durable execution in Pydantic AI agents with AWS Lambda Durability](https://pydantic.dev/articles/harness-aws-lambda) (Pydantic)
 - [AWS Lambda durable functions](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html)
 - [AWS Durable Execution SDK for Python](https://github.com/aws/aws-durable-execution-sdk-python)
-- [Pydantic AI durable execution](https://pydantic.dev/docs/ai/durable_execution/overview/)
+- [Pydantic AI durable execution](../durable_execution/overview.md)
 - [AWS Lambda Durability source code](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda/)
 
 ## API reference

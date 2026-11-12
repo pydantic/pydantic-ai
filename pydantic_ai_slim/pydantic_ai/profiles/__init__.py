@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from typing_extensions import TypedDict
 
+from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from ..exceptions import PydanticAIDeprecationWarning
-from ..messages import CachePoint, ModelRequest, ModelResponse, UserPromptPart
+from ..messages import CachePoint, DocumentMediaType, ModelRequest, ModelResponse, UserPromptPart
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
-from ..settings import CacheRetention
+from ..settings import CacheRetention, FramingAnnouncement
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage
@@ -102,12 +103,63 @@ class ModelProfile(TypedDict, total=False):
     provider accepts audio in user messages.
     """
 
+    supports_image_input: bool
+    """Whether the model accepts images. Default: `True`.
+
+    The file-input flags (this one, `supports_document_input`, `supported_document_media_types`,
+    `supports_audio_file_input` and `supports_video_input`) say which files can be sent to the model.
+    A model adapter turns off what its message mapping cannot send, whatever the profile says.
+
+    A file a tool returns that the model cannot take is replaced, in the request only, by a note naming
+    it: see [Where a returned file is sent](../tools-advanced.md#tool-return-file-provenance). A file in a
+    user prompt is sent as it is, and the request fails if the model cannot take it.
+    [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] reads the same flags to describe
+    such files in text instead.
+
+    Shipped profiles turn these off where an adapter or a model family is known not to take the file; `True`
+    means nothing says otherwise, not that the model was checked. A text-only model served through an adapter
+    that sends images (a text-only Llama on vLLM, say) needs `profile=ModelProfile(supports_image_input=False)`.
+    """
+
+    supports_document_input: bool
+    """Whether the model accepts documents, such as PDFs. Default: `True`.
+
+    Which document media types it accepts is narrowed by `supported_document_media_types`.
+    See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supported_document_media_types: frozenset[DocumentMediaType]
+    """The document media types the model accepts, when it accepts documents at all. Default: every
+    media type in `DocumentMediaType`.
+
+    Only narrows those known types: a document with any other media type is judged by
+    `supports_document_input` alone. Anthropic, for example, reads PDFs and plain text but not Word or
+    Excel files. See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supports_audio_file_input: bool
+    """Whether the model accepts audio files, such as an [`AudioUrl`][pydantic_ai.messages.AudioUrl]
+    or audio [`BinaryContent`][pydantic_ai.messages.BinaryContent]. Default: `True`.
+
+    Separate from `supports_audio_input`, which is about realtime speech history. See
+    `supports_image_input` for how the file-input flags are used.
+    """
+
+    supports_video_input: bool
+    """Whether the model accepts video. Default: `True`.
+
+    See `supports_image_input` for how the file-input flags are used.
+    """
+
     supports_inline_system_prompts: bool
     """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
 
     When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
     `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
-    provider's top-level system parameter.
+    provider's top-level system parameter, and the system prompt says what the tag means, from the request the
+    [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] setting says. User prompts and
+    tool returns go out as written; text in them
+    that resembles a `<system>` tag gets a note instead.
 
     APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
     to follow a user turn) still set this to `True`; it's on their model adapters to make the
@@ -125,6 +177,44 @@ class ModelProfile(TypedDict, total=False):
     only place that knows the `<system>...</system>` fallback.
     """
 
+    needs_sealed_system_blocks: bool
+    """Whether the model follows the fallback's `<system>` blocks better sealed and after the user's words. Default: `False`.
+
+    Only meaningful where `supports_inline_system_prompts` is `False`. When `True`, `Model.prepare_messages` renders
+    each mid-conversation `SystemPromptPart` as `<system verified>...</system>` after the user's words in
+    its request, and the announcement at the start of the system prompt says the application's blocks carry that
+    attribute and that a block after the user's words already applies to the reply to them. A user lookalike's note
+    in a request with such a block names it. A `<system>` tag in text from a user, a tool or a file still gets a note
+    when it copies the attribute.
+
+    Set for Claude Sonnet 4.6, Claude Sonnet 5.5, Claude Haiku 5.5, and Grok 4.3 through 4.7 (not Grok 4.20, which
+    measured worse sealed). Sonnet 4.6, with plain `<system>` blocks, ignored two mid-conversation instruction
+    changes, and followed both with a marker and the sentence together (not with either alone). With the blocks
+    after the user's words it also followed steering after a tool result and a change next to a user lookalike,
+    where ahead of them it didn't. Haiku 5.5 honors a native mid-conversation system message but did as well or
+    better on every cell measured with this rendering, and worse with plain `<system>` blocks, so its Anthropic
+    profile doesn't use the native role. Sonnet 5.5 credited the native role's messages to the user when asked who
+    said what, and with this rendering it attributed them correctly and followed steering after a tool result more
+    reliably, so its profile doesn't use the native role either. Those Grok models followed a genuine change next to
+    a user lookalike and steering after a tool result more reliably sealed than with plain blocks.
+    """
+
+    default_framing_announcement: FramingAnnouncement
+    """The model's default for the `framing_announcement` setting. Default: `'when_needed'`.
+
+    The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement] model setting wins when
+    it's set. Only meaningful where `supports_inline_system_prompts` is `False`.
+
+    `'when_needed'` sends the same request as `'always'` once a conversation has something to explain, and the same
+    request as `'never'` before that. Set to `'always'` for Claude Sonnet 4.6 and gpt-oss, which measured worse
+    without the announcement even on requests with nothing for it to explain: Sonnet 4.6 kept to the system prompt's
+    task against a conflicting user request in 30 of 48 runs with it and 22 of 96 without, and followed an
+    application's own reminder tags in a user turn in 24 of 24 with it and 0 of 48 without; gpt-oss kept to the
+    system prompt's task in 44 of 48 with it and 69 of 96 without. Other models measured did as well or better
+    without it on those requests. See
+    [When the announcement is sent](../message-history.md#when-the-announcement-is-sent).
+    """
+
     supports_request_scoped_system_prompts: bool
     """Whether the provider's API keeps a request-scoped `SystemPromptPart` in the conversation and stops rendering it itself. Default: `False`.
 
@@ -135,9 +225,22 @@ class ModelProfile(TypedDict, total=False):
     `Model.prepare_messages` leaves a request-scoped part out of every request after its own, and the part
     renders like any other mid-conversation `SystemPromptPart` while it's current.
 
-    Only meaningful together with `supports_inline_system_prompts`, and only set it on a model whose adapter
-    renders a self-clearing entry, currently `AnthropicModel`. On any other adapter, `True` makes every
-    request-scoped part render as a lasting system prompt on every later request.
+    Independent of `supports_inline_system_prompts`: where that's `False`, the entry holds a `<system>` block like the
+    model's other mid-conversation messages. Only set it on a model whose adapter renders a self-clearing entry,
+    currently `AnthropicModel`. On any other adapter, `True` makes every request-scoped part render as a lasting
+    system prompt on every later request.
+    """
+
+    supports_mid_conversation_effort: bool
+    """Whether the provider's API can change the thinking effort from a point in the conversation onward. Default: `False`.
+
+    When `True`, on a model whose adapter renders the change (`OpenAIResponsesModel`'s `configuration_update`
+    item, `AnthropicModel`'s per-message `output_config`, `OpenRouterModel`'s `configuration_update` system
+    message), a
+    [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] is sent in place and the request
+    keeps the conversation's earlier request-level effort, so the prompt cache survives the change. When
+    `False`, `Model.prepare_messages` drops those parts and the current effort goes out as the request-level
+    setting.
     """
 
     default_structured_output_mode: StructuredOutputMode
@@ -218,7 +321,7 @@ class ModelProfile(TypedDict, total=False):
     thinking_always_enabled: bool
     """Whether the model always uses thinking/reasoning (e.g., OpenAI o-series, DeepSeek R1). Default: `False`.
 
-    When True, `thinking=False` is silently ignored since the model cannot disable thinking.
+    When True, the model can't disable thinking, so `thinking=False` uses the lowest effort the model accepts instead.
     Implies `supports_thinking=True`.
     """
 
@@ -233,10 +336,10 @@ class ModelProfile(TypedDict, total=False):
     supports_forced_tool_choice: bool
     """Whether the model accepts a forced tool choice: `tool_choice='required'` or a specific tool. Default: `True`.
 
-    Some models reject forcing on every request, such as Claude Opus 5.5, Claude Fable 5.1 and Claude Mythos 5.1,
-    as do some OpenAI-compatible providers, such as Moonshot AI. When False, a forced tool choice that Pydantic AI
-    resolved itself (such as an output tool's) falls back to `'auto'`, with the tools filtered to the requested
-    ones where the API can't restrict the choice. An explicit forcing
+    Some models reject forcing on every request, such as Claude Opus 5.5, Claude Fable 5.1 and 5.2 and Claude
+    Mythos 5.1 and 5.2, as do some OpenAI-compatible providers, such as Moonshot AI. When False, a forced tool
+    choice that Pydantic AI resolved itself (such as an output tool's) falls back to `'auto'`, with the tools
+    filtered to the requested ones where the API can't restrict the choice. An explicit forcing
     [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] raises a `UserError`.
     """
 
@@ -261,6 +364,20 @@ class ModelProfile(TypedDict, total=False):
     thinking_tags: tuple[str, str]
     """The tags used to indicate thinking parts in the model's output. Default: [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS]."""
 
+    may_tokenize_special_tokens_in_content: bool
+    """Whether this route may encode chat-template special tokens found in message content as real control tokens. Default: `False`.
+
+    Many hosts of open-weight models do, so a literal `<|im_start|>` in a tool result opens a real turn in the role it
+    names. When `True`, `Model.prepare_messages` puts a zero-width joiner inside each such token in user prompts, tool
+    results, inlined text files and replayed model output, on the outgoing copy only, and the joiner is removed again
+    from the tokens in each response's text and tool call arguments. Text without one is unchanged.
+
+    The host decides this, not the model family, so a provider sets it from `model_profile`, through the one table in
+    `profiles/_special_tokens.py`. An application that has pinned a route known to treat these tokens as text, or that
+    needs them sent as written, can turn it off with `profile=`.
+    See [Special tokens in content](../message-history.md#special-tokens-in-content).
+    """
+
     mimics_assistant_message_formatting: bool
     """Whether the model reproduces markup it finds in prior assistant messages in its own visible output. Default: `False`.
 
@@ -271,13 +388,14 @@ class ModelProfile(TypedDict, total=False):
     When `True`, a `ThinkingPart` that can't be sent through the model's native reasoning channel is
     rendered into a *user* message ahead of the assistant turn instead of into the turn itself, which
     stops the imitation. Attributed to the user, that reasoning would read as something the user thought,
-    so it is wrapped in an `assistant_thinking` tag naming the model and provider that produced it rather
-    than in the model's own thinking tags. The cost is that the model still reports the reasoning's authorship
-    inaccurately when asked about it: naming the source in the tag does not change the answer it gives.
+    so it is wrapped in an `assistant_thinking` tag rather than in the model's own thinking tags. The cost
+    is that the model reports the reasoning's authorship inaccurately when asked about it, which naming the
+    source in the tag would not change.
 
-    This is currently only used by `AnthropicModel` and `BedrockConverseModel`. Claude served through an
-    OpenAI-compatible provider goes through `OpenAIChatModel`, which does not read this key — tracked in
-    https://github.com/pydantic/pydantic-ai/issues/7419.
+    This is used by `AnthropicModel`, `BedrockConverseModel`, `OpenAIChatModel` (and the models built on it)
+    and `OpenAIResponsesModel`, so it also covers Claude served through an OpenAI-compatible provider. An
+    `OpenAIChatModel` profile that sends reasoning back in a field (`openai_chat_send_back_thinking_parts='field'`,
+    as OpenRouter's does) never renders it as text, so there is nothing for this key to move.
 
     Where the carried reasoning goes is each adapter's own decision rather than a shared rewrite ahead of
     them: it has to land in front of whatever that provider renders next out of the same request — an
@@ -311,7 +429,7 @@ class ModelProfile(TypedDict, total=False):
     a history whose IDs came from another provider (OpenAI's `call_...`, Anthropic's `toolu_...`) or were
     generated by Pydantic AI (`pyd_ai_...`). When set, `Model.prepare_messages` replaces every function tool
     call ID that doesn't fit with a hash of it that does, and leaves IDs that already fit unchanged. The
-    calls, their results and the `<tool_result>` tags that reference them keep pairing up, and since the
+    calls, their results and the `<pyai:tool_result>` tags that reference them keep pairing up, and since the
     replacement depends only on the history, the same history is sent as the same bytes on every request.
     Only the outgoing copy changes: stored message history keeps the original IDs.
     """
@@ -419,6 +537,11 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_json_object_output': False,
     'supports_image_output': False,
     'supports_audio_input': False,
+    'supports_image_input': True,
+    'supports_document_input': True,
+    'supported_document_media_types': KNOWN_DOCUMENT_MEDIA_TYPES,
+    'supports_audio_file_input': True,
+    'supports_video_input': True,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,
@@ -434,6 +557,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_forced_tool_choice_with_thinking': True,
     'forced_tool_choice_disables_thinking': False,
     'thinking_tags': DEFAULT_THINKING_TAGS,
+    'may_tokenize_special_tokens_in_content': False,
     'mimics_assistant_message_formatting': False,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,

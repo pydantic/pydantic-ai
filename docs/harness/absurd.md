@@ -15,6 +15,29 @@ a task the capability is transparent.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Absurd Durability: resume a crashed run from its last saved step
+    accDescr: On a worker's first attempt, a model request and a tool call each finish, and each is saved to Postgres as an Absurd step. The worker crashes before the next model request's step is saved, so Absurd retries the task. On the retried task, AbsurdDurability returns stored results from the saved steps with no model or tool call, then the next model request runs live.
+    subgraph first["Worker, attempt 1"]
+        done["model request, tool call<br/>each one finishes"]
+        crash["next model request<br/>worker crashes before<br/>the step is saved"]:::blocked
+    end
+    steps[("Postgres<br/>Absurd steps")]:::external
+    subgraph retry["Task retried"]
+        replay["AbsurdDurability()<br/>returns stored results,<br/>no model or tool call"]:::capability
+        live["next model request<br/>runs live"]
+    end
+    done -.-x crash
+    done -->|"each saved as a step"| steps
+    crash -.->|"Absurd retries<br/>the task"| replay
+    steps -->|"saved steps"| replay
+    replay --> live
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## Installation
 
 ```bash
@@ -102,7 +125,11 @@ These are not checkpointed and run again on replay:
 - Function, MCP, or dynamic toolsets passed per run with `run(toolsets=...)` inside a task raise a
   `UserError`; register them on the agent instead. `ExternalToolset` is allowed.
 - Streaming inside a task is not live: the model stream is consumed inside the step, then its
-  captured events are replayed to the caller.
+  final response is replayed to the caller, one event per part.
+- Under [`BatchModelRequests`](../batch.md#durable-execution), submitting a request and each check on its batch are
+  steps, but the waits between checks are plain sleeps: the task has to keep running for as long as
+  the batch takes, within its claim timeout, and a recovered run sleeps again through the waits it
+  already did.
 
 ## Parallel execution
 

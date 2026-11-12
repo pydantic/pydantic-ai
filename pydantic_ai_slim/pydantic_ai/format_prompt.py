@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import date, time, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 from xml.etree import ElementTree
 
@@ -16,6 +16,9 @@ from pydantic_core import PydanticSerializationError
 __all__ = ('format_as_xml',)
 
 from pydantic.fields import ComputedFieldInfo, FieldInfo
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 _NAME_START_CHARS = (
     'A-Z_a-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f'
@@ -123,28 +126,36 @@ class _ToXml:
             self._mapping_to_xml(element, value, path)  # pyright: ignore[reportUnknownArgumentType]
             return element
         if is_dataclass(value) and not isinstance(value, type):
-            self._init_structure_info()
-            if tag is None:
-                element.tag = value.__class__.__name__
-            self._mapping_to_xml(element, asdict(value), path)
+            self._dataclass_to_xml(element, value, path, tag)
             return element
         if isinstance(value, BaseModel):
-            self._init_structure_info()
-            if tag is None:
-                element.tag = value.__class__.__name__
-            # by dumping the model we loose all metadata in nested data structures,
-            # but we have collected it when called _init_structure_info
-            try:
-                mapping = value.model_dump(mode='json')
-            except PydanticSerializationError as e:
-                raise TypeError(f'Unsupported type for XML formatting: {e}') from e
-            self._mapping_to_xml(element, mapping, path)
+            self._model_to_xml(element, value, path, tag)
             return element
         if isinstance(value, Iterable):
             for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
-                element.append(self._to_xml(value=item, path=f'{path}.[{n}]' if path else f'[{n}]'))
+                element.append(self._to_xml(value=item, path=self._child_path(path, f'[{n}]')))
             return element
         raise TypeError(f'Unsupported type for XML formatting: {type(value)}')
+
+    def _dataclass_to_xml(
+        self, element: ElementTree.Element, value: DataclassInstance, path: str, tag: str | None
+    ) -> None:
+        self._init_structure_info()
+        if tag is None:
+            element.tag = value.__class__.__name__
+        self._mapping_to_xml(element, asdict(value), path)
+
+    def _model_to_xml(self, element: ElementTree.Element, value: BaseModel, path: str, tag: str | None) -> None:
+        self._init_structure_info()
+        if tag is None:
+            element.tag = value.__class__.__name__
+        # by dumping the model we loose all metadata in nested data structures,
+        # but we have collected it when called _init_structure_info
+        try:
+            mapping = value.model_dump(mode='json')
+        except PydanticSerializationError as e:
+            raise TypeError(f'Unsupported type for XML formatting: {e}') from e
+        self._mapping_to_xml(element, mapping, path)
 
     def _set_scalar_text(self, element: ElementTree.Element, value: Any) -> bool:
         """Set element.text for scalar types. Return True if handled, False otherwise."""
@@ -196,9 +207,8 @@ class _ToXml:
                 key = str(key)
             elif not isinstance(key, str):
                 raise TypeError(f'Unsupported key type for XML formatting: {type(key)}, only str and int are allowed')
-            child_path = f'{path}.{key}' if path else key
             is_name = _XML_NAME.fullmatch(key) is not None
-            child = self._to_xml(value=value, path=child_path, tag=key if is_name else self.item_tag)
+            child = self._to_xml(value=value, path=self._child_path(path, key), tag=key if is_name else self.item_tag)
             if not is_name:
                 child.set('key', key)
             element.append(child)
@@ -213,30 +223,39 @@ class _ToXml:
             return
         elif isinstance(value, Mapping):
             for k, v in value.items():  # pyright: ignore[reportUnknownVariableType]
-                self._parse_data_structures(v, f'{path}.{k}' if path else f'{k}')
+                self._parse_data_structures(v, self._child_path(path, f'{k}'))
         elif is_dataclass(value) and not isinstance(value, type):
-            self._element_names[path] = value.__class__.__name__
-            for field in fields(value):
-                new_path = f'{path}.{field.name}' if path else field.name
-                if self.include_field_info and field.metadata:
-                    attributes = {k: v for k, v in field.metadata.items() if k in self._FIELD_ATTRIBUTES}
-                    if attributes:
-                        field_repr = f'{value.__class__.__name__}.{field.name}'
-                        self._fields_info[new_path] = (field_repr, FieldInfo(**attributes))
-                self._parse_data_structures(getattr(value, field.name), new_path)
+            self._parse_dataclass(value, path)
         elif isinstance(value, BaseModel):
-            self._element_names[path] = value.__class__.__name__
-            for model_fields in (value.__class__.model_fields, value.__class__.model_computed_fields):
-                for field, info in model_fields.items():
-                    new_path = f'{path}.{field}' if path else field
-                    if self.include_field_info and (isinstance(info, ComputedFieldInfo) or not info.exclude):
-                        field_repr = f'{value.__class__.__name__}.{field}'
-                        self._fields_info[new_path] = (field_repr, info)
-                    self._parse_data_structures(getattr(value, field), new_path)
+            self._parse_model(value, path)
         elif isinstance(value, Iterable):
             for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
-                new_path = f'{path}.[{n}]' if path else f'[{n}]'
-                self._parse_data_structures(item, new_path)
+                self._parse_data_structures(item, self._child_path(path, f'[{n}]'))
+
+    def _parse_dataclass(self, value: DataclassInstance, path: str) -> None:
+        self._element_names[path] = value.__class__.__name__
+        for dataclass_field in fields(value):
+            new_path = self._child_path(path, dataclass_field.name)
+            if self.include_field_info and dataclass_field.metadata:
+                attributes = {k: v for k, v in dataclass_field.metadata.items() if k in self._FIELD_ATTRIBUTES}
+                if attributes:
+                    field_repr = f'{value.__class__.__name__}.{dataclass_field.name}'
+                    self._fields_info[new_path] = (field_repr, FieldInfo(**attributes))
+            self._parse_data_structures(getattr(value, dataclass_field.name), new_path)
+
+    def _parse_model(self, value: BaseModel, path: str) -> None:
+        self._element_names[path] = value.__class__.__name__
+        for model_fields in (value.__class__.model_fields, value.__class__.model_computed_fields):
+            for name, info in model_fields.items():
+                new_path = self._child_path(path, name)
+                if self.include_field_info and (isinstance(info, ComputedFieldInfo) or not info.exclude):
+                    field_repr = f'{value.__class__.__name__}.{name}'
+                    self._fields_info[new_path] = (field_repr, info)
+                self._parse_data_structures(getattr(value, name), new_path)
+
+    @staticmethod
+    def _child_path(path: str, key: str) -> str:
+        return f'{path}.{key}' if path else key
 
     @classmethod
     def _extract_attributes(cls, info: FieldInfo | ComputedFieldInfo) -> dict[str, str]:

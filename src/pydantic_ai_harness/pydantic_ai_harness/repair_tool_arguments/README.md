@@ -5,20 +5,35 @@ or incomplete JSON. Use this capability on its own or through [Coder](../coder/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](../../../../docs/harness/index.md#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Repair Tool Arguments: fix malformed JSON before validation
+    accDescr: The model makes a tool call with JSON args. The RepairToolArguments capability runs in before_tool_validate, where json-repair fixes syntax, so the args are repaired if malformed and unchanged if valid. The args are then validated against the schema and reach your tool, and the tool result goes back to the model with the next request.
+    model(["model"])
+    repair["RepairToolArguments()<br/>before_tool_validate<br/>json-repair fixes syntax"]:::capability
+    validate["validate args<br/>against the schema"]
+    tool["your tool"]
+    model -->|"tool call, JSON args"| repair
+    repair -->|"repaired if malformed,<br/>unchanged if valid"| validate
+    validate --> tool
+    tool -->|"tool result, next request"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
+
 ## Usage
 
-Install `pydantic-ai-harness`; no extra is required for repair. This example uses a local test model.
+Install the `repair-tool-arguments` extra, which includes `json-repair`; without it, importing `RepairToolArguments` raises an `ImportError` naming the extra. `Coder` includes `RepairToolArguments`, so its `coder` extra installs `json-repair` too. This example uses a local test model.
 
 uv:
 
 ```bash
-uv add pydantic-ai-harness
+uv add "pydantic-ai-harness[repair-tool-arguments]"
 ```
 
 pip:
 
 ```bash
-pip install pydantic-ai-harness
+pip install "pydantic-ai-harness[repair-tool-arguments]"
 ```
 
 ```python
@@ -47,6 +62,14 @@ or `RecursionError`, the original arguments go through normal validation.
 Repair is heuristic: malformed input can be ambiguous, and inferred strings may differ from the model's
 intent. The capability does not supply a schema to the repair library or bypass tool validation,
 approval, or execution checks. It has no configuration options.
+
+## Message history
+
+A repair is written back to the tool call in the message history, so the requests that follow replay
+the arguments that ran instead of the malformed JSON a provider may reject. The model's original
+arguments are kept in the call's `provider_details['original_args']`. The call's provider item ID
+moves to `provider_details['original_id']`: OpenAI Responses replays its own stored copy of a call
+that keeps that ID, so the repaired arguments would otherwise never reach the model.
 
 ## Telemetry
 
