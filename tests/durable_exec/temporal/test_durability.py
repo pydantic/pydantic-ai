@@ -7950,7 +7950,7 @@ class RetryFeedbackAnswer:
 _retry_feedback_shown: list[list[SystemPromptPart | UserPromptPart]] = []
 """The retry feedback the model was shown, one entry per model request."""
 
-_RETRY_FEEDBACK_TAGS = ('<system>', '<validation_errors>')
+_RETRY_FEEDBACK_TAGS = ('<system>', '<pyai:validation_errors>')
 """The two tags a translated `RetryFeedbackPart` can arrive under; a `SystemPromptPart` needs none."""
 
 
@@ -8087,7 +8087,7 @@ async def test_durability_output_retry_feedback_survives_the_activity_and_a_resu
     The resuming model is reached by an alias only the `ResolveModelId` capability can build, so the
     workflow leaves the history untouched and the raw part is what crosses the activity boundary
     there. Keeping the presentation out of the history is what lets each execution build the sendable
-    part for the model it is actually using — here the same `<validation_errors>` fence both times,
+    part for the model it is actually using — here the same `<pyai:validation_errors>` fence both times,
     because a `'validation_error'`'s voice comes from its `cause` rather than from the profile.
     """
     _retry_feedback_shown.clear()
@@ -8144,9 +8144,9 @@ async def test_durability_output_retry_feedback_survives_the_activity_and_a_resu
                 UserPromptPart(
                     content="""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """,
                     timestamp=IsDatetime(),
                 )
@@ -8155,9 +8155,9 @@ Your previous response failed the application's validation (this is automated fe
                 UserPromptPart(
                     content="""\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """,
                     timestamp=IsDatetime(),
                 )

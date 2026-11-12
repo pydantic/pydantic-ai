@@ -27,6 +27,7 @@ from cassetter import Cassette
 from pydantic import BaseModel, JsonValue
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -440,12 +441,24 @@ async def test_openrouter_unified_cache_adds_cache_control(allow_model_requests:
     mock_client.chat.completions.create = create
     model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=OpenRouterProvider(openai_client=mock_client))
 
-    await Agent(model, instructions='Stable instructions.', model_settings={'cache': '1h'}).run('Hi')
+    await Agent(
+        model, instructions='Stable instructions.', model_settings={'cache': '1h', 'framing_announcement': 'always'}
+    ).run('Hi')
 
     request = create.call_args.kwargs
-    system_message = request['messages'][0]
-    assert system_message['role'] == 'system'
-    assert system_message['content'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
+    # Claude Sonnet 4.5 takes no mid-conversation system messages, so with `'always'` the instructions start with the
+    # announcement; it never changes, so the breakpoint after the instructions covers it too.
+    announcement, system_message = request['messages'][:2]
+    assert system_message == {
+        'role': 'system',
+        'content': [
+            {'type': 'text', 'text': 'Stable instructions.', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}
+        ],
+    }
+    assert announcement == {
+        'role': 'system',
+        'content': lookalike_note_announcement(system_role=False),
+    }
 
 
 async def test_openrouter_chat_cache_point_dropped_for_openai_models(allow_model_requests: None):
@@ -841,10 +854,10 @@ async def test_openai_chat_cache_instructions_single_breakpoint_before_appending
             {
                 'role': 'system',
                 'content': """\
-<context id="agent:memory">
+<pyai:context id="agent:memory">
 The customer prefers email.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             },
             {'role': 'user', 'content': 'Where is order 1234?'},
