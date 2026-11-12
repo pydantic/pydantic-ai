@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TextIO, TypeVar
+from typing import Literal, TextIO, TypeVar
 
 from publish_douwebot_review import ReviewEngine, ReviewResult
 from pydantic import TypeAdapter
@@ -22,6 +22,8 @@ _EVENT = TypeAdapter(dict[str, object])
 QUOTA_ERRORS = frozenset({'provider.go-limit', 'provider.quota'})
 # The shape of every error type OpenCode 2.2.5 sets, such as `provider.auth` or `unknown`.
 ERROR_TYPE = re.compile(r'[a-z][a-z.-]*')
+# The values DeepInfra documents for `reasoning_effort`: https://docs.deepinfra.com/chat/reasoning
+ReasoningEffort = Literal['none', 'low', 'medium', 'high']
 
 
 @dataclass(frozen=True)
@@ -32,7 +34,7 @@ class Provider:
     model: str
     key_variable: str
     review_engine: ReviewEngine
-    reasoning_effort: str | None = None
+    reasoning_effort: ReasoningEffort | None = None
     """The model's `reasoningEffort` setting in the OpenCode config; unset leaves the provider's default."""
 
 
