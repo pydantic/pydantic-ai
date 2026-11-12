@@ -326,6 +326,9 @@ execution's traces show only the work that invocation did, and costs are counted
   `event_stream_handler` (which runs inside the model step for model events and its own step for
   agent events), because a resumed execution serves the recorded step output and would drop the
   enqueued messages. Enqueue from handler-level code instead.
+- **`ctx.in_flight` raises throughout a durable execution**, in handler-level code and in steps alike,
+  until durable runs can track work that outlives a step. See
+  [Work that outlives a step](../capabilities/custom.md#in-flight-work).
 - **Checkpoints hold run data.** Model responses, tool results, and the error messages of failed
   steps (which can include a provider's error response body) are stored in the execution's durable
   state for the `RetentionPeriodInDays` of the durable configuration. Anyone who can read the
