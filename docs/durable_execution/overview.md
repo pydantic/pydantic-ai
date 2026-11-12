@@ -74,7 +74,7 @@ agent = Agent(
 2. Each workspace call is recorded as a unit of its own, so a run that restarts after the read reuses its result and only writes.
 3. Swap in any other engine's durability capability; the tool stays the same.
 
-To set it on tools you don't define yourself, such as a capability's or an MCP server's, change the tool definition in a `prepare` function or with [`PrepareTools`](../capabilities/prepare-tools.md). `durable=True` puts back the default over an earlier opt-out:
+To set it on tools you don't define yourself, such as a capability's or an MCP server's, change the tool definition in a `prepare` function or with [`PrepareTools`](../capabilities/prepare-tools.md). `durable=True` undoes an earlier `durable=False`, but not an opt-out in the engine's own per-tool config, such as Temporal's `tool_activity_config`:
 
 ```python {title="durable_prepare_tools.py" test="skip"}
 from dataclasses import replace

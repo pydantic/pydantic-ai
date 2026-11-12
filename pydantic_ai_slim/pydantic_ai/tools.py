@@ -785,7 +785,9 @@ class ToolDefinition:
     the durable execution backend. Only async function tools can do that; an engine raises a
     [`UserError`][pydantic_ai.exceptions.UserError] for any other tool it wraps.
     `None` (the default) and `True` keep the engine's default placement; `True` lets a `prepare` function undo an
-    opt-out. An engine's own metadata key, such as `metadata={'temporal': ...}`, wins when it's set on the tool.
+    earlier `durable=False`, but not an opt-out in the engine's own per-tool config, such as Temporal's
+    `tool_activity_config`. An engine's own metadata key, such as `metadata={'temporal': ...}`, wins when it's set
+    on the tool.
 
     Not sent to the model.
     """
