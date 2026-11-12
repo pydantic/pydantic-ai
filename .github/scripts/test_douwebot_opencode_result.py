@@ -76,6 +76,25 @@ def test_fence_with_other_text_still_fails(tmp_path: Path, text: str) -> None:
         review_result(_stream(tmp_path, text))
 
 
+# The answers glm-5.3-flash returned in runs 43266067725 and 43265435601 began with this prose and ended with this
+# JSON, in `json.dumps`'s default separators; the job log kept only both ends.
+_PROSE = "I've completed a thorough review of the changed files."
+_FINDINGS = json.dumps(
+    {
+        'verdict': 'REQUEST_CHANGES',
+        'comments': [{'path': 'a.py', 'line': 1, 'side': 'RIGHT', 'body': 'Handle the empty case.'}],
+        'discussion': '',
+    }
+)
+
+
+@pytest.mark.parametrize('separator', ['\n\n', ' '])
+def test_prose_before_bare_json_is_dropped(tmp_path: Path, separator: str) -> None:
+    """Accept a bare JSON object that ends the answer after prose."""
+    result = review_result(_stream(tmp_path, _PROSE + separator + _FINDINGS))
+    assert result.verdict == 'REQUEST_CHANGES'
+
+
 def test_fence_heavy_answer_is_rejected_in_linear_time(tmp_path: Path) -> None:
     """A model-controlled answer of a million fence characters cannot stall validation."""
     with pytest.raises(ValidationError):
