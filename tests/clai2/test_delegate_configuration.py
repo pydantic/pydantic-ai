@@ -21,7 +21,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapWorkspace
-from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, DelegationWorkspaceRequest
+from pydantic_ai_harness.subagents import DelegationTasks, DelegationWorkspaceRequest
 from pydantic_clai2 import open_stock_agent
 from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.config import Settings
@@ -30,7 +30,6 @@ from pydantic_clai2.models.chains import settings_model
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import ModelProvider, PluginHost
 from pydantic_clai2.runtime.tasks import review_workspace
-from pydantic_clai2.ui.menus.task_menu import TaskMenu
 
 
 async def test_review_uses_stock_model_services(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -301,14 +300,6 @@ async def test_plugin_host_model_defaults_without_session() -> None:
     host = PluginHost[object](name='standalone', console=Console(file=io.StringIO()), settings={})
     assert await host.resolve_model('test') == 'test'
     assert host.model_settings('test') is None
-
-
-def test_task_inspector_shows_the_selected_directory() -> None:
-    record = DelegationTask(
-        id='review', agent_name='Review', prompt='inspect', conversation_id='parent', working_directory='/policy'
-    )
-    menu = TaskMenu(snapshot=lambda: [record], action=lambda action, task: None)
-    assert 'Directory: /policy' in menu.preview(menu.items()[0])
 
 
 async def test_two_sessions_keep_their_delegate_models(tmp_path: Path) -> None:

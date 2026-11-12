@@ -379,7 +379,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         except ValidationError as e:
             # Say that the token limit cut the output off, as `CallToolsNode` does, rather than only that it's invalid.
             if cut_off and not allow_partial and is_incomplete_json(e):
-                raise exceptions.UnexpectedModelBehavior(truncated_output_message(self._max_tokens_getter())) from e
+                raise exceptions.OutputTokenLimitExceeded(truncated_output_message(self._max_tokens_getter())) from e
             raise
 
     async def _validate_image_output(self, image: _messages.BinaryImage, *, allow_partial: bool) -> OutputDataT:

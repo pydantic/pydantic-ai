@@ -223,10 +223,11 @@ async def batch_results(model: OpenAIResponsesModel, batch: Batch) -> list[Batch
     details = _DETAILS_ADAPTER.validate_python(batch.provider_details)
     results: dict[str, BatchResult] = {}
     for file_id in (details.get('output_file_id'), details.get('error_file_id')):
-        if file_id:
-            for line in (await client.files.content(file_id)).text.splitlines():
-                result = to_result(_OutputLine.model_validate_json(line))
-                results[result.custom_id] = result
+        if not file_id:
+            continue
+        for line in (await client.files.content(file_id)).text.splitlines():
+            result = to_result(_OutputLine.model_validate_json(line))
+            results[result.custom_id] = result
     if details['status'] == 'completed':
         uploaded_key = (batch_credential(model), batch.id)
         if (uploaded := _UPLOADED_INPUT_FILES.get(uploaded_key)) is not None and uploaded.completed:
