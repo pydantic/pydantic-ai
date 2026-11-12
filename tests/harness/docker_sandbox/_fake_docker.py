@@ -1,4 +1,4 @@
-"""A stand-in for the `docker` CLI, so `DockerSandboxBackend` runs without a daemon.
+"""A stand-in for the `docker` CLI, so `DockerContainerBackend` runs without a daemon.
 
 A "container" is a state file naming its working directory on this machine; `exec` runs the command
 there, like the real one runs it in the container. Removing a container kills the commands running in it.
@@ -144,7 +144,7 @@ class FakeDocker:
         return sorted(path.name for path in (self.bin_dir / 'containers').glob('*') if not path.suffix)
 
     def add_container(self, name: str, working_dir: Path, *, labeled: bool = True) -> None:
-        """Add a stopped container; `labeled=False` makes it one `DockerSandbox` didn't create."""
+        """Add a stopped container; `labeled=False` makes it one `DockerContainer` didn't create."""
         state = self.bin_dir / 'containers'
         state.mkdir(exist_ok=True)
         (state / name).write_text(str(working_dir))

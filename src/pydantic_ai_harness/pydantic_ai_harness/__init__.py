@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
     from .detect_loops import DetectLoops
-    from .docker_sandbox import DockerSandbox, DockerSandboxBackend
+    from .docker_container import DockerContainer, DockerContainerBackend
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
@@ -121,8 +121,8 @@ __all__ = [
     'DaytonaSandboxBackend',
     'DeduplicateFileReads',
     'DetectLoops',
-    'DockerSandbox',
-    'DockerSandboxBackend',
+    'DockerContainer',
+    'DockerContainerBackend',
     'DynamicWorkflow',
     'E2BSandbox',
     'E2BSandboxBackend',
@@ -227,8 +227,8 @@ _LAZY_EXPORTS = {
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS': 'refine_output',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'DetectLoops': 'detect_loops',
-    'DockerSandbox': 'docker_sandbox',
-    'DockerSandboxBackend': 'docker_sandbox',
+    'DockerContainer': 'docker_container',
+    'DockerContainerBackend': 'docker_container',
     'DynamicWorkflow': 'dynamic_workflow',
     'E2BSandbox': 'e2b_sandbox',
     'E2BSandboxBackend': 'e2b_sandbox',
@@ -307,6 +307,10 @@ _LAZY_EXPORTS = {
     'InputGuardFunc': 'guardrails',
     'OutputGuard': 'guardrails',
     'OutputGuardFunc': 'guardrails',
+    # Pre-rename names; importing the `pydantic_ai_harness.docker_sandbox` shim emits
+    # the deprecation warning.
+    'DockerSandbox': 'docker_sandbox',
+    'DockerSandboxBackend': 'docker_sandbox',
 }
 
 
