@@ -381,10 +381,6 @@ class AnthropicStreamedResponse(StreamedResponse):
                             # it runs, as a missing field such as a held key would change what the rest does.
                             computer_args = pydantic_core.from_json(computer_input_json, allow_partial=True)
                             incomplete.add(current_block.id)
-                        if not isinstance(computer_args, dict):
-                            # Not an object, so nothing in it maps, and Anthropic takes only an object back.
-                            computer_args = {}
-                            incomplete.add(current_block.id)
                         block = {'id': current_block.id, 'name': current_block.name, 'input': computer_args}
                         if native_computer.is_toolset:
                             computer_blocks.append(block)

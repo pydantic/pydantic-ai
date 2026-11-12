@@ -131,20 +131,21 @@ _XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
 _VIEWER_PORT = 6080
 
 _START_VIEWER = (
-    'd=/tmp/pydantic-ai-viewer; mkdir -p "$d"; '
+    # One call at a time, from any backend, else two could each write a password or start a viewer.
+    'd=/tmp/pydantic-ai-viewer; mkdir -p "$d"; exec 9>"$d/lock"; flock 9; '
     '[ -s "$d/password" ] || tr -dc A-Za-z0-9 </dev/urandom | head -c 8 > "$d/password"; '
     'if ! pgrep -x x11vnc >/dev/null; then '
     'x11vnc -storepasswd "$(cat "$d/password")" "$d/passwd" >/dev/null 2>&1; '
     f'setsid x11vnc -display {DISPLAY} -forever -shared -localhost -rfbport 5900 -rfbauth "$d/passwd" '
-    '>"$d/x11vnc.log" 2>&1 & fi; '
+    '>"$d/x11vnc.log" 2>&1 9>&- & fi; '
     'if ! pgrep -f \'[w]ebsockify\' >/dev/null; then rm -f "$d/novnc.log"; '
-    f'setsid /opt/noVNC/utils/novnc_proxy --vnc localhost:5900 --listen {_VIEWER_PORT} >"$d/novnc.log" 2>&1 & fi; '
+    f'setsid /opt/noVNC/utils/novnc_proxy --vnc localhost:5900 --listen {_VIEWER_PORT} >"$d/novnc.log" 2>&1 9>&- & fi; '
     'i=0; until grep -q "Navigate to this URL" "$d/novnc.log" 2>/dev/null; do '
     '[ $i -ge 100 ] && { echo "the viewer did not start:" >&2; tail -n 5 "$d/novnc.log" >&2; exit 1; }; '
     'sleep 0.1; i=$((i+1)); done; cat "$d/password"'
 )
 """Starts the template's VNC server and noVNC viewer behind a password, unless they are running, and prints the
-password. Both run until the sandbox stops."""
+password. Both run until the sandbox stops, so they don't keep the lock, which is released when the script exits."""
 
 _XFCE_ON_DISPLAY = (
     '(for p in $(pgrep -x xfce4-session); do '
