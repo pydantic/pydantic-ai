@@ -4077,17 +4077,19 @@ def test_each_decision_exports_one_span_with_both_accounts_quota(
 
 
 @pytest.mark.parametrize(
-    ('headers', 'status', 'sent', 'warning'),
+    ('headers', 'status', 'endpoint', 'sent', 'warning'),
     [
-        ('Authorization=', 200, False, None),
-        ('Authorization=token', 302, True, 'HTTP 302'),
+        ('Authorization=', 200, None, False, None),
+        ('Authorization=token', 302, None, True, 'HTTP 302'),
         # `http.client` rejects the header with a `ValueError` whose message repeats the header value.
-        ('Authorization=token%0Asecret-fixture', 200, False, 'ValueError'),
+        ('Authorization=token%0Asecret-fixture', 200, None, False, 'ValueError'),
+        ('Authorization=token', 200, 'localhost:4318', False, 'the OTLP endpoint has no http(s) scheme'),
     ],
 )
 def test_decision_span_export_never_changes_the_decision(
     headers: str,
     status: int,
+    endpoint: str | None,
     sent: bool,
     warning: str | None,
     tmp_path: Path,
@@ -4101,8 +4103,8 @@ def test_decision_span_export_never_changes_the_decision(
     monkeypatch.setattr(_Collector, 'status', status)
     monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS', headers)
 
-    with _http_server(_Collector) as endpoint:
-        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', endpoint)
+    with _http_server(_Collector) as url:
+        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', endpoint or url)
         decision, outputs, _ = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
 
     assert decision.ready
