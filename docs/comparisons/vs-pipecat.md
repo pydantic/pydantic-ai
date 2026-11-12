@@ -11,7 +11,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | Python | Python |
 | License | BSD-2-Clause | MIT |
 | Model providers | Many (services) | [Many](../models/overview.md) |
-| Extensibility | Frame processors and services | [Capabilities and toolsets](../extensibility.md); [90+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Frame processors and services | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | [From Daily](https://docs.pipecat.ai/enterprise-support), for Pipecat and Pipecat Cloud | [For the framework itself](../enterprise-support.md), no platform required |
