@@ -183,6 +183,21 @@ def _model_limit(model: AbstractModel) -> _Limit:
     return min(sides, default=None), min(pixels, default=None)
 
 
+def _call_limit(call: ComputerCallPart) -> _Limit:
+    """The largest screenshot the model that made `call` takes, as the agent recorded it on the call."""
+    side, pixels = call.screenshot_max_side, call.screenshot_max_pixels
+    return None if side is None and pixels is None else (side, pixels)
+
+
+def _min_limit(first: _Limit, second: _Limit) -> _Limit:
+    """The largest screenshot both limits allow."""
+    if first is None or second is None:
+        return first or second
+    sides = [side for side in (first[0], second[0]) if side]
+    pixels = [count for count in (first[1], second[1]) if count]
+    return min(sides, default=None), min(pixels, default=None)
+
+
 def _fit(size: tuple[int, int], limit: _Limit) -> tuple[int, int]:
     """The largest size of `size`'s shape within the limit: `size` itself when it fits."""
     if limit is None:
@@ -554,15 +569,18 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise ToolFailed(refused)
         made = _the_call(ctx)
         call = made[1] if made else None
+        # The agent records on the call the grid and screenshot limit of the model that made it, if it has them.
+        grid, made_limit = (
+            (call.coordinate_grid, _call_limit(call)) if isinstance(call, ComputerCallPart) else (None, None)
+        )
         plan = _Plan(
-            # The agent records on the call the grid of the model that made it, if it points on one.
-            grid=call.coordinate_grid if isinstance(call, ComputerCallPart) else None,
+            grid=grid,
             # The model pointed on the latest screenshot before its call.
             seen=_last_screenshot_size(ctx.messages[: made[0]]) if made else None,
             changed=actions if call and _changed(call, actions) else None,
-            # Any other model, such as one `ModelFallback` moves a request to, is refused before its request if it can't
-            # see the screenshot.
-            limit=_model_limit(ctx.model),
+            # The next request starts at the run's model, or with a sticky `ModelFallback` at the model that made the
+            # call, so the screenshot fits both. Another model is refused before its request if it can't see it.
+            limit=_min_limit(made_limit, _model_limit(ctx.model)),
             model_name=ctx.model.model_name,
             acts=acts,
         )
