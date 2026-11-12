@@ -161,12 +161,6 @@ _STOP_INPUT = (
 A cancelled command can keep running in the environment after the call that started it returns, and could press
 keys again after they were released."""
 
-STARTED = 'pydantic-ai-display-started'
-"""What a start script prints when it started a new X server, rather than finding one running."""
-
-RECORD_START = f'echo {STARTED}; '
-"""What a start script runs once a new X server answers: prints `STARTED`."""
-
 
 def _keysym(key: str) -> str:
     if key in _KEYSYMS:
@@ -216,10 +210,10 @@ def x11_display(
 ) -> LazyDisplay:
     """A backend's display on an X server that `script` starts at the size `$1` names, unless one answers.
 
-    `script` runs `RECORD_START` when it starts a new X server. `where` names the environment in errors.
+    `where` names the environment in errors.
     """
 
-    async def start() -> bool:
+    async def start() -> None:
         width, height = size
         # On `DISPLAY` whatever the backend's own env says, so it checks the X server the actions go to.
         result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env=_ENV, timeout=30)
@@ -228,7 +222,6 @@ def x11_display(
                 f'Could not start the display in {where()}: it needs Xvfb, xdotool, xwininfo, scrot and setsid '
                 f'({(result.stderr or result.stdout).strip()})'
             )
-        return STARTED in result.stdout.splitlines()
 
     return LazyDisplay(X11Computer(backend), start)
 

@@ -52,35 +52,27 @@ class LazyDisplay:
     """The display a backend hands out for its lifetime: started on first use, and again after a failure.
 
     Like the backend, it does nothing when built. `driver` drives the display once it runs. `start` brings the
-    display up, doing nothing to one that's running, and returns whether it launched a new display.
+    display up, doing nothing to one that's running.
 
     A call that only looks, such as a screenshot, is retried once after a failure, which starts a display that was
-    lost; an action isn't, so nothing is done twice. Until a screenshot shows a display that `start` launched, an
-    action refuses to run: the windows it was meant for are gone, whichever call launched it.
+    lost; an action isn't, so nothing is done twice.
 
     It implements [`Display`][pydantic_ai_harness.computer_use.Display] and every optional ability.
     """
 
-    def __init__(self, driver: DisplayDriver, start: Callable[[], Awaitable[bool]]):
+    def __init__(self, driver: DisplayDriver, start: Callable[[], Awaitable[None]]):
         self._driver = driver
         self._start = start
         self._running = False
         """Whether the display is known to be running, so a call needn't start it first."""
         self._lock = anyio.Lock()
-        self._unseen = False
-        """Whether a display launched since the last screenshot, so no one has seen what is on it."""
 
     async def _start_unless_running(self) -> None:
         # One start at a time: two would both find no display and start two.
         async with self._lock:
             if not self._running:
-                self._unseen |= await self._start()
+                await self._start()
                 self._running = True
-
-    async def _look(self, call: Callable[[DisplayDriver], Awaitable[bytes]]) -> bytes:
-        image = await self._call(call, observe=True)
-        self._unseen = False
-        return image
 
     async def _call(self, call: Callable[[DisplayDriver], Awaitable[T]], *, observe: bool) -> T:
         retry = observe
@@ -105,22 +97,10 @@ class LazyDisplay:
         return await self._call(lambda driver: driver.display_size(), observe=True)
 
     async def screenshot(self) -> bytes:
-        return await self._look(lambda driver: driver.screenshot())
+        return await self._call(lambda driver: driver.screenshot(), observe=True)
 
     async def act(self, action: DisplayAction) -> None:
-        async def act(driver: DisplayDriver) -> bool:
-            if self._unseen:
-                return False
-            await driver.act(action)
-            return True
-
-        if not await self._call(act, observe=False):
-            # The display was down and started since the last screenshot, for this action or for an earlier look such
-            # as reading its size: the windows the action was meant for are gone. Refused outside the call, so the
-            # display that started stays and the next screenshot shows it.
-            raise WorkspaceError(
-                'The display was not running and started since the last screenshot, so the action did not run.'
-            )
+        await self._call(lambda driver: driver.act(action), observe=False)
 
     async def zoom(self, region: Region) -> bytes:
         return await self._call(lambda driver: driver.zoom(region), observe=True)

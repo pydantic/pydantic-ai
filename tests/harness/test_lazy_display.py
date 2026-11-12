@@ -32,10 +32,9 @@ class FakeDriver:
         self.acted: list[DisplayAction] = []
         self._refuse = refuse
 
-    async def start(self) -> bool:
+    async def start(self) -> None:
         self.starts += 1
         await anyio.sleep(0)  # a start takes a moment, so concurrent first uses overlap
-        return False
 
     def _maybe_fail(self) -> None:
         if self.failures:
@@ -104,34 +103,6 @@ async def test_a_failed_action_is_not_retried_and_the_next_call_starts_the_displ
 
     await display.act(Click(x=2, y=2))
     assert (driver.starts, driver.acted) == (2, [Click(x=2, y=2)])
-
-
-@pytest.mark.parametrize('first', ['act', 'display_size'])
-async def test_an_action_does_not_run_on_a_display_that_started_since_the_last_screenshot(first: str) -> None:
-    """A backend rebuilt for one call finds the display down: the screen the next action was meant for is gone.
-
-    That holds whichever call started it, such as reading the size before acting.
-    """
-    driver = FakeDriver()
-
-    async def start() -> bool:
-        await driver.start()
-        return True  # the start script found the X server down and started it
-
-    display = LazyDisplay(driver, start)
-    if first == 'display_size':
-        await display.display_size()
-    refused = 'The display was not running and started since the last screenshot'
-    with pytest.raises(WorkspaceError, match=refused):
-        await display.act(Click(x=1, y=1))
-    with pytest.raises(WorkspaceError, match=refused):
-        await display.act(Click(x=1, y=1))
-    assert driver.acted == []
-
-    await display.screenshot()
-    await display.act(Click(x=2, y=2))
-    # The action uses the display that started, without starting it again.
-    assert (driver.acted, driver.starts) == ([Click(x=2, y=2)], 1)
 
 
 def test_it_is_a_display_with_every_optional_ability() -> None:
