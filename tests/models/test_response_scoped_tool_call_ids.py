@@ -297,6 +297,9 @@ async def test_responses_stream_qualifies_only_once_its_response_id_is_known(
 
     A request continuing that response by `previous_response_id` no longer holds it, so only the response ID could
     restore its results' IDs: a timestamp-scoped ID would reach the provider qualified.
+
+    Not a VCR test: a recording replays the event order the API sent, which starts with `response.created`, so it
+    can't produce a call that arrives before the response ID.
     """
     call = responses.ResponseFunctionToolCall(
         id='fc_1', arguments='{}', call_id='call_0', name='first_tool', status='completed', type='function_call'
