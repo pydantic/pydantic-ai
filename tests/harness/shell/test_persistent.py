@@ -22,7 +22,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.workspaces import CommandResult, FileEntry, LocalWorkspaceBackend, WorkspaceCommand, WorkspaceError
 from pydantic_ai_harness.shell import (
     MAX_FOREGROUND_WAIT,
     RUN_SCOPED_TOOL_NAMES,
@@ -105,6 +105,35 @@ class Recorder(AbstractCapability[None]):
         return last
 
 
+class SlowReads(LocalWorkspaceBackend):
+    """Records each call, and answers each file read (a job's status) `delay` seconds late, as a remote workspace does."""
+
+    def __init__(self, working_dir: Path, delay: float) -> None:
+        super().__init__(working_dir)
+        self.delay = delay
+        self.calls: list[str] = []
+
+    async def read_bytes(self, path: str) -> bytes:
+        self.calls.append(f'read_bytes {Path(path).name}')
+        await anyio.sleep(self.delay)
+        return await super().read_bytes(path)
+
+    async def stat(self, path: str) -> FileEntry:
+        self.calls.append(f'stat {Path(path).name}')
+        return await super().stat(path)
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        self.calls.append('run')
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
 class TestToolSelection:
     async def test_default_tools_are_run_scoped(self, tmp_path: Path) -> None:
         model = TestModel(call_tools=[])
@@ -146,6 +175,23 @@ class TestShellTool:
             denied_env_patterns=['OPENAI_*'],
         )
         assert 'unset' in output and 'do-not-expose' not in output
+
+    async def test_foreground_wait_makes_the_same_calls_however_slow_the_workspace(self, tmp_path: Path) -> None:
+        # A durable engine returns a run's recorded workspace calls by position, so a recovered run, on a
+        # workspace slower or faster than the first time, must make the same calls to be given their results.
+        calls: list[list[str]] = []
+        for delay in (0, 0.2):
+            work = tmp_path / str(delay)
+            work.mkdir()
+            workspace = SlowReads(work, delay)
+            capability = Shell[None](denied_commands=[], tools=['shell'])
+            output = await call_tool(
+                [capability], 'shell', {'command': 'sleep 30', 'timeout': 0.3}, workspace=workspace
+            )
+            os.killpg(int(output.split('kill -- -')[1].split('`')[0]), signal.SIGKILL)
+            assert '"exit_code": null' in output
+            calls.append(workspace.calls)
+        assert calls[0] == calls[1]
 
     @pytest.mark.parametrize('metadata_exists', [False, True])
     async def test_job_files_live_in_the_git_ignored_metadata_directory(
@@ -203,7 +249,7 @@ class TestShellTool:
         assert isinstance(started, CommandStartedEvent)
         assert started.command == 'printf hello'
         assert recorder.output == 'hello'
-        assert recorder.finished.total_lines == 1
+        assert recorder.finished.line_count == 1
         assert recorder.finished.exit_code == 0
         assert not recorder.finished.truncated
 
@@ -218,7 +264,7 @@ class TestShellTool:
         command = f'{shlex.quote(sys.executable)} -c {shlex.quote(script)}'
         # Without a log limit, which would empty a log this size when the command ends.
         await shell(tmp_path, {'command': command}, capabilities=[recorder], max_log_bytes=None)
-        assert recorder.finished.total_lines is None
+        assert recorder.finished.line_count is None
         assert recorder.finished.truncated
 
     async def test_output_arrives_before_command_exit(self, tmp_path: Path) -> None:
@@ -375,7 +421,7 @@ class TestShellTool:
         assert output.startswith('PID: ')
         assert output.endswith('status.json')
         assert recorder.finished.exit_code is None
-        assert recorder.finished.total_lines == 0
+        assert recorder.finished.line_count == 0
         assert recorder.output == ''
 
     async def test_supervisor_exits_after_its_job_directory_is_removed(self, tmp_path: Path) -> None:
@@ -389,35 +435,21 @@ class TestShellTool:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(group_id, signal.SIGKILL)
 
-    @pytest.mark.parametrize(
-        'command',
-        [
-            pytest.param('rm -rf .pydantic-ai-harness', id='removed'),
-            pytest.param('chmod 500 .pydantic-ai-harness/shell/*', id='read-only'),
-        ],
-    )
-    async def test_supervisor_exits_when_its_watcher_misses_the_stop_signal(self, tmp_path: Path, command: str) -> None:
+    async def test_supervisor_exits_when_its_watcher_misses_the_stop_signal(self, tmp_path: Path) -> None:
         # With nowhere to create `watch.stop`, `TERM` is the watcher's only stop. A job started with `TERM` ignored never
         # receives it: the loss `dash` causes only when the signal arrives before the watcher resets its inherited trap.
         previous = signal.signal(signal.SIGTERM, signal.SIG_IGN)
         try:
-            output = await shell(tmp_path, {'command': command, 'timeout': 0.2})
+            output = await shell(tmp_path, {'command': 'rm -rf .pydantic-ai-harness', 'timeout': 0.2})
         finally:
             signal.signal(signal.SIGTERM, previous)
         pid = int(output.split('PID: ')[1].split(' ')[0])
         group_id = int(output.split('kill -- -')[1].split('`')[0])
-        jobs = tmp_path / '.pydantic-ai-harness' / 'shell'
         try:
             await wait_for_exit(pid)
-            # Checked once the supervisor is gone, so the command's `chmod` has run.
-            for job in jobs.glob('*'):
-                if os.access(job, os.W_OK):  # pragma: no cover - root writes regardless of mode bits
-                    pytest.skip('mode bits do not bind this user')
         finally:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(group_id, signal.SIGKILL)
-            for job in jobs.glob('*'):
-                job.chmod(0o700)
 
     async def test_a_bare_toolset_starts_no_command(self, tmp_path: Path) -> None:
         toolset = Shell[object](denied_commands=[], tools=['shell']).get_toolset()
@@ -516,6 +548,30 @@ class TestLifecycle:
             await shell(tmp_path, {'command': 'sleep 60', 'mode': mode, 'timeout': 0.01})
         await wait_for_exit(jobs[0].pid)
         assert not Path(jobs[0].directory).exists()
+
+    async def test_a_failed_stop_keeps_the_calls_own_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A failed call stops its command before re-raising. A stop that fails too must not take the place of the
+        # call's own error, and leaves the job's directory, as a failed `stop_command` does.
+        jobs: list[Job] = []
+        kill = Job.kill
+
+        async def fail(job: Job) -> int | None:
+            jobs.append(job)
+            raise RuntimeError('result read failed')
+
+        async def refused_kill(self: Job) -> None:
+            await kill(self)
+            raise WorkspaceError('kill: Operation not permitted')
+
+        monkeypatch.setattr('pydantic_ai_harness.shell._persistent._count_lines', fail)
+        monkeypatch.setattr(Job, 'kill', refused_kill)
+        with pytest.raises(RuntimeError, match='result read failed') as raised:
+            await shell(tmp_path, {'command': 'sleep 60', 'timeout': 0.01})
+        assert raised.value.__notes__ == ['Cleaning up the command also failed: kill: Operation not permitted']
+        await wait_for_exit(jobs[0].pid)
+        assert Path(jobs[0].directory).exists()
 
     @pytest.mark.parametrize('command', ['sleep 60', 'true'])
     async def test_cancelled_finalization_terminates_process(

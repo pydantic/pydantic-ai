@@ -566,9 +566,9 @@ async def test_a_chain_can_pool_accounts_before_another_provider(tmp_path: Path)
     remember(store, login='claude', profile='work', plugin=plugin_login())
     remember(store, login='claude', profile='side', plugin=plugin_login())
     store.save_chain(name='best', models=['claude-code@*:opus', 'test'])
-    model = await keyed_resolver(tmp_path, store=store).resolve('chain:best')
+    resolver = keyed_resolver(tmp_path, store=store)
+    assert await resolver.expand('chain:best') == ['claude-code@work:opus', 'claude-code@side:opus', 'test']
+    model = await resolver.resolve('chain:best')
     assert isinstance(model, FallbackModel)
-    pooled, last = model.models
-    assert isinstance(pooled, FallbackModel) and len(pooled.models) == 2
-    assert isinstance(last, TestModel)
+    assert answers(model) == ['work answered opus', 'side answered opus', None]
     assert (await Agent(model).run('hi')).output == 'work answered opus'

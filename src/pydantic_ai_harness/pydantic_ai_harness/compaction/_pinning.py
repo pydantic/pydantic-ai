@@ -47,20 +47,20 @@ def is_pinned(part: object) -> bool:
 def collect_pinned(messages: Sequence[ModelMessage]) -> list[ModelRequestPart]:
     """Return every pinned part found across *messages*, in order."""
     out: list[ModelRequestPart] = []
-    for msg in messages:
-        if isinstance(msg, ModelRequest):
-            out.extend(part for part in msg.parts if is_pinned(part))
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            out.extend(part for part in message.parts if is_pinned(part))
     return out
 
 
 def _leading_context_len(messages: Sequence[ModelMessage]) -> int:
     """Count the leading run of requests made up only of system prompts and summaries."""
     count = 0
-    for msg in messages:
+    for message in messages:
         if (
-            isinstance(msg, ModelRequest)
-            and msg.parts
-            and all(isinstance(p, SystemPromptPart) or is_summary_part(p) for p in msg.parts)
+            isinstance(message, ModelRequest)
+            and message.parts
+            and all(isinstance(p, SystemPromptPart) or is_summary_part(p) for p in message.parts)
         ):
             count += 1
         else:

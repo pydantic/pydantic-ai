@@ -21,6 +21,7 @@ from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
+from ._durable_replay import ReplaySnapshot, snapshot as replay_snapshot_now, start_as_current_span
 from ._genai_prices import best_effort_price
 from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 
@@ -346,6 +347,8 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
                 'calls': _redact_binary_content(value.calls, active),
                 'approvals': _redact_binary_content(value.approvals, active),
                 'metadata': _redact_binary_content(value.metadata, active),
+                # Kind names, so never binary; serialized only when there are questions, as the type does.
+                **({'_kinds': value._kinds} if value._kinds else {}),  # pyright: ignore[reportPrivateUsage]
             }
         if isinstance(value, Mapping):
             return {  # pyright: ignore[reportUnknownVariableType]
@@ -1013,10 +1016,12 @@ def open_model_request_span(
     prepared_request_context: ModelRequestContext | None = None
 
     record_metrics: Callable[[], None] | None = None
+    replay_snapshot: ReplaySnapshot | None = None
     previous_include_content = include_content_ctx.get()
     try:
         with (
-            settings.tracer.start_as_current_span(
+            start_as_current_span(
+                settings.tracer,
                 span_name,
                 attributes=attributes,
                 kind=SpanKind.CLIENT,
@@ -1027,6 +1032,8 @@ def open_model_request_span(
         ):
             # Set inside the `with`, because the policy names the span it speaks for.
             include_content_ctx.set(ContentPolicy(span, settings.include_content, settings.tracer))
+            # Inside the span, so only the durable units this request ran under count.
+            replay_snapshot = replay_snapshot_now()
 
             def set_request_attributes(context: ModelRequestContext) -> ModelRequestContext:
                 nonlocal prepared_request_context
@@ -1114,7 +1121,8 @@ def open_model_request_span(
                 yield finish, prepared_request_context
     finally:
         include_content_ctx.set(previous_include_content)
-        if record_metrics:
+        # A request a durable engine served from its journal was already recorded when it ran.
+        if record_metrics and not (replay_snapshot is not None and replay_snapshot.replayed()):
             record_metrics()
 
 
@@ -1176,10 +1184,10 @@ def get_instructions(
     `model_request_parameters` is not available (e.g. OTel span attributes).
     """
     from pydantic_ai.messages import InstructionPart
-    from pydantic_ai.models import Model
+    from pydantic_ai.models import _instruction_parts_of  # pyright: ignore[reportPrivateUsage]
 
     if model_request_parameters:
-        parts = Model._get_instruction_parts(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
+        parts = _instruction_parts_of(messages, model_request_parameters)
         return InstructionPart.join(parts) if parts else None
 
     # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)

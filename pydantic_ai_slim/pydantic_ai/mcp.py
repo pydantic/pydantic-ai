@@ -1048,7 +1048,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 the installed fastmcp is 3) to use for HTTP transports — useful for self-signed
                 certificates or custom connection pooling. Mutually exclusive with `headers`.
                 The toolset never closes a user-supplied client: the caller owns its lifecycle,
-                and the toolset can reconnect with it across runs.
+                and the toolset can reconnect with it across runs. Every run's session, including
+                with a function passed as `auth`, uses this client and so shares its cookie jar:
+                pass `verify` instead when runs act for different users.
 
         Raises:
             ValueError: If a pre-built `fastmcp.Client` is passed alongside any of the kwargs that

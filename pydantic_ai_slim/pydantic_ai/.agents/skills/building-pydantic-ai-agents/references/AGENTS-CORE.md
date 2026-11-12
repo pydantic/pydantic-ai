@@ -15,7 +15,7 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
 )
@@ -197,7 +197,7 @@ Compaction or loss of the baseline starts a new prefix from current instructions
 Use a durable operation for instruction callbacks that read external state during durable execution.
 Deferred capabilities and realtime sessions do not support this update policy.
 Leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
-A `@agent.system_prompt(dynamic=True)` function is re-run for each later run of a conversation and, by default, rewrites its part in history in place, which busts the prompt cache. Prefer instructions; when a system prompt is needed (other agents continue the history), use `@agent.system_prompt(on_change='append')` (which implies `dynamic=True`): a changed value is appended as a new `SystemPromptPart` sent as `<context id="system_prompt:<name>">`, where `<name>` (the function's `__name__`, or `name=`) is visible to the model. History ties the prompt to the function's `__qualname__`, so renaming or moving the function disconnects it from existing conversations, even with `name=`.
+A `@agent.system_prompt(dynamic=True)` function is re-run for each later run of a conversation and, by default, rewrites its part in history in place, which busts the prompt cache. Prefer instructions; when a system prompt is needed (other agents continue the history), use `@agent.system_prompt(on_change='append')` (which implies `dynamic=True`): a changed value is appended as a new `SystemPromptPart` sent as `<pyai:context id="system_prompt:<name>">`, where `<name>` (the function's `__name__`, or `name=`) is visible to the model. History ties the prompt to the function's `__qualname__`, so renaming or moving the function disconnects it from existing conversations, even with `name=`.
 The deferred capability catalog and Harness `SubAgents` and `RepoContext` instructions already append their changes.
 So do MCP server instructions from `MCPToolset(..., include_instructions=True)`, keyed `toolset:<id>` (a URL toolset's `id` defaults to its hostname; durable execution needs an explicit one); stdio and in-process servers need an `id=` to append. Only enable `include_instructions` for servers you trust. The `MCP` capability includes them by default; pass `MCP(..., include_instructions=False)` for a server you don't trust, such as one your end users supply.
 
@@ -245,7 +245,7 @@ Examples:
 
 Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/), one `PYDANTIC_AI_GATEWAY_API_KEY` reaches models from several providers, with spending limits and cost monitoring in Logfire. Prefix the model string with `gateway/`, using the provider's API format:
 
-- `gateway/anthropic:claude-fable-5-1`
+- `gateway/anthropic:claude-fable-5-2`
 - `gateway/openai:gpt-6-sol`
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
@@ -337,15 +337,15 @@ from pydantic_ai.capabilities import ModelFallback
 agent = Agent(
     'openai:gpt-6.1-sol',
     name='fallback_agent',
-    capabilities=[ModelFallback('anthropic:claude-fable-5-1')],
+    capabilities=[ModelFallback('anthropic:claude-fable-5-2')],
 )
 ```
 
-`fallback_on` defaults to `(ModelAPIError, ContentFilterError)`: API errors and refusals (any `finish_reason='content_filter'` response, empty or with partial text). The backup model applies its own safety policy. `fallback_on=(ModelAPIError,)` opts out. `FallbackModel` defaults to `(ModelAPIError,)` and falls back on refusals only when `ContentFilterError` is named. Streamed refusals are never fallen back from. `fallback_on` also takes exception types, exception handlers, and response handlers (`(ModelResponse) -> bool`, which reject a successful response). Each candidate gets its own `prepare_model_request` pass and native tool factory call (with the candidate as `ctx.model`), so provider-specific preparation is redone per model, and outer capabilities only see the accepted response. Use `FallbackModel` instead only outside an agent (direct model requests or a standalone `Model`).
+`fallback_on` defaults to `(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)`: API errors, refusals (any `finish_reason='content_filter'` response, empty or with partial text) and cut-off responses (any `finish_reason='length'` response, including cut-off text that would otherwise be the output). The backup model applies its own safety policy and may answer within the token limit. Leave `ContentFilterError` or `OutputTokenLimitExceeded` out to opt out of either, e.g. when `max_tokens` is a deliberate cap. `FallbackModel` defaults to `(ModelAPIError,)` and falls back on refusals or cut-off responses only when `ContentFilterError` or `OutputTokenLimitExceeded` is named. Streamed refusals and cut-off responses are never fallen back from. `fallback_on` also takes exception types, exception handlers, and response handlers (`(ModelResponse) -> bool`, which reject a successful response). Each candidate gets its own `prepare_model_request` pass and native tool factory call (with the candidate as `ctx.model`), so provider-specific preparation is redone per model, and outer capabilities only see the accepted response. Use `FallbackModel` instead only outside an agent (direct model requests or a standalone `Model`).
 
 Each step restarts the chain from the step's model. Pass `sticky=True` to keep a conversation on the candidate it fell back to, which keeps that provider's prompt cache warm and stops retrying a failing primary every step. The agent records the answering model as each response's `model_id` and a fallback as its `failed_attempts`, so stickiness carries over to later runs continuing that history. Only a fallback makes a conversation sticky: a candidate picked with `run(model=...)` that answered without one doesn't. It only replaces the agent's default model, not `run(model=...)`, `override(model=...)` or `SelectModel`, and if the sticky candidate fails, the chain continues after it and wraps around.
 
-In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError], sticky: true}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions` and `ContentFilterError`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
+In a YAML/JSON agent spec, declare it as `- ModelFallback: [anthropic:claude-opus-5-5]`, or `- ModelFallback: {models: [...], fallback_on: [ModelRateLimitError, ModelUnavailableError], sticky: true}`. A spec's `fallback_on` takes only names of `ModelAPIError` classes from `pydantic_ai.exceptions`, `ContentFilterError` and `OutputTokenLimitExceeded`; handlers need Python. Model names resolve lazily, so `ResolveModelId` aliases work there too.
 
 Good defaults:
 
