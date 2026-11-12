@@ -198,6 +198,8 @@ Reserve `print()` for supplementary logging: printed text is surfaced separately
 
 When a nested tool returns a [`ToolReturn`](../tools-advanced.md#advanced-tool-returns), the snippet receives its `return_value`. Its `content`, such as a screenshot, never enters the sandbox: it is sent to the model alongside the `run_code` result, in call order, just as it would be for a direct tool call.
 
+A nested tool that raises [`ToolFailed`](../tools-advanced.md#tool-failed) the snippet does not catch ends `run_code` with a failed tool result instead of a retry, as when the model calls that tool directly. The result is the tool's message, followed by a summary of the other nested calls when the snippet made any, and does not spend `run_code`'s retries. A nested `ModelRetry` the snippet does not catch is still a retry.
+
 Printed output is limited to 10 MiB. Exceeding the limit makes `run_code` return a model retry.
 
 Sandbox execution is bounded by `resource_limits`, which defaults to 30 seconds of execution time
@@ -232,11 +234,6 @@ at a size cap and says how many entries it left out -- so a large payload cannot
 retry. The reported total stays exact whether or not the list was cut, which is what tells the
 model some calls are missing from what it can see. Nothing stops the model from calling those
 tools again.
-
-A nested tool that raises `ToolFailed` the snippet does not catch ends `run_code` with a failed
-tool result instead of a retry, as when the model calls that tool directly. The result carries the
-tool's message and the same started-call summary, and does not spend `run_code`'s retries. A nested
-`ModelRetry` the snippet does not catch is still a retry.
 
 Override them with `resource_limits={'max_duration_seconds': 10, 'max_memory': 134_217_728, 'max_suspensions': 10_000}` and
 `max_tool_calls=25`. Pass `resource_limits='unlimited'` only when another execution boundary

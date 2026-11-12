@@ -305,14 +305,16 @@ def _describe_started_calls(calls: dict[str, ToolCallPart], returns: dict[str, T
     used = 0
     for call_id, call in calls.items():
         result = returns.get(call_id)
-        # `ToolReturnPart.outcome` also allows 'failed', 'interrupted' and 'retried', but this
-        # function only ever sees parts built above, which set 'denied' or leave the default
-        # 'success'. Record any further outcome here rather than letting it fall through and read
-        # as a return.
+        # `ToolReturnPart.outcome` also allows 'interrupted' and 'retried', but this function only
+        # ever sees parts built above, which set 'denied', or 'failed' for a `ToolFailed` the
+        # snippet let escape, or leave the default 'success'. Record any further outcome here
+        # rather than letting it fall through and read as a return.
         if result is None:
             outcome = 'did not finish, so it may have applied a partial change'
         elif result.outcome == 'denied':
             outcome = 'was denied and did not run'
+        elif result.outcome == 'failed':
+            outcome = f'failed: {_preview(result.content)}'
         else:
             outcome = f'returned {_preview(result.content)}'
         line = f'- {call.tool_name}({_preview(call.args)}) {outcome}'
@@ -705,9 +707,10 @@ class RunCodeExecution:
     # Nested `ToolReturn.content` never enters the sandbox; it reaches the model on the `run_code` return.
     # Each call reserves its slot when it starts, so concurrent calls keep call order, as core does.
     user_content: dict[str, list[UserContent]] = field(default_factory=dict[str, list[UserContent]])
-    # Messages of the `ToolFailed` errors nested calls raised. Monty hands back only an uncaught
-    # error's text, so this is how the feed tells a `ToolFailed` that escaped the snippet.
-    tool_failed_messages: list[str] = field(default_factory=list[str])
+    # Each nested call's error message, by call ID in the order the calls settled, and whether the
+    # error was a `ToolFailed`. Monty hands back only an uncaught error's text, so this is how the
+    # feed tells that a `ToolFailed` escaped the snippet.
+    nested_errors: dict[str, tuple[str, bool]] = field(default_factory=dict[str, tuple[str, bool]])
     # Snippet code can catch the error at the call site, so the feed re-raises it once it stops.
     usage_limit_exceeded: UsageLimitExceeded | None = None
 
@@ -730,9 +733,8 @@ class RunCodeExecution:
         record_nested_call(
             call_part, outcome, calls=self.nested_calls, returns=self.nested_returns, user_content=self.user_content
         )
-        if isinstance(outcome.error, ToolFailed):
-            self.tool_failed_messages.append(outcome.error.message)
         if outcome.error is not None:
+            self.nested_errors[call_part.tool_call_id] = (str(outcome.error), isinstance(outcome.error, ToolFailed))
             if outcome.usage_limit_exceeded is not None:
                 self.usage_limit_exceeded = outcome.usage_limit_exceeded
             raise outcome.error
@@ -783,17 +785,33 @@ def _escaped_tool_failed(
     """The failure to report when the snippet ended on a nested call's uncaught `ToolFailed`, else `None`.
 
     Raising it from `run_code` gives the model a failed result that spends no retry, as calling the
-    tool directly does. Monty passes an uncaught error back as a plain `Exception` with the same
-    message, so the message is compared with the `ToolFailed` errors nested calls raised. A snippet
-    that caught one and then raised a different error with exactly the same text is read as a
-    failure too, which tells the model the same thing.
+    tool directly does. Monty passes an error a nested call raised back as a plain `Exception` with
+    the same message, so the latest nested error with that message decides. A snippet that caught
+    a `ToolFailed` and then raised a plain `Exception` with exactly the same text is read as that
+    failure, which tells the model the same thing.
     """
+    if type(error.exception()) is not Exception:
+        return None
     message = error.display(format='msg')
-    if message not in execution.tool_failed_messages:
+    escaped = next(
+        (call_id for call_id, (text, _) in reversed(execution.nested_errors.items()) if text == message), None
+    )
+    if escaped is None or not execution.nested_errors[escaped][1]:
         return None
     _raise_usage_limit_exceeded(execution)
-    # The started calls are listed, as for a retry, so the model does not repeat their side effects.
-    return ToolFailed(f'{execution.capture.prepend_to(message)}{_started_calls_note(execution)}{reset_advice}')
+    content = execution.capture.prepend_to(message)
+    if len(execution.nested_calls) > 1:
+        # Without a traceback, this is what tells the model which other calls already ran, so it
+        # does not repeat their side effects.
+        returns = dict(execution.nested_returns)
+        for call_id, (text, tool_failed) in execution.nested_errors.items():
+            if tool_failed:
+                tool_name = execution.nested_calls[call_id].tool_name
+                returns[call_id] = ToolReturnPart(
+                    tool_name=tool_name, content=text, tool_call_id=call_id, outcome='failed'
+                )
+        content += f'\n\n{_describe_started_calls(execution.nested_calls, returns)}'
+    return ToolFailed(f'{content}{reset_advice}')
 
 
 def _runtime_failure_retry(error: MontyRuntimeError, execution: RunCodeExecution, *, reset_advice: str) -> ModelRetry:
