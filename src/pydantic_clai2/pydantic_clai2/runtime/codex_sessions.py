@@ -186,7 +186,7 @@ def messages(path: Path) -> list[ModelMessage]:
     """The history the session's model saw, as Pydantic AI messages, framed by notes on the change of harness.
 
     History compacted away is kept ahead of the compaction. A summary Codex wrote itself is an
-    `imported_summary`, which every model continues from. An encrypted one is for a model of the
+    `imported_summary`, which CLAI's compaction builds on. An encrypted one is for a model of the
     `openai-codex` provider to continue from, as Codex's did, and for other models to read past.
     """
     # Task IDs derive from the session alone, and a report names no conversation, so none is needed here.
@@ -451,11 +451,14 @@ def _compacted(history: HistoryBuilder, payload: JsonObject, *, at: datetime, mo
         details = {'type': 'compaction', 'encrypted_content': text(item.get('encrypted_content'))}
         part = CompactionPart(None, id=text(item.get('id')) or None, provider_name=PROVIDER, provider_details=details)
         history.respond(part, at=at, model_name=model, provider_name=PROVIDER)
-    summaries = [item for item in replacement if _local_summary(item)]
-    for item in summaries:
-        # Ahead of the messages it kept, which every model then continues from.
-        history.request(imported_summary(_local_summary(item), source=SOURCE, at=at), at=at)
-    _retained_context(history, [item for item in replacement if item not in sealed and item not in summaries], at=at)
+    retained: list[JsonObject] = []
+    for item in replacement:
+        if summary := _local_summary(item):
+            # Ahead of the messages it kept, where CLAI's compaction puts its own summary.
+            history.request(imported_summary(summary, source=SOURCE, at=at), at=at)
+        elif item not in sealed:
+            retained.append(item)
+    _retained_context(history, retained, at=at)
 
 
 def _local_summary(item: JsonObject) -> str:

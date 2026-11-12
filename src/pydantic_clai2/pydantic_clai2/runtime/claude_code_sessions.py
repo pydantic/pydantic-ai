@@ -1,11 +1,10 @@
 """Claude Code sessions: `projects/<project>/<session-id>.jsonl` under `CLAUDE_CONFIG_DIR` or `~/.claude`.
 
 Each line is an entry linked to its parent by `parentUuid`. Rewinding starts a new branch from an
-earlier entry, so the conversation to continue is the chain behind the last message, not every line in
-the file. Parallel tool calls fork that chain: each result hangs off its own call, and only the last
-result continues it. Compaction starts a new chain at a boundary that names the entry before it as its
-`logicalParentUuid`, followed by the summary and the latest messages before the boundary, which Claude
-Code sent after the summary.
+earlier entry, and compaction starts a new chain at its boundary, so the conversation to continue is
+the chain behind the last message, not every line in the file. Parallel tool calls fork that chain:
+each result hangs off its own call, and only the last result continues it. A boundary also names the
+latest messages from before it that Claude Code kept, and sent after the summary.
 
 Besides the user's and the model's messages, the chain holds what Claude Code's harness added to the
 conversation: `attachment` entries with the text it `rendered` for the model (files, reminders, and
@@ -280,7 +279,7 @@ def _history(entries: list[JsonObject], agents: dict[str, DelegationTask], *, ma
 
 
 def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:
-    """The entries behind the last message, with the results of its parallel tool calls, in file order.
+    """The entries behind the last message and the results of its parallel tool calls, as Claude Code sent them.
 
     In a main transcript the last message is the last one off a sidechain; a sub-agent's is all sidechain.
     """
@@ -290,33 +289,21 @@ def _conversation(entries: list[JsonObject], *, main: bool) -> list[JsonObject]:
 
 
 def _as_sent(entries: list[JsonObject]) -> list[JsonObject]:
-    """`entries` with each compaction's summary, then the messages it preserved, right after its boundary.
+    """`entries` in file order, but for a compaction: its summary first, then the messages it preserved.
 
-    Claude Code keeps the latest messages before the boundary, and sends them after the summary, ahead of
-    what it attached after compacting.
+    The preserved messages are logged before the boundary, and what Claude Code attached after compacting,
+    such as restored files, between the boundary and the summary; it sent both after the summary.
     """
-    position = {text(entry.get('uuid')): index for index, entry in enumerate(entries)}
-    follows: dict[int, list[int]] = {}
-    moved: set[int] = set()
-    for index, entry in enumerate(entries):
-        segment = obj(obj(entry.get('compactMetadata')).get('preservedSegment'))
-        summary = position.get(text(segment.get('anchorUuid')))
-        head = position.get(text(segment.get('headUuid')), index)
-        tail = position.get(text(segment.get('tailUuid')), -1)
-        after = [*([summary] if summary is not None else []), *range(head, min(tail, index - 1) + 1)]
-        follows[index] = [moving for moving in after if moving not in moved]
-        moved.update(follows[index])
-    ordered: list[JsonObject] = []
-
-    def place(index: int) -> None:
-        ordered.append(entries[index])
-        for moving in follows[index]:
-            place(moving)
-
-    for index in range(len(entries)):
-        if index not in moved:
-            place(index)
-    return ordered
+    boundary = next((i for i, entry in enumerate(entries) if entry.get('subtype') == 'compact_boundary'), None)
+    if boundary is None:
+        return entries
+    after = range(boundary + 1, len(entries))
+    anchor = text(obj(obj(entries[boundary].get('compactMetadata')).get('preservedSegment')).get('anchorUuid'))
+    # Without an anchor, the boundary's summary is the first one after it.
+    summary = [i for i in after if text(entries[i].get('uuid')) == anchor] or [
+        i for i in after if entries[i].get('isCompactSummary')
+    ][:1]
+    return [*(entries[i] for i in summary), *entries[:boundary], *(entries[i] for i in after if i not in summary)]
 
 
 def _chain(entries: list[JsonObject], *, main: bool) -> set[str]:
@@ -332,16 +319,31 @@ def _chain(entries: list[JsonObject], *, main: bool) -> set[str]:
         None,
     )
     chain: set[str] = set()
+    first: JsonObject = {}
     while node is not None:
+        first = node
         chain.add(text(node.get('uuid')))
         # Popping each entry as it is visited also ends a malformed, cyclic chain.
         by_id.pop(text(node.get('uuid')), None)
-        # A compaction's boundary starts a chain, and names the entry it continues as its logical parent; where
-        # that is missing, the last message it preserved continues it.
-        segment = obj(obj(node.get('compactMetadata')).get('preservedSegment'))
-        links = (node.get('parentUuid'), node.get('logicalParentUuid'), segment.get('tailUuid'))
-        node = next((by_id.pop(link) for link in map(text, links) if link and link in by_id), None)
-    return chain
+        node = by_id.pop(text(node.get('parentUuid')), None)
+    return chain | _preserved(by_id, first)
+
+
+def _preserved(by_id: dict[str, JsonObject], boundary: JsonObject) -> set[str]:
+    """The IDs of the messages a compaction `boundary` kept from before it, its tail back to its head.
+
+    None when the head is not behind the tail, rather than the history before it that compaction replaced.
+    """
+    segment = obj(obj(boundary.get('compactMetadata')).get('preservedSegment'))
+    head = text(segment.get('headUuid'))
+    preserved: set[str] = set()
+    node = by_id.get(text(segment.get('tailUuid')))
+    while node is not None and (uuid := text(node.get('uuid'))) not in preserved:
+        preserved.add(uuid)
+        if uuid == head:
+            return preserved
+        node = by_id.get(text(node.get('parentUuid')))
+    return set()
 
 
 def _parallel_results(entries: list[JsonObject], chain: set[str]) -> set[str]:

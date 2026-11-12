@@ -2,7 +2,7 @@
 
 import json
 import os
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
@@ -20,7 +20,6 @@ from termflow.tui.completion import CompleteEvent, Document
 from termflow.tui.keys import Key
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Hooks
 from pydantic_ai.messages import (
     BinaryContent,
     CompactionPart,
@@ -30,7 +29,6 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
-    SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
@@ -39,15 +37,12 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
-from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness.compaction._summary import is_summary_part, summary_request
+from pydantic_ai_harness.compaction._summary import is_summary_part
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_ai_harness.subagents import DelegationTask, DelegationTasks, is_task_report
 from pydantic_clai2 import chat
@@ -61,13 +56,10 @@ from pydantic_clai2.runtime import claude_code_sessions, codex_sessions
 from pydantic_clai2.runtime.imported_history import (
     Header,
     HistoryBuilder,
-    ImportedSummaryWindow,
     imported_kind,
-    imported_summary,
     is_imported_context,
     is_typed_prompt,
     records,
-    summary_window,
     tail_records,
     timestamp,
 )
@@ -79,8 +71,7 @@ from pydantic_clai2.runtime.imported_sessions import (
     merge,
     save_import,
 )
-from pydantic_clai2.runtime.rewind import rewind_points
-from pydantic_clai2.runtime.session import Session, StockAgent
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -514,7 +505,7 @@ def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
     path = claude_agent_session(tmp_path)
     messages = claude_code_sessions.messages(path)
     assert parts(messages) == [
-        ('ModelRequest', ['UserPromptPart', 'UserPromptPart', 'CompactionPart', 'UserPromptPart']),
+        ('ModelRequest', ['UserPromptPart', 'CompactionPart', 'UserPromptPart']),
         ('ModelResponse', ['ToolCallPart', 'ToolCallPart']),
         ('ModelRequest', ['ToolReturnPart', 'ToolReturnPart', 'UserPromptPart', 'UserPromptPart', 'UserPromptPart']),
         ('ModelResponse', ['TextPart']),
@@ -524,9 +515,8 @@ def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
         ('ModelRequest', ['UserPromptPart']),
     ]
     opening, calls, results, checked, second, reports, done, closing = messages
-    # The history compacted away comes first, then the summary that stands in for it.
-    old, summary = opening.parts[1:3]
-    assert isinstance(old, UserPromptPart) and old.content == 'Before the compaction'
+    # The model's history starts at the compaction, which Claude Code's summary stands in for.
+    summary = opening.parts[1]
     assert is_summary_part(summary) and summary.content == 'Summary of the earlier work'
     assert isinstance(calls, ModelResponse) and calls.provider_response_id == 'm1'
     screenshot, missing, typed, attached, notified = results.parts
@@ -563,33 +553,35 @@ def test_claude_code_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
     )
 
 
-async def test_claude_code_import_keeps_the_history_compaction_replaced(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    'segment',
+    [
+        {'headUuid': 'p1', 'tailUuid': 'p2', 'anchorUuid': 'summary'},
+        # Without an anchor, the summary is the first one after the boundary.
+        {'headUuid': 'p1', 'tailUuid': 'p2'},
+    ],
+)
+def test_claude_code_import_starts_at_the_compaction_summary(tmp_path: Path, segment: dict[str, str]) -> None:
     model = 'claude-opus-5'
     later = {'timestamp': '2026-10-01T12:05:00Z'}
     path = write_jsonl(
         Path.home() / '.claude' / 'projects' / '-work' / f'{CLAUDE_ID}.jsonl',
         [
             {**claude_entry('u0', None, 'user', 'Start'), 'cwd': str(tmp_path)},
-            claude_entry(
-                'a0',
-                'u0',
-                'assistant',
-                [{'type': 'tool_use', 'id': 't0', 'name': 'Read', 'input': dict[str, object]()}],
-                model=model,
-            ),
-            claude_entry('r0', 'a0', 'user', [{'type': 'tool_result', 'tool_use_id': 't0', 'content': 'read'}]),
+            claude_entry('a0', 'u0', 'assistant', [{'type': 'text', 'text': 'Started'}], model=model),
             # The latest messages, which Claude Code sends again after the summary.
-            claude_entry('p1', 'r0', 'user', 'Keep going'),
+            claude_entry('p1', 'a0', 'user', 'Keep going'),
             claude_entry('p2', 'p1', 'assistant', [{'type': 'text', 'text': 'Going'}], model=model),
             {
                 'type': 'system',
                 'subtype': 'compact_boundary',
                 'uuid': 'boundary',
                 'parentUuid': None,
-                # Missing from the transcript, so the last message it preserved continues the chain.
-                'logicalParentUuid': 'gone',
-                'compactMetadata': {'preservedSegment': {'headUuid': 'p1', 'tailUuid': 'p2', 'anchorUuid': 'summary'}},
+                # The history compaction replaced, which is not imported.
+                'logicalParentUuid': 'p2',
+                'compactMetadata': {'preservedSegment': segment},
             },
+            # What Claude Code attached after compacting, which it sent after the summary.
             {**claude_attachment('f1', 'boundary', {'type': 'file'}, 'Contents of a.py'), **later},
             claude_entry('summary', 'f1', 'user', 'Summary so far', isCompactSummary=True, **later),
             claude_entry('u1', 'summary', 'user', 'Next', **later),
@@ -600,111 +592,24 @@ async def test_claude_code_import_keeps_the_history_compaction_replaced(tmp_path
     )
     messages = claude_code_sessions.messages(path)
     assert parts(messages) == [
-        ('ModelRequest', ['UserPromptPart', 'UserPromptPart']),
-        ('ModelResponse', ['ToolCallPart']),
-        ('ModelRequest', ['ToolReturnPart', 'CompactionPart', 'UserPromptPart']),
+        ('ModelRequest', ['UserPromptPart', 'CompactionPart', 'UserPromptPart']),
         ('ModelResponse', ['TextPart']),
         ('ModelRequest', ['UserPromptPart', 'UserPromptPart']),
         ('ModelResponse', ['TextPart']),
         ('ModelRequest', ['UserPromptPart']),
     ]
-    summary = messages[2].parts[1]
+    summary = messages[0].parts[1]
     assert is_summary_part(summary) and summary.content == 'Summary so far'
-    # Every prompt is shown, but only those after the summary can be rewound to.
-    assert [(point.text, point.reason) for point in rewind_points(messages)] == [
-        ('Start', 'predates rewritten context'),
-        ('Next', ''),
-    ]
-
-    sent: list[ModelMessage] = []
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        sent.extend(messages)
-        return ModelResponse(parts=[TextPart('ok')])
-
-    agent = Agent(FunctionModel(respond), capabilities=[ImportedSummaryWindow()])
-    result = await agent.run('More', message_history=messages)
-    # The model continues from the summary, as Claude Code's did; the conversation keeps what it replaced.
-    requests = [part for message in sent if isinstance(message, ModelRequest) for part in message.parts]
-    assert [part.content for part in requests if is_typed_prompt(part)] == ['Keep going', 'Next', 'More']
+    requests = [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
+    assert [part.content for part in requests if is_typed_prompt(part)] == ['Keep going', 'Next']
     assert [context(part)[0] for part in requests if is_imported_context(part)] == [
         'import_start',
         'file',
         'import_end',
     ]
-    assert not any(isinstance(part, ToolReturnPart) for part in requests)
-    assert result.all_messages()[:3] == messages[:3]
-
-
-class _SandboxGroup(CombinedCapability[None]):
-    """A plugin group that supplies the workspace itself."""
-
-    def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
-        return LocalWorkspaceBackend(Path(__file__).parent)
-
-
-@pytest.mark.parametrize(
-    ('stock', 'plugins', 'sent_from'),
-    [
-        # Rebound with the session's plugins, or, without any, never rebound, as it keeps its own model.
-        (True, [Hooks[None]()], 'Theirs'),
-        (True, [], 'Theirs'),
-        (False, [Hooks[None]()], 'Theirs'),
-        # The window would split a group that supplies the workspace, so the whole history is sent.
-        (False, [_SandboxGroup([Hooks[None]()])], 'Start'),
-    ],
-)
-async def test_sessions_send_only_what_follows_an_imported_summary(
-    stock: bool, plugins: list[AbstractCapability[None]], sent_from: str
-) -> None:
-    at = timestamp(AT)
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart('Start')]),
-        ModelResponse(parts=[TextPart('Started')]),
-        ModelRequest(parts=[imported_summary('Theirs', source='claude-code', at=at), UserPromptPart('Next')]),
-        ModelResponse(parts=[TextPart('Done')]),
-    ]
-    sent: list[str] = []
-
-    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        sent.extend(
-            str(part.content)
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, UserPromptPart | CompactionPart)
-        )
-        yield 'ok'
-
-    model = FunctionModel(stream_function=respond)
-    agent: Agent[None, str] = (
-        StockAgent(model, deps_type=type(None), output_type=str, capabilities=[])
-        if stock
-        else Agent(model, deps_type=type(None))
-    )
-    session = Session(agent, deps=None, plugins=plugins, message_history=history)
-    await session.prompt('More')
-    expected = ['Start', 'Theirs', 'Next', 'More']
-    assert sent == expected[expected.index(sent_from) :]
-    assert session.messages[:4] == history
-
-
-def test_summary_window_cuts_only_at_an_imported_summary() -> None:
-    at = timestamp(AT)
-    imported = imported_summary('Theirs', source='codex', at=at)
-    assert summary_window(history := [ModelRequest(parts=[UserPromptPart('Start')])]) is history
-    # A summary CLAI wrote already replaced the history ahead of it, except what it kept on purpose.
-    ours: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Start'), imported]), summary_request('Ours')]
-    assert summary_window(ours) is ours
-    rules, start, after = SystemPromptPart('Rules'), UserPromptPart('Start'), UserPromptPart('Next')
-    window = summary_window([ModelRequest(parts=[rules, start, imported, after])])
-    assert [m.parts for m in window] == [[rules, imported, after]]
-    window = summary_window([ModelResponse(parts=[TextPart('Hi')]), ModelRequest(parts=[imported])])
-    assert [m.parts for m in window] == [[imported]]
     # A summary imported before summaries were `CompactionPart`s is still read as the context it was saved as.
     metadata = {'origin': 'pydantic-ai-harness.imported-context', 'source': 'codex', 'kind': 'compaction_summary'}
     saved = UserPromptPart([TextContent('Theirs', metadata=metadata)])
-    assert summary_window(history := [ModelRequest(parts=[start, saved, after])]) is history
     assert imported_kind(saved) == 'compaction_summary' and not is_typed_prompt(saved)
 
 

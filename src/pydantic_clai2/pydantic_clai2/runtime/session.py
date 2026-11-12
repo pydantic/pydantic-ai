@@ -54,7 +54,6 @@ from pydantic_ai_harness.step_persistence.conversations import (
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
 from pydantic_clai2.plugins import ConversationChanged
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
-from pydantic_clai2.runtime.imported_history import ImportedSummaryWindow
 from pydantic_clai2.runtime.monty_cells import MONTY_CELL, MontyCell
 from pydantic_clai2.runtime.project_identity import ProjectIdentity, git_checkout, project_identity
 from pydantic_clai2.runtime.project_instructions import ProjectInstructions
@@ -147,7 +146,10 @@ def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]], *, include_dy
         if isinstance(plugin, AbstractCapability):
             capability = cast('AbstractCapability[DepsT]', plugin)
             # `apply` visits a group's members, not a group subclass that supplies the workspace itself.
-            if _group_supplies_workspace(capability):
+            if (
+                isinstance(capability, CombinedCapability)
+                and type(capability).get_workspace is not CombinedCapability.get_workspace
+            ):
                 return True
             capability.apply(leaves.append)
         elif include_dynamic:
@@ -155,14 +157,6 @@ def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]], *, include_dy
     return any(
         not leaf.defer_loading and _overrides_get_workspace(leaf, include_dynamic=include_dynamic) for leaf in leaves
     )
-
-
-def _group_supplies_workspace(plugin: AgentCapability[DepsT]) -> bool:
-    """Whether `plugin` is a group that supplies the workspace itself, which composing it with another splits up."""
-    if not isinstance(plugin, CombinedCapability):
-        return False
-    group = cast('CombinedCapability[DepsT]', plugin)
-    return type(group).get_workspace is not CombinedCapability.get_workspace
 
 
 def _overrides_get_workspace(leaf: AbstractCapability[DepsT], *, include_dynamic: bool) -> bool:
@@ -834,10 +828,8 @@ class Session(Generic[DepsT, OutputT]):
     def _bind(self) -> tuple[str | None, list[AgentCapability[DepsT]]]:
         """The model to pass to the next run and its run-level capabilities, rebinding a stock agent first."""
         run_model = self.model
-        capabilities: list[AgentCapability[DepsT]] = list(self.plugins)
+        capabilities = list(self.plugins)
         if isinstance(self._base_agent, StockAgent):
-            # Bound to the stock agent, so the conversations it delegates to get it too.
-            window = ImportedSummaryWindow[DepsT]()
             # CLAI's default is the agent's own model, so a capability that selects one wins.
             agent_model = None if self.model_chosen else self.model
             if agent_model is not None:
@@ -848,15 +840,11 @@ class Session(Generic[DepsT, OutputT]):
                 or any(new is not old for new, old in zip(self.plugins, self._bound_plugins))
             ):
                 instructions = Capability[DepsT](instructions=self._user_instructions)
-                self.agent = self._base_agent.with_plugins([*self.plugins, window, instructions], model=agent_model)
+                self.agent = self._base_agent.with_plugins([*self.plugins, instructions], model=agent_model)
                 self._bound_plugins = tuple(self.plugins)
                 self._bound_model = agent_model
-            # Already bound to the stock agent, including delegation and guardrails; one never rebound lacks the window.
-            capabilities = [window] if self.agent is self._base_agent else []
-        elif not any(_group_supplies_workspace(plugin) for plugin in self.plugins):
-            # Not beside a group that supplies the workspace: composed with it, the group would split into its
-            # members, as for the run's `instructions` in `prompt`. Such a session sends the whole imported history.
-            capabilities.append(ImportedSummaryWindow[DepsT]())
+            # Already bound to the stock agent, including delegation and guardrails.
+            capabilities = []
         if self.model is not None:
             capabilities.append(SessionModels[DepsT](self._resolve_model_id))
         if self.model_defaults is not None:
