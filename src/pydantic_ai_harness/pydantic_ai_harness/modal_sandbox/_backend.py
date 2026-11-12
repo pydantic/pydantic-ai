@@ -629,8 +629,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
         return self._resolved_working_dir
 
     async def _has_setsid(self, sandbox: modal.Sandbox) -> bool:
-        # Idempotent, like `working_dir()`: concurrent first runs may each probe.
-        if self._setsid_available is None:
+        # Idempotent, like `working_dir()`: concurrent first runs may each probe. Starting the display installs
+        # `setsid` when it's missing, so a "no" is kept only without a display.
+        if self._setsid_available is None or (not self._setsid_available and self._display is not None):
             async with self._mapped_errors(sandbox, 'Could not check Modal process isolation'):
                 probe = await sandbox.exec.aio(
                     'sh',

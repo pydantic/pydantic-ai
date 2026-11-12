@@ -672,7 +672,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
 
     async def _has_setsid(self, sandbox: e2b.AsyncSandbox) -> bool:
         async with self._setsid_lock:
-            if self._setsid is None:
+            # Starting the display installs `setsid` when it's missing, so a "no" is kept only without a display.
+            if self._setsid is None or (not self._setsid and self._display is not None):
                 async with self._sdk_errors(sandbox.sandbox_id, 'Could not probe E2B command launcher'):
                     probe = await sandbox.commands.run(
                         'command -v setsid >/dev/null 2>&1',
