@@ -197,9 +197,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     A directory is skipped when any component of its path below the working directory matches, either as written
     or after resolving symlinks, so everything beneath a match is skipped too, while the directories above it are
-    still surfaced. The default covers
-    directories package managers install into, whose instruction files are written for the package's own
-    contributors and would otherwise take precedence over the project's. Matching is case-sensitive.
+    still surfaced. The default covers directories package managers install into, whose instruction files are
+    written for the package's own contributors and would otherwise take precedence over the project's. Matching
+    is case-sensitive.
     """
 
     nested_max_chars: int | None = 32_000

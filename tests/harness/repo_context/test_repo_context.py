@@ -1344,12 +1344,14 @@ AAAAAAAAAAAAAAAAAAAA
     async def test_a_link_into_an_excluded_directory_is_not_surfaced(self, tmp_path: Path) -> None:
         _write(tmp_path / 'libs' / 'AGENTS.md', 'LIBS BODY')
         _write(tmp_path / 'node_modules' / 'dep' / 'AGENTS.md', 'DEP BODY')
-        _write(tmp_path / 'node_modules' / 'dep' / 'index.js', 'x')
+        _write(tmp_path / 'node_modules' / 'dep' / 'index.js', 'DEP SOURCE')
         (tmp_path / 'libs' / 'dep').symlink_to(tmp_path / 'node_modules' / 'dep', target_is_directory=True)
 
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
             if _tool_returns(messages) == 0:
-                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"libs/dep/index.js"}', tool_call_id='x')}
+                yield {
+                    0: DeltaToolCall(name='read_file', json_args='{"path":"libs/dep/index.js"}', tool_call_id='read')
+                }
             else:
                 yield 'done'
 
@@ -1358,7 +1360,13 @@ AAAAAAAAAAAAAAAAAAAA
             capabilities=[FileSystem(root_dir=tmp_path), RepoContext(autoload_instructions=False)],
         ).run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
         # The read itself is allowed; only the dependency's instruction file is held back.
-        assert 'x' in str(result.all_messages())
+        returns = [
+            str(part.content)
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_call_id == 'read'
+        ]
+        assert len(returns) == 1 and 'DEP SOURCE' in returns[0]
         assert _repo_notes(result.all_messages()) == snapshot(
             ['<context-file path="libs/AGENTS.md">\nLIBS BODY\n</context-file>']
         )
