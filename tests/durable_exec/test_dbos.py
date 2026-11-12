@@ -80,6 +80,7 @@ from pydantic_ai.exceptions import (
     ModelHTTPError,
     ModelRequestTimeout,
     ModelRetry,
+    RetryModelRequest,
     RunCancelled,
     RunTimedOut,
     ToolFailed,
@@ -4602,6 +4603,257 @@ async def test_dbos_durability_per_step_model_selector_alias_resolved_by_capabil
         return (await agent.run('hi', deps='acme')).output
 
     assert await run_agent() == 'tenant:acme'
+
+
+def _dbos_failing_primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelAPIError(model_name='primary', message='boom')
+
+
+async def test_dbos_durability_fallback_to_alias_resolved_by_capability(dbos: DBOS) -> None:
+    """A `ModelFallback` candidate only a `ResolveModelId` capability can resolve crosses the step boundary.
+
+    The candidate isn't the run's model, so it isn't recovered from `ctx.model`, and it isn't in `models=`:
+    the string the attempt was resolved from must be what the step re-resolves, with the run's deps.
+    """
+    agent = Agent(
+        FunctionModel(_dbos_failing_primary, model_name='primary'),
+        name='durability_fallback_capability_alias',
+        deps_type=str,
+        capabilities=[ModelFallback('tenant-model'), ResolveModelId(_dbos_tenant_resolver), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', deps='acme')).output
+
+    assert await run_agent() == 'tenant:acme'
+
+
+@dataclass
+class _SwapFallbackModelCapability(AbstractCapability[str]):
+    """Moves a fallback attempt to an unregistered model in `prepare_model_request`, keeping its `model_id`."""
+
+    async def prepare_model_request(
+        self, ctx: RunContext[str], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if request_context.attempt > 1:
+            request_context.model = FunctionModel(_dbos_failing_primary, model_name='swapped')
+        return request_context
+
+
+async def test_dbos_durability_fallback_alias_swapped_by_hook_is_rejected(dbos: DBOS) -> None:
+    """A hook that moves a fallback attempt to another model invalidates the string the candidate was resolved from.
+
+    Rebuilding the candidate from it would send the request to a model the hook didn't choose, so the
+    unregistered model the hook chose is rejected instead.
+    """
+    agent = Agent(
+        FunctionModel(_dbos_failing_primary, model_name='primary'),
+        name='durability_fallback_alias_swapped',
+        deps_type=str,
+        capabilities=[
+            ModelFallback('tenant-model'),
+            _SwapFallbackModelCapability(),
+            ResolveModelId(_dbos_tenant_resolver),
+            DBOSDurability(),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', deps='acme')).output
+
+    with pytest.raises(UserError, match="The model instance 'function:swapped' was not registered"):
+        await run_agent()
+
+
+@dataclass
+class _ClearFallbackModelIdCapability(AbstractCapability[str]):
+    """Clears a fallback attempt's `model_id` in `prepare_model_request`, keeping its model."""
+
+    async def prepare_model_request(
+        self, ctx: RunContext[str], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if request_context.attempt > 1:
+            request_context.model_id = None
+        return request_context
+
+
+async def test_dbos_durability_fallback_alias_cleared_by_hook_is_rejected(dbos: DBOS) -> None:
+    """A fallback candidate whose `model_id` a hook cleared is rejected, not rebuilt as the agent's default model."""
+    agent = Agent(
+        FunctionModel(_dbos_failing_primary, model_name='primary'),
+        name='durability_fallback_alias_cleared',
+        deps_type=str,
+        capabilities=[
+            ModelFallback('tenant-model'),
+            _ClearFallbackModelIdCapability(),
+            ResolveModelId(_dbos_tenant_resolver),
+            DBOSDurability(),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', deps='acme')).output
+
+    with pytest.raises(UserError, match="The model instance 'function:tenant-model' was not registered"):
+        await run_agent()
+
+
+class _LabelModel(WrapperModel):
+    """A behavior-changing wrapper: answers with its label instead of calling the model it wraps."""
+
+    def __init__(self, wrapped: Model, label: str) -> None:
+        super().__init__(wrapped)
+        self.answer = label
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(self.answer)])
+
+
+_labelled_inner = FunctionModel(_dbos_failing_primary, model_name='labelled')
+_first_label = _LabelModel(_labelled_inner, 'first')
+_second_label = _LabelModel(_labelled_inner, 'second')
+
+
+@dataclass
+class _SwapToSecondLabelCapability(AbstractCapability[str]):
+    """Moves a fallback attempt to another registered wrapper around the same model, keeping its `model_id`."""
+
+    async def prepare_model_request(
+        self, ctx: RunContext[str], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if request_context.attempt > 1:
+            request_context.model = _second_label
+        return request_context
+
+
+async def test_dbos_durability_fallback_moved_to_other_registered_wrapper_keeps_hook_choice(dbos: DBOS) -> None:
+    """A hook that moves a fallback attempt to another registered wrapper of the candidate's model is served by it.
+
+    Both wrappers wrap the same model, but each is its own registered selection, so the hook's crosses the step
+    boundary rather than the candidate's string.
+    """
+    agent = Agent(
+        FunctionModel(_dbos_failing_primary, model_name='primary'),
+        name='durability_fallback_other_wrapper',
+        deps_type=str,
+        capabilities=[
+            ModelFallback('first'),
+            _SwapToSecondLabelCapability(),
+            DBOSDurability(models={'first': _first_label, 'second': _second_label}),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', deps='acme')).output
+
+    assert await run_agent() == 'second'
+
+
+@dataclass
+class _RetryOnAliasCapability(AbstractCapability[str]):
+    """Moves a failed request to the 'tenant-model' alias, as a fallback does."""
+
+    async def on_model_request_error(
+        self, ctx: RunContext[str], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        raise RetryModelRequest('tenant-model')
+
+
+@dataclass
+class _ReturnToRunModelCapability(AbstractCapability[str]):
+    """Moves a retry attempt back to the run's model in `prepare_model_request`, keeping the alias's `model_id`."""
+
+    async def prepare_model_request(
+        self, ctx: RunContext[str], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if request_context.attempt > 1:
+            run_model = ctx.model
+            assert isinstance(run_model, FunctionModel)
+            request_context.model = run_model
+        return request_context
+
+
+async def test_dbos_durability_retry_moved_back_to_run_model_keeps_run_model(dbos: DBOS) -> None:
+    """A hook that moves a retry attempt back to the run's model is served by the run's model.
+
+    The alias the retry named no longer names the request's model, so it must not cross the step boundary,
+    where it would rebuild the alias's model that the hook moved away from.
+    """
+    calls: list[str] = []
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('primary')
+        if len(calls) == 1:
+            raise ModelAPIError(model_name='primary', message='boom')
+        return ModelResponse(parts=[TextPart('from primary')])
+
+    agent = Agent(
+        FunctionModel(primary, model_name='primary'),
+        name='durability_retry_moved_back',
+        deps_type=str,
+        capabilities=[
+            _RetryOnAliasCapability(),
+            _ReturnToRunModelCapability(),
+            ResolveModelId(_dbos_tenant_resolver),
+            DBOSDurability(),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', deps='acme')).output
+
+    assert await run_agent() == 'from primary'
+    assert calls == ['primary', 'primary']
+
+
+async def test_dbos_durability_retry_moved_back_to_run_alias_keeps_run_alias(dbos: DBOS) -> None:
+    """A hook that moves a retry attempt back to a run model named by an alias sends the run's alias across.
+
+    The retry's alias names the model the hook moved away from, so the step rebuilds the run's model
+    from the run's own alias instead.
+    """
+    calls: list[str] = []
+
+    def resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
+        if model_id != 'run-alias':
+            return _dbos_tenant_resolver(ctx, model_id)
+
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append('run-alias')
+            if len(calls) == 1:
+                raise ModelAPIError(model_name='run-alias', message='boom')
+            return ModelResponse(parts=[TextPart('from run alias')])
+
+        return FunctionModel(fn, model_name='run-alias')
+
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_retry_moved_back_alias',
+        deps_type=str,
+        capabilities=[
+            _RetryOnAliasCapability(),
+            _ReturnToRunModelCapability(),
+            ResolveModelId(resolver),
+            DBOSDurability(),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', model='run-alias', deps='acme')).output
+
+    assert await run_agent() == 'from run alias'
+    assert calls == ['run-alias', 'run-alias']
 
 
 @dataclass

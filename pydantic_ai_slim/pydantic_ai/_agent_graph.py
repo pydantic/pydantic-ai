@@ -3550,6 +3550,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # next request step, matching `FallbackModel`, rather than sticking to whichever
             # candidate happened to serve this one.
             request_context.model_id = model_id
+            request_context._model_id_resolved_to = model if model_id is not None else None  # pyright: ignore[reportPrivateUsage]
 
         request_context.attempt += 1
 

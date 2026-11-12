@@ -2054,9 +2054,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _model_id_for_request(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> str | None:
         """The cross-boundary identifier for this request's model.
 
-        Prefer the original model-id string the run's model was resolved from
+        Prefer the original model-id string the request's model was resolved from
         ([`ModelRequestContext.model_id`][pydantic_ai.models.ModelRequestContext.model_id]) when the
-        request still targets the run's model: it survives aliases that the resolved model's own
+        request still targets the model it was resolved to -- the run's, or the one a
+        [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] named by a string, such as a
+        `ModelFallback` candidate: it survives aliases that the resolved model's own
         `model_id` doesn't (the worker-side chain re-resolves the same string the caller wrote).
         Durability is the last writer in the before-chain, so it directly sees any outer model swap;
         a swap invalidates the provenance and falls back to `_find_model_id`.
@@ -2065,16 +2067,41 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # A durable run always targets a regular `Model`, never a realtime model, so `ctx.model`
         # (typed as the wider `AbstractModel`) is a `Model` here; the guard narrows it for `unwrap_model`.
         run_model = ctx.model
+        request_model = unwrap_model(request_context.model)
+        # Set when `provenance` is a `RetryModelRequest`'s string, to the model that string was resolved to.
+        resolved_to = request_context._model_id_resolved_to  # pyright: ignore[reportPrivateUsage]
         if (
             provenance is not None
-            and isinstance(run_model, Model)
-            and unwrap_model(request_context.model) is unwrap_model(cast('Model[Any]', run_model))
+            and resolved_to is not None
+            and self._still_targets(request_context.model, resolved_to)
         ):
             return provenance
+        # A hook may move a retried attempt back to the run's model: the run's own string names it then.
+        run_provenance = provenance if resolved_to is None else ctx.model_id
+        if (
+            run_provenance is not None
+            and isinstance(run_model, Model)
+            and request_model is unwrap_model(cast('Model[Any]', run_model))
+        ):
+            return run_provenance
         resolved = self._resolved_request_model(request_context.model)
         if resolved is not None:
             return resolved.model_id
         return self._find_model_id(request_context.model)
+
+    def _still_targets(self, model: Model, resolved_to: Model) -> bool:
+        """Whether `model` is `resolved_to`, under wrappers none of which is registered in `models=`.
+
+        A registered wrapper is a selection of its own, even around the same model, so it keeps its own ID.
+        """
+        candidate: Model | None = model
+        while candidate is not None:
+            if candidate is resolved_to:
+                return True
+            if self._registered_model_id(candidate)[0]:
+                return False
+            candidate = candidate.wrapped if isinstance(candidate, WrapperModel) else None
+        return False
 
     def _record_resolved_request_model(self, model: Model, model_id: str | None, *, registered: bool) -> None:
         model_key = id(model)
