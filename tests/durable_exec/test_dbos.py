@@ -4668,20 +4668,6 @@ async def test_dbos_durability_fallback_alias_swapped_by_hook_is_rejected(dbos: 
 
 
 @dataclass
-class _ReturnToRunModelCapability(AbstractCapability[str]):
-    """Moves a retry attempt back to the run's model in `prepare_model_request`, keeping the alias's `model_id`."""
-
-    async def prepare_model_request(
-        self, ctx: RunContext[str], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        if request_context.attempt > 1:
-            run_model = ctx.model
-            assert isinstance(run_model, FunctionModel)
-            request_context.model = run_model
-        return request_context
-
-
-@dataclass
 class _ClearFallbackModelIdCapability(AbstractCapability[str]):
     """Clears a fallback attempt's `model_id` in `prepare_model_request`, keeping its model."""
 
@@ -4780,6 +4766,20 @@ class _RetryOnAliasCapability(AbstractCapability[str]):
         self, ctx: RunContext[str], *, request_context: ModelRequestContext, error: Exception
     ) -> ModelResponse:
         raise RetryModelRequest('tenant-model')
+
+
+@dataclass
+class _ReturnToRunModelCapability(AbstractCapability[str]):
+    """Moves a retry attempt back to the run's model in `prepare_model_request`, keeping the alias's `model_id`."""
+
+    async def prepare_model_request(
+        self, ctx: RunContext[str], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if request_context.attempt > 1:
+            run_model = ctx.model
+            assert isinstance(run_model, FunctionModel)
+            request_context.model = run_model
+        return request_context
 
 
 async def test_dbos_durability_retry_moved_back_to_run_model_keeps_run_model(dbos: DBOS) -> None:
