@@ -62,7 +62,7 @@ def _open_response_calls(response: ModelResponse, open_calls: set[str]) -> bool:
 
     Repeating an ID within one response makes the two calls indistinguishable, and reusing one that is
     still open leaves the earlier call unanswerable: the later result answers this call instead. Either
-    way the pairing a provider reconstructs is not the one in `messages`.
+    way the pairing a provider reconstructs is not the one the history records.
     """
     call_ids = [part.tool_call_id for part in response.parts if isinstance(part, ToolCallPart)]
     if len(call_ids) != len(set(call_ids)) or not open_calls.isdisjoint(call_ids):
