@@ -319,6 +319,15 @@ never prints model text, because the answer can hold a private report. A DeepInf
 content a Go run sends Go, fork pull request content included. Start any new CI OpenCode run through
 `run_with_fallback`.
 
+The DeepInfra run's config sets the model's `reasoningEffort` to `low`; the Go run's config sets no reasoning effort.
+Without [`reasoning_effort`](https://docs.deepinfra.com/chat/reasoning), DeepInfra returned no reasoning for this
+model, and the model wrote its reasoning into its answer, which then failed validation. OpenCode 2.2.5 spells
+DeepInfra's effort as this setting (`deepinfraChat` in
+[`variant.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/variant.ts)), passes it to the
+provider ([`deepinfra.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/providers/deepinfra.ts)),
+and sends it as `reasoning_effort` (`lowerOptions` in
+[`openai-chat.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/protocols/openai-chat.ts)).
+
 # A copy of the repository picks the `CI` Linux runner
 
 The `CI_LINUX_RUNNER` repository variable sets the runner label of `check` and of every Linux job

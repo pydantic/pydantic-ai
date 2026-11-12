@@ -32,11 +32,14 @@ class Provider:
     model: str
     key_variable: str
     review_engine: ReviewEngine
+    reasoning_effort: str | None = None
+    """The model's `reasoningEffort` setting in the OpenCode config; unset leaves the provider's default."""
 
 
 OPENCODE_GO = Provider('opencode-go', 'opencode-go/deepseek-v4.1-flash', 'OPENCODE_API_KEY', 'opencode')
+# Without `reasoning_effort`, DeepInfra returns no reasoning for this model, which can then reason in its answer.
 DEEPINFRA = Provider(
-    'deepinfra', 'deepinfra/deepseek-ai/DeepSeek-V4.1-Flash', 'DEEPINFRA_API_KEY', 'opencode-deepinfra'
+    'deepinfra', 'deepinfra/deepseek-ai/DeepSeek-V4.1-Flash', 'DEEPINFRA_API_KEY', 'opencode-deepinfra', 'low'
 )
 
 
@@ -81,7 +84,7 @@ def read_only_config(*, agent: str, provider: Provider, steps: int | None = None
     agent_config: dict[str, object] = {'mode': 'primary', 'permissions': permissions}
     if steps is not None:
         agent_config['steps'] = steps
-    return {
+    config: dict[str, object] = {
         'plugins': ['-opencode.browser'],
         'snapshots': False,
         'default_agent': agent,
@@ -93,6 +96,12 @@ def read_only_config(*, agent: str, provider: Provider, steps: int | None = None
         },
         'policies': policies,
     }
+    if provider.reasoning_effort is not None:
+        # OpenCode 2.2.5 sends a model's `reasoningEffort` setting to DeepInfra as `reasoning_effort`.
+        model = provider.model.removeprefix(f'{provider.name}/')
+        settings = {'reasoningEffort': provider.reasoning_effort}
+        config['providers'] = {provider.name: {'models': {model: {'settings': settings}}}}
+    return config
 
 
 def run_with_fallback(
