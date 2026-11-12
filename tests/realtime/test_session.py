@@ -2719,7 +2719,7 @@ async def test_tool_returning_a_file_frames_it_with_its_call() -> None:
         ]
     )
 
-    async def runner(name: str, args: dict[str, Any], call_id: str) -> list[object]:
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> list[dict[str, int] | BinaryImage]:
         return [{'temp': 20}, BinaryImage(data=b'png', media_type='image/png', identifier='radar')]
 
     session = RealtimeSession(conn, runner, model_name='m')
