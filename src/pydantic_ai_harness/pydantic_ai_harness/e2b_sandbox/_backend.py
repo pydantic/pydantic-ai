@@ -833,7 +833,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         """
         if self._display is None:
             raise UserError('This E2B sandbox has no display: create it with `desktop=True`.')
-        await self._display.driver()
+        await self._display.start()
         result = await self.run(['sh', '-c', _START_VIEWER], timeout=30)
         if result.exit_code != 0:
             raise WorkspaceError(

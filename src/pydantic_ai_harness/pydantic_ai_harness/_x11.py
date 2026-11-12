@@ -22,7 +22,7 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.workspaces import CommandResult, SupportsCommands, WorkspaceError, WorkspaceUnavailableError
-from pydantic_ai_harness._display import ManagedDisplay, png_from_base64
+from pydantic_ai_harness._display import LazyDisplay, png_from_base64
 from pydantic_ai_harness._drag import DRAG_PRESS_PAUSE, DRAG_STEP_PAUSE, drag_steps
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
 
@@ -267,13 +267,13 @@ def x11_display(
     size: tuple[int, int],
     script: str,
     where: Callable[[], str],
-) -> ManagedDisplay:
+) -> LazyDisplay:
     """A backend's display on an X server that `script` starts at the size `$1` names, unless one answers.
 
     `script` runs `RECORD_START` when it starts a new X server. `where` names the environment in errors.
     """
 
-    async def start() -> X11Computer:
+    async def start() -> bool:
         width, height = size
         # On `DISPLAY` whatever the backend's own env says, so it checks the X server the actions go to.
         result = await backend.run(['sh', '-c', script, 'sh', f'{width}x{height}'], env=_ENV, timeout=_START_TIMEOUT)
@@ -282,12 +282,9 @@ def x11_display(
                 f'Could not start the display in {where()}: it needs Xvfb, xdotool, xwininfo, scrot and setsid '
                 f'({(result.stderr or result.stdout).strip()})'
             )
-        if STARTED in result.stdout.splitlines():
-            display.started_fresh()
-        return X11Computer(backend)
+        return STARTED in result.stdout.splitlines()
 
-    display = ManagedDisplay(start)
-    return display
+    return LazyDisplay(X11Computer(backend), start)
 
 
 _START_DESKTOP = start_x_server('/tmp/pydantic-ai-xvfb.log')
