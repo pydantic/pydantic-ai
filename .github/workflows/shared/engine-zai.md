@@ -7,8 +7,10 @@
 # expression): gh-aw derives the api-proxy target host AND the
 # `--anthropic-api-base-path` from its parsed URL path at compile time. With a
 # vars expression the path can't be parsed, so the proxy drops the `/api/anthropic`
-# prefix and the upstream returns 404. The `ZAI_API_KEY` secret is injected as
-# `ANTHROPIC_API_KEY` by the AWF api-proxy and excluded from the agent container.
+# prefix and the upstream returns 404. The AWF api-proxy injects the selected Z.AI key
+# as `ANTHROPIC_API_KEY`, which AWF excludes from the agent container. GitHub resolves
+# the key expression before `awf` starts: `ZAI_BACKUP_API_KEY` when the agent-start
+# recheck in `shared/provider-health.md` reports `account=backup`, else `ZAI_API_KEY`.
 # Z.AI Coding Plan exposes an Anthropic-compatible API at https://api.z.ai/api/anthropic.
 #
 # The public definition installs its published runtime. The repository policy is
@@ -17,13 +19,15 @@
 # Required repo variable:
 #   GH_AW_MODEL — unchanged model ID, prefixed with anthropic/ by each workflow.
 # Required secret:
-#   ZAI_API_KEY — API key injected by the AWF api-proxy.
+#   ZAI_API_KEY — primary Coding Plan API key injected by the AWF api-proxy.
+# Optional secret:
+#   ZAI_BACKUP_API_KEY — backup Coding Plan API key, used only when the primary is unusable.
 #
 # Usage:
 #   imports:
 #     - shared/engine-zai.md
 imports:
-  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@764a75c329840605ed6ecced16f102823389c817
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@c9c896e9f097362c69cabf5312d345155aec9625
 runtimes:
   uv: {}
 # Keep existing configurable budgets. AWF also has a fixed 10,000-credit cap.
@@ -49,7 +53,7 @@ engine:
   version: '0.64.0'
   env:
     ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
-    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+    ANTHROPIC_API_KEY: ${{ steps.agent_start_health.outputs.account == 'backup' && secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}
     PAI_AGENT: pydantic_ai_gh_aw_shim.agent:agent
     PAI_RESULT_METADATA: pydantic_ai_gh_aw_shim.agent:result_metadata
     PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
@@ -66,9 +70,8 @@ engine:
     GH_AW_HARNESS_MAX_RETRIES: "0"
   # One agent run at a time per workflow, on the shared Z.AI account. gh-aw applies this
   # group by default, but drops it for a workflow with `pull_request*` triggers.
-  # UI Security runs one review per PR, so reviews of different PRs run in parallel.
   concurrency:
-    group: "gh-aw-pydantic-ai-${{ github.workflow }}${{ github.workflow == 'Pydantic AI UI Security Review' && format('-{0}', github.event.pull_request.number || github.ref) || '' }}"
+    group: "gh-aw-pydantic-ai-${{ github.workflow }}"
     queue: max
 # gh-aw caps the agent job at 60 minutes and detection at 10 by default. Keep GitHub's
 # 360-minute job maximum, so each source's engine step budget fits, and a 20-minute detector.
@@ -162,6 +165,9 @@ safe-outputs:
         timeout-minutes: 15
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          # Serve detection on both Coding Plan accounts when OpenCode Go refuses it before its first step.
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
           # Detection only reads, so a failed OpenCode run is retried. An invalid verdict is not.
           GH_AW_HARNESS_MAX_RETRIES: "3"
@@ -175,6 +181,9 @@ safe-outputs:
         env:
           DETECTOR_OUTCOME: ${{ steps.detection_agentic_execution.outcome }}
           DETECTOR_JOB_STATUS: ${{ job.status }}
+          # The provider and plan of the last OpenCode run, which served detection or failed it.
+          DETECTOR_PROVIDER: ${{ steps.detection_agentic_execution.outputs.provider }}
+          DETECTOR_PLAN: ${{ steps.detection_agentic_execution.outputs.plan }}
           OTEL_SERVICE_NAME: gh-aw.threat-detection
         with:
           script: |
@@ -202,6 +211,8 @@ safe-outputs:
               'gh-aw.detector.outcome': outcome,
               'gh-aw.detector.reason': marker ? marker[1] : valid ? 'verdict' : 'missing_verdict',
               'gh-aw.detector.verdict': valid ? verdict.prompt_injection || verdict.secret_leak || verdict.malicious_patch ? 'blocked' : 'clean' : 'missing',
+              'gh-aw.detector.provider': process.env.DETECTOR_PROVIDER || 'unknown',
+              'gh-aw.detector.plan': process.env.DETECTOR_PLAN || 'unknown',
               'gh-aw.detector.attempts': streams.length,
               'gh-aw.detector.requests': steps.length,
               'gh-aw.detector.usage_available': steps.length > 0,

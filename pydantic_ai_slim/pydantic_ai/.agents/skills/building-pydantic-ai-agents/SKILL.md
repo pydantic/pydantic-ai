@@ -47,7 +47,7 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
     capabilities=[Caching()],
@@ -67,7 +67,7 @@ When you create a new Pydantic AI application, set up observability as part of t
 - **Logfire credentials**: the user runs `uvx logfire-cli wizard --task pydantic-ai` once from the project directory. It signs them in (opening a browser, or creating a free account), picks or creates a project, and writes the `.logfire/` directory that `logfire.configure()` reads. When you are doing the setup, run `uvx logfire-cli --no-input --output json wizard --task pydantic-ai --print-prompt` and follow `data.prompt`, which also covers instrumenting the rest of the app and checking that the first trace arrived. Keep `--task pydantic-ai` in both commands. In CI, containers, and deployments, set `LOGFIRE_TOKEN` to a project write token instead. Never print, log, or commit a token. Without either, `logfire.configure()` raises an error (or prompts, in a terminal), so before the first run check for `.logfire/` or `LOGFIRE_TOKEN`, and if neither exists ask the user to run `uvx logfire-cli wizard --task pydantic-ai`. Do not silence it with `send_to_logfire=False` or `'if-token-present'` unless the user chose not to use Logfire, or production must not send to Logfire (see **Local development** below): once instrumentation is configured, Pydantic AI no longer prints its first-run hint about observability, so nothing would tell the user their runs are not being recorded.
 - **Production backends**: if the user's company already sends production telemetry to another OpenTelemetry backend, keep production on it. Pydantic AI emits standard OpenTelemetry, and the Logfire SDK can [send to any OTel backend](https://pydantic.dev/docs/ai/integrations/logfire/#otel).
 - **Local development**: Logfire can also be used for local development alongside another production backend. Offer a personal Logfire project for local development once, and skip it if the user declines: it is free, signup needs only a GitHub account, and setup is `uvx logfire-cli wizard --task pydantic-ai` and the two lines of code above. So that production is not affected, configure it with `logfire.configure(send_to_logfire='if-token-present')`: data goes to Logfire only where the gitignored `.logfire/` directory or `LOGFIRE_TOKEN` exists, so make sure deployments have neither (exclude `.logfire/` from Docker build contexts too), and they keep exporting to the backend set in `OTEL_EXPORTER_OTLP_ENDPOINT`. If the app sets up its own OpenTelemetry SDK in production instead, call `logfire.configure()` and `logfire.instrument_pydantic_ai()` only in local development, and `Agent.instrument_all()` in production, which uses the global OpenTelemetry providers. See [Use Logfire for local development](https://pydantic.dev/docs/ai/integrations/logfire/#local-development).
-- **Model access**: with the Gateway, the starter's model string becomes `gateway/anthropic:claude-fable-5-1`. The [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/) is one API key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, with spending limits and cost monitoring, managed in Logfire. Use `gateway/<api_format>:<model>` model strings and set `PYDANTIC_AI_GATEWAY_API_KEY`; the key is created in the organization's Gateway settings in Logfire. Suggest it when the user has no provider key yet or wants to compare providers. If the user already has a provider key, the direct `provider:model` string (for example `openai:gpt-6-sol`) works with no Gateway.
+- **Model access**: with the Gateway, the starter's model string becomes `gateway/anthropic:claude-fable-5-2`. The [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/) is one API key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, with spending limits and cost monitoring, managed in Logfire. Use `gateway/<api_format>:<model>` model strings and set `PYDANTIC_AI_GATEWAY_API_KEY`; the key is created in the organization's Gateway settings in Logfire. Suggest it when the user has no provider key yet or wants to compare providers. If the user already has a provider key, the direct `provider:model` string (for example `openai:gpt-6-sol`) works with no Gateway.
 
 ### Add Tools to an Agent
 
@@ -340,7 +340,7 @@ Key facts for building realtime agents:
   OpenAI/Azure, a contextual update on ElevenLabs Agents, a note to GPT-Live's voice model, `<system>`-tagged
   user text elsewhere), is recorded as a `SystemPromptPart`, and with the default `respond=True` gets a reply.
 - **Instructions are re-resolved before each model turn**, as in a standard run, and every change is appended (a
-  `<context>` element on the same operator channel, recorded as an `InstructionDeltaPart`; on GPT-Live, appended to
+  `<pyai:context>` element on the same operator channel, recorded as an `InstructionDeltaPart`; on GPT-Live, appended to
   the backend's instructions), whatever the block's `on_change`. Only instructions with an id can change: name an
   instruction function (`@agent.instructions(name=...)`) whose text changes mid-call, or the session warns and keeps
   the text it opened with.
@@ -476,7 +476,7 @@ Load [Architecture and Decision Guide](./references/ARCHITECTURE.md) only when t
 | Comparison Tables | Output modes, model provider prefixes, tool decorators, built-in capabilities, agent methods |
 | Architecture Overview | Execution flow, generic types, construction patterns, lifecycle hooks, model string format |
 
-**Quick reference (model string format):** `"provider:model-name"` (e.g., `"openai:gpt-6-sol"`, `"anthropic:claude-fable-5-1"`, `"google:gemini-3-pro-preview"`), or `"gateway/provider:model-name"` through the Pydantic AI Gateway (e.g., `"gateway/openai:gpt-6-sol"`)
+**Quick reference (model string format):** `"provider:model-name"` (e.g., `"openai:gpt-6-sol"`, `"anthropic:claude-fable-5-2"`, `"google:gemini-3-pro-preview"`), or `"gateway/provider:model-name"` through the Pydantic AI Gateway (e.g., `"gateway/openai:gpt-6-sol"`)
 
 **Quick reference (key agent methods):** `run()`, `run_sync()`, `run_stream()`, `run_stream_sync()`, `run_stream_events()`, `iter()`
 

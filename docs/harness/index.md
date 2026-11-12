@@ -140,9 +140,9 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Smol Sandbox](smol-sandbox.md) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
 | [BoxLite Sandbox](boxlite-sandbox.md) | Harness | Commands and files in a [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on your own machine, with an optional egress allow-list; no cloud account |
 | [OpenSandbox](opensandbox-sandbox.md) | Harness | Commands and files in a sandbox on your own [OpenSandbox](https://open-sandbox.ai) server, on Docker or Kubernetes |
-| [Docker Sandbox](docker-sandbox.md) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
+| [Docker Container](docker-container.md) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
 | [SSH Workspace](ssh-workspace.md) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
-| [Bubblewrap Sandbox](bubblewrap-sandbox.md) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) sandbox on that workspace's host |
+| [Bubblewrapped Workspace](bubblewrap-sandbox.md) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) wrapper on that workspace's host (best-effort convenience, not a security boundary) |
 
 ### Tools & native abilities
 
@@ -248,9 +248,11 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Approval Reviewer](approval-reviewer.md) | Harness | A second model answers one risk question per call waiting for approval, approves the low-risk ones, and leaves the rest to a person |
 | [Permissions](permissions.md) | Harness | Ask a person before file writes and commands, by permission mode: full access, auto (asks before risky commands), or read-only |
 | [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md) | Core | Resolve approval-deferred tool calls programmatically |
+| [Request Input](../capabilities/request-input.md) | Core | Ask for approvals, answers and external results on deferred tool calls inside the run, durably on AWS Lambda |
 | [System Reminders](system-reminders.md) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
 | [Detect Loops](detect-loops.md) | Harness | Notice repeated tool calls, results, alternations, or responses, and nudge the model, stop the run, or call your handler |
 | [Trajectory Judge](trajectory-judge.md) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
+| [Refine Output](refine-output.md) | Harness | Send the agent back to review and revise its output before the run ends |
 
 ### Self-extension
 

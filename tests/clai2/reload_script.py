@@ -14,6 +14,7 @@ import prompt_toolkit
 import pytest
 from prompt_toolkit.completion import CompleteEvent, Completer
 from prompt_toolkit.document import Document
+from prompt_toolkit.utils import Event
 from rich.console import Console
 from rich.text import Text
 
@@ -115,6 +116,8 @@ async def main(root: Path, mode: str) -> None:
 
     class Prompt(Generic[PromptT]):
         def __init__(self, **kwargs: object) -> None:
+            self.app = self
+            self.on_reset: Event[Prompt[PromptT]] = Event(self)
             completer = kwargs['completer']
             assert isinstance(completer, Completer)
             self.completer = completer

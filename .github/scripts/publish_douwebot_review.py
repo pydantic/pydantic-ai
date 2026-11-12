@@ -13,12 +13,16 @@ from pydantic import BaseModel, Field
 
 APPROVAL_BODY = 'No blocking findings.'
 DOUWEBOT_MARKER = re.compile(
-    r'\n\n<!-- douwebot:review run=([1-9][0-9]*) head=([a-f0-9]{40})(?: engine=(claude|opencode))? -->\Z'
+    r'\n\n<!-- douwebot:review run=([1-9][0-9]*) head=([a-f0-9]{40})(?: engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\Z'
 )
-ReviewEngine = Literal['claude', 'opencode']
+# `opencode` is OpenCode on the OpenCode Go subscription; `opencode-zai` is its fallback on the GLM Coding Plan.
+# Nothing publishes `opencode-deepinfra` any more; it marks reviews DeepInfra served before the Coding Plan replaced it.
+ReviewEngine = Literal['claude', 'opencode', 'opencode-zai', 'opencode-deepinfra']
 REVIEW_ENGINES: dict[ReviewEngine, str] = {
     'claude': 'Reviewer: Claude Code (claude-opus-5-5)',
     'opencode': 'Reviewer: OpenCode (opencode-go/deepseek-v4.1-flash)',
+    'opencode-zai': 'Reviewer: OpenCode (zai-coding-plan/glm-5.3-flash)',
+    'opencode-deepinfra': 'Reviewer: OpenCode (deepinfra/deepseek-ai/DeepSeek-V4.1-Flash)',
 }
 ReviewVerdict = Literal['APPROVE', 'REQUEST_CHANGES', 'INCOMPLETE']
 REVIEW_BODIES: dict[ReviewVerdict, str] = {
@@ -75,7 +79,7 @@ def main() -> None:
     env = os.environ
     head = env['HEAD_SHA']
     engine = env['REVIEW_ENGINE']
-    if engine != 'claude' and engine != 'opencode':
+    if engine != 'claude' and engine != 'opencode' and engine != 'opencode-zai':
         raise ValueError('Unknown review engine')
     endpoint = f'repos/{env["GITHUB_REPOSITORY"]}/pulls/{int(env["PR_NUMBER"])}'
     result: ReviewResult | None = None
