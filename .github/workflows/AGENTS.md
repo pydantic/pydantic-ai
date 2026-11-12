@@ -393,7 +393,8 @@ douwebot's OpenCode fallback, `Category Classify`'s OpenCode fallback and `PR Re
 run's resource attributes name the repository, `github.run_id`, `github.run_attempt` and `github.job`, then the
 caller's attributes. They end with the run's plan as `opencode_fallback.plan`, and its place in the chain, counting
 from 1, as `opencode_fallback.attempt`. OpenCode's own spans carry no model or plan attribute, and both Coding Plan
-accounts call the same endpoint, so only `opencode_fallback.plan` tells their runs apart.
+accounts call the same endpoint, so only `opencode_fallback.plan` tells their runs apart. A restart is its own
+attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` when the review's chain restarted a run.
 
 Threat detection does not set the token. Its `gh-aw.detector.result` span records each detection's usage and outcome,
 and the provider and plan of its last run, which the detector step writes as its `provider` and `plan` outputs.

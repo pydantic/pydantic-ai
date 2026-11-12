@@ -384,6 +384,8 @@ def main() -> None:
                 'pr_review_checks.attempts': len(attempts),
                 **{f'pr_review_checks.{key}': value for key, value in failure.items() if value is not None},
                 **({} if last.finished is None else {'pr_review_checks.step_finish': last.finished}),
+                # Only a restart moves the chain past a run that finished a step.
+                **({'pr_review_checks.restarted': True} if any(run.finished for run in attempts[:-1]) else {}),
             }
         if token := env.get('LOGFIRE_TOKEN', ''):
             failed = 'pr_review_checks.exception' in values
