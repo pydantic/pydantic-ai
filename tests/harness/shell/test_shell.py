@@ -52,6 +52,9 @@ from pydantic_ai_harness.shell._toolset import ShellToolset
 
 from .._tool_calls import call_tool
 
+READINESS_WAIT_TIMEOUT = 300
+"""Bounds a wait for something the test caused, so it only ever catches a hang, never a slow runner."""
+
 
 def _env_toolset(
     shell_dir: Path,
@@ -2376,10 +2379,11 @@ class TestDetachedJobRoundTrip:
     async def test_start_check_stop(self, tmp_path: Path) -> None:
         ts = _shell_toolset(tmp_path)
         command_id = _parse_command_id(
-            await ts.start_command(_ctx(tmp_path), 'echo started; echo warn >&2; echo made > made.txt; exec sleep 300')
+            # `started` comes last, so once it shows, the stderr line and `made.txt` are already written.
+            await ts.start_command(_ctx(tmp_path), 'echo made > made.txt; echo warn >&2; echo started; exec sleep 300')
         )
         job_dir = Path((await _job(ts, _ctx(tmp_path), command_id)).directory)
-        with anyio.fail_after(10):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             while 'started' not in (checked := await ts.check_command(_ctx(tmp_path), command_id)):
                 await anyio.sleep(0.05)  # pragma: lax no cover
         assert checked.endswith('[status: running]')
