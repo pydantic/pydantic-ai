@@ -8457,6 +8457,8 @@ _ACTION_COUNTS = 'computer_action_counts'
 
 # Every action becomes at least one tool action.
 _ACTION_COUNTS_TA = TypeAdapter(list[Annotated[int, Field(ge=1)]])
+_OBJECT_TA = TypeAdapter(dict[str, Any])
+_OBJECTS_TA = TypeAdapter(list[dict[str, Any]])
 
 
 def _map_computer_call(
@@ -8519,10 +8521,10 @@ def _scroll_conversions(call: ToolCallPart | None, result: ComputerResult | None
     if call is None or result is None or result.get('changed'):
         return []
     details = call.provider_details or {}
-    item: dict[str, Any] = details.get('computer_call', {})
-    actions: list[dict[str, Any]] = item.get('actions') or ([item['action']] if item.get('action') else [])
-    tool_actions: list[dict[str, Any]] = call.args_as_dict().get('actions') or []
     try:
+        item = _OBJECT_TA.validate_python(details.get('computer_call', {}))
+        actions = _OBJECTS_TA.validate_python(item.get('actions') or ([item['action']] if item.get('action') else []))
+        tool_actions = _OBJECTS_TA.validate_python(call.args_as_dict().get('actions') or [])
         counts = _ACTION_COUNTS_TA.validate_python(details.get(_ACTION_COUNTS))
     except ValidationError:
         return []
