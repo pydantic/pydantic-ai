@@ -193,16 +193,14 @@ def test_launcher_sends_shared_review_and_restricts_environment(
     assert 'Before returning the structured result, run `gh pr view' not in call.input
     assert 'Use the `gh` CLI only when' not in call.input
     assert review_env.read_text(encoding='utf-8') == 'engine=opencode\n'
-    assert (
-        capsys.readouterr().out == 'OpenCode run served by opencode-go/deepseek-v4.1-flash with `OPENCODE_API_KEY`.\n'
-    )
+    assert capsys.readouterr().out == 'OpenCode run served by opencode-go/deepseek-v4.1-flash on OpenCode Go.\n'
 
 
 GO_LIMIT_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash failed with error type provider.go-limit, status 429.'
 NO_TYPE_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash failed with no error type.'
 TO_ZAI_LOG = (
     'opencode-go/deepseek-v4.1-flash refused the run before its first step; '
-    'retrying on zai-coding-plan/glm-5.3-flash with `ZAI_API_KEY`.'
+    'retrying on zai-coding-plan/glm-5.3-flash on the primary Coding Plan.'
 )
 ZAI_LOG = 'OpenCode run on zai-coding-plan/glm-5.3-flash'
 # What OpenCode 2.2.5 writes when the Coding Plan's quota refuses the first request: Z.AI code 1308 or 1310.
@@ -230,7 +228,7 @@ def test_go_refusal_reruns_the_review_on_the_coding_plan(
     assert capsys.readouterr().out == (
         f'OpenCode run on opencode-go/deepseek-v4.1-flash failed with error type {kind}, status 429.\n'
         f'{TO_ZAI_LOG}\n'
-        'OpenCode run served by zai-coding-plan/glm-5.3-flash with `ZAI_API_KEY`.\n'
+        'OpenCode run served by zai-coding-plan/glm-5.3-flash on the primary Coding Plan.\n'
     )
 
 
@@ -249,8 +247,8 @@ def test_coding_plan_quota_refusal_reruns_the_review_on_the_backup_account(
         f'{GO_LIMIT_LOG}\n{TO_ZAI_LOG}\n'
         f'{ZAI_LOG} failed with error type provider.quota, status 429.\n'
         'zai-coding-plan/glm-5.3-flash refused the run before its first step; '
-        'retrying on zai-coding-plan/glm-5.3-flash with `ZAI_BACKUP_API_KEY`.\n'
-        'OpenCode run served by zai-coding-plan/glm-5.3-flash with `ZAI_BACKUP_API_KEY`.\n'
+        'retrying on zai-coding-plan/glm-5.3-flash on the backup Coding Plan.\n'
+        'OpenCode run served by zai-coding-plan/glm-5.3-flash on the backup Coding Plan.\n'
     )
 
 

@@ -32,6 +32,8 @@ class Provider:
     """The variable OpenCode reads the provider's key from."""
     secret_variable: str
     """The workflow variable that holds this account's key."""
+    plan: str
+    """The subscription the job log names for this account."""
     review_engine: ReviewEngine
     handover_errors: frozenset[str]
     """OpenCode error types that hand a run this provider refused to the next provider in the chain."""
@@ -47,6 +49,7 @@ OPENCODE_GO = Provider(
     'opencode-go/deepseek-v4.1-flash',
     'OPENCODE_API_KEY',
     'OPENCODE_API_KEY',
+    'OpenCode Go',
     'opencode',
     frozenset({'provider.go-limit', 'provider.quota'}),
 )
@@ -56,6 +59,7 @@ ZAI = Provider(
     'zai-coding-plan/glm-5.3-flash',
     'ZHIPU_API_KEY',
     'ZAI_API_KEY',
+    'the primary Coding Plan',
     'opencode-zai',
     frozenset({'provider.quota'}),
 )
@@ -64,6 +68,7 @@ ZAI_BACKUP = Provider(
     'zai-coding-plan/glm-5.3-flash',
     'ZHIPU_API_KEY',
     'ZAI_BACKUP_API_KEY',
+    'the backup Coding Plan',
     'opencode-zai',
     frozenset(),
 )
@@ -174,7 +179,7 @@ def run_with_fallback(
                 'json',
             ]
             result = launch(command, env, stream)
-        print(f'OpenCode run served by {provider.model} with `{provider.secret_variable}`.')
+        print(f'OpenCode run served by {provider.model} on {provider.plan}.')
         return result, provider
 
     def report_failure(provider: Provider) -> tuple[str | None, bool]:
@@ -215,7 +220,7 @@ def run_with_fallback(
                 raise
             print(
                 f'{provider.model} refused the run before its first step; '
-                f'retrying on {successor.model} with `{successor.secret_variable}`.'
+                f'retrying on {successor.model} on {successor.plan}.'
             )
     try:
         return run_on(chain[-1], os.environ[chain[-1].secret_variable])
