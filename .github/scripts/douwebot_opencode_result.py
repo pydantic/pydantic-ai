@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -11,6 +12,10 @@ from publish_douwebot_review import ReviewResult
 from pydantic import TypeAdapter, ValidationError
 
 _EVENT = TypeAdapter(dict[str, object])
+# Some models write prose, then the requested JSON object in a Markdown code fence, despite the prompt.
+# The last fenced block is the answer when it ends the text; text after it still fails.
+_OPENING_FENCE = re.compile(r'[ \t]*```[\w+-]*[ \t]*')
+_CLOSING_FENCE = re.compile(r'[ \t]*```')
 
 
 def final_text(path: Path) -> str:
@@ -42,6 +47,20 @@ def final_text(path: Path) -> str:
     raise ValueError('OpenCode review did not return text')
 
 
+def unfenced(text: str) -> str:
+    """Return the fenced block that ends `text`, or `text` itself when no fence ends it.
+
+    One pass over the lines: the answer is model-controlled, and a backtracking regex over it is quadratic.
+    """
+    *lines, closing = text.rstrip().split('\n')
+    if _CLOSING_FENCE.fullmatch(closing):
+        # The block between the opening and the closing fence has at least one line, possibly empty.
+        for index in range(len(lines) - 2, -1, -1):
+            if _OPENING_FENCE.fullmatch(lines[index]):
+                return '\n'.join(lines[index + 1 :])
+    return text
+
+
 def rejection_reason(error: ValueError) -> str:
     """Say why `final_text`, or validation of the text it returned, rejected a stream, without repeating the stream."""
     if isinstance(error, ValidationError):
@@ -53,12 +72,17 @@ def rejection_reason(error: ValueError) -> str:
 
 def review_result(path: Path) -> ReviewResult:
     """Return the final assistant result only after a normal completed stream."""
-    return ReviewResult.model_validate_json(final_text(path))
+    text = unfenced(final_text(path))
+    # glm-5.3-flash also writes prose before a bare JSON object. That prose still fails when it holds a `{`.
+    return ReviewResult.model_validate_json(text[max(text.find('{'), 0) :])
 
 
 def main() -> None:
     """Publish one compact validated result as a GitHub Actions output."""
-    result = review_result(Path(sys.argv[1]))
+    try:
+        result = review_result(Path(sys.argv[1]))
+    except ValueError as exc:
+        sys.exit(f'OpenCode returned an invalid review: {rejection_reason(exc)}')
     with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
         output.write('result=' + json.dumps(result.model_dump(), separators=(',', ':')) + '\n')
 

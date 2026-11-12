@@ -4,9 +4,10 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import fields
 from typing import Any, Literal
 
-from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
+from aws_durable_execution_sdk_python.concurrency.models import BatchResult
+from aws_durable_execution_sdk_python.config import ParallelConfig, StepConfig, StepSemantics
 from aws_durable_execution_sdk_python.retries import RetryDecision
-from aws_durable_execution_sdk_python.serdes import SerDes
+from aws_durable_execution_sdk_python.serdes import SerDes, SerDesContext
 from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from pydantic_ai.durable_exec import (
@@ -43,6 +44,8 @@ class AWSLambdaOperationConfig(RoleBasedOperationConfig[StepConfig | None]):
         base_config = _parse_step_config(base)
         self.base_step_config = base_config
         """The `StepConfig` every step gets unless a tool's metadata overrides it."""
+        self.parallel_config = _parallel_config(base_config)
+        """Checkpoints a `parallel` operation's results with the configured `serdes`, as steps are."""
 
         def resolve_tool(
             operation_id: DurableOperationId, tool: object | None, tool_name: str
@@ -100,6 +103,28 @@ class AWSLambdaOperationBackend(JournalCallableOperationBackend[StepConfig | Non
         # Execution in a durable context guarantees a bridge.
         assert bridge is not None
         return await bridge.run_step(name, body, config)
+
+
+def _parallel_config(config: StepConfig | None) -> ParallelConfig | None:
+    serdes: SerDes[Any] | None = config.serdes if config is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    if serdes is None:
+        return None
+    return ParallelConfig(serdes=_BatchResultSerDes(serdes), item_serdes=serdes)
+
+
+class _BatchResultSerDes(SerDes[BatchResult[Any]]):
+    """Checkpoints a `parallel` operation's `BatchResult` through a serializer of plain values."""
+
+    def __init__(self, inner: SerDes[Any]) -> None:
+        self._inner = inner
+
+    def serialize(self, value: BatchResult[Any], serdes_context: SerDesContext) -> str:
+        data: dict[str, Any] = value.to_dict()  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        return self._inner.serialize(data, serdes_context)
+
+    def deserialize(self, data: str, serdes_context: SerDesContext) -> BatchResult[Any]:
+        batch: BatchResult[Any] = BatchResult.from_dict(self._inner.deserialize(data, serdes_context))  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        return batch
 
 
 def _parse_step_config(config: Mapping[str, Any] | None) -> StepConfig | None:

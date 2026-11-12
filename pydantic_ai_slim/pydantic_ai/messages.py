@@ -4390,7 +4390,9 @@ class BaseToolCallPart(Generic[ArgsT_co]):
             return self.args
         try:
             args = pydantic_core.from_json(self.args)
-            assert isinstance(args, dict), 'args should be a dict'
+            # Not an `assert`: `python -O` strips those.
+            if not isinstance(args, dict):
+                raise AssertionError('args should be a dict')
             return cast(dict[str, Any], args)
         except (ValueError, AssertionError):
             if raise_if_invalid:
@@ -4714,19 +4716,24 @@ CapabilityPartVoice: TypeAlias = Literal['data', 'instruction']
 
 
 Authority: TypeAlias = Literal['operator', 'user', 'none']
-"""How much authority content in a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] carries with the model.
+"""How much authority content carries with the model, by who wrote it.
 
-- `'operator'`: the application's own: it reaches the model in the application's voice, as a system message.
-- `'user'`: the user's: it reaches the model in the user's turn, labelled as attached by the application on the user's
-  behalf, since the user didn't type it now.
-- `'none'`: data, such as a tool's output, another model's text or a file someone else wrote: it reaches the model in
-  a frame, with a note naming who wrote it.
+- `'operator'`: the application's own, such as its instructions or files the operator controls. In a
+  [`CapabilityPart`][pydantic_ai.messages.CapabilityPart], it reaches the model in the application's voice, as a
+  system message.
+- `'user'`: the user's, such as a user's saved notes or uploads. In a capability part, it reaches the model in the
+  user's turn, labelled as attached by the application on the user's behalf, since the user didn't type it now.
+- `'none'`: data, such as a tool's output, another model's text or a file someone else wrote. In a capability part, it
+  reaches the model in a frame, with a note naming who wrote it.
 
-Every [source][pydantic_ai.messages.CapabilityPartSource] has one. A part reaches the model with the lower of its
-source's authority and the authority its kind asks for: an
+Every capability part's [source][pydantic_ai.messages.CapabilityPartSource] has one. A part reaches the model with the
+lower of its source's authority and the authority its kind asks for: an
 [`InstructionCapabilityPart`][pydantic_ai.messages.InstructionCapabilityPart] asks for `'operator'` and a
 [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] for `'none'`. A part whose source has less authority
 than its kind asks for is downgraded, never refused.
+
+A [`Workspace`][pydantic_ai.workspaces.Workspace]'s [`authority`][pydantic_ai.workspaces.Workspace.authority] is
+the authority of the files in it.
 """
 
 _AUTHORITY_RANK: Final[dict[Authority, int]] = {'none': 0, 'user': 1, 'operator': 2}
@@ -5073,6 +5080,9 @@ class CapabilityPart:
                 f'{owner} has `voice={cls._voice!r}` from its base, so it cannot render with `voice={self.rendering.voice!r}`.'
             )
         _check_capability_rendering(owner, self.rendering)
+        if self.rendering.voice == 'instruction' and cls._registered_kind is None:
+            # Registration checked a registered kind's name; an unknown part's comes from history or whoever built it.
+            _check_instruction_kind_tag(owner, self.kind)
         self._check_voice(owner)
         for name in self.rendering.attributes:
             value = self._attribute_value(name)
@@ -5218,6 +5228,17 @@ def _narrowed_content_type(cls: type[CapabilityPart]) -> Any:
             [content_type] = get_args(base)
             return None if isinstance(content_type, TypeVar) else content_type
     return None
+
+
+def _check_instruction_kind_tag(owner: str, kind: str) -> None:
+    """Raise unless the name in `kind` can frame an instruction part downgraded onto the user channel."""
+    try:
+        check_capability_frame(kind.rpartition('.')[2], ())
+    except UserError as e:
+        raise UserError(
+            f"{owner} is in the application's voice, and a part downgraded from it is framed in a tag named after its "
+            f'kind, so the name must work as a data tag: {e}'
+        ) from e
 
 
 def _capability_part_kind(cls: type[CapabilityPart], namespace: str | None, name: str | None) -> str:
