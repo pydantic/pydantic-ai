@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, InitVar, dataclass, field
 from functools import cached_property, partial
-from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, assert_never, cast
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -1289,21 +1289,18 @@ def _add_retry_feedback(
     )
     if isinstance(translated, ToolReturnPart):
         # Tool-related retries are handled when processing ToolCallPart in ModelResponse
-        pass
-    else:
-        # Harness feedback dumps in the voice the model is shown it in, so a transcript
-        # can't read it as something a person wrote
-        # (https://github.com/pydantic/pydantic-ai/issues/6404). The part itself rides in
-        # `provider_metadata` either way, so the reload reconstructs it instead of the
-        # plain part the rendered text alone would produce.
-        feedback_ui_part = TextUIPart(
-            text=translated.model_response(),
-            state='done',
-            provider_metadata=dump_provider_metadata(retry_feedback=retry_feedback_payload(translated)),
-        )
-        _add_segment(
-            segments, 'system' if _retry_feedback_speaks_for_the_harness(translated) else 'user', feedback_ui_part
-        )
+        return
+    # Harness feedback dumps in the voice the model is shown it in, so a transcript
+    # can't read it as something a person wrote
+    # (https://github.com/pydantic/pydantic-ai/issues/6404). The part itself rides in
+    # `provider_metadata` either way, so the reload reconstructs it instead of the
+    # plain part the rendered text alone would produce.
+    feedback_ui_part = TextUIPart(
+        text=translated.model_response(),
+        state='done',
+        provider_metadata=dump_provider_metadata(retry_feedback=retry_feedback_payload(translated)),
+    )
+    _add_segment(segments, 'system' if _retry_feedback_speaks_for_the_harness(translated) else 'user', feedback_ui_part)
 
 
 def _convert_user_prompt_part(
@@ -1552,6 +1549,12 @@ def _load_user_data_part(builder: MessagesBuilder, part: DataUIPart, content: li
         builder.add(effort_part)
 
 
+_HeldBackRequestPart: TypeAlias = (
+    ToolReturnPart | ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart
+)
+"""A request part an assistant `UIMessage` step holds back until the step ends."""
+
+
 @dataclass
 class _AssistantLoadContext:
     """What `VercelAIAdapter._load_assistant_message` carries from one part of an assistant `UIMessage` to the next."""
@@ -1559,13 +1562,7 @@ class _AssistantLoadContext:
     builder: MessagesBuilder
     enqueued: list[ModelMessage]
     has_steps: bool
-    pending_returns: list[
-        ToolReturnPart | ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart
-    ] = field(
-        default_factory=list[
-            ToolReturnPart | ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart
-        ]
-    )
+    pending_returns: list[_HeldBackRequestPart] = field(default_factory=list[_HeldBackRequestPart])
     # Enqueued messages were delivered after the step's tool returns, so they wait with them.
     pending_enqueued: list[ModelMessage] = field(default_factory=list[ModelMessage])
 
