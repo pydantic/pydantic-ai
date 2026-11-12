@@ -148,7 +148,7 @@ async def main():
 3. Ends the wait the run is in. The run continues with the decision: the approved refund runs, and the model writes its reply.
 4. Stands in for the approver, who opens the approvals page and clicks Approve, which posts to `/approvals/{token}`.
 
-_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
+_(To run this example, add `asyncio.run(main())`; no other changes are needed.)_
 
 The wait lives in the process: if the process restarts, the run and its wait are gone, and resolving the old token raises a [`UserError`][pydantic_ai.exceptions.UserError]. So does a token that is wrong, from another process, or already resolved, timed out or cancelled. For waits that must survive restarts, use a durable engine, or end the run with `DeferredToolRequests` output and store the conversation as [Pausing a conversation](../deferred-tools.md#pausing-a-conversation) shows.
 
