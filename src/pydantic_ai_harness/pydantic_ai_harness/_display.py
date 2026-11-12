@@ -1,4 +1,4 @@
-"""`ManagedDisplay`, a backend's display started on first use and again after a failure, and helpers the displays share."""
+"""`LazyDisplay`, a backend's display started on first use and again after a failure, and helpers the displays share."""
 
 from __future__ import annotations as _annotations
 
@@ -14,7 +14,7 @@ from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError, Worksp
 from ._png import PNG_SIGNATURE
 from .computer_use import DisplayAction, UnsupportedActionError
 
-__all__ = ('DisplayDriver', 'ManagedDisplay')
+__all__ = ('DisplayDriver', 'LazyDisplay')
 
 T = TypeVar('T')
 
@@ -48,64 +48,58 @@ class DisplayDriver(Protocol):
     async def cursor_position(self) -> Point: ...
 
 
-class ManagedDisplay:
+class LazyDisplay:
     """The display a backend hands out for its lifetime: started on first use, and again after a failure.
 
-    `start` brings the display up, doing nothing to one that's running, and returns its driver.
+    Like the backend, it does nothing when built. `driver` drives the display once it runs. `start` brings the
+    display up, doing nothing to one that's running, and returns whether it launched a new display.
 
     A call that only looks, such as a screenshot, is retried once after a failure, which starts a display that was
-    lost; an action isn't, so nothing is done twice. The backend calls `started_fresh` when `start` launched a new
-    display. Until a screenshot shows the new display, an action refuses to run: the windows it was meant for are
-    gone, whichever call launched it.
+    lost; an action isn't, so nothing is done twice. Until a screenshot shows a display that `start` launched, an
+    action refuses to run: the windows it was meant for are gone, whichever call launched it.
 
     It implements [`Display`][pydantic_ai_harness.computer_use.Display] and every optional ability.
     """
 
-    def __init__(self, start: Callable[[], Awaitable[DisplayDriver]]):
+    def __init__(self, driver: DisplayDriver, start: Callable[[], Awaitable[bool]]):
+        self._driver = driver
         self._start = start
-        self._driver: DisplayDriver | None = None
+        self._running = False
+        """Whether the display is known to be running, so a call needn't start it first."""
         self._lock = anyio.Lock()
         self._unseen = False
         """Whether a display launched since the last screenshot, so no one has seen what is on it."""
 
-    def started_fresh(self) -> None:
-        """Record that `start` launched a new display, without the windows that were open before."""
-        self._unseen = True
+    async def _start_unless_running(self) -> None:
+        # One start at a time: two would both find no display and start two.
+        async with self._lock:
+            if not self._running:
+                self._unseen |= await self._start()
+                self._running = True
 
     async def _look(self, call: Callable[[DisplayDriver], Awaitable[bytes]]) -> bytes:
         image = await self._call(call, observe=True)
         self._unseen = False
         return image
 
-    async def _driver_or_start(self) -> DisplayDriver:
-        """The running display's driver, starting the display unless it's running."""
-        # One start at a time: two would both find no display and start two.
-        async with self._lock:
-            if self._driver is None:
-                self._driver = await self._start()
-            return self._driver
-
     async def _call(self, call: Callable[[DisplayDriver], Awaitable[T]], *, observe: bool) -> T:
         retry = observe
         while True:
-            driver = None
             try:
-                driver = await self._driver_or_start()
-                result = await call(driver)
+                await self._start_unless_running()
+                return await call(self._driver)
             except UnsupportedActionError:
                 raise  # a refused action, such as an unknown key: the display is fine
             except Exception as error:
-                # The display may have stopped, or the environment restarted: the next call starts it again.
-                if driver is not None and self._driver is driver:
-                    self._driver = None
+                # The display may have stopped, or the environment restarted: the next call starts it again, which
+                # does nothing to a display that is still running.
+                self._running = False
                 # Retrying can't help an unavailable environment, and would double a timeout.
                 if isinstance(error, WorkspaceUnavailableError | WorkspaceTimeoutError):
                     raise
                 if not retry:
                     raise
                 retry = False
-            else:
-                return result
 
     async def display_size(self) -> tuple[int, int]:
         return await self._call(lambda driver: driver.display_size(), observe=True)
