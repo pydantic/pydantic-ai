@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import anyio
+import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRetry, RunContext, ToolDefinition, ToolFailed
@@ -23,10 +24,10 @@ class AccountNotConnected(ToolFailed):
 
 
 @dataclass
-class RecordRunCodeErrors(AbstractCapability[Any]):
-    """Records the exception each `run_code` execution ends with, as an error-reporting hook would."""
+class RecordToolErrors(AbstractCapability[Any]):
+    """Records the exception each tool execution ends with, by tool name, as an error-reporting hook would."""
 
-    errors: list[Exception] = field(default_factory=list[Exception])
+    errors: list[tuple[str, Exception]] = field(default_factory=list[tuple[str, Exception]])
 
     async def wrap_tool_execute(
         self,
@@ -40,12 +41,11 @@ class RecordRunCodeErrors(AbstractCapability[Any]):
         try:
             return await handler(args)
         except Exception as error:
-            if call.tool_name == 'run_code':
-                self.errors.append(error)
+            self.errors.append((call.tool_name, error))
             raise
 
 
-async def _run_code_returns(*snippets: str, recorder: RecordRunCodeErrors | None = None) -> Sequence[ToolReturnPart]:
+async def _run_code_returns(*snippets: str, recorder: RecordToolErrors | None = None) -> Sequence[ToolReturnPart]:
     """Run each snippet as one `run_code` call, then finish, and return the `run_code` results."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -54,7 +54,7 @@ async def _run_code_returns(*snippets: str, recorder: RecordRunCodeErrors | None
             return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': snippets[step]})])
         return ModelResponse(parts=[TextPart(content='done')])
 
-    agent = Agent(FunctionModel(respond), capabilities=[CodeMode(), recorder or RecordRunCodeErrors()], retries=1)
+    agent = Agent(FunctionModel(respond), capabilities=[CodeMode(), recorder or RecordToolErrors()], retries=1)
     calendar_failed = anyio.Event()
 
     @agent.tool_plain
@@ -212,20 +212,24 @@ No calendar is connected.
 Account for all 2 before retrying; repeating a call repeats whatever it already did.\
 """)
 
-    async def test_tool_failed_subclass_reaches_run_code_hooks_as_the_cause(self) -> None:
-        recorder = RecordRunCodeErrors()
-        (part,) = await _run_code_returns('print("checking")\nawait read_inbox()', recorder=recorder)
+    @pytest.mark.parametrize('code', ['await read_inbox()', 'print("checking")\nawait read_inbox()'])
+    async def test_tool_failed_subclass_reaches_hooks(self, code: str) -> None:
+        recorder = RecordToolErrors()
+        (part,) = await _run_code_returns(code, recorder=recorder)
         assert part.outcome == 'failed'
-        (error,) = recorder.errors
+        (nested_name, nested_error), (run_code_name, run_code_error) = recorder.errors
+        # A hook on the nested tool gets the instance the tool raised.
+        assert (nested_name, run_code_name) == ('read_inbox', 'run_code')
+        assert isinstance(nested_error, AccountNotConnected)
+        assert nested_error.account == 'email'
+        # On `run_code`, core wraps the `ToolFailed` that carries the extra text, which is caused by that
+        # same instance. The chain has this shape whether or not the snippet printed anything.
         causes: list[BaseException] = []
-        cause: BaseException | None = error
+        cause: BaseException | None = run_code_error
         while cause is not None:
             causes.append(cause)
             cause = cause.__cause__
-        # Core wraps the `ToolFailed` `run_code` raises, which carries the printed output, and that
-        # one is caused by the instance the nested tool raised.
         assert [type(cause).__name__ for cause in causes] == snapshot(
             ['ToolFailedError', 'ToolFailed', 'AccountNotConnected']
         )
-        assert isinstance(causes[-1], AccountNotConnected)
-        assert causes[-1].account == 'email'
+        assert causes[-1] is nested_error
