@@ -268,14 +268,13 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   the job validates only that fenced block, so prose before the fence passes; text after it still fails.
   The check's `max_steps` and `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive
   starting values, to be tuned down from recorded runs. Token totals are recorded and never capped.
-  With `LOGFIRE_TOKEN`
-  set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
-  with its outcome, steps, tokens and duration. OpenCode's spans carry no prompt or completion text
-  and no token counts. A vulnerability that already exists on the default branch goes only to the
-  private triage Slack webhook, escaped and quoted in a code block because the model wrote it. Result
-  artifacts are public, so they carry no private report. A
-  review job also leaves out a finding on a file outside its check or on a line the pull request did
-  not add or remove, and its result keeps only how many it dropped of each severity.
+  With `LOGFIRE_TOKEN` set, OpenCode exports its own spans and logs over OTLP, and the runner exports
+  one span per review with its outcome, steps, tokens and duration. OpenCode's spans carry no prompt
+  or completion text and no token counts. A vulnerability that already exists on the default branch
+  goes only to the private triage Slack webhook, escaped and quoted in a code block because the model
+  wrote it. Result artifacts are public, so they carry no private report. A review job also leaves out
+  a finding on a file outside its check or on a line the pull request did not add or remove, and its
+  result keeps only how many it dropped of each severity.
 - `publish` validates every finding against its check's files, and drops a finding on a line outside
   GitHub's patch for its file. The job log counts every dropped finding. A dropped `critical` or
   `high` finding marks its check `INCOMPLETE`, including one on a file whose patch GitHub omitted. A
