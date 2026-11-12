@@ -60,6 +60,7 @@ from .prepare_tools import PrepareOutputTools, PrepareTools
 from .process_event_stream import ProcessEventStream
 from .process_history import ProcessHistory
 from .reinject_system_prompt import ReinjectSystemPrompt
+from .request_input import RequestInput
 from .resolve_model_id import ModelIdResolver, ResolveModelId
 from .select_model import SelectModel
 from .set_tool_metadata import SetToolMetadata
@@ -183,6 +184,7 @@ __all__ = [
     'NativeCompaction',
     'DynamicCapability',
     'durable_operation',
+    'RequestInput',
     'HandleDeferredToolCalls',
     'HistoryProcessor',
     'HookTimeoutError',

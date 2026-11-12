@@ -1236,7 +1236,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Raises:
             UserError: If this `RunContext` isn't backed by a running agent (e.g. the synthetic
                 context from `Agent.system_prompt_parts`, or across a durable-execution
-                serialization boundary such as a Temporal activity).
+                serialization boundary such as a Temporal activity), or if the run's event loop
+                can't be reached from the calling thread or loop (e.g. a run inside a Temporal
+                workflow cancelled from another thread).
         """
         # Read via `__dict__` because `TemporalRunContext.__getattribute__` raises a
         # serialize-it-yourself `UserError` for absent fields, which would be misleading here:

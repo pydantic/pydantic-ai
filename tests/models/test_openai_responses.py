@@ -1857,6 +1857,7 @@ async def test_openai_responses_stream_function_call_args_from_done_event(
                     id='fc_1',
                     provider_name='openai',
                 ),
+                canonical_system='openai',
             ),
             PartDeltaEvent(
                 index=0,
@@ -1871,6 +1872,7 @@ async def test_openai_responses_stream_function_call_args_from_done_event(
                     id='fc_1',
                     provider_name='openai',
                 ),
+                canonical_system='openai',
             ),
         ]
     )
@@ -1995,6 +1997,7 @@ async def test_openai_responses_stream_parallel_function_call_args(allow_model_r
                     id='fc_done',
                     provider_name='openai',
                 ),
+                canonical_system='openai',
             ),
             PartDeltaEvent(
                 index=0,
@@ -2010,6 +2013,7 @@ async def test_openai_responses_stream_parallel_function_call_args(allow_model_r
                     provider_name='openai',
                 ),
                 next_part_kind='tool-call',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=1,
@@ -2017,6 +2021,7 @@ async def test_openai_responses_stream_parallel_function_call_args(allow_model_r
                     tool_name='lookup', args='', tool_call_id='call_fc_delta', id='fc_delta', provider_name='openai'
                 ),
                 previous_part_kind='tool-call',
+                canonical_system='openai',
             ),
             PartDeltaEvent(
                 index=1,
@@ -2035,6 +2040,7 @@ async def test_openai_responses_stream_parallel_function_call_args(allow_model_r
                     id='fc_delta',
                     provider_name='openai',
                 ),
+                canonical_system='openai',
             ),
         ]
     )
@@ -2142,6 +2148,7 @@ async def test_openai_responses_stream_function_call_done_keeps_disagreeing_stre
                     provider_name='openai',
                     provider_details={'namespace': 'weather'},
                 ),
+                canonical_system='openai',
             )
         ]
     )
@@ -2246,6 +2253,7 @@ async def test_openai_responses_stream_function_call_output_done_without_added(a
                     id='fc_1',
                     provider_name='openai',
                 ),
+                canonical_system='openai',
             ),
             PartEndEvent(
                 index=0,
@@ -2256,6 +2264,7 @@ async def test_openai_responses_stream_function_call_output_done_without_added(a
                     id='fc_1',
                     provider_name='openai',
                 ),
+                canonical_system='openai',
             ),
         ]
     )
@@ -3854,6 +3863,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     signature='gAAAAABoydMADQ6HaJB8mYQXlwd-4MrCfzmKqMHXUnSAXWV3huK1UrU1h3Do3pbK4bcD4BAvNiHTH-Pn27MGZDP_53IhKj_vB0egVf6Z_Y2uFPtzmyasYtTzrTkGSfAMR0xfI4wJk99aatk3UyLPNE7EO_vWYzN6CSX5ifJNNcmY3ArW1A7XnmsnMSBys05PsWqLMHZOUFuBvM2W37QUW6QOfBXZy0TamoO5UknNUfZb_TwvSnMEDpa-lXyDn4VuzfxreEGVHGdSyz5oLN0nBr3KwHIfxMRZIf9gi9-hKCnxX7i-ZktNIfTgd_WEmNKlaPO-qjKHPlO_XPKbEfpBdMv5b2P9BIC20ZG3m6qnEc4OqafWZa1iC2szi4eKOEa6neh2ltVLsLS3MlurF4sO-EHQT4O9t-zJ-738mZsOgjsI9rTrLm_aTAJrntSSWRLcP6PI6_ILHyeAl_aN4svtnwQJZhv4_Qf62q70SZQ5fSfqoqfO1YHLcXq6Op99iH3CfAhOjH-NcgThFLpT4-VLYABl8wiWBTsWzdndZoPmvMLEOaEGJOcM6_922FC0Q-fUio3psm_pLcElaG-XIkyn4oNuk6OJQonFE-Bm6WS_1I9sMF0ncSD4gH1Ey-5y2Ayxi3Kb3XWjFvs1RKW17KFXj8sthF3vY5WHUeRKA14WtN-cHsi4lXBFYJmn2FiD3CmV-_4ErzXH8sIMJrDDsqfCoiSbHwih25INTTIj7KAPL2QtIpU6A8zbzQIK-GOKqb0n4wGeOIyf7J4C2-5jhmlF2a6HUApFXZsRcD8e3X1WqSjdTdnRu_0GzDuHhPghRQJ3DHfGwDvoZy6UK55zb2MaxpNyMHT149sMwUWkCVg0BruxnOUfziuURWhT-VJWzv5mr3Z765TFB1PfHJhznKPFiZN0MTStVtqKQlOe8nkwLevCgZY4oT1Mysg7YJhcWtkquKILXe-y6luJBHzUy_aFAgFliUbcrOhkoBk5olAbSz8Y4sSz5vWugYA1kwlIofnRm4sPcvoIXgUD_SGGI3QNsQyRWQEhf7G5mNRrxmLhZZLXAcBAzkw10nEjRfew2Fri7bdvyzJ1OS_af9fHmeqCZG5ievKIX6keUkIYQo_qm4FQFkXZSl9lMHsUSF-di4F6ws31vM0zVLMmH52u12Z3SZhvAFzIV5Vtyt_IfrMV3ANMqVF4SmS4k2qUlv1KuPQVgqGCVHvfeE1oSyYgYF6oFX8ThXNB79wxvi4Oo8fWEZLzZMFH9QEr2c7sOWHYWk-wUMP1auXTQNExEVz22pBxueZGZhRyLdpcA12v8o6vJkVuBj-2eR8GRI7P6InJdQAO9TIBhM7NtJU2NUpeP_84js3RTBVktqBT74nWPaHIddGMSfW2aGmFJovvshhxGMLtN_6XMh4wRKW0IE_-Rfbhk8_-xHKI5McYI048N_TMYOS8KqPPAmGVklRGqPZ5xXMNvQEVweThDTYTo3NoAsS0fN2yMmSwrjRYBHsgYMtil4pd6ddp8dvF_XSJUkW0nF8t6ciI_k47sug3gyw4usqspWxY9Hwbzb4OFzzrgtO_7Ll6lFFFUx2oHy8AO9sJ97Y3Fg6luuew7ZRDzA_4XMrT7mNW6YuT-o2DunaZw-jvQezNHjPN2WhaTS7fkisyhFSFTMBYE-H4psfj_sizutv-LjwbumTcX2mnYE9SZhVr8dL0c7sgwHP1831RxTSSl3ql_obE3ICDooyuM8PYE56Jx0HOOGbEeJd3w91SzNHPG_3SQfXszrZlw4BGWrEUHBbtVY2ZEnsyGNAx6vKO8lz9D-6yZ618foDJSH-Ilk56a5rhr0beWjSd9mYMsr3zpVz6HcpTLYGEgHfPxpT2eaYaC1H_znw7y1eMKamwudYmtz_azX5LrOtwc0p-pXH-kdoNe248pSz9qsmHcXA41fuj2weKQNrmBcghwtfM95B060tnmebJ_B_KkLXL4cNF-hZqi0wAHrHYrZ_WM0Dy90AFH-b7iiWuWz5M1EhZXo179iEdybM-1PgccFJ0zvOqODl7FNxSgWVyNS1k9R42aZx2PzFAfAbBtJ-KVMhUayAvGLNmi35EAT0G6FK65VBEe7A6zPFqzrrAiG8dy3Z0I0253WzIblHPNMpmxI_ca5tIx3u8Za6Nu9rx8mi0CY2jsRSKnqb7RZvLuB78Uj32lb_9jbq5_gL9_y7Bt7U7i7FospyqMFzEYQLvdyrtfNrfY0rB4zr4Mo0tDn_4YOD_d_nP5axUh9_ruqXZ_d3eVdNmlITjQZj8ALe1EfidP8a-Dl62t6STVv8d2y8v9-jy3J7wReLJbJ6gDDnygJllY7NrIVXSjR45FXiCDnpaRonu--I_0b_LRJFOoJUJX0S9YMaXAkKyHSEj-UWjiuk8cIBNcXxwlxnqqNMezvvV113MAOEbfHygDnphzjzZQxteAVbSy0ucGDR2FPi30d6z51NxGnXNS_sM7wnjBMNp4Li0hhttOp6PgvDKPSMAcgUtKLFKE8iWQAvERoUVxw5Et20hNTNXf_0sXOyh0bF0URPGDxSYz9uZI6-nlwVlo1aobdEnn7STSq2_tuTDIrQyfBGZzhv8OB0H3cj9mBs=',
                     provider_name='openai',
                 ),
+                canonical_system='openai',
             ),
             PartEndEvent(
                 index=0,
@@ -3864,6 +3874,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     provider_name='openai',
                 ),
                 next_part_kind='builtin-tool-call',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=1,
@@ -3874,6 +3885,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     provider_name='openai',
                 ),
                 previous_part_kind='thinking',
+                canonical_system='openai',
             ),
             PartDeltaEvent(
                 index=1,
@@ -3892,6 +3904,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     provider_name='openai',
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=2,
@@ -3903,6 +3916,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     provider_name='openai',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=3,
@@ -3913,6 +3927,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     provider_name='openai',
                 ),
                 previous_part_kind='builtin-tool-return',
+                canonical_system='openai',
             ),
             PartEndEvent(
                 index=3,
@@ -3923,6 +3938,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     provider_name='openai',
                 ),
                 next_part_kind='text',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=4,
@@ -3932,6 +3948,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     provider_name='openai',
                 ),
                 previous_part_kind='thinking',
+                canonical_system='openai',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
@@ -4113,6 +4130,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     id='msg_00a60507bf41223d0068c9d30b055481a0b0ee28a021919c94',
                     provider_name='openai',
                 ),
+                canonical_system='openai',
             ),
         ]
     )
@@ -8076,6 +8094,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                 part=ThinkingPart(
                     content='', id='rs_68c3509b2ee0819eba32735182d275ad0f2d670b80edc507', provider_name='openai'
                 ),
+                canonical_system='openai',
             ),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='**Calcul')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='ating')),
@@ -8191,6 +8210,7 @@ I\
                     provider_name='openai',
                 ),
                 next_part_kind='builtin-tool-call',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=1,
@@ -8200,6 +8220,7 @@ I\
                     provider_name='openai',
                 ),
                 previous_part_kind='thinking',
+                canonical_system='openai',
             ),
             PartDeltaEvent(
                 index=1,
@@ -8307,6 +8328,7 @@ I\
                     provider_name='openai',
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=2,
@@ -8318,6 +8340,7 @@ I\
                     provider_name='openai',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=3,
@@ -8327,6 +8350,7 @@ I\
                     provider_name='openai',
                 ),
                 previous_part_kind='builtin-tool-return',
+                canonical_system='openai',
             ),
             PartDeltaEvent(
                 index=3,
@@ -8422,6 +8446,7 @@ I\
                     provider_name='openai',
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=4,
@@ -8433,6 +8458,7 @@ I\
                     provider_name='openai',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=5,
@@ -8442,6 +8468,7 @@ I\
                     provider_name='openai',
                 ),
                 previous_part_kind='builtin-tool-return',
+                canonical_system='openai',
             ),
             PartDeltaEvent(
                 index=5,
@@ -8471,6 +8498,7 @@ I\
                     provider_name='openai',
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=6,
@@ -8482,6 +8510,7 @@ I\
                     provider_name='openai',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=7,
@@ -8489,6 +8518,7 @@ I\
                     content='123', id='msg_68c350a75ddc819ea5406470460be7850f2d670b80edc507', provider_name='openai'
                 ),
                 previous_part_kind='builtin-tool-return',
+                canonical_system='openai',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
@@ -9357,6 +9387,7 @@ I\
                     id='msg_68c350a75ddc819ea5406470460be7850f2d670b80edc507',
                     provider_name='openai',
                 ),
+                canonical_system='openai',
             ),
         ]
     )
@@ -9928,6 +9959,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     signature=IsStr(),
                     provider_name='openai',
                 ),
+                canonical_system='openai',
             ),
             PartEndEvent(
                 index=0,
@@ -9938,6 +9970,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     provider_name='openai',
                 ),
                 next_part_kind='builtin-tool-call',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=1,
@@ -9947,6 +9980,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     provider_name='openai',
                 ),
                 previous_part_kind='thinking',
+                canonical_system='openai',
             ),
             PartDeltaEvent(
                 index=1,
@@ -11242,6 +11276,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     provider_name='openai',
                 ),
                 next_part_kind='file',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=2,
@@ -11262,6 +11297,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     provider_name='openai',
                 ),
                 previous_part_kind='file',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=4,
@@ -11269,6 +11305,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                     content='Here', id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4', provider_name='openai'
                 ),
                 previous_part_kind='builtin-tool-return',
+                canonical_system='openai',
             ),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the')),
@@ -11314,6 +11351,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 part=TextPart(
                     content=IsStr(), id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4', provider_name='openai'
                 ),
+                canonical_system='openai',
             ),
         ]
     )
@@ -11568,6 +11606,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     signature=IsStr(),
                     provider_name='openai',
                 ),
+                canonical_system='openai',
             ),
             PartEndEvent(
                 index=0,
@@ -11578,6 +11617,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     provider_name='openai',
                 ),
                 next_part_kind='builtin-tool-call',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=1,
@@ -11587,6 +11627,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     provider_name='openai',
                 ),
                 previous_part_kind='thinking',
+                canonical_system='openai',
             ),
             PartEndEvent(
                 index=1,
@@ -11596,6 +11637,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     provider_name='openai',
                 ),
                 next_part_kind='file',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=2,
@@ -11630,6 +11672,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                     provider_name='openai',
                 ),
                 previous_part_kind='file',
+                canonical_system='openai',
             ),
         ]
     )
@@ -13346,6 +13389,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                     tool_call_id='mcpl_00b9cc7a23d047270068faa0e29804819fb060cec0408ffbcd',
                     provider_name='openai',
                 ),
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=1,
@@ -13399,6 +13443,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                     provider_name='openai',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='openai',
             ),
             PartStartEvent(
                 index=3,
@@ -13408,6 +13453,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                     provider_name='openai',
                 ),
                 previous_part_kind='thinking',
+                canonical_system='openai',
             ),
             PartDeltaEvent(
                 index=3,
@@ -13516,6 +13562,7 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                     provider_name='openai',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='openai',
             ),
         ]
     )
@@ -15191,6 +15238,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                         id='fs_006dcb10dc68b990006931d758d64c819b8936fb07f31c09d4',
                         provider_name='openai',
                     ),
+                    canonical_system='openai',
                 ),
                 PartDeltaEvent(
                     index=0,
@@ -15209,6 +15257,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                         provider_name='openai',
                     ),
                     next_part_kind='builtin-tool-return',
+                    canonical_system='openai',
                 ),
                 PartStartEvent(
                     index=1,
@@ -15220,11 +15269,13 @@ async def test_openai_responses_model_file_search_tool_stream(
                         provider_name='openai',
                     ),
                     previous_part_kind='builtin-tool-call',
+                    canonical_system='openai',
                 ),
                 PartStartEvent(
                     index=2,
                     part=TextPart(content='The', id=IsStr(), provider_name='openai'),
                     previous_part_kind='builtin-tool-return',
+                    canonical_system='openai',
                 ),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' capital')),
@@ -15250,6 +15301,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                         provider_details={'citations': IsList(length=(1, ...))},
                         citations=IsCitationList(),
                     ),
+                    canonical_system='openai',
                 ),
             ]
         )
@@ -18210,11 +18262,13 @@ async def test_openai_responses_phase_streamed_without_deltas(allow_model_reques
             PartStartEvent(
                 index=0,
                 part=TextPart(content='', provider_name='openai', provider_details={'phase': 'final_answer'}),
+                canonical_system='openai',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartEndEvent(
                 index=0,
                 part=TextPart(content='', provider_name='openai', provider_details={'phase': 'final_answer'}),
+                canonical_system='openai',
             ),
         ]
     )

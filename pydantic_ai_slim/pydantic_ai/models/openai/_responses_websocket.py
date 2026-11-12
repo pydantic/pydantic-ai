@@ -138,30 +138,7 @@ class ResponsesWebSocket:
         except APIError:
             raise
         except InvalidStatus as exc:
-            status_code = exc.response.status_code
-            if status_code < 400:
-                raise ModelAPIError(
-                    model_name=model_name, message=f'WebSocket handshake failed with status {status_code}'
-                ) from exc
-            text = bytes(exc.response.body).decode(errors='replace')
-            # Read like the SDK reads an HTTP error response, so the rejection gets the category it gets over HTTP.
-            try:
-                parsed: object = from_json(text)
-            except ValueError:
-                parsed = None
-            error: object = parsed.get('error', parsed) if is_str_dict(parsed) else None
-            fields = (
-                {key: value for key, value in error.items() if isinstance(value, str)} if is_str_dict(error) else {}
-            )
-            raise status_error(
-                status_code=status_code,
-                code=fields.get('code'),
-                error_type=fields.get('type'),
-                message=fields.get('message', text),
-                body=error if error is not None else text,
-                # `dict(exc.response.headers)` raises `MultipleValuesError` on a repeated header.
-                headers={name: ', '.join(exc.response.headers.get_all(name)) for name in exc.response.headers},
-            ) from exc
+            raise cls._handshake_rejection_error(exc, model_name, status_error) from exc
         except TimeoutError as exc:
             raise ModelTimeoutError(
                 model_name=model_name, message='WebSocket connection timed out.', phase='connect'
@@ -172,6 +149,29 @@ class ResponsesWebSocket:
             ) from exc
 
         return cls(connection, model_name, cls.effective_headers(client, headers), named_lane_limit, status_error)
+
+    @staticmethod
+    def _handshake_rejection_error(exc: InvalidStatus, model_name: str, status_error: StatusError) -> ModelAPIError:
+        status_code = exc.response.status_code
+        if status_code < 400:
+            return ModelAPIError(model_name=model_name, message=f'WebSocket handshake failed with status {status_code}')
+        text = bytes(exc.response.body).decode(errors='replace')
+        # Read like the SDK reads an HTTP error response, so the rejection gets the category it gets over HTTP.
+        try:
+            parsed: object = from_json(text)
+        except ValueError:
+            parsed = None
+        error: object = parsed.get('error', parsed) if is_str_dict(parsed) else None
+        fields = {key: value for key, value in error.items() if isinstance(value, str)} if is_str_dict(error) else {}
+        return status_error(
+            status_code=status_code,
+            code=fields.get('code'),
+            error_type=fields.get('type'),
+            message=fields.get('message', text),
+            body=error if error is not None else text,
+            # `dict(exc.response.headers)` raises `MultipleValuesError` on a repeated header.
+            headers={name: ', '.join(exc.response.headers.get_all(name)) for name in exc.response.headers},
+        )
 
     @staticmethod
     def effective_headers(client: AsyncOpenAI, extra_headers: Mapping[str, str]) -> dict[str, str]:

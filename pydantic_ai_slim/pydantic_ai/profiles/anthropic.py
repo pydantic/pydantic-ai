@@ -195,7 +195,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """The most output tokens the model can generate in one response, thinking included. Default: `None` (unknown).
 
     `AnthropicModel` sends it as `max_tokens` when the request doesn't set one, so responses are only cut off at the
-    model's limit, like on APIs where the output limit is optional.
+    model's limit, like on APIs where the output limit is optional, and lowers a `max_tokens` above it to it, as
+    Anthropic rejects that with a 400. `BedrockConverseModel` does the same for Claude.
     """
 
     anthropic_rejects_max_tokens_beyond_context_window: bool
