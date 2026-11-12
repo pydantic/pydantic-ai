@@ -1,5 +1,5 @@
 {
-  "against": "v2.67.0",
+  "against": "v2.68.0",
   "reason": "Removes clai2-internal `pydantic_clai2.runtime.project_instructions.PROJECT_INSTRUCTIONS_TAG`: `ProjectInstructions` now sends a typed `ProjectInstructionsPart`, so the framing tag it registered is no longer used. It only served clai2's own runtime.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11935"
 }
