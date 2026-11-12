@@ -2659,7 +2659,8 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
 
         For providers whose tool result API only accepts text. Multimodal files are referenced
         by identifier in the tool result text ('See file {id}.') and included in full in the
-        returned file content list.
+        returned file content list. Non-file items keep the JSON form they have when they are the
+        tool's whole return value.
 
         Each file is framed by `_tool_result_provenance_tags` so the model can tell it from the
         user's own uploads, which travel on the same channel.
