@@ -426,8 +426,8 @@ jobs:
 
       # The full Pyright check runs here, not in pre-commit. With `CI` set, `make typecheck-changed`
       # hands the whole project to `make typecheck-pyright`, under the `PYRIGHT_TIME_BUDGET` that only
-      # that script enforces. It runs whenever the install succeeded, so a failing pre-commit hook or
-      # policy check does not hide type errors.
+      # that script enforces. The check runs whenever the install succeeded, so a failing pre-commit
+      # hook or policy check does not hide type errors.
       #
       # A pull request checks with pyright-rs first: a Rust port of pyright's command-line check
       # that prints pyright's output and exit code for the same command line and configuration, in
@@ -447,6 +447,7 @@ jobs:
           PYRIGHT_PYTHON_IGNORE_WARNINGS: "1"
           UV_NO_SYNC: "1"
         run: |
+          trap 'echo "::warning title=pyright-rs::Installing pyright-rs failed, so pyright checks this run."' ERR
           name="pyright-rs-$PYRIGHT_RS_RELEASE-x86_64-unknown-linux-gnu"
           curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
             --output "$RUNNER_TEMP/$name.tar.gz" \
@@ -467,7 +468,7 @@ jobs:
         continue-on-error: true
         env:
           PYRIGHT: ${{ steps.pyright-rs.outputs.path }}
-          # pyright-rs ran the check in 35.0 s on a GitHub runner where pyright took 175.4 s
+          # pyright-rs checked both projects in 35.0 s on a GitHub runner where pyright took 185.8 s
           # (https://github.com/dsfaccini/pyright-rs/actions/runs/43305070216). A run 1.5x that
           # fails 50, and a failure only hands the check to pyright and its own budget below, so a
           # slowdown fails the pull request only when pyright shows it too.

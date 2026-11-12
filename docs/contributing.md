@@ -151,8 +151,9 @@ is per-worktree and never committed. CI runs the same target, and there it check
 GitHub Actions always sets `CI`, and on seeing it `make typecheck-changed` narrows nothing and hands
 the whole project to `make typecheck-pyright`. On a pull request, CI first runs that target with
 [pyright-rs](https://github.com/dsfaccini/pyright-rs), a Rust port of Pyright's command-line check,
-and runs Pyright only when pyright-rs fails. The `PYRIGHT` variable names the command the target
-runs, so `make typecheck-pyright PYRIGHT=path/to/pyright-rs` repeats that check locally.
+and runs Pyright whenever pyright-rs fails, cannot be installed, or ports a Pyright version other
+than the one `uv.lock` pins. The `PYRIGHT` variable names the command the target runs, so
+`make typecheck-pyright PYRIGHT=path/to/pyright-rs` repeats that check locally.
 
 Locally it follows the imports Pyright resolves statically, and never checks a file under `tests/`
 that did not itself change since the run it recorded. Tests are two thirds of the project's lines

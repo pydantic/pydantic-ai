@@ -45,7 +45,7 @@ lint: ## Lint the code
 PYRIGHT_THREADS ?=
 
 # The command that runs pyright. CI's `pull_request` runs set it to pyright-rs, a port of pyright's
-# command-line check; see the `Type-check with Pyright` step in .github/workflows/ci.yml.
+# command-line check; see the `Type-check with pyright-rs` step in .github/workflows/ci.yml.
 PYRIGHT ?= uv run pyright
 
 .PHONY: typecheck-pyright
