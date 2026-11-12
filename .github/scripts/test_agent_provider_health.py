@@ -4006,15 +4006,17 @@ def test_gate_log_names_each_accounts_quota_diagnostic(tmp_path: Path, monkeypat
 def test_a_run_blocked_by_its_own_incident_opens_no_quota_incident(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A workflow incident blocks both accounts, so their exhausted quotas open nothing new."""
+    """A workflow incident blocks both accounts, so the gate skips the backup and opens nothing new."""
     workflow_incident = _issue(7, health.IncidentMarker('workflow', 'CI Review', 'inference', '7', None, 'inference'))
     client = FakeGitHub([workflow_incident])
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
-    _stub_account_quotas(monkeypatch, _EXHAUSTED, _BACKUP_EXHAUSTED)
+    probes = _stub_account_quotas(monkeypatch, _EXHAUSTED, _BACKUP_EXHAUSTED)
     decision, _, _ = _run_account_gate(client, tmp_path, monkeypatch)
 
     _monitor_blocked_gate(decision, client, tmp_path)
 
+    assert (decision.reason, decision.accounts) == ('Open operational incident #7 blocks inference', ())
+    assert probes == [_PRIMARY_KEY]
     assert client.posts == []
 
 

@@ -512,9 +512,10 @@ fabricated agent result. The non-model provider-health monitor owns incident iss
 creation and recovery. Do not enable gh-aw's generic failure-as-issue reporting or its
 failed-job reporting (`report-failed-jobs`) for these workflows.
 
-The gate checks the primary account first. When an open incident or its quota blocks the primary,
-and `ZAI_BACKUP_API_KEY` is set, the gate checks the backup account the same way. The run blocks
-only when neither account can serve it. A ready decision outputs `account=primary` or
+The gate checks the primary account first. When the primary's own provider incident or its quota
+blocks it, and `ZAI_BACKUP_API_KEY` is set, the gate checks the backup account the same way. A
+workflow or task incident blocks both accounts, so the gate does not check the backup for it. The run
+blocks only when neither account can serve it. A ready decision outputs `account=primary` or
 `account=backup`, and its artifact records each account's own decision when it checked both.
 Without `ZAI_BACKUP_API_KEY`, the gate checks only the primary.
 

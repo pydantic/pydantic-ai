@@ -808,7 +808,8 @@ def _open_incidents_until(client: GitHubClient, found: Callable[[list[Issue]], b
     return list(issues.values())
 
 
-def _health_decision(health: Health, issues: list[Issue], account: Account = 'primary') -> Health:
+def _blocking_incident(health: Health, issues: list[Issue], account: Account = 'primary') -> Issue | None:
+    """Return the open incident that blocks this run on `account`; a workflow incident spares its own recovery dispatch."""
     incident = _matching_incident(health, issues, account)
     if incident is not None and health.recovery_issue == incident.number:
         marker = _marker_from_body(incident.body)
@@ -819,7 +820,12 @@ def _health_decision(health: Health, issues: list[Issue], account: Account = 'pr
             and marker.scope == 'workflow'
             and len(matching) == 1
         ):
-            incident = None
+            return None
+    return incident
+
+
+def _health_decision(health: Health, issues: list[Issue], account: Account = 'primary') -> Health:
+    incident = _blocking_incident(health, issues, account)
     if incident is not None:
         return replace(health, ready=False, reason=f'Open operational incident #{incident.number} blocks inference')
     if health.quota.status != 'healthy':
@@ -858,7 +864,11 @@ def check_health(
         recovery_issue=recovery_issue,
     )
     primary = _health_decision(base, issues)
-    if primary.ready or backup_quota is None:
+    # A workflow or task incident blocks every account: only the primary's own provider incident or quota
+    # can be avoided on the backup.
+    incident = _blocking_incident(base, issues)
+    marker = _marker_from_body(incident.body) if incident is not None else None
+    if primary.ready or backup_quota is None or (marker is not None and marker.scope != 'provider'):
         return primary
     backup = _health_decision(replace(base, quota=backup_quota()), issues, 'backup')
     # The combined reason names each account's quota diagnostic next to that account's own reason.
