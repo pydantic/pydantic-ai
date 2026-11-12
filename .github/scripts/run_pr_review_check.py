@@ -321,7 +321,8 @@ def main() -> None:
     runner_temp = Path(env['RUNNER_TEMP'])
     head = workspace / 'pr-head'
     changes = changed_files(head, env['BASE_SHA'], env['HEAD_SHA'])
-    files = select(changes)[check.name]
+    selected = select(changes)
+    files = selected[check.name]
     strip_instructions(head)
     check_symlinks(workspace, skip_pr_head=True)
     check_symlinks(head)
@@ -359,11 +360,19 @@ def main() -> None:
         output=stream,
         steps=check.max_steps,
         extra_env=telemetry,
+        # The `detect` job builds the matrix in `select` order.
+        matrix_index=list(selected).index(check.name),
     )
     changed = {change.path: change.positions for change in changes}
     result, private_report = check_result(check, files, stream, usage, changed=changed)
     if token:
-        export_span(endpoint, token, result, {**attributes, 'pr_review_checks.provider': provider.name}, started)
+        export_span(
+            endpoint,
+            token,
+            result,
+            {**attributes, 'pr_review_checks.provider': provider.name, 'pr_review_checks.plan': provider.plan},
+            started,
+        )
     else:
         print('::warning::LOGFIRE_TOKEN is empty, so this review exports no telemetry.')
     if private_report:

@@ -42,7 +42,7 @@ class Provider:
 # OpenCode 2.2.5 types a spent OpenCode Go usage window `provider.go-limit`, and a quota it cannot name
 # `provider.quota`. It also types any 402, and a Z.AI 429 whose message names a plan, quota or balance limit, such as
 # codes 1308, 1309 and 1310, `provider.quota`. It retries any other 429, such as 1302 rate limits and 1305 overload,
-# as `provider.rate-limit`: `classify` in
+# and types one that outlasts its retries `provider.rate-limit`: `classify` in
 # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts
 OPENCODE_GO = Provider(
     'opencode-go',
@@ -53,6 +53,8 @@ OPENCODE_GO = Provider(
     'opencode',
     frozenset({'provider.go-limit', 'provider.quota'}),
 )
+# Each Coding Plan account hands a run its quota or rate limit refused to the other account.
+CODING_PLAN_HANDOVER_ERRORS = frozenset({'provider.quota', 'provider.rate-limit'})
 # The GLM Coding Plan, on its own coding endpoint. OpenCode 2.2.5 reads its key from `ZHIPU_API_KEY` only.
 ZAI = Provider(
     'zai-coding-plan',
@@ -61,7 +63,7 @@ ZAI = Provider(
     'ZAI_API_KEY',
     'the primary Coding Plan',
     'opencode-zai',
-    frozenset({'provider.quota'}),
+    CODING_PLAN_HANDOVER_ERRORS,
 )
 ZAI_BACKUP = Provider(
     'zai-coding-plan',
@@ -70,7 +72,7 @@ ZAI_BACKUP = Provider(
     'ZAI_BACKUP_API_KEY',
     'the backup Coding Plan',
     'opencode-zai',
-    frozenset(),
+    CODING_PLAN_HANDOVER_ERRORS,
 )
 
 
@@ -138,12 +140,15 @@ def run_with_fallback(
     output: Path,
     steps: int | None = None,
     extra_env: Mapping[str, str] | None = None,
+    matrix_index: int = 0,
 ) -> tuple[T, Provider]:
-    """Launch OpenCode on Go, then on the Z.AI Coding Plan, then on its backup account, while each refuses the run.
+    """Launch OpenCode on Go, then on one Z.AI Coding Plan account, then on the other, while each refuses the run.
 
-    A provider hands the run to the next one whose key is set only when its quota limit refused the run before it
-    finished a step. `launch` runs the command in the environment it is given and writes the event stream to the
-    stream it is given, which `output` holds after each run. Each run gets a config that allows only its provider,
+    A provider hands the run to the next one whose key is set only when it refused the run with one of its
+    `handover_errors` before the run finished a step. The workflow's run number plus `matrix_index`, the run's place in
+    its job matrix, picks the account tried first: the primary when the sum is even, the backup when it is odd.
+    `launch` runs the command in the environment it is given and writes the event stream to the stream it is given,
+    which `output` holds after each run. Each run gets a config that allows only its provider,
     and an environment that holds only that account's key. A run whose process fails prints its model and OpenCode
     error type.
     """
@@ -207,7 +212,11 @@ def run_with_fallback(
     if not os.environ[OPENCODE_GO.secret_variable]:
         raise ValueError(f'{OPENCODE_GO.secret_variable} is empty')
     # A Z.AI account without a key is left out, so a run never waits on a provider it cannot reach.
-    chain = [OPENCODE_GO, *(provider for provider in (ZAI, ZAI_BACKUP) if os.environ.get(provider.secret_variable))]
+    plans = [provider for provider in (ZAI, ZAI_BACKUP) if os.environ.get(provider.secret_variable)]
+    # Run numbers count up within a workflow, so a burst of runs, and the checks of one matrix, alternate accounts.
+    if (int(os.environ['GITHUB_RUN_NUMBER']) + matrix_index) % 2:
+        plans.reverse()
+    chain = [OPENCODE_GO, *plans]
     for provider, successor in zip(chain, chain[1:]):
         try:
             return run_on(provider, os.environ[provider.secret_variable])

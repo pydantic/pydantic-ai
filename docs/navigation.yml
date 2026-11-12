@@ -421,7 +421,7 @@ navigation:
           - page: "SSH Workspace"
             path: "harness/ssh-workspace.md"
             slug: "harness/ssh-workspace"
-          - page: "Bubblewrap Sandbox"
+          - page: "Bubblewrapped Workspace"
             path: "harness/bubblewrap-sandbox.md"
             slug: "harness/bubblewrap-sandbox"
       - section: "Tools & Native Abilities"

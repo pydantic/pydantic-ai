@@ -165,7 +165,7 @@ safe-outputs:
         timeout-minutes: 15
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          # Serve detection when OpenCode Go, then the primary Coding Plan, refuse it before its first step.
+          # Serve detection on both Coding Plan accounts when OpenCode Go refuses it before its first step.
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
           ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           PYTHONPATH: ${{ runner.temp }}/douwebot-tools/python
