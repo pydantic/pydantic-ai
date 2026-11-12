@@ -538,14 +538,7 @@ _SAFETY_CHECKS_TA = pydantic.TypeAdapter(list[SafetyCheck])
 _COORDINATE_GRID = 'coordinate_grid'
 """The `provider_details` key under which the agent records the grid a call's positions are on."""
 
-_SCREENSHOT_MAX_SIDE = 'screenshot_max_side'
-"""The `provider_details` key under which the agent records the longest screenshot side the call's model takes."""
-
-_SCREENSHOT_MAX_PIXELS = 'screenshot_max_pixels'
-"""The `provider_details` key under which the agent records the most screenshot pixels the call's model takes."""
-
-
-_LABEL_KEYS = frozenset({_COORDINATE_GRID, _SCREENSHOT_MAX_SIDE, _SCREENSHOT_MAX_PIXELS})
+_LABEL_KEYS = frozenset({_COORDINATE_GRID})
 """The `provider_details` keys the agent adds to a `computer` call after the model returned it, which the provider
 never saw."""
 
@@ -590,24 +583,6 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         UI rebuilt, reads `None`.
         """
         return _label(self, _COORDINATE_GRID, minimum=2)
-
-    @property
-    def screenshot_max_side(self) -> int | None:
-        """The longest side, in pixels, of a screenshot the model that made the call takes, or `None` for no limit.
-
-        The agent records it from the profile's `computer_use_screenshot_max_side`, so the screenshot the call returns
-        can be taken at a size that model can see; a call without it, such as in a history a UI rebuilt, reads `None`.
-        """
-        return _label(self, _SCREENSHOT_MAX_SIDE)
-
-    @property
-    def screenshot_max_pixels(self) -> int | None:
-        """The most pixels in a screenshot the model that made the call takes, or `None` for no limit.
-
-        Recorded from the profile's `computer_use_screenshot_max_pixels`; see
-        [`screenshot_max_side`][pydantic_ai.computer_use.ComputerCallPart.screenshot_max_side].
-        """
-        return _label(self, _SCREENSHOT_MAX_PIXELS)
 
 
 class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=COMPUTER_KIND):
