@@ -349,7 +349,7 @@ def test_model_profile_minimal_thinking_level_matches_model_prefix():
         ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
         ('gemini-4-argon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
         ('gemini-4-carbon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
-        ('gemini-4-hydrogen', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+        ('gemini-4-hydrogen', frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH'))),
         # Models supporting the full scale carry no level set.
         ('gemini-3-flash-preview', None),
         # Budget-based models carry no level set.

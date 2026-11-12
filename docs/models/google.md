@@ -380,10 +380,13 @@ requested effort to the nearest supported level. `gemini-3.1-flash-image` is the
 API enforces them, so Pydantic AI applies those levels only when the client talks to the Gemini API, and Vertex AI
 keeps the full scale. For a model id the table doesn't cover, declare its
 levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
-(default: the full scale); unsupported efforts resolve to the nearest supported level.
+(default: every level but `xhigh`); unsupported efforts resolve to the nearest supported level.
 
 `gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen` support the `low`, `medium` and `high` levels, so
-`thinking=False` and `'minimal'` resolve to `low`.
+`thinking=False` and `'minimal'` resolve to `low`. `gemini-4-hydrogen` also supports `xhigh`, its deepest reasoning,
+which `thinking='xhigh'` and `'max'` select; on models without it, they resolve to `high`. The `google-genai` SDK's
+`ThinkingLevel` enum doesn't list `XHIGH` yet, so the SDK warns `XHIGH is not a valid ThinkingLevel` and sends the level
+anyway.
 
 On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
 `thinking_level` instead.
