@@ -8381,8 +8381,8 @@ def _unsupported_computer_fields(action: dict[str, Any]) -> list[str] | None:
 
     A field that is missing, has the wrong type or isn't one the tool takes doesn't map.
     """
-    kind = action.get('type', '')
-    fields = _COMPUTER_ACTION_FIELDS.get(kind)
+    kind = action.get('type')
+    fields = _COMPUTER_ACTION_FIELDS.get(kind) if isinstance(kind, str) else None
     if fields is None:
         return sorted(action.keys() - {'type'})
     unsupported = (action.keys() - fields) | (_REQUIRED_COMPUTER_FIELDS.get(kind, frozenset()) - action.keys())

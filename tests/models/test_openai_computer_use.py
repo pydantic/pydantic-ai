@@ -636,6 +636,7 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
         ({'type': 'type', 'text': 'hi'}, {'type': 'type', 'text': 'hi'}),
         ({'type': 'wait'}, {'type': 'wait'}),
         ({'type': 'teleport', 'x': 1}, {'type': 'teleport', 'unsupported_fields': ['x']}),
+        ({'type': ['click'], 'x': 1}, {'type': ['click'], 'unsupported_fields': ['x']}),
         # Under the tool's own type, so the retry names the field rather than refusing the type.
         (
             {'type': 'double_click', 'x': 1, 'y': 2, 'duration_ms': 5},
