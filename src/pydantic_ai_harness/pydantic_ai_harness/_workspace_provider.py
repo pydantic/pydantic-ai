@@ -216,14 +216,16 @@ def command_argv(command: WorkspaceCommand, shell: bool) -> list[str]:
 # missing and 126 when it cannot run, as the protocol asks; `exec` keeps the argv literal and
 # replaces the shell with the program, with stdin at EOF. BusyBox and bash read a program named like
 # `-c` as an option of `exec`, and dash's `exec` takes no `--`, so such a name is resolved to its
-# path first.
-EXEC_SCRIPT = """p=$1
-shift
-case $p in
--*/*) p=./$p ;;
--*) q=$(command -v -- "$p") || { printf 'sh: %s: not found\\n' "$p" >&2; exit 127; }; p=$q ;;
+# path first. The command's `env` is the shell's own environment, and assigning a variable the
+# environment has changes what the program inherits, so the script assigns none on the usual path
+# and only a reserved name for a program named like an option.
+EXEC_SCRIPT = """case $1 in
+-*/*) PYDANTIC_AI_HARNESS_PROGRAM=./$1 ;;
+-*) PYDANTIC_AI_HARNESS_PROGRAM=$(command -v -- "$1") || { printf 'sh: %s: not found\\n' "$1" >&2; exit 127; } ;;
+*) exec "$@" </dev/null ;;
 esac
-exec "$p" "$@" </dev/null"""
+shift
+exec "$PYDANTIC_AI_HARNESS_PROGRAM" "$@" </dev/null"""
 
 
 def check_env_types(env: Mapping[str, str] | None) -> None:
