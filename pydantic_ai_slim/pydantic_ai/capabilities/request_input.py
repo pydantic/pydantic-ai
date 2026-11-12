@@ -12,7 +12,6 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.tools import AgentDepsT
 
 from .deferred_tool_handler import (
-    _DEFAULT_WAIT_NAME,  # pyright: ignore[reportPrivateUsage]
     HandleDeferredToolCalls,
     _Handler,  # pyright: ignore[reportPrivateUsage]
     _TokenHandler,  # pyright: ignore[reportPrivateUsage]
@@ -37,7 +36,7 @@ class RequestInput(HandleDeferredToolCalls[AgentDepsT]):
         ask: _TokenHandler[AgentDepsT],
         *,
         timeout: timedelta | None = None,
-        name: str = _DEFAULT_WAIT_NAME,
+        name: str = 'deferred_tool_calls',
         id: str | None = None,
         description: str | None = None,
         defer_loading: bool = False,
