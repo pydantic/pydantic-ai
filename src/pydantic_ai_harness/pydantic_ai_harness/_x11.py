@@ -331,9 +331,9 @@ def desktop_display(
     size: tuple[int, int] | None,
     where: Callable[[], str],
 ) -> LazyDisplay | None:
-    """A sandbox's display on a plain Xvfb at `size`, or `None` when it has no desktop.
+    """A sandbox's display on a plain Xvfb at `size`, or `None` without a desktop.
 
-    For a sandbox with no desktop image of its own, which `start_x_server` provisions on first use.
+    For a sandbox with no desktop of its own: `start_x_server` installs what's missing on first use.
     """
     if size is None:
         return None
