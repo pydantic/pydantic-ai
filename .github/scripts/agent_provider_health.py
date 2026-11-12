@@ -1427,10 +1427,11 @@ def _export_decision_span(health: Health, started_ns: int) -> None:
     }
     if joins_trace:
         span['parentSpanId'] = parent_span_id
-    resource = {
-        'service.name': os.environ.get('OTEL_SERVICE_NAME') or 'agent-provider-health',
-        **_otel_pairs(os.environ.get('OTEL_RESOURCE_ATTRIBUTES', '')),
-    }
+    resource = _otel_pairs(os.environ.get('OTEL_RESOURCE_ATTRIBUTES', ''))
+    # As in the OTel SDKs, `OTEL_SERVICE_NAME` takes precedence over a `service.name` resource attribute.
+    resource['service.name'] = (
+        os.environ.get('OTEL_SERVICE_NAME') or resource.get('service.name') or 'agent-provider-health'
+    )
     body = {
         'resourceSpans': [
             {

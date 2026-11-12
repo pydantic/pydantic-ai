@@ -4002,7 +4002,9 @@ def test_each_decision_exports_one_span_with_both_accounts_quota(
     monkeypatch.setattr(_Collector, 'received', received)
     monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS', 'Authorization=logfire%20fixture-token')
     monkeypatch.setenv('OTEL_SERVICE_NAME', 'gh-aw.pydantic-ai-pr-review')
-    monkeypatch.setenv('OTEL_RESOURCE_ATTRIBUTES', 'gh-aw.workflow.name=CI%20Review,github.run_id=43')
+    monkeypatch.setenv(
+        'OTEL_RESOURCE_ATTRIBUTES', 'service.name=other,gh-aw.workflow.name=CI%20Review,github.run_id=43'
+    )
     monkeypatch.setenv('GITHUB_JOB', job)
     # A default-branch dispatch with a recovery issue, which the span also records.
     monkeypatch.setenv('PYDANTIC_AI_RECOVERY_ISSUE', '7')
