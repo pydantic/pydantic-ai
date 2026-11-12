@@ -115,8 +115,11 @@ Under durable execution, put the capability on the agent. With Temporal, DBOS or
 are durable steps and a recovered run continues with the same batch; the waits between checks are durable on
 Temporal and DBOS, and plain sleeps on Prefect. Under the Harness's Azure Durable Task engine, submitting and each
 check are activities and the waits between them are durable timers, so a recovered run continues with the same batch.
-The other Harness engines (AWS Lambda, Absurd, pgtask, Render Workflows) sleep in-process between checks, so the
-process must stay up for the whole batch. Restate and Airflow don't record
+Under the Harness's AWS Lambda, Absurd and pgtask engines, submitting and each check are durable steps, and each wait
+between checks suspends the execution until it's over, so no process is held while the batch is processed and a
+recovered run doesn't wait again through waits it already did (Lambda rounds waits up to whole seconds). Render
+Workflows has no durable timer, so it sleeps in-process between checks and the task must stay up for the whole batch.
+Engines build this on `BaseDurabilityCapability.durable_sleep`. Restate and Airflow don't record
 batched requests, so recovery submits them again, in a new batch that's billed too. Where an engine can't wait out a long
 batch, use `PendingModelResponse` and schedule the next run from the stored history yourself. See
 https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution for each engine's details.
