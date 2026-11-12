@@ -435,10 +435,9 @@ class DaytonaSandboxBackend(
         env: Environment variables every command gets; a command's own `env` is layered on top.
             They are also set on a newly created sandbox.
         desktop: Whether the sandbox has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse],
-            started on first use through Daytona's computer-use API: `True` for 1280x800, or its `(width, height)`,
-            at least 1024x768; a smaller size is refused. The size applies to a newly created sandbox; Daytona
-            can't resize a running one, so an attached sandbox keeps its own. The snapshot needs Daytona's desktop
-            packages, which its default snapshot has.
+            started on first use: `True` for 1280x800, or its `(width, height)`, at least 1024x768. The size applies
+            to a new sandbox, since Daytona can't resize a running one. The snapshot needs Daytona's desktop
+            packages, which the default snapshot has.
     """
 
     def __init__(
@@ -478,7 +477,7 @@ class DaytonaSandboxBackend(
                 f"Daytona's desktop is at least 1024x768, not {self._desktop_size[0]}x{self._desktop_size[1]}."
             )
         # Commands see the desktop too, so a program the agent starts from the shell opens on it. Daytona's desktop
-        # runs on display `:0` (checked live).
+        # runs on display `:0`.
         self._env = {**({'DISPLAY': ':0'} if self._desktop_size else {}), **(env or {})}
         self._display = (
             None
@@ -910,9 +909,9 @@ class DaytonaSandboxBackend(
 
 
 def _desktop_broken(error: daytona.DaytonaServiceUnavailableError) -> bool:
-    """Whether a 503 comes from a desktop that broke for good, rather than a proxy that is briefly refusing traffic.
+    """Whether a 503 comes from a broken desktop, rather than a proxy briefly refusing traffic.
 
-    Checked live: a desktop that took input before it started answers every request with `connection is shut down`.
+    A desktop that took input before it started answers every request with `connection is shut down`.
     """
     return error.source != SOURCE_PROXY and 'connection is shut down' in error.message
 

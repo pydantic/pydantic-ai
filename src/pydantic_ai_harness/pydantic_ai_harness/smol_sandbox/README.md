@@ -171,7 +171,7 @@ async def main():
 
 The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use, with no window manager, so apps the agent starts from the shell open on it without title bars. Commands get `DISPLAY` set for it.
 
-Without an `image`, a new VM runs `debian:bookworm-slim`, since smolvm's own Alpine has no `apt-get`. The first start installs Xvfb, `xdotool`, `xwininfo` and `scrot` with `apt-get`, which needs `allow_internet_access=True`; for a VM without network access, use an `image` that already has Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid`.
+Without an `image`, a new VM runs `debian:bookworm-slim`, since smolvm's own Alpine has no `apt-get`. The first start installs [the programs the display needs](../computer_use/#what-the-display-needs), which needs `allow_internet_access=True`. For a VM without network access, use an `image` that already has them.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 

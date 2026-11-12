@@ -40,7 +40,7 @@ def can_be_sandboxed(tool_def: ToolDefinition) -> bool:
     (`unless_native`) has to stay native so `Model.prepare_request` can drop it when the provider supports
     the native tool; a tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
     `run_workflow`) is a peer of `run_code`, not something to fold inside it; and `ComputerUse`'s `computer` tool
-    returns a screenshot the model itself has to see, which code calling it would keep from the model.
+    returns a screenshot the model has to see, which code calling it would hide.
     """
     return (
         tool_def.tool_kind not in _FRAMEWORK_CONTROL_TOOL_KINDS

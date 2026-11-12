@@ -3048,9 +3048,9 @@ def _continuation_digest(history: _Hasher, parts: Sequence[ModelResponsePart]) -
 def _call_as_sent(part: ToolCallPart) -> ToolCallPart:
     """`part` as the server holds it: a base call, without what the agent graph adds after `request()`.
 
-    The digest is taken in `request()`, and the graph then promotes the call to its kind's typed subclass and labels a
-    `computer` call with the grid and screenshot limits of the model that made it. None of that is sent, so
-    leaving it in would make a response compared later never match.
+    The digest is taken in `request()`. The graph then promotes the call to its typed subclass and labels a
+    `computer` call with its model's grid and screenshot limits. None of that is sent, so leaving it in would stop a
+    later response from matching.
     """
     args = part.args if part.args is None or isinstance(part.args, str) else {**part.args}
     details = {key: value for key, value in (part.provider_details or {}).items() if key not in _LABEL_KEYS}
@@ -3610,8 +3610,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
         if profile.get('openai_responses_supports_json_schema_output', False):
             profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
-        # Providers say which models take the native computer tool, which only the Responses API sends; a profile
-        # without its own native tools lists every type, so the flag also takes it away.
+        # The provider's profile says which models take the native computer tool. A profile without its own native
+        # tools lists every type, so the flag also removes it.
         supported = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
         supported = (
             supported | {ComputerTool}
@@ -6882,7 +6882,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         )
                         call = _map_computer_call(chunk.item, computer_name, call_id, self.provider_name)
                         if isinstance(self._parts_manager.get_part_by_vendor_id(chunk.item.id), ComputerCallPart):
-                            # Started at its added event: completed as a delta, as a second start would be read as
+                            # Started at its added event, so it's completed as a delta; a second start would read as
                             # another call.
                             if event := self._parts_manager.handle_tool_call_delta(
                                 vendor_part_id=chunk.item.id, args=call.args, provider_details=call.provider_details
@@ -8433,10 +8433,9 @@ _LIST = TypeAdapter(list[Any], config={'strict': True})
 
 
 def _map_computer_action(raw: Any) -> list[tuple[dict[str, Any], str | None]]:
-    """One OpenAI computer action as `computer` tool actions, each with a note when it runs other than as asked.
+    """One OpenAI computer action as `computer` tool actions, each with a note when it runs differently than asked.
 
-    An action that doesn't validate becomes one the tool refuses, naming the fields that didn't, so the model retries
-    and none of it runs.
+    An invalid action becomes one the tool refuses, naming the bad fields, so none of it runs and the model retries.
     """
     try:
         action = _OPENAI_ACTION.validate_python(raw)
@@ -8504,10 +8503,9 @@ _STORED_ITEM_TA = TypeAdapter(dict[str, Any])
 
 
 def _stored_computer_call(part: ToolCallPart) -> dict[str, Any] | None:
-    """The `computer_call` item a call came as, to send back as it was, or `None` to send the call back plain.
+    """The `computer_call` item a call came as, to send back unchanged, or `None` to send the call back plain.
 
-    A history can come back from storage or a UI, so the item is checked to be an object; what's inside it is the
-    API's to judge.
+    A history may come from storage or a UI, so only that the item is an object is checked; the API judges the rest.
     """
     try:
         return _STORED_ITEM_TA.validate_python((part.provider_details or {}).get('computer_call')) or None
@@ -8554,10 +8552,10 @@ def _map_computer_call(
 
 
 def _computer_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPart]:
-    """Each call this API made as a `computer_call`, by tool call ID, so its output can read it.
+    """Each `computer_call` this API made, by tool call ID, so its output can read it.
 
-    Found by the item it came as, not by whether its arguments are valid: a call whose actions didn't map was still a
-    `computer_call` on the wire, and its output must be a `computer_call_output`.
+    Found by the item it came as, not by valid arguments: a call whose actions didn't map was still a `computer_call`,
+    and its output must be a `computer_call_output`.
     """
     return {
         part.tool_call_id: part
@@ -8571,9 +8569,8 @@ def _computer_calls_by_id(messages: list[ModelMessage]) -> dict[str, ToolCallPar
 def _scroll_notes(call: ToolCallPart | None, result: ComputerResult | None) -> list[str]:
     """The notes on the pixel scrolls that ran, kept on the call when it was made.
 
-    Only the `performed` actions ran; a call changed before it ran ran other actions, which its summary describes, and
-    a result without its outcome doesn't say what ran. A history can come back from storage or a UI, so the notes are
-    checked, and without them nothing is said.
+    Only the first `performed` actions ran. Nothing is said for a call changed before it ran (its summary covers it),
+    a result without its outcome, or notes that don't validate, since a history may come from storage or a UI.
     """
     if call is None or result is None or result.get('changed'):
         return []
@@ -8585,10 +8582,10 @@ def _scroll_notes(call: ToolCallPart | None, result: ComputerResult | None) -> l
 
 
 def _needs_summary(result: ComputerResult | None) -> bool:
-    """Whether a `computer` result needs its text beside the screenshot: the image alone would say the call ran.
+    """Whether a `computer` result needs its text beside the screenshot, which alone would say the call ran.
 
-    A result without its outcome, such as one a UI rebuilt, may describe a failure. A call that failed or was changed
-    before it ran says so in its text.
+    A result without its outcome, such as one a UI rebuilt, may describe a failure. A failed or changed call says so
+    in its text.
     """
     return result is None or 'error' in result or bool(result.get('changed'))
 
@@ -8615,8 +8612,8 @@ def _map_computer_call_output(
             'detail': 'original',  # pyright: ignore[reportAssignmentType]
         },
     }
-    # Read from the stored details as the approval gate reads them: a restored call whose arguments didn't validate
-    # is a plain `ToolCallPart`, and may still have run, approved with corrected arguments.
+    # Read from the stored details, as the approval gate does: a restored call whose arguments didn't validate is a
+    # plain `ToolCallPart`, and may still have run with corrected arguments.
     if computer_return and call is not None and (checks := _safety_checks(call.provider_details)):
         output['acknowledged_safety_checks'] = [
             responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck(

@@ -257,9 +257,8 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         env: Environment variables every command gets; per-command `env` is layered on top. Nothing is
             read from the host environment.
         desktop: Whether the VM has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
-            `True` for 1280x800, or its `(width, height)`. It starts on first use, driven with `xdotool` and
-            `scrot`, which the first start installs with `apt-get` when they're missing; that needs
-            `allow_internet_access`. Without an `image`, a new VM runs `debian:bookworm-slim`.
+            `True` for 1280x800, or its `(width, height)`. The first start installs the programs it needs, which
+            needs `allow_internet_access`. Without an `image`, a new VM runs `debian:bookworm-slim`.
     """
 
     def __init__(
