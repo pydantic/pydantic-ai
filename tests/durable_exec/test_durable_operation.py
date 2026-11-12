@@ -343,9 +343,10 @@ async def test_durable_metadata_runs_a_function_tool_outside_the_durable_unit() 
         id='functions',
     )
     durability = KeyedJournalDurability()
-    agent = Agent(
+    agent = Agent[None, str](
         TestModel(),
         name='agent',
+        deps_type=type(None),
         toolsets=[toolset],
         capabilities=[
             SetToolMetadata(tools=['selected'], durable=False),
@@ -408,7 +409,9 @@ def _dynamic(tool: Tool[None]) -> DynamicToolset[None]:
 async def test_durable_metadata_refuses_tools_that_cannot_leave_the_durable_unit(
     toolset: FunctionToolset[None] | DynamicToolset[None], match: str
 ) -> None:
-    agent = Agent(TestModel(), name='agent', toolsets=[toolset], capabilities=[JournalDurability()])
+    agent = Agent[None, str](
+        TestModel(), name='agent', deps_type=type(None), toolsets=[toolset], capabilities=[JournalDurability()]
+    )
 
     with pytest.raises(UserError, match=match):
         await agent.run('Go.')
