@@ -1048,6 +1048,19 @@ class TestAzureDurableTaskDurability:
                 'recovered',
                 id='capped-at-max-retry-interval',
             ),
+            # A backoff too long for a `timedelta` is capped at `max_retry_interval` before it's built.
+            pytest.param(
+                {
+                    'first_retry_interval': timedelta(seconds=1),
+                    'max_number_of_attempts': 3,
+                    'backoff_coefficient': 1e14,
+                    'max_retry_interval': timedelta(seconds=2),
+                },
+                2,
+                [2.0],
+                'recovered',
+                id='long-backoff-capped-at-max-retry-interval',
+            ),
             pytest.param(
                 {'first_retry_interval': timedelta(seconds=30), 'max_number_of_attempts': 2},
                 None,

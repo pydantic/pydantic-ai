@@ -119,10 +119,13 @@ def _retry_after_cap(policy: task.RetryPolicy, attempts: int) -> float:
 
 def _continued_policy(policy: task.RetryPolicy, attempts: int, elapsed: timedelta) -> task.RetryPolicy:
     """The retry policy for the attempts `policy` has left after `attempts`, with the backoff where it left off."""
-    backoff_coefficient = policy.backoff_coefficient or 1.0
+    # In seconds, as the SDK works out its backoff, so a long one is capped before it can overflow a `timedelta`.
+    first_retry_interval = policy.first_retry_interval.total_seconds() * (policy.backoff_coefficient or 1.0) ** attempts
+    if policy.max_retry_interval is not None:
+        first_retry_interval = min(first_retry_interval, policy.max_retry_interval.total_seconds())
     retry_timeout = policy.retry_timeout
     return task.RetryPolicy(
-        first_retry_interval=policy.first_retry_interval * backoff_coefficient**attempts,
+        first_retry_interval=timedelta(seconds=first_retry_interval),
         max_number_of_attempts=policy.max_number_of_attempts - attempts,
         backoff_coefficient=policy.backoff_coefficient,
         max_retry_interval=policy.max_retry_interval,
