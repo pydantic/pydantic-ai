@@ -186,6 +186,11 @@ async def fail_external_event(client: Client, token: str, reason: str) -> None:
     as it does when it times out. [`RequestInput`][pydantic_ai.capabilities.RequestInput] then denies the
     pending calls with `reason` in the message to the model.
 
+    Args:
+        client: A Temporal client for the namespace the workflow runs in.
+        token: The resume token `ask` received.
+        reason: Why no answer is coming, which the wait's `ExternalEventError` carries.
+
     Raises:
         UserError: The token was not handed out by a Temporal workflow.
         temporalio.service.RPCError: The workflow is not running, for example because it already completed.
