@@ -372,6 +372,11 @@ class ConversationStore(ABC):
         read only until the stored ones clean to as many parts as `sent`, or to more messages, not the
         whole history. Cleaning can also add a message, like a result for a tool call nothing
         answered, so the history `sent` came from can be shorter than `sent`.
+
+        That holds because `repair_messages` drops a tool result only when no earlier message holds
+        its call, and otherwise only adds parts or merges adjacent messages. If a change to it broke
+        that, the search could miss the history `sent` came from, and the save would branch as if
+        `sent` had been edited.
         """
         parts = _part_count(sent)
         stored = [entry.message for entry in history]
