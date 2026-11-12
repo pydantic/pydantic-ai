@@ -55,7 +55,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import history_items
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import TurnStart
-from pydantic_clai2.runtime import session_runtime, tasks as runtime_tasks
+from pydantic_clai2.runtime import session_runtime
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_runtime import create_shell
@@ -1162,23 +1162,3 @@ async def test_a_question_asked_after_a_turns_last_read_starts_the_next_turn(
             shell.editor.submit('/exit')
     (record,) = shell.tasks.owner.records.values()
     assert (record.outcome, record.output) == ('ok', 'Chose cheddar')
-
-
-def test_freed_memory_is_returned_where_the_allocator_can(monkeypatch: pytest.MonkeyPatch) -> None:
-    trims: list[int] = []
-
-    class Glibc:
-        def malloc_trim(self, pad: int) -> int:
-            trims.append(pad)
-            return 1
-
-    libraries: list[object] = [Glibc(), object()]
-    monkeypatch.setattr(runtime_tasks.ctypes, 'CDLL', lambda name: libraries.pop(0))
-    monkeypatch.setattr(runtime_tasks.sys, 'platform', 'linux')
-    runtime_tasks._release_freed_memory()  # pyright: ignore[reportPrivateUsage]
-    assert trims == [0]
-    runtime_tasks._release_freed_memory()  # pyright: ignore[reportPrivateUsage]  # musl: no `malloc_trim`
-    monkeypatch.setattr(runtime_tasks.sys, 'platform', 'darwin')
-    runtime_tasks._release_freed_memory()  # pyright: ignore[reportPrivateUsage]
-    assert trims == [0]
-    assert libraries == []

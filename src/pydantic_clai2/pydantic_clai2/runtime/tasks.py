@@ -174,19 +174,6 @@ def resume_prompt(record: DelegationTask) -> str:
     )
 
 
-def _release_freed_memory() -> None:
-    """Return the memory that freed objects left behind to the OS.
-
-    Loading the saved tasks parses each one's full history file and then drops it, and glibc's allocator keeps
-    most of the freed memory for reuse instead of returning it, often hundreds of megabytes for a large task
-    directory. Other allocators either return it themselves or have no `malloc_trim`, so this does nothing there.
-    """
-    if sys.platform != 'linux':
-        return
-    with suppress(AttributeError):  # A C library without `malloc_trim`, like musl
-        ctypes.CDLL(None).malloc_trim(0)
-
-
 class TaskRouter:
     """The process's one delegated-task owner, and the routing of its events to each live session's `Tasks`.
 
@@ -231,7 +218,12 @@ class TaskRouter:
         async with self._lock:
             if not self._users:
                 await self._stack.enter_async_context(self.owner.opened())
-                _release_freed_memory()
+                # Loading the saved tasks parsed each one's full history and then dropped it, and glibc keeps
+                # that freed memory for reuse instead of returning it: hundreds of megabytes for a large task
+                # directory. Other C libraries either return it themselves or have no `malloc_trim`.
+                if sys.platform == 'linux':
+                    with suppress(AttributeError):
+                        ctypes.CDLL(None).malloc_trim(0)
             self._users += 1
         try:
             yield self.owner
