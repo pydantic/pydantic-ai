@@ -72,7 +72,7 @@ def build_orchestrator(
         summarize,
         name='summarize',
         description='Summarize a text.',
-        tools=list(tools) if tools is not None else [noop],
+        tools=list(tools) if tools is not None else [Tool[None](noop)],
         capabilities=[durability()] if durable_sub_agents else [],
     )
     return Agent(
