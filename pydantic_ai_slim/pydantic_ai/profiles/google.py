@@ -213,7 +213,7 @@ class GoogleModelProfile(ModelProfile, total=False):
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
-    # listed support the full `GOOGLE_THINKING_LEVELS` scale, except where only one API enforces
+    # listed support the default `GOOGLE_THINKING_LEVELS`, except where only one API enforces
     # the documented set: `GoogleModel.profile` applies that set by the client's transport, as it
     # does for `gemini-3.1-flash-image` on the Gemini API.
     # https://ai.google.dev/gemini-api/docs/thinking
@@ -243,7 +243,7 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
 _REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Verified live 2026-09-16 against the Gemini Developer API: `gemini-3.8-live-extended-thinking`
     # answers `1007 Thinking level MINIMAL is not supported for this model` and accepts the other
-    # three. Live models not listed here take the full scale.
+    # three. Live models not listed here take the default `GOOGLE_THINKING_LEVELS`.
     ('gemini-3.8-live-extended-thinking', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
 )
 """Live model name prefixes mapped to the thinking levels they accept."""

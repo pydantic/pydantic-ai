@@ -722,7 +722,7 @@ class GoogleModel(Model[Client]):
         """The model profile.
 
         When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
-        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the full scale. A
+        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the default levels. A
         `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
 
         On Vertex AI, `gemini-3.1-pro-preview` can turn thinking off with `thinking_budget=0`, so it isn't
