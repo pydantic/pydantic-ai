@@ -73,7 +73,8 @@ The parts that matter:
 
 - Each sub-agent is an `async` function. You call it with `await`.
 - You pass the work as a single keyword argument, `task`. Always by keyword -- `reviewer(task="...")`, not `reviewer("...")`.
-- `asyncio.gather(...)` runs the two reviews concurrently instead of one after the other.
+- `asyncio.gather(...)` runs the two reviews concurrently instead of one after the other (except in a
+  [DBOS workflow](#running-under-other-durable-engines)).
 - The last expression's value becomes the result the model sees. The intermediate `reports` list never leaves the sandbox.
 
 Each call is a full `Agent.run`, with its own model loop, message history, tools, and typed output. Two things follow: calls are **isolated** (a sub-agent remembers nothing from an earlier call, so put everything it needs into `task`), and calls **cost tokens and take time** (which is why this capability gives you budgets, below).
