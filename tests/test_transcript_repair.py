@@ -693,7 +693,8 @@ def _two_call_agent(received: list[list[ModelMessage]]) -> Agent[None, str | Def
 
     @agent.tool_plain
     def get_data() -> str:
-        return 'data'  # pragma: no cover -- already answered in the history
+        # Already answered in the history.
+        return 'data'  # pragma: no cover
 
     @agent.tool_plain(requires_approval=True)
     def create_file(path: str) -> str:
