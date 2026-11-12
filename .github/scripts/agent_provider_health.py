@@ -1392,10 +1392,6 @@ def _export_decision_span(health: Health, started_ns: int) -> None:
     headers = _otel_pairs(os.environ.get('OTEL_EXPORTER_OTLP_HEADERS', ''))
     if not endpoint or not headers.get('Authorization'):
         return
-    # The no-redirect opener has no handler for another scheme: `open` would return `None` and fail the decision.
-    if urllib.parse.urlsplit(endpoint).scheme not in ('http', 'https'):
-        print('::warning::Could not export the provider health span: the OTLP endpoint has no http(s) scheme')
-        return
     values: dict[str, object] = {
         'github.job': os.environ.get('GITHUB_JOB', ''),
         'provider_health.ready': health.ready,
@@ -1445,6 +1441,11 @@ def _export_decision_span(health: Health, started_ns: int) -> None:
         ]
     }
     try:
+        # The no-redirect opener has no handler for another scheme: `open` would return `None` and fail the decision.
+        # `urlsplit` itself raises `ValueError` on a malformed bracketed host.
+        if urllib.parse.urlsplit(endpoint).scheme not in ('http', 'https'):
+            print('::warning::Could not export the provider health span: the OTLP endpoint has no http(s) scheme')
+            return
         request = urllib.request.Request(
             f'{endpoint}/v1/traces',
             data=json.dumps(body).encode(),

@@ -4084,6 +4084,7 @@ def test_each_decision_exports_one_span_with_both_accounts_quota(
         # `http.client` rejects the header with a `ValueError` whose message repeats the header value.
         ('Authorization=token%0Asecret-fixture', 200, None, False, 'ValueError'),
         ('Authorization=token', 200, 'localhost:4318', False, 'the OTLP endpoint has no http(s) scheme'),
+        ('Authorization=token', 200, 'https://[::1', False, 'ValueError'),
     ],
 )
 def test_decision_span_export_never_changes_the_decision(
@@ -4114,6 +4115,33 @@ def test_decision_span_export_never_changes_the_decision(
     assert 'secret-fixture' not in out
     warnings = [line for line in out.splitlines() if line.startswith('::warning::')]
     assert warnings == ([] if warning is None else [f'::warning::Could not export the provider health span: {warning}'])
+
+
+def test_a_blocked_decision_exports_its_unknown_quota_without_an_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A gate blocked by an unreadable primary quota, with no backup key, exports the diagnostic and no account."""
+    _stub_account_quotas(monkeypatch, health.Quota('unknown', diagnostic='http_error', http_status=503), None)
+    received: list[tuple[str, str | None, bytes]] = []
+    monkeypatch.setattr(_Collector, 'received', received)
+    monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS', 'Authorization=token')
+
+    with _http_server(_Collector) as url:
+        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', url)
+        decision, _, _ = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
+
+    assert (decision.ready, decision.account) == (False, None)
+    [(_, _, body)] = received
+    [span] = json.loads(body)['resourceSpans'][0]['scopeSpans'][0]['spans']
+    attributes = {item['key']: item['value'] for item in span['attributes']}
+    assert 'provider_health.account' not in attributes
+    assert {key: value for key, value in attributes.items() if key.startswith('provider_health.primary.')} == {
+        'provider_health.primary.ready': {'boolValue': False},
+        'provider_health.primary.reason': {'stringValue': decision.reason},
+        'provider_health.primary.quota.status': {'stringValue': 'unknown'},
+        'provider_health.primary.quota.diagnostic': {'stringValue': 'http_error'},
+        'provider_health.primary.quota.http_status': {'intValue': '503'},
+    }
 
 
 def _monitor_blocked_gate(decision: health.Health, client: FakeGitHub, tmp_path: Path) -> None:
