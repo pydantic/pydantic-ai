@@ -46,7 +46,7 @@ from pydantic_ai_harness._workspace_provider import (
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 
 if TYPE_CHECKING:
-    from daytona import AsyncDaytona, AsyncSandbox
+    from daytona import AsyncComputerUse, AsyncDaytona, AsyncSandbox
 
     from pydantic_ai.workspaces import WorkspaceCommand
 
@@ -58,7 +58,7 @@ try:
 except ImportError as error:
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
 
-from pydantic_ai_harness._display import ManagedDisplay, desktop_size
+from pydantic_ai_harness._display import LazyDisplay, desktop_size
 from pydantic_ai_harness.daytona_sandbox._desktop import DaytonaDesktop
 
 _AUTH_MESSAGE = (
@@ -481,7 +481,11 @@ class DaytonaSandboxBackend(
         # runs on display `:0` (checked live).
         self._env = {**({'DISPLAY': ':0'} if self._desktop_size else {}), **(env or {})}
         self._display = (
-            None if self._desktop_size is None else ManagedDisplay(self._start_display, scope=self._display_scope)
+            None
+            if self._desktop_size is None
+            else LazyDisplay(
+                DaytonaDesktop(self._attached_computer_use), self._start_display, scope=self._display_scope
+            )
         )
         self._working_dir = absolute_path('working_dir', working_dir)
         # `working_dir()` must return a canonical absolute path, resolved once with `pwd -P`.
@@ -654,7 +658,6 @@ class DaytonaSandboxBackend(
             # Under the lock, so a sandbox still being created is recorded before its client closes.
             async with self._lock:
                 client, self._client, self._sandbox, self._resolved_working_dir = self._client, None, None, None
-                # The sandbox may stop before it is used again, and its desktop with it.
                 self._reset_display()
             if client is not None:
                 await _close_quietly(client)
@@ -847,7 +850,7 @@ class DaytonaSandboxBackend(
         return self._display
 
     def _reset_display(self) -> None:
-        # The driver holds the old client's sandbox handle.
+        # The sandbox may stop before it is attached again, and its desktop with it.
         if self._display is not None:
             self._display.reset()
 
@@ -865,12 +868,19 @@ class DaytonaSandboxBackend(
                 # display starts again on the next.
                 raise WorkspaceError(f'The Daytona desktop failed: {error}') from error
 
-    async def _start_display(self) -> DaytonaDesktop:
-        assert self._display is not None
+    def _attached_computer_use(self) -> AsyncComputerUse:
+        # The display calls it inside `_display_scope`, which attaches the sandbox and keeps it attached.
+        assert self._sandbox is not None
+        return self._sandbox.computer_use
+
+    async def _start_display(self) -> bool:
+        """Start the desktop unless it's running, and return whether it was down, so its windows are gone."""
         sandbox = await self.get_sandbox()
         computer_use = sandbox.computer_use
         try:
             status = await computer_use.get_status(request_timeout=_REQUEST_TIMEOUT)
+            if status.status == 'active':
+                return False
             await computer_use.start(request_timeout=_REQUEST_TIMEOUT)
         except daytona.DaytonaServiceUnavailableError as error:
             if not _desktop_broken(error):
@@ -879,9 +889,7 @@ class DaytonaSandboxBackend(
                 f"The Daytona sandbox {sandbox.id!r}'s desktop stopped answering; stopping and starting the "
                 f'sandbox brings it back. ({error})'
             ) from error
-        if status.status != 'active':
-            self._display.started_fresh()
-        return DaytonaDesktop(computer_use)
+        return True
 
     async def live_view_url(self, *, expires_in: int = 3600) -> str:
         """A link to watch the desktop, and use it, in a browser, valid for `expires_in` seconds.
@@ -890,13 +898,10 @@ class DaytonaSandboxBackend(
         """
         if self._display is None:
             raise UserError('This Daytona workspace has no display: create it with `desktop=True`.')
-        async with self._display_scope():
+        # The sandbox may have stopped and started since the desktop last started, which leaves the viewer down.
+        await self._display.start()
+        async with self._operation():
             sandbox = await self.get_sandbox()
-            # The sandbox may have stopped and started since the desktop last started, which leaves the viewer down.
-            status = await sandbox.computer_use.get_status(request_timeout=_REQUEST_TIMEOUT)
-            if status.status != 'active':
-                self._display.reset()
-            await self._display.driver()
             async with _mapped_errors('Could not create a live view link', sandbox=sandbox):
                 signed = await sandbox.create_signed_preview_url(
                     _VNC_PORT, expires_in_seconds=expires_in, request_timeout=_REQUEST_TIMEOUT

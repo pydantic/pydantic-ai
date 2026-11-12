@@ -22,6 +22,7 @@ class FakeDisplay:
         self.starts: list[str] = []
         self.xdotool: list[str] = []
         self.viewers: list[str] = []
+        self.viewer_fails = False
 
     def __call__(self, command: str, timeout: float | None) -> tuple[str, str, int]:
         if 'Xvfb' in command:
@@ -43,7 +44,7 @@ class FakeDisplay:
                 return '', "Error: Can't open display: :1", 1
         elif 'novnc_proxy' in command:
             self.viewers.append(command)
-            if not self.up:
+            if self.viewer_fails or not self.up:
                 return '', 'the viewer did not start:\nno display', 1
             return 'Pass1234', '', 0
         return '', '', 0

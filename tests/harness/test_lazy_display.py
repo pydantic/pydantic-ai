@@ -1,4 +1,4 @@
-"""Tests for `ManagedDisplay`, the start-and-retry policy every harness display shares.
+"""Tests for `LazyDisplay`, the start-and-retry policy every harness display shares.
 
 It is private, but each backend reaches only some of its rules cheaply, so they are pinned here once.
 """
@@ -10,7 +10,7 @@ import pytest
 
 from pydantic_ai.computer_use import Click, Point, PressKeys, Region
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError, WorkspaceUnavailableError
-from pydantic_ai_harness._display import ManagedDisplay
+from pydantic_ai_harness._display import LazyDisplay
 from pydantic_ai_harness.computer_use import (
     Display,
     DisplayAction,
@@ -32,10 +32,10 @@ class FakeDriver:
         self.acted: list[DisplayAction] = []
         self._refuse = refuse
 
-    async def start(self) -> FakeDriver:
+    async def start(self) -> bool:
         self.starts += 1
         await anyio.sleep(0)  # a start takes a moment, so concurrent first uses overlap
-        return self
+        return False
 
     def _maybe_fail(self) -> None:
         if self.failures:
@@ -66,7 +66,7 @@ class FakeDriver:
 
 async def test_concurrent_first_uses_start_one_display() -> None:
     driver = FakeDriver()
-    display = ManagedDisplay(driver.start)
+    display = LazyDisplay(driver, driver.start)
     async with anyio.create_task_group() as tg:
         for _ in range(3):
             tg.start_soon(display.display_size)
@@ -75,7 +75,7 @@ async def test_concurrent_first_uses_start_one_display() -> None:
 
 async def test_every_call_reaches_the_started_display() -> None:
     driver = FakeDriver()
-    display = ManagedDisplay(driver.start)
+    display = LazyDisplay(driver, driver.start)
     assert await display.screenshot() == FAKE_SCREENSHOT
     assert await display.zoom(Region(left=0, top=0, right=10, bottom=10)) == FAKE_SCREENSHOT
     assert await display.cursor_position() == Point(x=0, y=0)
@@ -84,7 +84,7 @@ async def test_every_call_reaches_the_started_display() -> None:
 
 async def test_a_failed_look_starts_the_display_again_and_looks_again() -> None:
     driver = FakeDriver()
-    display = ManagedDisplay(driver.start)
+    display = LazyDisplay(driver, driver.start)
     await display.display_size()
 
     driver.failures = [WorkspaceError('the display went away')]
@@ -94,7 +94,7 @@ async def test_a_failed_look_starts_the_display_again_and_looks_again() -> None:
 
 async def test_a_failed_action_is_not_retried_and_the_next_call_starts_the_display() -> None:
     driver = FakeDriver()
-    display = ManagedDisplay(driver.start)
+    display = LazyDisplay(driver, driver.start)
     await display.display_size()
 
     driver.failures = [WorkspaceError('the display went away')]
@@ -114,12 +114,11 @@ async def test_an_action_does_not_run_on_a_display_that_started_since_the_last_s
     """
     driver = FakeDriver()
 
-    async def start() -> FakeDriver:
-        # The start script found the X server down and started it.
-        display.started_fresh()
-        return await driver.start()
+    async def start() -> bool:
+        await driver.start()
+        return True  # the start script found the X server down and started it
 
-    display = ManagedDisplay(start)
+    display = LazyDisplay(driver, start)
     if first == 'display_size':
         await display.display_size()
     refused = 'The display was not running and started since the last screenshot'
@@ -136,13 +135,14 @@ async def test_an_action_does_not_run_on_a_display_that_started_since_the_last_s
 
 
 def test_it_is_a_display_with_every_optional_ability() -> None:
-    display = ManagedDisplay(FakeDriver().start)
+    driver = FakeDriver()
+    display = LazyDisplay(driver, driver.start)
     assert all(isinstance(display, protocol) for protocol in (Display, SupportsZoom, SupportsCursorPosition))
 
 
 async def test_a_refused_action_keeps_the_display() -> None:
     driver = FakeDriver(refuse=PressKeys)
-    display = ManagedDisplay(driver.start)
+    display = LazyDisplay(driver, driver.start)
     with pytest.raises(UnsupportedActionError):
         await display.act(PressKeys(keys=('a',)))
     await display.act(Click(x=1, y=1))
@@ -154,7 +154,7 @@ async def test_a_refused_action_keeps_the_display() -> None:
 )
 async def test_an_unavailable_or_stuck_environment_is_not_retried(error: WorkspaceError) -> None:
     driver = FakeDriver()
-    display = ManagedDisplay(driver.start)
+    display = LazyDisplay(driver, driver.start)
     await display.display_size()
 
     driver.failures = [error]
