@@ -18,7 +18,7 @@ from pydantic import BaseModel, TypeAdapter
 sys.path.insert(0, str(Path(__file__).parent))
 
 import douwebot_opencode_run
-from douwebot_opencode_run import DEEPINFRA, OPENCODE_GO, Provider, check_symlinks
+from douwebot_opencode_run import DEEPINFRA, OPENCODE_GO, Provider, check_symlinks, read_only_config
 
 # What OpenCode 2.2.5 writes when OpenCode Go's usage limit refuses the first request: a step starts, none finishes.
 LIMIT = 'OpenCode Go weekly usage limit reached. Switch to a free model, or turn on Extra Usage on the Go page.'
@@ -162,6 +162,15 @@ def assert_runs_on(launch: Launch, provider: Provider) -> None:
         provider.key_variable: keys[provider.key_variable]
     }
     assert 'GH_TOKEN' not in launch.env
+
+
+def test_only_deepinfra_sets_a_reasoning_effort() -> None:
+    """DeepInfra returns no reasoning for the model unless asked; the Go config stays without a provider override."""
+    settings = {'settings': {'reasoningEffort': 'low'}}
+    assert read_only_config(agent='reviewer', provider=DEEPINFRA)['providers'] == {
+        'deepinfra': {'models': {'deepseek-ai/DeepSeek-V4.1-Flash': settings}}
+    }
+    assert 'providers' not in read_only_config(agent='reviewer', provider=OPENCODE_GO)
 
 
 def test_launcher_sends_shared_review_and_restricts_environment(
