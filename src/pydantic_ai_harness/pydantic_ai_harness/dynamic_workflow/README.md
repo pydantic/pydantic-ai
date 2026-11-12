@@ -482,8 +482,8 @@ call. When any sub-agent in the catalog carries it, every sub-agent call the scr
 without `DBOSDurability`. An `asyncio.gather` over sub-agents then takes the sum of their run times
 rather than the longest. Each call runs as ordinary workflow code, as it would outside
 `DynamicWorkflow`: the sub-agent's model requests, MCP tool calls, and tools decorated with
-`@DBOS.step` keep their own checkpoints, and DBOS checks the roles those `@DBOS.step` tools require. Recovery replays a call's
-finished steps and runs on from there. Other function tools run as workflow code and run again on
+`@DBOS.step` keep their own checkpoints, and DBOS checks the roles those `@DBOS.step` tools
+require. Recovery replays a call's finished steps and runs on from there. Other function tools run as workflow code and run again on
 recovery, so put side effects in `@DBOS.step` tools. Recording each call as one DBOS step would let
 the calls overlap, but DBOS runs a step called from inside another step as a plain function call,
 without its own checkpoint or role check.
