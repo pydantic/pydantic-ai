@@ -1,12 +1,11 @@
 """The protocols a screen implements for `ComputerUse`: `Display`, its optional abilities, and `SupportsDisplay`.
 
-A workspace backend with a screen, such as a sandbox started with a desktop, implements `SupportsDisplay`, and
-`ComputerUse` drives the `Display` it returns. They are structural: a backend conforms by having the members, without
-importing anything from here.
+A workspace backend with a screen implements `SupportsDisplay`, and `ComputerUse` drives the `Display` it returns. The
+protocols are structural, so a backend needs no imports from here.
 
-These protocols don't change once released, since adding a member would break every display written before it. A new
-ability is a new optional protocol, like `SupportsZoom`, and a new kind of input is a new action type in
-`DisplayAction`, which a display written earlier refuses with `UnsupportedActionError`.
+They don't change once released, since a new member would break every existing display. A new ability is a new
+optional protocol, like `SupportsZoom`, and a new input is a new action type in `DisplayAction`, which an older display
+refuses with `UnsupportedActionError`.
 """
 
 from __future__ import annotations as _annotations
@@ -89,7 +88,7 @@ class SupportsDisplay(Protocol):
 
     @property
     def display(self) -> Display | None:
-        """This environment's display, or `None` for one without a screen, decided without I/O.
+        """This environment's display, or `None` without a screen. No I/O.
 
         It is the same object for the backend's lifetime, through restarts and reconnects.
         """

@@ -1,7 +1,7 @@
-"""Events emitted by the `computer` tool, so an application can follow the screen without parsing results.
+"""Events the `computer` tool emits, so an application can follow the screen without parsing results.
 
-Each is emitted once a call has finished, outside its durable unit, so it is emitted once even under durable
-execution. They add no telemetry spans; core already traces the tool call.
+Each is emitted once per finished call, outside its durable unit, so durable execution doesn't repeat it. They add no
+telemetry spans, since core already traces the tool call.
 """
 
 from dataclasses import dataclass
