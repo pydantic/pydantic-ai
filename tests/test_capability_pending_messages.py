@@ -2454,6 +2454,53 @@ async def test_content_recorded_at_a_deferred_pause_is_reported_once_to_listener
     assert streamed == ([] if driver == 'run' else enqueue_ids)
 
 
+async def test_content_recorded_when_run_stream_finds_a_deferred_result_reaches_the_handler():
+    """`run_stream()` ends the run itself once the stream finds a deferred result, and the run's last events get out.
+
+    The model streams a call that needs approval, so `run_stream()` runs the step's other calls and ends the run.
+    Content one of them queued is recorded at the pause, and its event reaches the handler as well as listeners.
+    """
+
+    @dataclass
+    class Listener(AbstractCapability[object]):
+        seen: list[str]
+
+        @on_event(EnqueuedMessagesEvent)
+        async def delivered(self, ctx: RunContext[object], event: EnqueuedMessagesEvent) -> None:
+            self.seen.append(event.enqueue_id)
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='note', json_args='{}', tool_call_id='call-note')}
+        yield {1: DeltaToolCall(name='gated', json_args='{}', tool_call_id='call-gated')}
+
+    listener = Listener(seen=[])
+    agent = Agent(
+        FunctionModel(stream_function=stream_fn), output_type=[str, DeferredToolRequests], capabilities=[listener]
+    )
+    enqueue_ids: list[str | None] = []
+
+    @agent.tool
+    def note(ctx: RunContext[object]) -> str:
+        enqueue_ids.append(ctx.enqueue('noted at the pause'))
+        return 'noted'
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:  # pragma: no cover
+        return 'done'
+
+    streamed: list[str] = []
+
+    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        streamed.extend([event.enqueue_id async for event in events if isinstance(event, EnqueuedMessagesEvent)])
+
+    async with agent.run_stream('Hello', event_stream_handler=handler) as result:
+        assert isinstance(await result.get_output(), DeferredToolRequests)
+
+    assert len(enqueue_ids) == 1
+    assert listener.seen == enqueue_ids
+    assert streamed == enqueue_ids
+
+
 async def test_interrupted_request_queued_at_a_deferred_pause_stays_queued():
     """A queued interrupted request would close the paused calls on resume, so it isn't recorded."""
     interrupted = ModelRequest(parts=[UserPromptPart('half done')], state='interrupted')

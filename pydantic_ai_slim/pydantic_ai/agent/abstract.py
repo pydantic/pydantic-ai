@@ -1164,7 +1164,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                         )
                                     )
 
-                                await agent_run.next(_agent_graph.SetFinalResult(final_result))
+                                # Like `next()`, but events emitted as the run ends also reach `event_stream_handler`.
+                                await agent_run._run_node_with_hooks(  # pyright: ignore[reportPrivateUsage]
+                                    _agent_graph.SetFinalResult(final_result),
+                                    agent_run._stream_and_advance,  # pyright: ignore[reportPrivateUsage]
+                                    event_stream_handler,
+                                )
 
                                 # The tool calls above (and any agents they delegated to) added usage to the run
                                 # after the stream snapshotted it. The final response itself is only recorded once
@@ -1178,8 +1183,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 on_complete,
                             )
                             # Note: wrap_node_run/after_node_run are intentionally skipped here.
-                            # before_node_run fired above; on_complete() later calls
-                            # agent_run.next(SetFinalResult(...)) which fires the full lifecycle
+                            # before_node_run fired above; on_complete() later runs
+                            # SetFinalResult(...) through the full node lifecycle, which fires it
                             # for SetFinalResult, but not for this ModelRequestNode.
                             break
                 elif self.is_call_tools_node(node):
