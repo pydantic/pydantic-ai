@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import posixpath
 import warnings
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
@@ -11,6 +12,7 @@ from typing import Any, get_args, overload
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import AuthorityWorkspace, Workspace, WorkspaceBackend
@@ -405,7 +407,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         """The selected skills, and the names of those whose `SKILL.md` is below `'operator'` authority.
 
         Each skill's level is its own file's, `authority_of(path)` in the workspace its library is read from, with
-        the configured library directories counted as part of that workspace (see `_library_view`).
+        each skill's directory counted as part of that workspace (see `_skill_authority`).
         """
         # Where each name's first `SKILL.md` is, whether it was kept or flagged.
         claimed: dict[str, tuple[Workspace, str]] = {}
@@ -425,7 +427,6 @@ class Skills(AbstractCapability[AgentDepsT]):
                 unknown_names=source.unknown_names,
             )
             messages.extend(skipped)
-            view = await _library_view(workspace, source.directories)
             for skill in skills:
                 previous = claimed.get(skill.name)
                 if previous is not None:
@@ -441,7 +442,7 @@ class Skills(AbstractCapability[AgentDepsT]):
                     continue
                 # A library read from `workspace=` is not where the model's file tools work.
                 by_name[skill.name] = replace(skill, in_run_workspace=source.workspace is None)
-                read_from[skill.name] = view
+                read_from[skill.name] = workspace
         return SkillCatalog(skills=tuple(by_name.values()), skipped=tuple(messages)), await _lowered(by_name, read_from)
 
     @staticmethod
@@ -483,20 +484,21 @@ def _flagged(scanner: ArtifactScanner | None, skill: SkillDefinition) -> Skipped
 
 
 async def _lowered(skills: dict[str, SkillDefinition], read_from: dict[str, Workspace]) -> frozenset[str]:
-    """The names of `skills` whose `SKILL.md` is below `'operator'` in the workspace view each was read through."""
+    """The names of `skills` whose `SKILL.md` is below `'operator'` in the workspace each was read from."""
     return frozenset(
-        [name for name, skill in skills.items() if await read_from[name].authority_of(skill.path) != 'operator']
+        [name for name, skill in skills.items() if await _skill_authority(read_from[name], skill.path) != 'operator']
     )
 
 
-async def _library_view(workspace: Workspace, directories: Sequence[str | Path]) -> Workspace:
-    """`workspace` as the skills read from `directories` see it, with those directories inside it.
+async def _skill_authority(workspace: Workspace, skill_file: str) -> Authority:
+    """The level of the skill whose `SKILL.md` is `skill_file`, with its directory counted as part of `workspace`.
 
     `authority_of` puts a path outside the working directory at `'none'` unless a `path_authority` entry covers it,
-    but a library is a directory the operator configured, such as personal skills above a repository. A skill there
-    gets the level of the entry covering it, if any, and otherwise the workspace's own level, so a plain workspace
-    offers its libraries as before. Naming the libraries at `'operator'` in a wrapper does that: the wrapper never
-    raises a level, so every path keeps the lowest level any of the workspace's own layers gives it.
+    but a library is configured by the operator, and a skill directory in it may link elsewhere, such as to skills
+    shared between projects. Naming the skill's directory at `'operator'` in a wrapper gives it the level of the entry
+    covering it, if any, and otherwise the workspace's own; its link target gets no more than the link's location.
+    The wrapper never raises a level, so a plain workspace offers its skills as before and a lowered one lowers them.
     """
-    paths = [await workspace.resolve(str(directory)) for directory in directories]
-    return AuthorityWorkspace(workspace, authority='operator', path_authority=dict.fromkeys(paths, 'operator'))
+    directory = posixpath.dirname(await workspace.resolve(skill_file))
+    view = AuthorityWorkspace(workspace, authority='operator', path_authority={directory: 'operator'})
+    return await view.authority_of(skill_file)
