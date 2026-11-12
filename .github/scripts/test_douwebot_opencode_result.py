@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from douwebot_opencode_result import review_result
+from douwebot_opencode_result import main, review_result
 
 _RESULT = '{"verdict":"APPROVE","comments":[],"discussion":""}'
 _STOP: dict[str, object] = {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop'}}
@@ -117,3 +117,15 @@ def test_incomplete_or_invalid_review_fails(tmp_path: Path, events: list[dict[st
     """Never pass a partial stream, error, or invalid review to the publisher."""
     with pytest.raises((ValueError, ValidationError)):
         review_result(_write_events(tmp_path, events))
+
+
+def test_rejected_review_exits_with_its_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The job log says why the answer was rejected without repeating it, and no result reaches the publisher."""
+    output = tmp_path / 'github-output'
+    output.touch()
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.setattr(sys, 'argv', ['douwebot_opencode_result.py', str(_stream(tmp_path, 'Private finding.'))])
+    with pytest.raises(SystemExit) as raised:
+        main()
+    assert raised.value.code == 'OpenCode returned an invalid review: validation failed: json_invalid'
+    assert output.read_text(encoding='utf-8') == ''

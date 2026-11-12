@@ -349,7 +349,7 @@ sets that variable to its account's key. Each run's config allows only its provi
 model and the plan that served the run. When a run's process fails, the job log names that run's model, its plan, and the
 `type` and `status` of its stream's last `error` event. It prints a type only when the type is shaped like
 OpenCode's own, such as `provider.auth`. It never prints the error message or response body, which can repeat the
-provider's response. When `PR Review Checks` or threat detection rejects a run's stream or answer, the job log names
+provider's response. When douwebot, `PR Review Checks` or threat detection rejects a run's stream or answer, the job log names
 the reason: a fixed message from `final_text` in `.github/scripts/douwebot_opencode_result.py`, the sorted validation
 error types, or the exception's class name. It never prints model text, because the answer can hold a private
 report. A Z.AI run sends Z.AI the same content a Go run sends Go, fork pull request content included. Start any new

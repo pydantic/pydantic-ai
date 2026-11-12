@@ -77,7 +77,10 @@ def review_result(path: Path) -> ReviewResult:
 
 def main() -> None:
     """Publish one compact validated result as a GitHub Actions output."""
-    result = review_result(Path(sys.argv[1]))
+    try:
+        result = review_result(Path(sys.argv[1]))
+    except ValueError as exc:
+        sys.exit(f'OpenCode returned an invalid review: {rejection_reason(exc)}')
     with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
         output.write('result=' + json.dumps(result.model_dump(), separators=(',', ':')) + '\n')
 
