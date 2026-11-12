@@ -94,10 +94,17 @@ _PLAIN_KEYSYMS = frozenset({'ctrl', 'shift', 'alt', 'super', 'space'})
 """Key names xdotool takes as they are."""
 
 _COMMAND_TIMEOUT = 150
-"""Maximum time for one display command; holding keys for the longest wait, 30 s, is the longest bounded action."""
+"""Maximum time for one display command on top of the pauses it asks for, such as the seconds a `hold_key` holds."""
 
 _TYPING_DELAY_MS = '12'
-"""Milliseconds between typed characters, `xdotool type`'s default."""
+"""Milliseconds between typed characters, `xdotool type`'s default, and between the presses of a repeated key."""
+
+_KEY_SECONDS = int(_TYPING_DELAY_MS) / 1000
+"""The pause one typed character or one key press asks for."""
+
+_TYPED_PER_COMMAND = 2_000
+"""Characters typed by one command. Modal refuses a command over 64 KB, and each character is a keysym of about six
+bytes: 15,000 characters in one command failed there, 2,000 at a time type in about 27 s."""
 
 _LEVEL_SHIFTS = ('Shift_L', 'ISO_Level3_Shift')
 """The modifiers `xdotool` presses to reach a character on a key's other levels, released after a failed typing."""
@@ -114,6 +121,8 @@ turned on."""
 
 _SCROLL_TICK_DELAY_MS = '20'
 """Milliseconds between scroll wheel clicks, instead of `xdotool`'s 100 ms between clicks."""
+
+_SCROLL_TICK_SECONDS = int(_SCROLL_TICK_DELAY_MS) / 1000
 
 _RELEASE_TIMEOUT = 10
 """Maximum time spent releasing held keys and buttons after a failed or cancelled action."""
@@ -244,8 +253,10 @@ class X11Computer:
     def __init__(self, backend: SupportsCommands):
         self._backend = backend
 
-    async def _run(self, command: list[str] | str) -> CommandResult:
-        result = await self._backend.run(command, shell=isinstance(command, str), env=_ENV, timeout=_COMMAND_TIMEOUT)
+    async def _run(self, command: list[str] | str, *, pauses: float = 0) -> CommandResult:
+        """Run `command`, allowing `pauses`, the seconds it asks to pause for, on top of the usual time limit."""
+        timeout = _COMMAND_TIMEOUT + pauses
+        result = await self._backend.run(command, shell=isinstance(command, str), env=_ENV, timeout=timeout)
         if result.exit_code == 127:
             raise WorkspaceUnavailableError(
                 f'A display command is missing on display {DISPLAY}: {(result.stderr or result.stdout).strip()}'
@@ -257,21 +268,23 @@ class X11Computer:
             )
         return result
 
-    async def _xdotool(self, args: list[str], *, hold: tuple[str, ...] = (), release: tuple[str, ...] = ()) -> None:
+    async def _xdotool(
+        self, args: list[str], *, hold: tuple[str, ...] = (), release: tuple[str, ...] = (), pauses: float = 0
+    ) -> None:
         """Run one `xdotool` command chain with `hold` held down; if it fails or is cancelled, let go of everything."""
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
         keydown = ['keydown', *keysyms] if keysyms else []
-        await self._input(['xdotool', *_RELEASE_MODIFIERS, *keydown, *args, *keyup], [list(release), keyup])
+        await self._input(['xdotool', *_RELEASE_MODIFIERS, *keydown, *args, *keyup], [list(release), keyup], pauses)
 
-    async def _input(self, command: list[str], releases: list[list[str]]) -> None:
+    async def _input(self, command: list[str], releases: list[list[str]], pauses: float = 0) -> None:
         """Run an input command; if it fails or is cancelled, stop it and let go of what it may hold.
 
         Each of `releases` is an `xdotool` chain, run on its own so one that fails doesn't keep the others from
         running.
         """
         try:
-            result = await self._run(['sh', '-c', _INPUT, 'sh', *command])
+            result = await self._run(['sh', '-c', _INPUT, 'sh', *command], pauses=pauses)
         except BaseException:
             with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True):
                 # Before letting go, or the command could press again what was just released.
@@ -334,6 +347,7 @@ class X11Computer:
                     + ['sleep', str(DRAG_PRESS_PAUSE), 'mouseup', '1'],
                     hold=modifiers,
                     release=('mouseup', '1'),
+                    pauses=2 * DRAG_PRESS_PAUSE + len(drag_steps(path)) * DRAG_STEP_PAUSE,
                 )
             case MouseDown(button=button):
                 await self._xdotool(['mousedown', _BUTTONS[button]])
@@ -344,20 +358,23 @@ class X11Computer:
                 await self._xdotool(
                     [*_move(x, y), 'click', '--repeat', str(amount), '--delay', _SCROLL_TICK_DELAY_MS, wheel],
                     hold=modifiers,
+                    pauses=amount * _SCROLL_TICK_SECONDS,
                 )
             case TypeText(text=text):
                 keysyms = [_character(character) for character in text]
-                # A cancel can land between a key's press and release, and X then repeats the key without end.
-                release = ['keyup', *_LEVEL_SHIFTS, *dict.fromkeys(keysyms)]
-                command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--delay', _TYPING_DELAY_MS, '--', *keysyms]
-                await self._input(command, [release])
+                for start in range(0, len(keysyms), _TYPED_PER_COMMAND):
+                    part = keysyms[start : start + _TYPED_PER_COMMAND]
+                    # A cancel can land between a key's press and release, and X then repeats the key without end.
+                    release = ['keyup', *_LEVEL_SHIFTS, *dict.fromkeys(part)]
+                    command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--delay', _TYPING_DELAY_MS, '--', *part]
+                    await self._input(command, [release], len(part) * _KEY_SECONDS)
             case PressKeys(keys=keys, repeat=repeat):
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.
                 release = ['keyup', *reversed(keysyms)]
                 command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--repeat', str(repeat), '--', '+'.join(keysyms)]
-                await self._input(command, [release])
+                await self._input(command, [release], repeat * _KEY_SECONDS)
             case HoldKeys(keys=keys, seconds=seconds):
-                await self._xdotool(['sleep', str(seconds)], hold=keys)
+                await self._xdotool(['sleep', str(seconds)], hold=keys, pauses=seconds)
             case _:
                 raise UnsupportedActionError(f'The display cannot perform {action!r}.')
