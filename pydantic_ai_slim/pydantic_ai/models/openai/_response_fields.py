@@ -1,4 +1,4 @@
-"""Usage, Responses finish reasons and status, logprobs, compaction items and response-scoped tool call IDs."""
+"""Usage, Responses finish reasons, status and refusals, logprobs, compaction items and response-scoped tool call IDs."""
 
 from __future__ import annotations as _annotations
 
@@ -36,6 +36,18 @@ def response_status_to_state(status: ResponseStatus | None, *, background: bool)
     if status in ('queued', 'in_progress'):
         return 'suspended' if background else 'incomplete'
     return 'complete'
+
+
+def response_refusal(response: responses.Response) -> str | None:
+    """The text of the last refusal in a Responses API response's output messages, if any."""
+    refusals = [
+        content.refusal
+        for item in response.output
+        if isinstance(item, responses.ResponseOutputMessage)
+        for content in item.content
+        if isinstance(content, responses.ResponseOutputRefusal)
+    ]
+    return refusals[-1] if refusals else None
 
 
 # Convert logprobs to a serializable format
