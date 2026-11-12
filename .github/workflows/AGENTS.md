@@ -527,6 +527,8 @@ Every decision, the gate's and the agent-start recheck's, also exports one
 - The span carries `provider_health.ready`, `.reason` and `.account`. Each checked account adds
   `provider_health.<account>.ready`, `.reason` and `.quota.*`, the artifact's quota fields. A gate
   that checked only the primary reports the decision as the primary's.
+- `PR Review Checks` gives the controller to the `telemetry` check as a joint path, so the
+  `general` check still reviews it.
 
 The runner's `Workflow finished` log adds `failure_kind` and `http_status` from the failure the
 record receives, and `zai_error_code` from a model HTTP error's body.

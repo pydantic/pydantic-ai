@@ -132,6 +132,11 @@ class Health:
     account: Account | None = None
     accounts: tuple[AccountHealth, ...] = ()
 
+    @property
+    def account_decisions(self) -> tuple[AccountHealth, ...]:
+        """Each checked account's own decision. A gate that checked only the primary decided for the primary alone."""
+        return self.accounts or (AccountHealth('primary', self.ready, self.reason, self.quota),)
+
     def __post_init__(self) -> None:
         if _positive_attempt(self.run_attempt) is None:
             raise ValueError('run_attempt must be a positive integer')
@@ -1190,7 +1195,7 @@ def _reconcile_blocked_gate(
     triage: bool,
 ) -> int:
     """Open a quota incident for each account whose quota, not an incident, blocked a run that no account could serve."""
-    decisions = health.accounts or (AccountHealth('primary', health.ready, health.reason, health.quota),)
+    decisions = health.account_decisions
     if any(decision.ready for decision in decisions):
         print(f'Activation was blocked by existing state: {health.reason}')
         return 0
@@ -1400,8 +1405,7 @@ def _export_decision_span(health: Health, started_ns: int) -> None:
         values['provider_health.account'] = health.account
     if health.recovery_issue is not None:
         values['provider_health.recovery_issue'] = health.recovery_issue
-    # A gate that checked only the primary decided for the primary alone.
-    for item in health.accounts or (AccountHealth('primary', health.ready, health.reason, health.quota),):
+    for item in health.account_decisions:
         values[f'provider_health.{item.account}.ready'] = item.ready
         values[f'provider_health.{item.account}.reason'] = item.reason
         for name, value in _quota_json(item.quota).items():
@@ -1516,7 +1520,7 @@ def _check_command(args: argparse.Namespace) -> int:
     displayed_reason = health.reason if health.accounts else health.reason + _quota_diagnostic_suffix(health.quota)
     if summary:
         quota_detail = ''
-        account_quotas = [(item.account, item.quota) for item in health.accounts] or [('primary', health.quota)]
+        account_quotas = [(item.account, item.quota) for item in health.account_decisions]
         for account, checked in account_quotas:
             if checked.interval_reset_at is None or checked.weekly_reset_at is None:
                 continue
