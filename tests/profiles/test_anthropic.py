@@ -32,6 +32,11 @@ from .._inline_snapshot import Is, snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from anthropic.types.beta import BetaMessage, BetaTextBlock, BetaUsage
+
+    from pydantic_ai import Agent
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.native_tools import (
         AdvisorTool,
         CodeExecutionTool,
@@ -41,8 +46,12 @@ with try_import() as imports_successful:
         WebSearchTool,
     )
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
-    from pydantic_ai.profiles.anthropic import anthropic_model_profile
-    from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
+    from pydantic_ai.profiles.anthropic import (
+        _COUNTING_STRICT_SCHEMAS,  # pyright: ignore[reportPrivateUsage]
+        anthropic_model_profile,
+    )
+    from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer, AnthropicProvider
+    from pydantic_ai.tools import Tool, ToolDefinition
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -84,7 +93,8 @@ def test_strict_true_schema_with_constraints():
 
     original_schema = User.model_json_schema()
     transformer = AnthropicJsonSchemaTransformer(original_schema, strict=True)
-    transformed = transformer.walk()
+    with pytest.warns(UserWarning, match='strict-schema transformation removed constraint information'):
+        transformed = transformer.walk()
 
     assert transformer.is_strict_compatible is True
     assert original_schema == snapshot(
@@ -193,7 +203,8 @@ def test_strict_true_described_options():
 
     schema = Ticket.model_json_schema(schema_generator=GenerateToolJsonSchema)
     transformer = AnthropicJsonSchemaTransformer(schema, strict=True)
-    transformed = transformer.walk()
+    with pytest.warns(UserWarning, match='strict-schema transformation removed constraint information'):
+        transformed = transformer.walk()
 
     assert transformed == snapshot(
         {
@@ -261,7 +272,8 @@ def test_strict_true_typed_const():
         legs: Literal[4]
 
     transformer = AnthropicJsonSchemaTransformer(Pet.model_json_schema(), strict=True)
-    transformed = transformer.walk()
+    with pytest.warns(UserWarning, match='strict-schema transformation removed constraint information'):
+        transformed = transformer.walk()
 
     assert transformed == snapshot(
         {
@@ -381,8 +393,18 @@ def test_strict_none_simple_schema():
 def test_strict_true_warns_on_dict_fields():
     """With strict=True, dict fields (additionalProperties with schema) emit a warning."""
     schema = {'type': 'object', 'additionalProperties': {'type': 'string'}}
-    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
         AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+    assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [
+        '`dict` fields are not supported by Anthropic in strict mode (including `NativeOutput`, which is '
+        "automatically selected when thinking is enabled). Anthropic's schema transformation sets "
+        '`additionalProperties` to `false`, which forces the model to return `{}`. Use a `list` of '
+        '`tuple[str, str]`, or a `TypedDict` or `dataclass` with explicit `key` and `value` fields, or set '
+        '`output_type=PromptedOutput(...)`.',
+        "Anthropic's strict-schema transformation removed constraint information from the JSON schema. The "
+        'model may not enforce those constraints.',
+    ]
 
 
 def test_strict_false_no_warning_on_dict_fields():
@@ -409,15 +431,35 @@ def test_strict_true_warns_on_basemodel_with_dict_field():
         metadata: dict[str, str]
 
     schema = ModelWithDict.model_json_schema()
-    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
         AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+    assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [
+        '`dict` fields are not supported by Anthropic in strict mode (including `NativeOutput`, which is '
+        "automatically selected when thinking is enabled). Anthropic's schema transformation sets "
+        '`additionalProperties` to `false`, which forces the model to return `{}`. Use a `list` of '
+        '`tuple[str, str]`, or a `TypedDict` or `dataclass` with explicit `key` and `value` fields, or set '
+        '`output_type=PromptedOutput(...)`.',
+        "Anthropic's strict-schema transformation removed constraint information from the JSON schema. The "
+        'model may not enforce those constraints.',
+    ]
 
 
 def test_strict_true_warns_on_any_dict_field():
     """With strict=True, dict[str, Any] fields (additionalProperties: true) emit a warning."""
     schema = {'type': 'object', 'additionalProperties': True}
-    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
         AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+    assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [
+        '`dict` fields are not supported by Anthropic in strict mode (including `NativeOutput`, which is '
+        "automatically selected when thinking is enabled). Anthropic's schema transformation sets "
+        '`additionalProperties` to `false`, which forces the model to return `{}`. Use a `list` of '
+        '`tuple[str, str]`, or a `TypedDict` or `dataclass` with explicit `key` and `value` fields, or set '
+        '`output_type=PromptedOutput(...)`.',
+        "Anthropic's strict-schema transformation removed constraint information from the JSON schema. The "
+        'model may not enforce those constraints.',
+    ]
 
 
 def test_strict_true_warns_on_basemodel_with_any_dict_field():
@@ -428,8 +470,18 @@ def test_strict_true_warns_on_basemodel_with_any_dict_field():
         metadata: dict[str, Any]
 
     schema = ModelWithAnyDict.model_json_schema()
-    with pytest.warns(UserWarning, match='`dict` fields are not supported by Anthropic in strict mode'):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
         AnthropicJsonSchemaTransformer(schema, strict=True).walk()
+    assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == [
+        '`dict` fields are not supported by Anthropic in strict mode (including `NativeOutput`, which is '
+        "automatically selected when thinking is enabled). Anthropic's schema transformation sets "
+        '`additionalProperties` to `false`, which forces the model to return `{}`. Use a `list` of '
+        '`tuple[str, str]`, or a `TypedDict` or `dataclass` with explicit `key` and `value` fields, or set '
+        '`output_type=PromptedOutput(...)`.',
+        "Anthropic's strict-schema transformation removed constraint information from the JSON schema. The "
+        'model may not enforce those constraints.',
+    ]
 
 
 # =============================================================================
@@ -859,3 +911,92 @@ def test_anthropic_tool_deferral_mode_tracks_tool_search_support(model_name: str
     profile = anthropic_model_profile(model_name)
     assert profile is not None
     assert profile.get('tool_deferral_mode') == expected
+
+
+def test_strict_removed_constraint_warns_on_model_request():
+    from anthropic import transform_schema
+
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
+    schema = {
+        'type': 'object',
+        'properties': {'order_id': {'type': 'string', 'pattern': '^ORD-[0-9]{6}$'}},
+        'required': ['order_id'],
+    }
+    parameters = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='lookup', description='Look up an order', parameters_json_schema=schema, strict=True)
+        ]
+    )
+
+    with pytest.warns(UserWarning, match='removed constraint information'):
+        customized = model.customize_request_parameters(parameters)
+
+    assert customized.function_tools[0].parameters_json_schema == transform_schema(schema)
+
+    token = _COUNTING_STRICT_SCHEMAS.set(True)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            counted = model.customize_request_parameters(
+                ModelRequestParameters(
+                    function_tools=[
+                        ToolDefinition(
+                            name='lookup', description='Look up an order', parameters_json_schema=schema, strict=True
+                        )
+                    ]
+                )
+            )
+    finally:
+        _COUNTING_STRICT_SCHEMAS.reset(token)
+    assert counted.function_tools[0].parameters_json_schema == transform_schema(schema)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        automatic = model.customize_request_parameters(
+            ModelRequestParameters(
+                function_tools=[
+                    ToolDefinition(
+                        name='lookup', description='Look up an order', parameters_json_schema=schema, strict=None
+                    )
+                ]
+            )
+        )
+    assert automatic.function_tools[0].parameters_json_schema == schema
+
+
+def test_strict_removed_constraint_warns_on_agent_function_tool(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+):
+    captured_parameters: list[ModelRequestParameters] = []
+
+    async def fake_messages_create(messages, stream, model_settings, model_request_parameters):
+        captured_parameters.append(model_request_parameters)
+        return BetaMessage(
+            id='msg_test',
+            content=[BetaTextBlock(text='done', type='text')],
+            model='claude-sonnet-4-5',
+            role='assistant',
+            stop_reason='end_turn',
+            stop_sequence=None,
+            type='message',
+            usage=BetaUsage(input_tokens=1, output_tokens=1),
+        )
+
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
+    # Stub only the network seam: `request()` runs the real `prepare_request()` pipeline,
+    # which is where the strict-schema customization (and this warning) happens.
+    monkeypatch.setattr(model, '_messages_create', fake_messages_create)  # pyright: ignore[reportPrivateUsage]
+
+    def lookup_order(order_id: Annotated[str, Field(pattern='^ORD-[0-9]{6}$')]) -> str:
+        return order_id
+
+    agent = Agent(model, tools=[Tool(lookup_order, strict=True)])
+
+    with pytest.warns(UserWarning, match='removed constraint information'):
+        result = agent.run_sync('Return a short response.')
+
+    assert result.output == 'done'
+    assert len(captured_parameters) == 1
+    order_id_schema = captured_parameters[0].function_tools[0].parameters_json_schema['properties']['order_id']
+    assert 'pattern' not in order_id_schema
+    assert '^ORD-[0-9]{6}$' in order_id_schema['description']
