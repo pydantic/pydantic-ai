@@ -20,7 +20,7 @@ from pydantic_ai._capability_loads import (
     is_load_part,
     keep_loaded_state,
 )
-from pydantic_ai._framing import neutralize_tags
+from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -336,7 +336,7 @@ def _neutralize_transcript_tags(content: str) -> str:
     """Escape the transcript's own tags and every framing tag core writes in *content*.
 
     Content then can't open or close a message, the transcript, or the previous summary, and a
-    `<system>`, `<context>` or `<tool_result>` tag in it stays inside its element.
+    `<system>`, `<pyai:context>` or `<pyai:tool_result>` tag in it stays inside its element.
     """
     # TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands (#10957), registering
     # the transcript's tags as framing tags there.
@@ -1153,11 +1153,12 @@ async def write_summary(
         capabilities=list(summarizer.summarization_capabilities),
         retries=summarizer.retries,
     )
-    result = await agent.run(
-        prompt,
-        conversation_id=ctx.conversation_id,
-        usage=ctx.usage,
-        usage_limits=reserved_usage_limits(ctx.usage_limits),
-        event_stream_handler=summarizer.event_stream_handler,
-    )
+    with second_model_prompt():
+        result = await agent.run(
+            prompt,
+            conversation_id=ctx.conversation_id,
+            usage=ctx.usage,
+            usage_limits=reserved_usage_limits(ctx.usage_limits),
+            event_stream_handler=summarizer.event_stream_handler,
+        )
     return result.output

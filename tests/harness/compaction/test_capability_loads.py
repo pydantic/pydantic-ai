@@ -43,10 +43,12 @@ from pydantic_ai_harness.compaction import (
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 INSTRUCTIONS = 'Call get_forecast with a city name.'
-STATED_INSTRUCTIONS = f'<system><context id="capability:weather">\n{INSTRUCTIONS}\n</context></system>'
+STATED_INSTRUCTIONS = f'<system><pyai:context id="capability:weather">\n{INSTRUCTIONS}\n</pyai:context></system>'
 """The capability's instructions in the system voice, as `FunctionModel` receives them."""
 STYLE_INSTRUCTIONS = 'Answer in one sentence.'
-STATED_STYLE_INSTRUCTIONS = f'<system><context id="capability:style">\n{STYLE_INSTRUCTIONS}\n</context></system>'
+STATED_STYLE_INSTRUCTIONS = (
+    f'<system><pyai:context id="capability:style">\n{STYLE_INSTRUCTIONS}\n</pyai:context></system>'
+)
 SUMMARY = 'Athens was sunny.'
 """Short enough that the compacted history, the unloaded-capability note included, is smaller than the original."""
 UNLOADED_NOTE = (

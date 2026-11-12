@@ -2467,34 +2467,34 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
             {
                 'parts': [
                     {'text': '[Tool call-1: weather returned: ["sunny","See file weather.png."]]'},
-                    {'text': '<tool_result tool_name="weather" tool_call_id="call-1" file_id="weather.png">'},
+                    {'text': '<pyai:tool_result tool_name="weather" tool_call_id="call-1" file_id="weather.png">'},
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                     {'text': '[Tool plain-call: plain returned: ok]'},
                     {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
                     {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
                     {
                         'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 answer in prose
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                     },
                     {
                         'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 answer in prose
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                     },
                     {
                         'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """
                     },
                     {'inline_data': {'data': b'url-image', 'mime_type': 'image/png'}},
