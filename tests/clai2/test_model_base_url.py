@@ -27,6 +27,10 @@ from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import ModelProvider
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
+from tests.conftest import try_import
+
+with try_import() as xai_imports_successful:
+    from pydantic_ai.providers.xai import XaiProvider
 
 URL = 'https://gateway.example/v1'
 ENV_URL = 'https://env.example/v1'
@@ -168,10 +172,8 @@ def test_every_provider_is_built_with_the_base_url(provider: str, missing_extras
         assert httpx.URL(built.base_url).host == 'gateway.example'
 
 
-def test_xai_takes_the_base_url_as_its_api_host() -> None:  # pragma: lax no cover -- skipped without the `xai` extra
-    pytest.importorskip('xai_sdk', reason='needs the `xai` extra')
-    from pydantic_ai.providers.xai import XaiProvider
-
+@pytest.mark.skipif(not xai_imports_successful(), reason='needs the `xai` extra')
+def test_xai_takes_the_base_url_as_its_api_host() -> None:
     for base_url in ('gateway.example:8443', 'https://gateway.example:8443/'):
         built = key_profiles.build_provider('xai', key='sk-profile', base_url=base_url)
         assert isinstance(built, XaiProvider) and built.api_host == 'gateway.example:8443'
