@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import copy
 import dataclasses
 from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, AgentRunResult, Conversation, ModelRequest, ModelResponse, TextPart, UserPromptPart
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
 from pydantic_ai.conversation import ConversationTypeAdapter
 from pydantic_ai.conversation_store import (
     ConversationConflict,
@@ -15,8 +17,9 @@ from pydantic_ai.conversation_store import (
     ConversationRecord,
     InMemoryConversationStore,
 )
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ModelMessage, ModelSettingsDeltaPart, SystemPromptPart, ToolCallPart
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, RunContext
@@ -589,7 +592,7 @@ class _LookUp:
 
     def __call__(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if not self.calls:
-            return self.final
+            return copy.deepcopy(self.final)
         self.calls -= 1
         self.made += 1
         return ModelResponse(parts=[ToolCallPart('lookup', {'n': self.made}, tool_call_id=f'call-{self.made}')])
@@ -865,6 +868,281 @@ async def test_a_trimmed_run_result_keeps_its_whole_conversation_across_serializ
     reloaded = await store.load(stored.conversation_id)
     assert reloaded is not None
     assert reloaded.messages == result.conversation.messages
+
+
+@dataclasses.dataclass
+class _NoteAtStep(AbstractCapability[Any]):
+    """Adds a note to the history and the request at a step, as a capability can."""
+
+    step: int
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if ctx.run_step == self.step:
+            note = ModelRequest(parts=[UserPromptPart('a note')])
+            request_context.messages = [*request_context.messages, note]
+            ctx.messages.append(note)
+        return request_context
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_message_a_capability_adds_to_a_trimmed_history_is_kept_where_it_was_added() -> None:
+    agent = Agent(
+        FunctionModel(_LookUp(calls=3)), capabilities=[ProcessHistory(_keep_first_and_last_four), _NoteAtStep(3)]
+    )
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    result = await agent.run('look it up')
+
+    assert len(result.all_messages()) == 6
+    assert conversation_view(result.conversation.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'user-prompt: a note',
+            'call call-3',
+            'return call-3: fact 3',
+            'text: done',
+        ]
+    )
+
+
+def _summarize(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Puts a summary in place of all but the last two messages of a history longer than six."""
+    if len(messages) <= 6:
+        return messages
+    return [ModelRequest(parts=[UserPromptPart(f'summary of {len(messages) - 2}')]), *messages[-2:]]
+
+
+def _summarizing_agent(model: _LookUp) -> Agent[None, str]:
+    agent = Agent(FunctionModel(model), capabilities=[ProcessHistory(_summarize)])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    return agent
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_summary_a_capability_puts_in_place_of_messages_is_stored_after_them() -> None:
+    store = InMemoryConversationStore()
+    result = await _summarizing_agent(_LookUp(calls=3)).run('look it up')
+
+    assert conversation_view(result.all_messages()) == snapshot(
+        ['user-prompt: summary of 5', 'call call-3', 'return call-3: fact 3', 'text: done']
+    )
+    await store.save(result)
+    stored = await store.load(result.conversation_id)
+    assert stored is not None
+    assert conversation_view(stored.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'user-prompt: summary of 5',
+            'call call-3',
+            'return call-3: fact 3',
+            'text: done',
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_summarized_conversation_carried_in_memory_is_summarized_again_like_one_loaded_from_the_store() -> None:
+    """The full history, summaries included, goes on to the next run, whose capability summarizes it again."""
+    store = InMemoryConversationStore()
+    model = _LookUp(calls=3)
+    agent = _summarizing_agent(model)
+    first = (await agent.run('look it up')).conversation
+    await store.save(first)
+    loaded = await store.load(first.conversation_id)
+    assert loaded is not None
+
+    model.calls, model.made = 1, 3
+    carried = await agent.run('and again', conversation=first)
+    model.calls, model.made = 1, 3
+    reloaded = await agent.run('and again', conversation=loaded)
+
+    assert conversation_view(carried.all_messages()) == snapshot(
+        [
+            'user-prompt: summary of 7',
+            'text: done',
+            'user-prompt: and again',
+            'call call-4',
+            'return call-4: fact 4',
+            'text: done',
+        ]
+    )
+    assert conversation_view(carried.conversation.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'user-prompt: summary of 5',
+            'call call-3',
+            'return call-3: fact 3',
+            'user-prompt: summary of 7',
+            'text: done',
+            'user-prompt: and again',
+            'call call-4',
+            'return call-4: fact 4',
+            'text: done',
+        ]
+    )
+    assert conversation_view(reloaded.conversation.messages) == conversation_view(carried.conversation.messages)
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_messages_a_capability_rewrites_or_moves_are_kept_once_as_the_run_added_them() -> None:
+    """A rewritten copy, which keeps its message's timestamp and run, stands for it, and a moved message is kept where it was."""
+
+    def rewrite(messages: list[ModelMessage]) -> list[ModelMessage]:
+        if len(messages) != 3:
+            return messages
+        first_call, prompt, first_return = messages[1], messages[0], messages[2]
+        assert isinstance(first_return, ModelRequest)
+        return [first_call, prompt, dataclasses.replace(first_return, parts=[UserPromptPart('[cleared]')])]
+
+    agent = Agent(FunctionModel(_LookUp(calls=2)), capabilities=[ProcessHistory(rewrite)])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    result = await agent.run('look it up')
+
+    assert conversation_view(result.all_messages()) == snapshot(
+        [
+            'call call-1',
+            'user-prompt: look it up',
+            'user-prompt: [cleared]',
+            'call call-2',
+            'return call-2: fact 2',
+            'text: done',
+        ]
+    )
+    assert conversation_view(result.conversation.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'text: done',
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_tool_result_a_capability_clears_in_place_is_kept_as_it_was_returned() -> None:
+    def clear(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            dataclasses.replace(message, parts=[UserPromptPart('[cleared]')])
+            if isinstance(message, ModelRequest) and message is not messages[0] and message is not messages[-1]
+            else message
+            for message in messages
+        ]
+
+    agent = Agent(FunctionModel(_LookUp(calls=2)), capabilities=[ProcessHistory(clear)])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    result = await agent.run('look it up')
+
+    assert len(result.all_messages()) == len(result.conversation.messages)
+    assert 'user-prompt: [cleared]' in conversation_view(result.all_messages())
+    assert conversation_view(result.conversation.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'text: done',
+        ]
+    )
+
+
+async def test_the_last_messages_dropped_from_a_run_s_history_after_it_are_kept() -> None:
+    result = await Agent(TestModel()).run('hello')
+    result.all_messages().pop()
+
+    assert conversation_view(result.all_messages()) == ['user-prompt: hello']
+    assert conversation_view(result.conversation.messages) == snapshot(
+        ['user-prompt: hello', 'text: success (no tool calls)']
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_trimmed_run_result_dumped_without_its_messages_leaves_out_its_whole_conversation_too() -> None:
+    result = await _trimming_agent(_LookUp(calls=3)).run('look it up')
+    adapter: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
+    assert 'conversation_messages' in adapter.dump_python(result)
+
+    for exclude in ({'messages'}, {'messages': {0}}):
+        dumped = adapter.dump_python(result, exclude=exclude)
+        assert 'conversation_messages' not in dumped
+        assert 'conversation_run_start' not in dumped
+        adapter.validate_json(adapter.dump_json(result, exclude=exclude))
+
+
+def test_a_run_result_whose_whole_conversation_refers_past_its_messages_fails_validation() -> None:
+    adapter: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
+    with pytest.raises(ValidationError, match='`conversation_messages` refers to message 1, but `messages` holds 1'):
+        adapter.validate_python(
+            {
+                'output': 'done',
+                'messages': [{'kind': 'request', 'parts': []}],
+                'conversation_messages': [0, 1],
+                'conversation_run_start': 1,
+            }
+        )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_request_scoped_request_a_retried_step_removes_from_the_given_history_moves_where_the_run_s_own_start() -> (
+    None
+):
+    @dataclasses.dataclass
+    class RetryOnError(AbstractCapability[Any]):
+        async def on_model_request_error(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+        ) -> ModelResponse:
+            raise ModelRetry('try again')
+
+    attempts: list[int] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        attempts.append(len(messages))
+        if len(attempts) == 1:
+            raise RuntimeError('provider down')
+        return ModelResponse(parts=[TextPart('done')])
+
+    first = await Agent(TestModel()).run('hello')
+    history = [*first.all_messages(), ModelRequest(parts=[SystemPromptPart('Be brief.', scope='request')])]
+    agent = Agent(FunctionModel(respond), capabilities=[RetryOnError(), ProcessHistory(lambda messages: messages[-2:])])
+
+    result = await agent.run('and now', message_history=history)
+
+    dumped = TypeAdapter(AgentRunResult[str]).dump_python(result)
+    assert dumped['conversation_run_start'] == len(first.all_messages())
+    assert conversation_view(result.conversation.messages) == snapshot(
+        ['user-prompt: hello', 'text: success (no tool calls)', 'user-prompt: and now', 'text: done']
+    )
 
 
 async def test_a_run_result_keeps_where_its_conversation_s_unsaved_messages_start_across_serialization() -> None:

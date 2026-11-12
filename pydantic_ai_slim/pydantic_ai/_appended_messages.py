@@ -55,9 +55,9 @@ class AppendedMessages:
         if replacement is not None:
             recorded[index] = replacement
         else:
-            # A failed step's empty trailing request, normally one the run added. Were it one the run was given,
-            # `new_message_index` would point one past them, which only has a store compare the whole history.
             del recorded[index]
+            if index < self.new_message_index:
+                self.new_message_index -= 1
 
 
 def append_to_history(ctx: RunContext[Any], *messages: ModelMessage) -> None:

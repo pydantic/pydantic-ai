@@ -153,16 +153,100 @@ def _full_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.M
     """The history the run was given and every message it added, and where those start, if its history lost any of them.
 
     A capability can drop messages from the history or replace them with rewritten copies, say to keep what the
-    model sees short. Any other message it adds, and filling in or adding to a message as `_rewritten` allows,
-    keeps the history whole.
+    model sees short. The full history then has the messages as the run was given or added them, and every other
+    message the history holds, like a summary a capability put in place of the ones it dropped, right before the
+    message it comes before in the history. A message a capability only adds, and filling in or adding to a message
+    as `_rewritten` allows, keeps the history whole, so this is `None`.
     """
     recorded = state.appended_messages.messages
     if recorded is None:
         return None
-    history = iter(state.message_history)
-    if all(any(kept is message or not _rewritten(kept, message) for kept in history) for message in recorded):
-        return None
-    return recorded, state.appended_messages.new_message_index
+    merge = _HistoryMerge(recorded, given=state.appended_messages.new_message_index, history=state.message_history)
+    for message in state.message_history:
+        merge.place(message)
+    merge.finish()
+    return (merge.merged, merge.given_end) if merge.changed else None
+
+
+@dataclasses.dataclass
+class _HistoryMerge:
+    """Merges a run's message history into the messages it was given and added, for `_full_history`."""
+
+    recorded: list[_messages.ModelMessage]
+    given: int
+    """How many of `recorded` the run was given."""
+    history: dataclasses.InitVar[list[_messages.ModelMessage]]
+    merged: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
+    given_end: int = 0
+    """Where the messages the run was given end in `merged`."""
+    changed: bool = False
+    """Whether the history dropped or rewrote any of `recorded`."""
+    _added: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
+    """Messages of the history not in `recorded`, waiting for the recorded message they come before."""
+    _start: int = 0
+    _positions: dict[int, int] = dataclasses.field(default_factory=dict[int, int])
+    _held: set[int] = dataclasses.field(default_factory=set[int])
+
+    def __post_init__(self, history: list[_messages.ModelMessage]) -> None:
+        self._positions = {id(message): index for index, message in enumerate(self.recorded)}
+        self._held = {id(message) for message in history}
+
+    def place(self, message: _messages.ModelMessage) -> None:
+        """Merge in `message`, the next one of the history."""
+        index = self._positions.get(id(message))
+        if index is not None and index < self._start:
+            # Already merged: the history moved it.
+            self.changed = True
+            return
+        copied = False
+        if index is None:
+            index, copied = self._find_original(message)
+        if index is None:
+            self._added.append(message)
+            return
+        self.changed = self.changed or copied or index != self._start
+        self.take(index)
+
+    def finish(self) -> None:
+        """Merge the recorded messages after the last one the history holds, then the added ones after it."""
+        self.changed = self.changed or self._start < len(self.recorded)
+        self.take(len(self.recorded))
+
+    def take(self, index: int) -> None:
+        """Merge the recorded messages the history dropped before `index`, the added ones waiting, then the one at `index`."""
+        self._merge_recorded(range(self._start, index))
+        self.merged += self._added
+        self._added = []
+        self._merge_recorded(range(index, min(index + 1, len(self.recorded))))
+        self._start = index + 1
+
+    def _merge_recorded(self, indices: range) -> None:
+        for index in indices:
+            self.merged.append(self.recorded[index])
+            if index < self.given:
+                self.given_end = len(self.merged)
+
+    def _find_original(self, message: _messages.ModelMessage) -> tuple[int | None, bool]:
+        """The recorded message `message` is a copy of, among the ones the history dropped, and whether it rewrote it.
+
+        A copy that only fills in or adds to a message, as `_rewritten` allows, stands for it. So does one that keeps
+        its timestamp and run, as `dataclasses.replace` does, as a rewrite of it, even with a `run_id` the run filled in.
+        """
+        for index in range(self._start, len(self.recorded)):
+            original = self.recorded[index]
+            if id(original) in self._held:
+                break
+            if type(original) is not type(message):
+                continue
+            if not _rewritten(message, original):
+                return index, False
+            if (
+                original.timestamp is not None
+                and message.timestamp == original.timestamp
+                and original.run_id in (None, message.run_id)
+            ):
+                return index, True
+        return None, False
 
 
 _STATE_KEYS = (
@@ -963,13 +1047,14 @@ def _appended_messages_data(data: dict[str, Any]) -> dict[str, Any]:
     messages = data.get('messages')
     history = cast('list[Any]', messages) if isinstance(messages, list) else []
     full = data['conversation_messages']
-    return {
-        'messages': [
-            history[item] if isinstance(item, int) and 0 <= item < len(history) else item
-            for item in (cast('list[Any]', full) if isinstance(full, list) else [])
-        ],
-        'new_message_index': data.get('conversation_run_start', 0),
-    }
+    messages_data: list[Any] = []
+    for item in cast('list[Any]', full) if isinstance(full, list) else []:
+        if isinstance(item, int) and not 0 <= item < len(history):
+            raise ValueError(
+                f'`conversation_messages` refers to message {item}, but `messages` holds {len(history)} messages.'
+            )
+        messages_data.append(history[item] if isinstance(item, int) else item)
+    return {'messages': messages_data, 'new_message_index': data.get('conversation_run_start', 0)}
 
 
 def _from_legacy_shape(data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -1109,7 +1194,12 @@ class AgentRunResult(Generic[OutputDataT]):
             # `exclude_none=True` on a `None` output. The handler applies those filters to the
             # stand-in, so honor them here instead of failing the dump that was asked for.
             data['output'] = serialized['output']
-        return cast('_AgentRunResultData[Any]', _filter_serialized(data, info))
+        filtered = _filter_serialized(data, info)
+        if filtered.get('messages') is not self._state.message_history:
+            # The caller left out messages, which the full history would hold again and its indices point into.
+            filtered.pop('conversation_messages', None)
+            filtered.pop('conversation_run_start', None)
+        return cast('_AgentRunResultData[Any]', filtered)
 
     @overload
     def _traceparent(self, *, required: Literal[False]) -> str | None: ...
@@ -1245,9 +1335,11 @@ class AgentRunResult(Generic[OutputDataT]):
         [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory], changes what the model is sent
         and what [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] returns, not the
         conversation: when it dropped or rewrote messages this run was given or added, the messages
-        are the history as the run was given it followed by every message the run added, so storing
-        the conversation keeps them all and the capability trims again on the next run. Otherwise
-        they are the same as `all_messages()`, including any message a capability added.
+        are the history as the run was given it followed by every message the run added, with any
+        message the capability put in the history, like a summary, right after the ones it dropped.
+        Storing or carrying the conversation keeps them all, and the capability trims or compacts the
+        full history again on the next run. Otherwise the messages are the same as `all_messages()`,
+        including any message a capability added.
         """
         output = self.output
         full = _full_history(self._state)
