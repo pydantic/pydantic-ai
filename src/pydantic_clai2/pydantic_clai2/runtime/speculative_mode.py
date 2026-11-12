@@ -208,7 +208,7 @@ State persists between snippets and is saved with the session:
 _MountMode = Literal['read-write', 'read-only']
 """How much of the working directory the run's `FileSystem` lets the sandbox mount."""
 
-_RunPermissions: TypeAlias = 'Permissions[AgentDepsT] | Sequence[Permissions[AgentDepsT]] | None'
+_RunPermissions: TypeAlias = Permissions[AgentDepsT] | Sequence[Permissions[AgentDepsT]] | None
 """The run's `Permissions`, one or several; `speculative_capabilities` passes every one it binds."""
 
 _WORKSPACE_GUIDANCE: Mapping[str | None, str] = {
