@@ -529,14 +529,14 @@ class WorkspaceBackendSuite:
             launch = (
                 'command -v setsid > /dev/null || exit 127; '
                 f'setsid sh -c \': > "$3"; {_FINISH_ONCE_RELEASED}\' sh "$@" < /dev/null > /dev/null 2>&1 & '
-                'while [ ! -f "$3" ]; do sleep 0.1; done'
+                'i=0; while [ ! -f "$3" ]; do i=$((i + 1)); [ "$i" -le 100 ] || exit 1; sleep 0.1; done'
             )
             try:
                 with anyio.fail_after(60):  # Hang guard, not an assertion about remote speed.
                     result = await commands.run(['sh', '-c', launch, 'sh', release, finished, started])
                 if result.exit_code == 127:
                     pytest.skip('the environment does not provide `setsid`')  # pragma: no cover
-                assert result.exit_code == 0
+                assert result.exit_code == 0, 'the detached process never started'
                 ref = backend.ref
                 assert ref is not None
                 attached = Workspace(attach_backend(ref))

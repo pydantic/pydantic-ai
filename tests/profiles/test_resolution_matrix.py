@@ -252,6 +252,7 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_effort': True,
             'anthropic_default_code_execution_tool_version': '20260120',
@@ -259,6 +260,7 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'default_framing_announcement': 'always',
             'tool_deferral_mode': 'standalone',
             'supports_cache': True,
             'supported_cache_retentions': ('5m', '1h'),
@@ -294,6 +296,7 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disallows_sampling_settings': True,
             'anthropic_default_code_execution_tool_version': '20260120',
@@ -328,6 +331,7 @@ def test_anthropic_claude_haiku_4_5():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 64000,
@@ -361,6 +365,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': None,
@@ -941,6 +946,26 @@ def test_xai_grok_3_mini():
     )
 
 
+@pytest.mark.skipif(not xai_imports(), reason='xai not installed')
+def test_xai_grok_4_7():
+    profile = XaiProvider.model_profile('grok-4.7')
+    assert _normalize(profile) == snapshot(
+        {
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'grok_supports_builtin_tools': True,
+            'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'grok_default_effort_omitted': True,
+            'needs_sealed_system_blocks': True,
+        }
+    )
+
+
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
 def test_mistral_mistral_large():
     profile = MistralProvider.model_profile('mistral-large-latest')
@@ -1007,6 +1032,7 @@ def test_gateway_gpt_oss_inline_defs():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'default_framing_announcement': 'always',
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'may_tokenize_special_tokens_in_content': True,
@@ -1249,6 +1275,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'bedrock_supports_tool_caching': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
@@ -1332,6 +1359,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 64000,
@@ -1377,6 +1405,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': None,
@@ -1519,6 +1548,7 @@ def test_bedrock_openai():
             'supports_thinking': True,
             'bedrock_thinking_variant': 'openai',
             'thinking_always_enabled': True,
+            'default_framing_announcement': 'always',
             'supports_video_input': False,
         }
     )
@@ -1656,6 +1686,7 @@ def test_bedrock_xai_grok(region: str):
                 'grok_supports_builtin_tools': True,
                 'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
                 'supported_native_tools': frozenset(),
+                'needs_sealed_system_blocks': True,
                 'bedrock_supports_tool_choice': True,
                 'bedrock_thinking_variant': 'xai',
                 'bedrock_disallows_sampling_settings': True,
@@ -1671,6 +1702,7 @@ def test_bedrock_xai_grok(region: str):
                 'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
                 'supported_native_tools': frozenset(),
                 'grok_default_effort_omitted': True,
+                'needs_sealed_system_blocks': True,
                 'bedrock_supports_tool_choice': True,
                 'bedrock_thinking_variant': 'xai',
                 'bedrock_disallows_sampling_settings': True,
@@ -1713,12 +1745,14 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_supports_dynamic_filtering': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 128000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'default_framing_announcement': 'always',
             'tool_deferral_mode': 'standalone',
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -1895,6 +1929,42 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_x_ai_grok_4_7():
+    profile = OpenRouterProvider.model_profile('x-ai/grok-4.7')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_image_media_types': frozenset(
+                {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
+            ),
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'grok_supports_builtin_tools': True,
+            'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'grok_default_effort_omitted': True,
+            'needs_sealed_system_blocks': True,
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'openrouter_system_messages_precede_generation': False,
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_trailing_cache_control': True,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
+            'may_tokenize_special_tokens_in_content': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_mistral_large():
     profile = OpenRouterProvider.model_profile('mistralai/mistral-large-latest')
     assert _normalize(profile) == snapshot(
@@ -2005,6 +2075,7 @@ def test_github_copilot_anthropic_claude_haiku_4_5():
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': 64000,
             'anthropic_rejects_max_tokens_beyond_context_window': False,
@@ -2099,6 +2170,7 @@ def test_github_copilot_xai_grok_4_5():
             'thinking_always_enabled': True,
             'grok_supports_builtin_tools': True,
             'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'needs_sealed_system_blocks': True,
             'openai_chat_supports_max_completion_tokens': True,
         }
     )
@@ -2497,6 +2569,7 @@ def test_groq_gpt_oss():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'supports_inline_system_prompts': True,
+            'default_framing_announcement': 'always',
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
             'may_tokenize_special_tokens_in_content': True,
@@ -2557,6 +2630,7 @@ def test_ollama_gpt_oss():
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'ignore_streamed_leading_whitespace': True,
+            'default_framing_announcement': 'always',
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -2600,6 +2674,7 @@ def test_vllm_gpt_oss_hf_namespace():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'default_framing_announcement': 'always',
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_supports_document_input': False,
@@ -2902,6 +2977,7 @@ def test_together_qwen():
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
+                    'default_framing_announcement': 'always',
                     'supports_forced_tool_choice': False,
                     'ignore_streamed_leading_whitespace': True,
                     'may_tokenize_special_tokens_in_content': True,
@@ -2919,6 +2995,7 @@ def test_together_qwen():
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
+                    'default_framing_announcement': 'always',
                     'supports_forced_tool_choice': False,
                     'ignore_streamed_leading_whitespace': True,
                     'may_tokenize_special_tokens_in_content': True,
@@ -2987,6 +3064,7 @@ def test_together_qwen():
                     'grok_supports_builtin_tools': True,
                     'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
                     'grok_default_effort_omitted': True,
+                    'needs_sealed_system_blocks': True,
                     'may_tokenize_special_tokens_in_content': False,
                 }
             ),
@@ -3033,6 +3111,7 @@ def test_openai_compatible_vendor_family(model_name: str, expected: dict[str, An
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
+                    'default_framing_announcement': 'always',
                     'supports_forced_tool_choice': False,
                     'ignore_streamed_leading_whitespace': True,
                     'may_tokenize_special_tokens_in_content': True,
@@ -3155,6 +3234,7 @@ def test_anthropic_unknown_model_returns_some_profile():
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_binds_thinking_blocks': False,
             'anthropic_max_output_tokens': None,
@@ -3315,6 +3395,7 @@ def test_vercel_anthropic_claude_sonnet():
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': True,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_binds_thinking_blocks': False,
@@ -3324,6 +3405,7 @@ def test_vercel_anthropic_claude_sonnet():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
+            'default_framing_announcement': 'always',
             'may_tokenize_special_tokens_in_content': False,
         }
     )
@@ -3461,6 +3543,7 @@ def test_heroku_returns_openai_transformer():
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': True,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_binds_thinking_blocks': False,
@@ -3470,6 +3553,7 @@ def test_heroku_returns_openai_transformer():
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
             'tool_deferral_mode': 'standalone',
+            'default_framing_announcement': 'always',
             'may_tokenize_special_tokens_in_content': False,
         }
     )
@@ -3607,6 +3691,7 @@ def test_crusoe_harmony():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'default_framing_announcement': 'always',
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'may_tokenize_special_tokens_in_content': True,

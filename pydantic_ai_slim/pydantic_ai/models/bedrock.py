@@ -107,6 +107,7 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._anthropic_max_tokens import cap_max_tokens
 from pydantic_ai.models._anthropic_schema_limits import (
     SCHEMA_TOO_COMPLEX_HINT,
     default_output_mode_within_limits,
@@ -865,6 +866,8 @@ class BedrockConverseModel(Model[BaseClient]):
     # types core knows have.
     _unsupported_file_inputs = frozenset({'audio'})
     _supported_media_types = {'image': KNOWN_IMAGE_MEDIA_TYPES, 'video': KNOWN_VIDEO_MEDIA_TYPES}
+    # A tool's files that a tool result can't carry here go on the user channel, framed.
+    _relocates_tool_files = True
 
     unsupported_settings = frozenset(
         {
@@ -1096,6 +1099,7 @@ class BedrockConverseModel(Model[BaseClient]):
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
+        prepared_settings = cap_max_tokens(prepared_settings, self.profile.get('anthropic_max_output_tokens'))
         if prepared_settings and (
             self.profile.get('anthropic_disallows_sampling_settings', False)
             or self.profile.get('bedrock_disallows_sampling_settings', False)

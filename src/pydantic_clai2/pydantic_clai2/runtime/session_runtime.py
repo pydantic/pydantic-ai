@@ -31,7 +31,7 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, Mode
 from pydantic_ai.models import Model, infer_model_profile
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_ai_harness.subagents import DelegationTask, TaskQuestionEvent
+from pydantic_ai_harness.subagents import DelegationTask, TaskQuestionAskedEvent
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff
@@ -1432,12 +1432,13 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         """Fail the terminal menus and prompts command `text` opens while CLAI has no terminal for them.
 
         That is when no terminal shows this session and stdin is not one either, as under `clai2 --web`
-        started from a script: a menu would read EOF and close as cancelled.
+        started from a script: a menu would read EOF and close as cancelled. What can ask through a
+        remote UI's dialogs asks there instead.
         """
         stdin = sys.stdin
         if self.terminal is not None or (stdin is not None and not stdin.closed and stdin.isatty()):
             return nullcontext()
-        return without_terminal(text, instead=self._page_menu(text))
+        return without_terminal(text, instead=self._page_menu(text), dialogs=self.process.live.dialogs)
 
     def _page_menu(self, text: str) -> str | None:
         """`/NAME` when `text` gives arguments to a command whose bare form opens its menu in the page."""
@@ -1697,7 +1698,7 @@ def _run_events(
         return observe
 
     async def observe_run(event: AgentStreamEvent) -> None:
-        if not isinstance(event, TaskQuestionEvent):
+        if not isinstance(event, TaskQuestionAskedEvent):
             await observe(event)
 
     return observe_run

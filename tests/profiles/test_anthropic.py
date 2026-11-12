@@ -32,6 +32,7 @@ from .._inline_snapshot import Is, snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.native_tools import (
         AdvisorTool,
         CodeExecutionTool,
@@ -42,7 +43,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
-    from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
+    from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer, AnthropicProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -639,6 +640,7 @@ def test_model_profile_fable_5_1():
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
@@ -744,6 +746,7 @@ def test_model_profile_opus_5():
             'anthropic_disallows_top_effort_when_thinking_disabled': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
+            'needs_sealed_system_blocks': False,
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_task_budgets': True,
@@ -804,7 +807,8 @@ def test_model_profile_sonnet_5_5():
     thinking block replayed after the `system` prompt changes (with an explicit
     `prefix_mismatch_behavior` of `'error'`). It also rejects `thinking: {'type': 'disabled'}` in favor of
     `{'type': 'between_tools'}`, which turns thinking off and, like disabled thinking on Opus 5, returns a 400 for
-    `xhigh` and `max` effort; live on the Anthropic API and on Bedrock.
+    `xhigh` and `max` effort; live on the Anthropic API and on Bedrock. It also gets the sealed `<system>` rendering,
+    which measured better than the native role.
     """
     profile = anthropic_model_profile('claude-sonnet-5-5')
     sonnet_5 = anthropic_model_profile('claude-sonnet-5')
@@ -816,6 +820,7 @@ def test_model_profile_sonnet_5_5():
         'anthropic_binds_thinking_blocks': True,
         'anthropic_disallows_top_effort_when_thinking_disabled': True,
         'anthropic_disables_thinking_with_between_tools': True,
+        'needs_sealed_system_blocks': True,
     }
 
 
@@ -829,8 +834,9 @@ def test_model_profile_haiku_5_5():
     also returned signed thinking blocks and positive thinking-token usage. Other live probes confirmed forced tool
     choice, task-budget acceptance, `code_execution_20260120`, BM25 search, Advisor, web-search request acceptance,
     deferred tool addition, inline system messages, and the `drop_block` transformation after a prefix change. The only
-    Haiku-specific profile overrides are fast speed disabled, thinking-block binding enabled, and a text block
-    before a `system` entry that follows a tool result; unchanged fields retain Opus 5's existing profile defaults. See Anthropic's
+    Haiku-specific profile overrides are fast speed disabled, thinking-block binding enabled, a text block
+    before a `system` entry that follows a tool result (for an application that opts into the native role), and the
+    sealed `<system>` rendering, which measured better than the native role; unchanged fields retain Opus 5's existing profile defaults. See Anthropic's
     [overview](https://platform.claude.com/docs/en/models/haiku-5-5/overview),
     [mid-conversation system messages](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results),
     [migration guide](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide),
@@ -849,6 +855,7 @@ def test_model_profile_haiku_5_5():
         'anthropic_supports_fast_speed': False,
         'anthropic_binds_thinking_blocks': True,
         'anthropic_distrusts_system_after_tool_result': True,
+        'needs_sealed_system_blocks': True,
     }
 
 
@@ -861,3 +868,25 @@ def test_anthropic_tool_deferral_mode_tracks_tool_search_support(model_name: str
     profile = anthropic_model_profile(model_name)
     assert profile is not None
     assert profile.get('tool_deferral_mode') == expected
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'sealed'),
+    [
+        ('claude-sonnet-4-6', True),
+        ('claude-haiku-5-5', True),
+        ('claude-sonnet-4-5', False),
+        ('claude-sonnet-5', False),
+        ('claude-sonnet-5-5', True),
+        ('claude-opus-5', False),
+        ('claude-haiku-4-5', False),
+    ],
+)
+def test_anthropic_sealed_system_block_models(model_name: str, sealed: bool):
+    """A sealed model never gets the native role: its blocks are the `<system>` fallback."""
+    profile = AnthropicModel(model_name, provider=AnthropicProvider(api_key='mock-api-key')).profile
+    assert profile.get('needs_sealed_system_blocks', False) is sealed
+    if sealed:
+        assert profile.get('supports_inline_system_prompts') is False
+        # Sonnet 4.6 rejects the entry; the other two take it, with the sealed block inside.
+        assert profile.get('supports_request_scoped_system_prompts') is (model_name != 'claude-sonnet-4-6')

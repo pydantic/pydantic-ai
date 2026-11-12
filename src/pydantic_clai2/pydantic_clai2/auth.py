@@ -34,7 +34,7 @@ from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
-from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.menu_worker import menu_key, remote_dialogs, run_worker
 from pydantic_clai2.ui.prompt import line_input
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.rendering import markdown_style
@@ -66,6 +66,8 @@ async def login_command(
     `dialogs` asks wherever a menu was opened, such as the web UI: subscriptions wait on their waiting
     screen and API keys come from `/keys`;
     connections and plugin sign-ins, which ask in the terminal, raise `ValueError` saying so.
+    Without them, where CLAI has no terminal, Codex waits on `remote_dialogs`' screen and a plugin's
+    handler asks there through `line_input.read_line`.
     """
     plugins = plugins or {}
     if len(args) > 1:
@@ -119,7 +121,9 @@ async def _sign_in(
     dialogs: Dialogs | None,
 ) -> str:
     if name == CODEX:
-        return await codex.login([] if profile is None else [account(name, profile)], dialogs=dialogs)
+        return await codex.login(
+            [] if profile is None else [account(name, profile)], dialogs=dialogs or remote_dialogs()
+        )
     if name == github_copilot.ACCOUNT:
         return await github_copilot.login(console=codex.console, account=account(name, profile), dialogs=dialogs)
     if (login := plugins.get(name)) is not None:
