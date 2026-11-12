@@ -164,8 +164,8 @@ class ModelProfile(TypedDict, total=False):
     """The longest side, in pixels, of a screenshot the model takes. Default: unset, meaning no limit.
 
     A computer-use capability, such as Pydantic AI Harness's `ComputerUse`, refuses a screen larger than this and
-    `computer_use_screenshot_max_pixels`. Claude profiles set both: Claude refuses a larger image, or, on its earlier computer use tools, is sent it scaled down and answers in
-    the smaller image's pixels.
+    `computer_use_screenshot_max_pixels`. Claude profiles set both: Claude refuses a larger image, or, on its earlier
+    computer use tools, is sent it scaled down and answers in the smaller image's pixels.
     """
 
     computer_use_screenshot_max_pixels: int
