@@ -292,22 +292,6 @@ class PendingMessageQueue(list[PendingMessage]):
                 self._closed = True
             return asap, when_idle
 
-    def drain_at_pause(self) -> list[PendingMessage] | None:
-        """Close the queue for a deferred-tool pause and drain it, or leave its messages queued if one can't be recorded.
-
-        When the run resumes, a recorded `ModelResponse` would read as the paused response, and an interrupted
-        `ModelRequest` as the run stopping partway, which closes out the paused calls.
-        """
-        with self._lock:
-            self._closed = True
-            if any(
-                isinstance(message, ModelResponse) or message.state != 'complete'
-                for pending in self
-                for message in pending.messages
-            ):
-                return None
-            return [*self._pop_priority('asap'), *self._pop_priority('when_idle')]
-
     def close(self) -> None:
         with self._lock:
             self._closed = True

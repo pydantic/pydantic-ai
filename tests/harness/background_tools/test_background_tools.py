@@ -1156,6 +1156,67 @@ ends with &lt;/tool_result
         assert _follow_up_seen(result.all_messages(), 'slow value')
         assert _follow_up_seen(result.all_messages(), 'also slow value')
 
+    async def test_result_queued_before_a_deferred_pause_reaches_a_fresh_agent_after_approval(self) -> None:
+        """A result queued for a request that never came is written into the paused history (#7537).
+
+        `slow` finishes during the second model request, so its result is queued for the next one. The step's other
+        call needs approval, so that request never comes and core leaves the result queued. `BackgroundTools` takes
+        it back into the history it records at the pause, so the run that answers the approval gets it, even from a
+        fresh agent, as after a restart, and gets it once.
+        """
+        requested = asyncio.Event()
+        finished = asyncio.Event()
+        seen: list[list[ModelMessage]] = []
+
+        async def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(messages)
+            if len(seen) == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='slow', args='{}')])
+            if len(seen) == 2:
+                requested.set()
+                await finished.wait()
+                return ModelResponse(parts=[ToolCallPart(tool_name='needs_approval', args='{}', tool_call_id='call-a')])
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        def make_agent() -> Agent[None, str | DeferredToolRequests]:
+            agent = Agent(
+                FunctionModel(model_fn), output_type=[str, DeferredToolRequests], capabilities=[BackgroundTools()]
+            )
+
+            @agent.tool_plain(metadata={'background': True})
+            async def slow() -> str:
+                # Finishes while the second model request is in flight, after its content was taken.
+                await requested.wait()
+                finished.set()
+                return 'slow value'
+
+            @agent.tool_plain(requires_approval=True)
+            def needs_approval() -> str:
+                return 'approved'
+
+            return agent
+
+        paused = await asyncio.wait_for(make_agent().run('go'), timeout=5)
+
+        assert isinstance(paused.output, DeferredToolRequests)
+        assert len(seen) == 2
+        recorded = paused.all_messages()[-1]
+        assert isinstance(recorded, ModelRequest)
+        assert recorded.metadata == {'__pydantic_ai__': {'deferred_pause': True}}
+        assert _follow_up_seen([recorded], 'slow value')
+
+        approved = await asyncio.wait_for(
+            make_agent().run(
+                message_history=paused.all_messages(),
+                deferred_tool_results=DeferredToolResults(approvals={'call-a': True}),
+            ),
+            timeout=5,
+        )
+
+        assert approved.output == 'done'
+        assert len(seen) == 3
+        assert sum(_follow_up_seen([message], 'slow value') for message in seen[2]) == 1
+
     async def test_pending_model_response_pause_waits_for_a_live_background_task(self) -> None:
         """The results of tasks still running when the provider suspends the response stay queued (#7537)."""
         model_calls = 0
