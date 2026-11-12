@@ -101,8 +101,8 @@ The parts that matter:
 - Each sub-agent is an `async` function. You call it with `await`.
 - You pass the work as a single keyword argument, `task`, always by keyword:
   `reviewer(task="...")`, not `reviewer("...")`.
-- `asyncio.gather(...)` runs the two reviews concurrently instead of one after the other (except in a
-  [DBOS workflow](#running-under-other-durable-engines)).
+- `asyncio.gather(...)` runs the two reviews concurrently instead of one after the other (except
+  when they [run under `DBOSDurability` in a DBOS workflow](#running-under-other-durable-engines)).
 - The last line's value becomes the result the model sees. The intermediate `reports` list never
   leaves the sandbox.
 
@@ -446,9 +446,9 @@ The script runs in Monty, a subset of Python:
   unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_seconds` set,
   a script may sleep for at most that long in total.
 - `asyncio.gather(...)` takes positional awaitables but no keyword arguments, including
-  `return_exceptions=True`. It runs sub-agents and `asyncio.sleep` calls concurrently, except in a
-  [DBOS workflow](#running-under-other-durable-engines), where they run one at a time. Other task
-  creation and wait APIs are unavailable.
+  `return_exceptions=True`. It runs sub-agents and `asyncio.sleep` calls concurrently, except when
+  sub-agents [run under `DBOSDurability` in a DBOS workflow](#running-under-other-durable-engines),
+  where they run one at a time. Other task creation and wait APIs are unavailable.
 
 Before a script runs, it is statically type-checked against the sub-agent signatures. An ordinary,
 statically provable mistake such as a misspelled function, a positional `task`, or a wrong-typed

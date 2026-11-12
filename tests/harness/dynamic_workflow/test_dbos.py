@@ -150,6 +150,22 @@ async def test_sub_agent_step_tools_keep_their_role_checks(
 
 
 @pytest.fixture
+def plain_sub_agents_workflow(dbos: DBOS, model_calls: list[str]) -> Callable[[], Awaitable[str]]:
+    orchestrator = build_orchestrator(DBOSDurability, summarize_model(model_calls), durable_sub_agents=False)
+    return dbos_workflow(orchestrator, 'dynamic_workflow_dbos_plain_sub_agents')
+
+
+async def test_gathered_sub_agents_without_dbos_durability_run_concurrently_in_a_workflow(
+    plain_sub_agents_workflow: Callable[[], Awaitable[str]], model_calls: list[str]
+) -> None:
+    # Only the orchestrator is durable, so the sub-agents make no steps of their own and still overlap.
+    assert await plain_sub_agents_workflow() == EXPECTED
+    # Alpha, dispatched first, finished last.
+    assert sorted(model_calls) == ['alpha 1', 'alpha 3', 'beta 1', 'beta 3']
+    assert model_calls[-1] == 'alpha 3'
+
+
+@pytest.fixture
 def orchestrator(dbos: DBOS, model_calls: list[str]) -> Agent[None, str]:
     return build_orchestrator(DBOSDurability, summarize_model(model_calls))
 
