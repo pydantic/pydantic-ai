@@ -379,11 +379,11 @@ Gotchas:
   pixels; a `FallbackModel` keeps the grid only when every model in it uses the same one. Under `ModelFallback`,
   each model that answers is told its own coordinates; one that can't take images, or would see the latest screenshot
   scaled down, ends the run with a `UserError` before its request. The agent tells a grid model its grid in the tool
-  description and labels each `ComputerCallPart` with it (`coordinate_grid`); a custom runner reads that instead of the
-  run's model.
+  description and labels each `ComputerCallPart` from the model that made it (`coordinate_grid`,
+  `screenshot_max_side`, `screenshot_max_pixels`); a custom runner reads those instead of the run's model.
 - Screenshots are sent at the screen's size: on a screen larger than the model takes (profile
   `computer_use_screenshot_max_side` and `computer_use_screenshot_max_pixels`) the run stops with an error naming the
-  largest size that fits. 1280x800 fits every model.
+  largest size that fits, before the call acts. 1280x800 fits every model.
 - Under durable execution each `computer` call's screen work is one unit, so replay and recovery don't repeat a finished
   call. One cut off before it was recorded retries under the engine's config for capability steps; on Temporal set
   `activity_config` with a longer `start_to_close_timeout` and `RetryPolicy(maximum_attempts=1)`. When the engine gives
