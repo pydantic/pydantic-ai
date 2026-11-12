@@ -13,7 +13,7 @@ from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai.workspaces import Workspace, WorkspaceBackend
+from pydantic_ai.workspaces import AuthorityWorkspace, Workspace, WorkspaceBackend
 from pydantic_ai_harness._workspace import require_workspace, secondary_workspace
 from pydantic_ai_harness.artifact_scanning import ArtifactScanner
 from pydantic_ai_harness.artifact_scanning._scanner import record_flagged
@@ -336,6 +336,10 @@ class Skills(AbstractCapability[AgentDepsT]):
                 )
         for message in (*(skipped.message for skipped in catalog.skipped), *self._advice(catalog.skills)):
             warnings.warn(message, UserWarning, stacklevel=2)
+        return self._offer(catalog, lowered)
+
+    def _offer(self, catalog: SkillCatalog, lowered: frozenset[str]) -> AbstractCapability[AgentDepsT]:
+        """One deferred capability per `'operator'` skill, plus this capability's run copy for the `lowered` ones."""
         invocable = [skill for skill in catalog.skills if skill.model_invocable]
         offered: list[AbstractCapability[AgentDepsT]] = [
             _Skill[AgentDepsT](skill) for skill in invocable if skill.name not in lowered
@@ -394,12 +398,13 @@ class Skills(AbstractCapability[AgentDepsT]):
     async def _load(self, run_workspace: Workspace | None) -> tuple[SkillCatalog, frozenset[str]]:
         """The selected skills, and the names of those whose `SKILL.md` is below `'operator'` authority.
 
-        Each skill's level is its own file's, `authority_of(path)` in the workspace its library is read from.
+        Each skill's level is its own file's, `authority_of(path)` in the workspace its library is read from, with
+        the configured library directories counted as part of that workspace (see `_library_view`).
         """
         # Where each name's first `SKILL.md` is, whether it was kept or flagged.
         claimed: dict[str, tuple[Workspace, str]] = {}
         by_name: dict[str, SkillDefinition] = {}
-        lowered: set[str] = set()
+        read_from: dict[str, Workspace] = {}
         messages: list[SkippedSkill] = []
         for source in self._sources:
             workspace = source.workspace or run_workspace
@@ -414,6 +419,7 @@ class Skills(AbstractCapability[AgentDepsT]):
                 unknown_names=source.unknown_names,
             )
             messages.extend(skipped)
+            view = await _library_view(workspace, source.directories)
             for skill in skills:
                 previous = claimed.get(skill.name)
                 if previous is not None:
@@ -429,9 +435,8 @@ class Skills(AbstractCapability[AgentDepsT]):
                     continue
                 # A library read from `workspace=` is not where the model's file tools work.
                 by_name[skill.name] = replace(skill, in_run_workspace=source.workspace is None)
-                if await workspace.authority_of(skill.path) != 'operator':
-                    lowered.add(skill.name)
-        return SkillCatalog(skills=tuple(by_name.values()), skipped=tuple(messages)), frozenset(lowered)
+                read_from[skill.name] = view
+        return SkillCatalog(skills=tuple(by_name.values()), skipped=tuple(messages)), await _lowered(by_name, read_from)
 
     @staticmethod
     def _advice(definitions: tuple[SkillDefinition, ...]) -> list[str]:
@@ -469,3 +474,23 @@ def _flagged(scanner: ArtifactScanner | None, skill: SkillDefinition) -> Skipped
         message=f'Skipping {skill.path}: an artifact scan flagged it ({scan.summary()}).',
         scan=scan,
     )
+
+
+async def _lowered(skills: dict[str, SkillDefinition], read_from: dict[str, Workspace]) -> frozenset[str]:
+    """The names of `skills` whose `SKILL.md` is below `'operator'` in the workspace view each was read through."""
+    return frozenset(
+        [name for name, skill in skills.items() if await read_from[name].authority_of(skill.path) != 'operator']
+    )
+
+
+async def _library_view(workspace: Workspace, directories: Sequence[str | Path]) -> Workspace:
+    """`workspace` as the skills read from `directories` see it, with those directories inside it.
+
+    `authority_of` puts a path outside the working directory at `'none'` unless a `path_authority` entry covers it,
+    but a library is a directory the operator configured, such as personal skills above a repository. A skill there
+    gets the level of the entry covering it, if any, and otherwise the workspace's own level, so a plain workspace
+    offers its libraries as before. Naming the libraries at `'operator'` in a wrapper does that: the wrapper never
+    raises a level, so every path keeps the lowest level any of the workspace's own layers gives it.
+    """
+    paths = [await workspace.resolve(str(directory)) for directory in directories]
+    return AuthorityWorkspace(workspace, authority='operator', path_authority=dict.fromkeys(paths, 'operator'))
