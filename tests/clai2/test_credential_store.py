@@ -1,6 +1,7 @@
 """One keyring read per session for every credential, older per-entry logins, and the no-keyring file fallback."""
 
 import io
+import logging
 import os
 import stat
 import sys
@@ -231,15 +232,33 @@ def no_keyring(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) 
 
 
 @pytest.mark.parametrize('no_keyring', [NoKeyringError, InitError], indirect=True)
-def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None, caplog: pytest.LogCaptureFixture) -> None:
+def test_file_fallback_when_no_keyring(
+    fallback: Path, no_keyring: None, caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert any(
+        isinstance(handler, logging.NullHandler)
+        for handler in credential_store._logger.handlers  # pyright: ignore[reportPrivateUsage]
+    )
+    save_codex_credentials(fallback=fallback, value='{"access_token":"quiet"}')
+    assert capsys.readouterr().err == ''
+    fallback.unlink()
+    caplog.clear()
+    new_session()
+
     with caplog.at_level('WARNING', logger='pydantic_clai2.config.credential_store'):
         assert load_codex_credentials(fallback=fallback) is None
+        assert caplog.records == []
         save_codex_credentials(fallback=fallback, value='{"access_token":"first"}')
+        assert [record.getMessage() for record in caplog.records] == [
+            'No OS keyring backend available; falling back to 0600 plaintext credential files.'
+        ]
+        new_session()
         assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
         save_codex_credentials(fallback=fallback, value='{"access_token":"refreshed"}')
         assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
     assert [record.getMessage() for record in caplog.records] == [
-        'No OS keyring backend available; falling back to 0600 plaintext credential files.'
+        'No OS keyring backend available; falling back to 0600 plaintext credential files.',
+        'No OS keyring backend available; falling back to 0600 plaintext credential files.',
     ]
     assert list(fallback.parent.glob('credentials.*')) == [fallback]
     if sys.platform != 'win32':  # pragma: no branch

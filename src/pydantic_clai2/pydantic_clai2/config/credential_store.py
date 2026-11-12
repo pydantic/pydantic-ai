@@ -30,6 +30,8 @@ _SLASH = '%2F'
 # A locked or failing keyring is not "no keyring": only these mean nothing is configured.
 _NO_KEYRING = (NoKeyringError, InitError)
 _logger = logging.getLogger(__name__)
+# Suppress `logging.lastResort` stderr output in interactive terminals when no logging handler is configured.
+_logger.addHandler(logging.NullHandler())
 
 
 @cache
@@ -163,11 +165,13 @@ def load_codex_credentials(*, account: str = _ACCOUNT, fallback: Path | None = N
             return _decrypt(encrypted)
         root = keyring.get_password(_SERVICE, account)
     except _NO_KEYRING:
-        _warn_plaintext_fallback()
         root = None
     if root is not None:
         return _migrate(root=root, account=account, encrypted=encrypted)
-    return plaintext.read_text(encoding='utf-8') if plaintext.is_file() else None
+    if not plaintext.is_file():
+        return None
+    _warn_plaintext_fallback()
+    return plaintext.read_text(encoding='utf-8')
 
 
 def save_codex_credentials(*, value: str, account: str = _ACCOUNT, fallback: Path | None = None) -> None:
