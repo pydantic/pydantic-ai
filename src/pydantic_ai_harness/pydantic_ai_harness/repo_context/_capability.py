@@ -60,8 +60,8 @@ _POINTER_NOTE = (
     '{frame}. Read the file if it is relevant to your task.'
 )
 _UNLOADED_NOTE = (
-    'This directory has an instruction file that is not loaded here, because the operator does not control '
-    "this workspace's files: `{label}`. Read it with your file tools if it is relevant to your task."
+    "This directory has an instruction file that is not loaded here, because it isn't from the operator: "
+    '`{label}`. Read it with your file tools if it is relevant to your task.'
 )
 _NESTED_PRECEDENCE = (
     'Instruction files ({names}) apply to the directory they are in and everything below it. Where instruction '
@@ -261,8 +261,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     )
     """Walk-up files above the working directory that are below `'operator'` authority, sent as repository data."""
 
-    _ancestors_sent: bool = field(default=False, init=False, repr=False, compare=False)
-    """Whether this run has enqueued `_ancestor_parts`."""
+    _pending_ancestors: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
+    """Directories whose `_ancestor_parts` entry is enqueued but not yet in history."""
+
+    _ancestor_compaction: CompactionPart | None = field(default=None, init=False, repr=False, compare=False)
+    """The latest compaction in history when `_pending_ancestors` was last checked; a new one clears them."""
 
     _lowered: bool = field(default=False, init=False, repr=False, compare=False)
     """Whether this run reads instruction files below `'operator'` authority, which leaves out `_NESTED_PRECEDENCE`."""
@@ -317,7 +320,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         run._context_files = None
         run._unloaded_file = None
         run._ancestor_parts = []
-        run._ancestors_sent = False
+        run._pending_ancestors = set()
+        run._ancestor_compaction = None
         run._pending_dirs = set()
         run._loaded_dirs = set()
         run._pending_chars = {}
@@ -442,15 +446,24 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     ) -> ModelRequestContext:
         """Send the walk-up files above the working directory that are below `'operator'` authority, as repository data.
 
-        They go with the run's first request, unless the history the model sees already holds the same file with the
-        same text, so a conversation records each file again only when it changed or a compaction dropped it.
+        Each goes in unless the history the model sees already holds it with the same text, checked on every request:
+        a conversation records a file again when it changed, and a run puts back one a compaction dropped, at the end
+        of the request being sent. A run that resumes from tool results sends a changed file after them too: unlike
+        user text, the part's frame and note say it's the repository's file, not a new message from the user.
         """
-        if self._ancestors_sent:
+        if not self._ancestor_parts:
             return request_context
-        self._ancestors_sent = True
+        compaction = _latest_compaction(ctx.messages)
+        if compaction is not self._ancestor_compaction:
+            # Whatever was enqueued before this compaction may not survive it.
+            self._ancestor_compaction = compaction
+            self._pending_ancestors.clear()
         latest = _latest_context_files(ctx.messages)
         for part in self._ancestor_parts:
-            if latest.get(part.directory) != part.content:
+            if latest.get(part.directory) == part.content:
+                self._pending_ancestors.discard(part.directory)
+            elif part.directory not in self._pending_ancestors:
+                self._pending_ancestors.add(part.directory)
                 ctx.enqueue(part)
         return request_context
 

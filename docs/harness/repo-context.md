@@ -167,7 +167,7 @@ Walk-up files become part of the agent's instructions, so the model gives them t
 In a workspace with less than `'operator'` [authority](../workspace.md#workspace-authority), the walk-up reads each file at its own level, `Workspace.authority_of(path)`. A file above the working directory gets the level of the `path_authority` entry covering it, or else the workspace's own level, so a plain workspace loads its ancestors' files as before. Only files at `'operator'` go in the instructions:
 
 - The working directory's own file below `'operator'` is named in the instructions, by its configured name, and the model reads it with its file tools, so its contents reach it as tool output.
-- An ancestor's file below `'operator'`, which the file tools can't reach, is sent as a `ContextFilePart` with the run's first request: repository data on the user channel, with a note saying who wrote it. It's sent again only when its text changed or a compaction dropped it.
+- An ancestor's file below `'operator'`, which the file tools can't reach, is sent as a `ContextFilePart` with the run's first request: repository data on the user channel, with a note saying who wrote it. It's sent again when its text changed, and put back on the next request when a compaction drops it.
 - The instructions leave out the sentence on how nested instruction files relate ("the more deeply nested one takes precedence"), which would rank repository files over the operator's.
 
 Give the operator's own files above an untrusted checkout their level with `path_authority`, such as `LocalWorkspace('./checkout', authority='none', path_authority={'~/AGENTS.md': 'operator'})`.

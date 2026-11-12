@@ -1705,7 +1705,7 @@ class TestWalkUpAuthority:
         instructions, parts, result = await self._run(tmp_path, workspace)
         assert instructions == snapshot("""\
 <pyai:context id="capability:repo_context">
-This directory has an instruction file that is not loaded here, because the operator does not control this workspace's files: `AGENTS.md`. Read it with your file tools if it is relevant to your task.
+This directory has an instruction file that is not loaded here, because it isn't from the operator: `AGENTS.md`. Read it with your file tools if it is relevant to your task.
 </pyai:context>
 A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
@@ -1737,7 +1737,7 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
 repo rules
 </context-file>
 
-This directory has an instruction file that is not loaded here, because the operator does not control this workspace's files: `AGENTS.md`. Read it with your file tools if it is relevant to your task.
+This directory has an instruction file that is not loaded here, because it isn't from the operator: `AGENTS.md`. Read it with your file tools if it is relevant to your task.
 </pyai:context>
 A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
@@ -1765,6 +1765,56 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
         instructions, parts, _ = await self._run(tmp_path, workspace)
         assert 'package rules' in instructions
         assert 'repo rules' not in instructions
+        assert [part.content for part in parts] == ['repo rules']
+
+    async def test_a_compaction_during_the_run_puts_an_ancestor_back(self, tmp_path: Path) -> None:
+        working_dir = self._repo(tmp_path)
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(working_dir)), authority='none')
+        requests = 0
+
+        @dataclass
+        class CompactBeforeTheSecondRequest(AbstractCapability[object]):
+            async def before_model_request(
+                self, ctx: RunContext[object], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                # Like `SummarizingCompaction`: rewrite history in place, dropping the ancestor's part.
+                if requests == 1:
+                    ctx.messages[:] = [
+                        ModelRequest(parts=[UserPromptPart('go')]),
+                        ModelRequest(parts=[CompactionPart('The agent looked around.')]),
+                    ]
+                    return replace(request_context, messages=list(ctx.messages))
+                return request_context
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            nonlocal requests
+            step, requests = requests, requests + 1
+            if step == 0:
+                yield {0: DeltaToolCall(name='look', json_args='{}', tool_call_id='look0')}
+            else:
+                yield 'done'
+
+        agent = Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                CompactBeforeTheSecondRequest(),
+                RepoContext(home_dir=str(tmp_path), nested_traversal=False),
+            ],
+        )
+
+        @agent.tool_plain
+        def look() -> str:
+            return 'looked'
+
+        result = await agent.run('go', workspace=workspace)
+        parts = [
+            part
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ContextFilePart)
+        ]
+        # The compaction dropped the part sent with the first request; the second request puts it back.
         assert [part.content for part in parts] == ['repo rules']
 
     async def test_a_lower_copy_does_not_drop_an_operator_file(self, tmp_path: Path) -> None:
