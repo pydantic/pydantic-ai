@@ -27,6 +27,7 @@ import anyio
 import grpc
 import grpc.aio
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
+from google.protobuf.message import Message
 from k8s_agent_sandbox.commands.async_command_executor import AsyncCommandExecutor
 
 _GRACE = 0.3
@@ -36,7 +37,7 @@ _MAX_ARG_STRLEN = 32 * 4096
 """Linux's limit on one `execve` argument or environment string, with its NUL; macOS has none."""
 
 
-def _messages() -> dict[str, Any]:
+def _messages() -> dict[str, type[Message]]:
     F = descriptor_pb2.FieldDescriptorProto
     file = descriptor_pb2.FileDescriptorProto(
         name='fake_sandboxd/process.proto', package='fake.process.v1', syntax='proto3'
@@ -107,7 +108,7 @@ class FakeSandboxd:
 
     async def start(self) -> None:
         self.server = grpc.aio.server()
-        handlers: dict[str, grpc.RpcMethodHandler[Any, Any]] = {
+        handlers: dict[str, grpc.RpcMethodHandler[Message, Message]] = {
             'Start': grpc.unary_stream_rpc_method_handler(
                 self._start, MESSAGES['StartRequest'].FromString, lambda message: message.SerializeToString()
             ),
@@ -129,7 +130,8 @@ class FakeSandboxd:
         assert self.server is not None
         await self.server.stop(grace=0)
 
-    async def _start(self, request: Any, context: grpc.aio.ServicerContext[Any, Any]) -> AsyncIterator[Any]:
+    # `request` is a message class built at runtime, so its fields have no static type.
+    async def _start(self, request: Any, context: grpc.aio.ServicerContext[Message, Message]) -> AsyncIterator[Message]:
         Response = MESSAGES['StartResponse']
         command = list(request.config.command)
         call_env = dict(request.config.env_vars)
@@ -144,8 +146,8 @@ class FakeSandboxd:
         self._idle.clear()
         # Reaps the child however the call ends.
         waiter = asyncio.ensure_future(process.wait())
-        tasks: list[asyncio.Future[Any]] = []
-        queue: asyncio.Queue[Any] = asyncio.Queue()
+        tasks: list[asyncio.Future[None]] = []
+        queue: asyncio.Queue[Message | None] = asyncio.Queue()
 
         async def pump(stream: asyncio.StreamReader, name: str) -> None:
             try:
@@ -316,7 +318,7 @@ class FakeCluster:
         self.claims: dict[tuple[str, str], FakeSandboxd] = {}
         self.pools = {'pool'}
         self.clients: list[FakeClient] = []
-        self.created: list[tuple[str, str, dict[str, Any]]] = []
+        self.created: list[tuple[str, str, dict[str, object]]] = []
         self.sandbox_lookup_error: Exception | None = None
         """When set, reading a Sandbox object fails, as when the API server is unreachable."""
         self.sandbox_lookup_gate: anyio.Event | None = None
@@ -344,7 +346,7 @@ class FakeCluster:
         for key in list(self.claims):
             await self.delete(key)
 
-    def client(self, *, connection_config: Any, cleanup: bool) -> FakeClient:
+    def client(self, *, connection_config: object, cleanup: bool) -> FakeClient:
         """Stands in for the `AsyncSandboxClient` class: the backend constructs clients through this."""
         client = FakeClient(self, connection_config, cleanup)
         self.clients.append(client)
@@ -354,7 +356,7 @@ class FakeCluster:
 class FakeClient:
     """The SDK's `AsyncSandboxClient`."""
 
-    def __init__(self, cluster: FakeCluster, connection_config: Any, cleanup: bool) -> None:
+    def __init__(self, cluster: FakeCluster, connection_config: object, cleanup: bool) -> None:
         self.cluster = cluster
         self.connection_config = connection_config
         self.cleanup = cleanup
@@ -363,7 +365,7 @@ class FakeClient:
         self.k8s_helper = FakeK8sHelper(cluster)
 
     async def create_sandbox(
-        self, warmpool: str, namespace: str = 'default', *, claim_name: str, **kwargs: Any
+        self, warmpool: str, namespace: str = 'default', *, claim_name: str, **kwargs: object
     ) -> FakeSandbox:
         """Like the SDK given a `claim_name`: a claim that fails or is cancelled is left for the caller to delete."""
         from k8s_agent_sandbox.exceptions import SandboxWarmPoolNotFoundError
@@ -411,7 +413,7 @@ class FakeK8sHelper:
     def __init__(self, cluster: FakeCluster) -> None:
         self.cluster = cluster
 
-    async def get_sandbox(self, name: str, namespace: str) -> dict[str, Any] | None:
+    async def get_sandbox(self, name: str, namespace: str) -> dict[str, dict[str, str]] | None:
         if self.cluster.sandbox_lookup_gate is not None:
             await self.cluster.sandbox_lookup_gate.wait()
         if self.cluster.sandbox_lookup_error is not None:
@@ -421,7 +423,7 @@ class FakeK8sHelper:
         bound = (sandboxd for (ns, _), sandboxd in self.cluster.claims.items() if ns == namespace)
         return {'metadata': {'name': name}} if any(sandboxd.sandbox_id == name for sandboxd in bound) else None
 
-    async def get_sandbox_claim(self, name: str, namespace: str) -> dict[str, Any] | None:
+    async def get_sandbox_claim(self, name: str, namespace: str) -> dict[str, dict[str, str]] | None:
         return {'metadata': {'name': name}} if (namespace, name) in self.cluster.claims else None
 
     async def resolve_sandbox_name(self, claim_name: str, namespace: str, timeout: int) -> str:
