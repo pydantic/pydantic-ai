@@ -702,10 +702,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
+                If `None`, the default value is determined by the toolset.
             durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
                 outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
-                If `None`, the default value is determined by the toolset.
-            include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, the default value is determined by the toolset.
         """
         if docstring_format is None:

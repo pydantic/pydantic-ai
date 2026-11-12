@@ -6332,9 +6332,12 @@ async def test_durability_rejects_overridden_executing_toolsets_in_workflow(clie
             'Temporal, because toolsets that execute their own tools or resolve dynamically must be registered '
             'for durable execution when the agent is constructed. Pass them to the agent constructor instead -- '
             'not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction '
-            '`@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async '
-            "tools that don't need durable wrapping can opt out with durable=False (or metadata={'temporal': False}, which takes precedence when set) to be "
-            'allowed at runtime.'
+            '`@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
+        ) + (
+            " Async tools that don't need durable wrapping can opt out with durable=False (or "
+            "metadata={'temporal': False}, which takes precedence when set) to be allowed at runtime."
+            if kind == 'function'
+            else ''
         )
         with workflow_raises(UserError, message):
             await client.execute_workflow(
@@ -6429,8 +6432,7 @@ async def test_durability_rejects_decorator_toolset_in_workflow(client: Client):
             'execute their own tools or resolve dynamically must be registered for durable execution when the '
             'agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or '
             '`override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing '
-            "toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable "
-            "wrapping can opt out with durable=False (or metadata={'temporal': False}, which takes precedence when set) to be allowed at runtime."
+            'toolsets like `ExternalToolset` can be passed at runtime.'
         )
         with workflow_raises(UserError, message):
             await client.execute_workflow(

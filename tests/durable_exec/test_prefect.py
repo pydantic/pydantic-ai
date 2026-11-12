@@ -1666,14 +1666,14 @@ RUNTIME_TOOLSET_REJECTION_CASES = [
         id='anonymous-mcp',
         toolsets=(MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),),
         expected=snapshot(
-            "MCPToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with durable=False (or metadata={'prefect': False}, which takes precedence when set) to be allowed at runtime."
+            'MCPToolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
         ),
     ),
     RuntimeToolsetRejectionCase(
         id='anonymous-custom-mcp',
         toolsets=(CustomLabelMCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server'])),),
         expected=snapshot(
-            "custom MCP toolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with durable=False (or metadata={'prefect': False}, which takes precedence when set) to be allowed at runtime."
+            'custom MCP toolset cannot be added at runtime with Prefect, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime.'
         ),
     ),
     RuntimeToolsetRejectionCase(

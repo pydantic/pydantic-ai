@@ -19,7 +19,7 @@ unknown leaf types.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Any, Literal
 
 from ..exceptions import UserError
@@ -93,9 +93,12 @@ def _all_tools_opt_out(toolset: AbstractToolset[Any], tool_config_key: str | Non
     )
 
 
-def _opt_out_hint(tool_config_key: str | None, unsupported_kinds: frozenset[RuntimeToolsetKind]) -> str:
-    """How async function tools can opt out of durable wrapping to be allowed at runtime, if this engine has a way."""
-    if tool_config_key is None and 'function' not in unsupported_kinds:
+def _opt_out_hint(tool_config_key: str | None, rejected_kinds: Collection[RuntimeToolsetKind]) -> str:
+    """How the tools of a rejected `FunctionToolset` can opt out of durable wrapping to be allowed at runtime.
+
+    Only a `FunctionToolset` can opt out; an MCP or dynamic toolset's tools can't leave their durable unit.
+    """
+    if 'function' not in rejected_kinds:
         return ''
     engine_opt_out = (
         f' (or metadata={{{tool_config_key!r}: False}}, which takes precedence when set)'
@@ -151,7 +154,7 @@ def reject_unsupported_runtime_toolsets(
                 label = 'MCPToolset'
             offenders.append(label)
     offenders_text = ', '.join(offenders)
-    opt_out = _opt_out_hint(tool_config_key, unsupported_kinds)
+    opt_out = _opt_out_hint(tool_config_key, bad_toolsets.keys())
     raise UserError(
         f'{offenders_text} cannot be added at runtime with {engine}, because toolsets '
         'that execute their own tools or resolve dynamically must be registered for durable execution '
