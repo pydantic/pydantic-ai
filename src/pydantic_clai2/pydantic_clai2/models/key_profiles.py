@@ -58,7 +58,7 @@ KEY_VARIABLES = {
     'bedrock-mantle': ('AWS_BEARER_TOKEN_BEDROCK',),
     'cohere': ('CO_API_KEY',),
     'google': ('GOOGLE_API_KEY', 'GEMINI_API_KEY'),
-    'google-cloud': ('GOOGLE_API_KEY', 'GEMINI_API_KEY'),
+    'google-cloud': (),  # Application Default Credentials win over its key variables.
     'heroku': ('HEROKU_INFERENCE_KEY',),
     'huggingface': ('HF_TOKEN',),
     'snowflake': ('SNOWFLAKE_TOKEN',),
