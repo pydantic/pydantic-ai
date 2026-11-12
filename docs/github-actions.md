@@ -125,8 +125,13 @@ That example passes no `model`, because a spec can name its own. The `model` inp
 whatever model the agent carries, and is required only when it carries none.
 
 The Harness is installed when `agent` names something inside it, and left out otherwise, so a
-workflow running its own agent doesn't wait for it or resolve its dependencies. Set
-`harness-version` to install it anyway, pinned to a release.
+workflow running its own agent doesn't wait for it or resolve its dependencies. An agent of your own
+that uses the Harness installs it through `pip-install`.
+
+Both packages are pinned to the exact versions each release of the action was tested with, so a
+workflow that pins the action to a commit runs the same agent code every time. Set
+`pydantic-ai-version` to pick another release; with the default agent, set `harness-version` to the
+matching Harness release too (`0.67.0` goes with `2.67.0`).
 
 ## Inputs
 
@@ -138,8 +143,8 @@ workflow running its own agent doesn't wait for it or resolve its dependencies. 
 | `model` | | A [model](models/overview.md) identifier such as `{{ openai:medium }}`. Overrides the model the agent carries. |
 | `python-version` | `3.12` | The Python the agent runs on, 3.11 or later. |
 | `pip-install` | | Extra space-separated packages, such as the project your agent lives in. |
-| `pydantic-ai-version` | `>=2.44.0` | The `pydantic-ai-slim` version specifier to install. |
-| `harness-version` | | An exact `pydantic-ai-harness` version, installed whatever the agent is. |
+| `pydantic-ai-version` | `2.67.0` | The exact `pydantic-ai-slim` version to install. |
+| `harness-version` | `0.67.0` | The exact `pydantic-ai-harness` version, installed when `agent` names the Harness. |
 | `working-directory` | `.` | The directory packages are installed from and the agent runs in. |
 
 The action installs `pydantic-ai-slim` with the `openai`, `anthropic` and `spec` extras. Any other
@@ -181,7 +186,8 @@ Provider credentials belong in the step's `env:`. The action takes no API key in
 passes through an action input that a failure could echo. Exchanging a GitHub OIDC token for
 short-lived provider credentials, the way
 [Anthropic's](https://github.com/anthropics/claude-code-action) and
-[OpenAI's](https://github.com/openai/codex-action) own actions can, is not implemented here yet.
+[OpenAI's](https://github.com/openai/codex-action) own actions can, is not implemented here yet; it
+is tracked in [#8411](https://github.com/pydantic/pydantic-ai/issues/8411).
 
 ## Observability
 
