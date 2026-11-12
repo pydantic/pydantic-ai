@@ -37,6 +37,7 @@ from pydantic_ai_harness.coder import Coder
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
+from ..display_contract import check_display_contract
 from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT
 
 pytestmark = pytest.mark.boxd_live
@@ -67,9 +68,13 @@ async def client() -> AsyncIterator[boxd.AsyncBoxd]:
 
 
 @asynccontextmanager
-async def _owned(client: boxd.AsyncBoxd, working_dir: str | None = None) -> AsyncGenerator[BoxdSandboxBackend]:
+async def _owned(
+    client: boxd.AsyncBoxd, working_dir: str | None = None, *, desktop: bool = False
+) -> AsyncGenerator[BoxdSandboxBackend]:
     """Create a machine and delete it on the way out, even when the test deleted it already."""
-    backend = BoxdSandboxBackend(client=client, auto_suspend_timeout=LIVE_AUTO_SUSPEND_TIMEOUT, working_dir=working_dir)
+    backend = BoxdSandboxBackend(
+        client=client, auto_suspend_timeout=LIVE_AUTO_SUSPEND_TIMEOUT, working_dir=working_dir, desktop=desktop
+    )
     try:
         await backend.get_sandbox()
         yield backend
@@ -82,6 +87,16 @@ async def _wait_for_status(client: boxd.AsyncBoxd, machine_id: str, status: str)
     with anyio.fail_after(120):
         while (await client.machines.get(machine_id)).status != status:
             await anyio.sleep(0.5)
+
+
+async def test_a_desktop_meets_the_display_contract(client: boxd.AsyncBoxd) -> None:
+    """The fakes keep the X server's state between commands: a plain Xvfb resets each time its last client exits, so
+    without `-noreset` the pointer went back to the middle after every action."""
+    async with _owned(client, desktop=True) as backend:
+        display = backend.display
+        assert display is not None
+        await display.screenshot()
+        await check_display_contract(display)
 
 
 async def test_creates_an_isolated_machine_and_runs_a_command(client: boxd.AsyncBoxd) -> None:
