@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
-from pydantic_ai import Agent, Tool
+from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     Click,
     ComputerCallPart,
     ComputerReturnPart,
+    HoldKeys,
     SafetyCheck,
     Screenshot,
+    Wait,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -197,7 +201,7 @@ async def test_a_computer_call_with_safety_checks_waits_for_approval_however_its
     from dataclasses import dataclass
     from typing import Any
 
-    from pydantic_ai import Agent, DeferredToolRequests, RunContext, Tool
+    from pydantic_ai import Agent, DeferredToolRequests, Tool
     from pydantic_ai.capabilities import AbstractCapability
     from pydantic_ai.exceptions import SkipToolValidation
 
@@ -241,9 +245,21 @@ async def test_a_computer_call_with_safety_checks_waits_for_approval_however_its
     assert ran == []
 
 
-async def test_a_computer_call_with_safety_checks_refuses_an_external_executor() -> None:
+@pytest.mark.parametrize('hook_asks', [pytest.param(False, id='alone'), pytest.param(True, id='a-hook-asks-too')])
+async def test_a_computer_call_with_safety_checks_refuses_an_external_executor(hook_asks: bool) -> None:
     from pydantic_ai import Agent, DeferredToolRequests
+    from pydantic_ai.capabilities import Hooks
+    from pydantic_ai.exceptions import ApprovalRequired
     from pydantic_ai.toolsets import ExternalToolset
+
+    # A hook asking for approval as well doesn't let the call through to the external executor.
+    hooks = Hooks[Any]()
+
+    @hooks.on.after_tool_validate
+    async def ask(
+        ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        raise ApprovalRequired
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         checks = [{'id': 'sc_1', 'code': 'malicious_instructions', 'message': 'Check it.'}]
@@ -271,7 +287,12 @@ async def test_a_computer_call_with_safety_checks_refuses_an_external_executor()
             )
         ]
     )
-    agent = Agent(FunctionModel(respond), toolsets=[external], output_type=[str, DeferredToolRequests])
+    agent = Agent(
+        FunctionModel(respond),
+        toolsets=[external],
+        capabilities=[hooks] if hook_asks else [],
+        output_type=[str, DeferredToolRequests],
+    )
     with pytest.raises(UserError, match='approval cannot reach'):
         await agent.run('Click.')
 
@@ -399,3 +420,12 @@ def test_a_computer_call_reads_only_real_labels(value: object) -> None:
     assert (
         ComputerCallPart('computer', {'actions': []}, provider_details={'coordinate_grid': 1}).coordinate_grid is None
     )
+
+
+@pytest.mark.parametrize('seconds', [float('inf'), float('nan')])
+def test_a_duration_must_be_finite(seconds: float) -> None:
+    # JSON can't hold it, so a saved history would lose the action.
+    with pytest.raises(ValidationError, match='finite number'):
+        Wait(seconds=seconds)
+    with pytest.raises(ValidationError, match='finite number'):
+        HoldKeys(keys=('shift',), seconds=seconds)

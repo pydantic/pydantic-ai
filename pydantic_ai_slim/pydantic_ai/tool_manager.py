@@ -351,8 +351,6 @@ def _require_safety_approval(validated: ValidatedToolCall[AgentDepsT]) -> Valida
     """
     if validated.ctx.tool_call_approved or not _has_safety_checks(validated.call):
         return validated
-    if isinstance(validated.deferral, ApprovalRequired):
-        return validated
     tool = validated.tool
     if isinstance(validated.deferral, CallDeferred) or (tool is not None and tool.tool_def.kind == 'external'):
         # Approving a call leads to running it here, which an external or deferred call can't do yet.
@@ -361,6 +359,8 @@ def _require_safety_approval(validated: ValidatedToolCall[AgentDepsT]) -> Valida
             ' to approve it before it runs, but it is handed to an external or deferred executor that approval'
             ' cannot reach. Run the computer tool in this process so approval can gate it.'
         )
+    if isinstance(validated.deferral, ApprovalRequired):
+        return validated  # a hook already asked for approval
     return replace(validated, deferral=ApprovalRequired())
 
 

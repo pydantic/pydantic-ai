@@ -424,7 +424,7 @@ class HoldKeys:
     type: Literal['hold_key'] = 'hold_key'
     keys: _Keys
     """One key per entry, held together."""
-    seconds: Annotated[float, Field(gt=0)]
+    seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)]
     """How long to hold them."""
 
 
@@ -433,7 +433,7 @@ class Wait:
     """Pause, for example while a page or application loads."""
 
     type: Literal['wait'] = 'wait'
-    seconds: Annotated[float, Field(gt=0)] = 1
+    seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] = 1
     """How long to wait."""
 
 
