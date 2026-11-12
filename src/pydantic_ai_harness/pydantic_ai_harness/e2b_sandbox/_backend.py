@@ -844,7 +844,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         result = await self.run(['sh', '-c', _START_VIEWER], timeout=30)
         if result.exit_code != 0:
             raise WorkspaceError(
-                f'Could not start the desktop viewer: the template needs x11vnc and noVNC in /opt/noVNC '
+                f'Could not start the desktop viewer: the template needs x11vnc, flock and noVNC in /opt/noVNC '
                 f'({(result.stderr or result.stdout).strip()})'
             )
         sandbox = await self.get_sandbox()
