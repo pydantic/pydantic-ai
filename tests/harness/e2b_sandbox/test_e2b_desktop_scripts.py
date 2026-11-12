@@ -23,6 +23,8 @@ _STUBS = {
     'xdotool': '[ "$1" != search ] || [ -e "$bin/xfce-started" ]',  # the display answers; XFCE's window once started
     'pgrep': 'cat "$bin/pgrep-$2" 2>/dev/null',  # prints the PIDs the test listed for `-x NAME` or `-f PATTERN`
     'startxfce4': 'touch "$bin/xfce-started"',
+    # The start script checks these are installed; the display already answers, so they don't run.
+    **dict.fromkeys(['Xvfb', 'xwininfo', 'scrot'], 'exit 1'),
     # The viewer's two programs: each lists its PID for `pgrep`, logs its start, prints its ready line and stays up.
     'x11vnc': '[ "$1" = -storepasswd ] && { echo "$2" > "$3"; exit; }; '
     'echo $$ > "$bin/pgrep-x11vnc"; echo x11vnc >> "$bin/starts"; echo PORT=5900; exec sleep 1',
