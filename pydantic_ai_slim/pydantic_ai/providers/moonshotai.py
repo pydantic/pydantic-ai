@@ -3,7 +3,10 @@ from __future__ import annotations as _annotations
 import os
 from typing import Any, Literal, overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
@@ -116,10 +119,12 @@ class MoonshotAIProvider(_OpenAISDKProvider):
     def __init__(self, *, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
+    def __init__(self, *, api_key: str | SecretStr, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: _OpenAIHTTPClient, base_url: str | None = None) -> None: ...
+    def __init__(
+        self, *, api_key: str | SecretStr, http_client: _OpenAIHTTPClient, base_url: str | None = None
+    ) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -127,7 +132,7 @@ class MoonshotAIProvider(_OpenAISDKProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
@@ -144,6 +149,7 @@ class MoonshotAIProvider(_OpenAISDKProvider):
                 instead of `MOONSHOTAI_BASE_URL`. Cannot be combined with `base_url`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
+        api_key = secret_value(api_key)
         api_key = api_key or os.getenv('MOONSHOTAI_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(

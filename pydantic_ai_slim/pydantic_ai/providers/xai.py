@@ -4,7 +4,10 @@ import asyncio
 import os
 from typing import TYPE_CHECKING, Any, overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.grok import grok_model_profile, grok_realtime_model_profile
 from pydantic_ai.providers import Provider
@@ -106,7 +109,7 @@ class XaiProvider(Provider[AsyncClient]):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         api_host: str | None = None,
         timeout: float | None = None,
         metadata: tuple[tuple[str, str], ...] | None = None,
@@ -118,7 +121,7 @@ class XaiProvider(Provider[AsyncClient]):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         api_host: str | None = None,
         timeout: float | None = None,
         metadata: tuple[tuple[str, str], ...] | None = None,
@@ -144,6 +147,7 @@ class XaiProvider(Provider[AsyncClient]):
             xai_client: An existing `xai_sdk.AsyncClient` to use. This takes precedence over `api_key`, `api_host`,
                 `timeout`, and `metadata`.
         """
+        api_key = secret_value(api_key)
         self._lazy_client: _LazyAsyncClient | None = None
         # Retained so transports authenticating outside the gRPC SDK (e.g. the realtime WebSocket) can
         # read it back; `None` when a pre-configured `xai_client` was passed, since its key isn't exposed.

@@ -45,7 +45,7 @@ from typing import (
 
 import anyio
 from anyio.to_thread import run_sync
-from pydantic import BaseModel, JsonValue, TypeAdapter
+from pydantic import BaseModel, JsonValue, SecretStr, TypeAdapter
 from pydantic._internal import _decorators, _typing_extra
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import ParamSpec, TypeIs, TypeVar, is_typeddict
@@ -1292,6 +1292,19 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
 def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
     """Check if obj is a dict, narrowing the type to `dict[str, Any]`."""
     return isinstance(obj, dict)
+
+
+@overload
+def secret_value(value: str | SecretStr) -> str: ...
+
+
+@overload
+def secret_value(value: str | SecretStr | None) -> str | None: ...
+
+
+def secret_value(value: str | SecretStr | None) -> str | None:
+    """The plain value of a secret, such as an API key, that may be wrapped in a `SecretStr`."""
+    return value.get_secret_value() if isinstance(value, SecretStr) else value
 
 
 def is_google_files_api_url(url: str) -> bool:

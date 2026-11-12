@@ -156,6 +156,10 @@ class CapabilitySpec(NamedSpec):
     """
 
 
+class ProviderSpec(NamedSpec):
+    """The provider of a model spec: a provider class's class-style name or a provider name, with its arguments."""
+
+
 def build_registry(
     *,
     custom_types: Sequence[type[T]],

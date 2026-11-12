@@ -5,24 +5,35 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
+import importlib
+import inspect
+import pkgutil
 import re
 import warnings
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Self, TypeVar, cast
 from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
+from pydantic import SecretStr
 
+import pydantic_ai.providers
 from pydantic_ai import Capability as TopLevelCapability
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
-from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.agent.spec import (
+    _PROVIDER_CLASS_KEYS,  # pyright: ignore[reportPrivateUsage]
+    AgentSpec,
+    _builtin_provider_class,  # pyright: ignore[reportPrivateUsage]
+    _provider_client_types,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
@@ -72,6 +83,7 @@ from pydantic_ai.native_tools import (
     WebSearchTool,
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
+from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings as _ModelSettings, ToolOrOutput
 
 from ._inline_snapshot import snapshot
@@ -90,6 +102,34 @@ pytestmark = []
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
+
+with try_import() as anthropic_imports_successful:
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+with try_import() as groq_imports_successful:
+    from pydantic_ai.providers.groq import GroqProvider
+
+with try_import() as openai_imports_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+
+    class MyGatewayProvider(OpenAIProvider):
+        """A custom provider whose spec takes a region instead of a base URL."""
+
+        @classmethod
+        def from_spec(cls, *, region: str, api_key: SecretStr) -> Self:
+            return cls(base_url=f'https://{region}.gateway.example.com/v1', api_key=api_key)
+
+    class KebabNamedProvider(MyGatewayProvider):
+        @classmethod
+        def get_serialization_name(cls) -> str | None:
+            return 'azure'
+
+    class RenamedGatewayProvider(MyGatewayProvider):
+        @classmethod
+        def get_serialization_name(cls) -> str | None:
+            return 'OpenAICompatible'
 
 
 def test_capability_top_level_export() -> None:
@@ -692,6 +732,484 @@ def test_agent_from_spec_model_override():
     assert agent.model is model
 
 
+def _model_spec(provider: Any, name: str = 'openai-chat:qwen/qwen3') -> dict[str, Any]:
+    return {'model': {'name': name, 'provider': provider}}
+
+
+_GATEWAY_PROVIDER = {'name': 'my-gateway', 'base_url': 'https://gateway.example.com/v1'}
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize('key', ['OpenAICompatible', 'openai-compatible'])
+def test_agent_from_spec_model_with_provider(monkeypatch: pytest.MonkeyPatch, key: str) -> None:
+    """The model name picks the model class, and the provider's secret argument comes from its env var."""
+    # Unit (not VCR): building the model from a spec sends no request.
+    monkeypatch.setenv('MY_GATEWAY_API_KEY', 'gateway-key')
+
+    agent = Agent.from_spec(_model_spec({key: {**_GATEWAY_PROVIDER, 'api_key': {'env': 'MY_GATEWAY_API_KEY'}}}))
+
+    model = agent.model
+    assert isinstance(model, OpenAIChatModel)
+    assert model.model_name == 'qwen/qwen3'
+    assert model.system == 'my-gateway'
+    provider = model._provider  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider.base_url == 'https://gateway.example.com/v1/'
+    assert provider.client.api_key == 'gateway-key'
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+def test_agent_from_spec_model_with_provider_without_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A secret argument can be `null`, and `OPENAI_API_KEY` isn't sent to an OpenAI-compatible service."""
+    monkeypatch.setenv('OPENAI_API_KEY', 'openai-key')
+
+    agent = Agent.from_spec(_model_spec({'OpenAICompatible': {**_GATEWAY_PROVIDER, 'api_key': None}}))
+
+    assert isinstance(agent.model, OpenAIChatModel)
+    assert agent.model.client.api_key == 'api-key-not-set'
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'provider, name, provider_class, model_class',
+    [
+        (
+            {'OpenAI': {'base_url': 'https://proxy.example.com/v1'}},
+            'openai:gpt-5.2',
+            'OpenAIProvider',
+            'OpenAIResponsesModel',
+        ),
+        (
+            {'openai-chat': {'base_url': 'https://proxy.example.com/v1'}},
+            'openai-chat:gpt-5.2',
+            'OpenAIProvider',
+            'OpenAIChatModel',
+        ),
+        (
+            {'Azure': {'azure_endpoint': 'https://my.openai.azure.com'}},
+            'azure:gpt-5.2',
+            'AzureProvider',
+            'OpenAIChatModel',
+        ),
+        (
+            {'azure': {'azure_endpoint': 'https://my.openai.azure.com'}},
+            'openai-responses:gpt-5.2',
+            'AzureProvider',
+            'OpenAIResponsesModel',
+        ),
+    ],
+)
+def test_agent_from_spec_model_with_provider_name(
+    monkeypatch: pytest.MonkeyPatch, provider: dict[str, Any], name: str, provider_class: str, model_class: str
+) -> None:
+    """Class-style and provider names both build the provider class, with the provider's own defaults."""
+    monkeypatch.setenv('OPENAI_API_KEY', 'openai-key')
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'azure-key')
+    monkeypatch.setenv('OPENAI_API_VERSION', '2024-12-01-preview')
+
+    agent = Agent.from_spec(_model_spec(provider, name))
+
+    assert isinstance(agent.model, OpenAIChatModel | OpenAIResponsesModel)
+    assert type(agent.model).__name__ == model_class
+    assert type(agent.model._provider).__name__ == provider_class  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+def test_agent_from_spec_model_with_gateway_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `gateway/<upstream>` provider name builds what `gateway_provider` builds for that upstream."""
+    monkeypatch.setenv('MY_GATEWAY_API_KEY', 'gateway-key')
+
+    agent = Agent.from_spec(
+        _model_spec(
+            {'gateway/openai': {'api_key': {'env': 'MY_GATEWAY_API_KEY'}, 'base_url': 'https://gateway.example.com'}},
+            'gateway/openai:gpt-5.2',
+        )
+    )
+
+    assert isinstance(agent.model, OpenAIResponsesModel)
+    assert agent.model.system == 'openai'
+    assert agent.model._provider.base_url == snapshot('https://gateway.example.com/openai/')  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize('via', ['from_spec', 'from_file'])
+def test_agent_from_spec_model_with_custom_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, via: str) -> None:
+    """A custom provider class is found by its class-style name, with the arguments of its `from_spec`."""
+    monkeypatch.setenv('MY_GATEWAY_API_KEY', 'gateway-key')
+    spec = AgentSpec.model_validate(
+        _model_spec({'MyGateway': {'region': 'eu', 'api_key': {'env': 'MY_GATEWAY_API_KEY'}}})
+    )
+
+    if via == 'from_file':
+        spec.to_file(tmp_path / 'agent.yaml', custom_provider_types=[MyGatewayProvider])
+        agent = Agent.from_file(tmp_path / 'agent.yaml', custom_provider_types=[MyGatewayProvider])
+    else:
+        agent = Agent.from_spec(spec, custom_provider_types=[MyGatewayProvider])
+
+    assert isinstance(agent.model, OpenAIChatModel)
+    provider = agent.model._provider  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(provider, MyGatewayProvider)
+    assert provider.base_url == 'https://eu.gateway.example.com/v1/'
+    assert provider.client.api_key == 'gateway-key'
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_spec, message',
+    [
+        (
+            _model_spec({'OpenAICompatible': {**_GATEWAY_PROVIDER, 'api_key': 'sk-inline'}}),
+            "Argument 'api_key' of provider 'OpenAICompatible' is a secret, so a spec can only reference an environment variable for it, as `{env: VAR_NAME}`.",
+        ),
+        (
+            _model_spec({'OpenAICompatible': {**_GATEWAY_PROVIDER, 'api_key': {'env': 'MY_UNSET_API_KEY'}}}),
+            "The environment variable 'MY_UNSET_API_KEY' referenced by argument 'api_key' of provider 'OpenAICompatible' is not set or empty.",
+        ),
+        (
+            _model_spec({'OpenAICompatible': {'name': 'my-gateway', 'base_url': {'env': 'MY_GATEWAY_BASE_URL'}}}),
+            "Argument 'base_url' of provider 'OpenAICompatible' is not a secret, so it cannot be read from an environment variable.",
+        ),
+        (
+            _model_spec({'OpenAICompatible': 'my-gateway'}),
+            "The arguments of provider 'OpenAICompatible' in a spec must be given by name, as an object.",
+        ),
+        (
+            _model_spec({'OpenAICompatible': _GATEWAY_PROVIDER}, 'qwen3'),
+            "A model spec `name` must have the form `<provider>:<model>`, got 'qwen3'.",
+        ),
+        (_model_spec({'OpenAICompatible': _GATEWAY_PROVIDER}, 'unknown:qwen3'), 'Unknown model: unknown:qwen3'),
+        (
+            _model_spec({'OpenAICompatible': _GATEWAY_PROVIDER}, 'sentence-transformers:all-MiniLM-L6-v2'),
+            'Unknown model: sentence-transformers:all-MiniLM-L6-v2',
+        ),
+        (
+            _model_spec({'OpenAICompatible': {**_GATEWAY_PROVIDER, 'openai_client': 'not-a-client'}}),
+            "Invalid arguments for provider 'OpenAICompatible': 1 validation error for ProviderArguments\nopenai_client\n  Extra inputs are not permitted",
+        ),
+    ],
+)
+def test_agent_from_spec_model_with_provider_errors(
+    monkeypatch: pytest.MonkeyPatch, model_spec: dict[str, Any], message: str
+) -> None:
+    monkeypatch.setenv('MY_UNSET_API_KEY', '')
+
+    with pytest.raises(UserError, match=re.escape(message)):
+        Agent.from_spec(model_spec)
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.skipif(
+    not openai_imports_successful() or not anthropic_imports_successful(), reason='openai or anthropic not installed'
+)
+def test_agent_from_spec_model_with_provider_for_another_model_class() -> None:
+    """The provider name only picks the provider, so a model class that can't use it raises an error naming both."""
+    with pytest.raises(UserError) as exc_info:
+        Agent.from_spec(_model_spec({'OpenAICompatible': _GATEWAY_PROVIDER}, 'anthropic:claude-sonnet-4-6'))
+
+    assert str(exc_info.value) == snapshot(
+        "Provider 'OpenAICompatible' (OpenAICompatibleProvider) cannot be used with model 'anthropic:claude-sonnet-4-6', which needs a provider like `AnthropicProvider`."
+    )
+    assert AnthropicProvider.__name__ in str(exc_info.value)
+
+
+def test_agent_from_spec_model_with_unknown_provider() -> None:
+    with pytest.raises(UserError) as exc_info:
+        Agent.from_spec(_model_spec('MyGateway'))
+
+    assert str(exc_info.value).startswith(
+        "Provider 'MyGateway' is not a built-in provider or in the provided `custom_provider_types`. Valid choices: ['OpenAI', "
+    )
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+def test_agent_from_spec_model_with_codex_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A spec can't hold OAuth credentials, so `OpenAICodex` reads the Codex CLI's `auth.json`."""
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path))
+
+    with pytest.raises(UserError, match='No Codex CLI credentials found'):
+        Agent.from_spec(_model_spec('OpenAICodex', 'openai-codex:gpt-5.2-codex'))
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'provider_class, message',
+    [
+        (TestModel, 'All custom provider classes must be subclasses of Provider'),
+        (
+            KebabNamedProvider,
+            "Custom provider class KebabNamedProvider has the name 'azure', which is a provider name.",
+        ),
+    ],
+)
+def test_custom_provider_types_validation(provider_class: type[Any], message: str) -> None:
+    with pytest.raises(ValueError, match=re.escape(message)):
+        Agent.from_spec(_model_spec('Azure'), custom_provider_types=[provider_class])
+
+
+def test_agent_from_spec_model_override_skips_model_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `model` passed to `from_spec` replaces the spec's model without building it or reading its env vars."""
+    agent = Agent.from_spec(
+        _model_spec({'OpenAICompatible': {**_GATEWAY_PROVIDER, 'api_key': {'env': 'MY_UNSET_API_KEY'}}}),
+        model=TestModel(model_name='override'),
+    )
+
+    assert isinstance(agent.model, TestModel)
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize('via', ['run', 'override'])
+async def test_run_time_spec_model_with_provider(via: str) -> None:
+    """A model spec in a run-time spec is built too."""
+    agent = Agent('test')
+    spec = _model_spec({'OpenAICompatible': _GATEWAY_PROVIDER})
+
+    with agent.override(spec=spec) if via == 'override' else nullcontext():
+        async with agent.iter('hello', spec=spec if via == 'run' else None) as run:
+            model = run.ctx.deps.model
+            assert isinstance(model, OpenAIChatModel)
+            assert model.system == 'my-gateway'
+            http_client = model._provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+            assert http_client is not None and not http_client.is_closed
+
+    # A model built for a single run is closed when the run ends, like one it builds from a model name.
+    assert http_client.is_closed == (via == 'run')
+
+
+@pytest.mark.parametrize('via', ['run', 'override', 'override-around-run'])
+async def test_run_time_model_skips_model_spec(via: str) -> None:
+    """A `model` passed alongside a run-time spec, or overridden around it, replaces the spec's model without building it."""
+    agent = Agent('test')
+    spec = _model_spec({'OpenAICompatible': {**_GATEWAY_PROVIDER, 'api_key': {'env': 'MY_UNSET_API_KEY'}}})
+    model = TestModel(custom_output_text='explicit model')
+
+    if via == 'override':
+        with agent.override(model=model, spec=spec):
+            result = await agent.run('hello')
+    elif via == 'override-around-run':
+        with agent.override(model=model):
+            result = await agent.run('hello', spec=spec)
+    else:
+        result = await agent.run('hello', model=model, spec=spec)
+
+    assert result.output == 'explicit model'
+
+
+@pytest.mark.parametrize(
+    'fmt, expected',
+    [
+        (
+            'yaml',
+            snapshot("""\
+# yaml-language-server: $schema=agent_schema.json
+model:
+  name: openai-chat:qwen/qwen3
+  provider:
+    OpenAICompatible:
+      name: my-gateway
+      base_url: https://gateway.example.com/v1
+      api_key:
+        env: MY_GATEWAY_API_KEY
+"""),
+        ),
+        (
+            'json',
+            snapshot("""\
+{
+  "$schema": "agent_schema.json",
+  "model": {
+    "name": "openai-chat:qwen/qwen3",
+    "provider": {
+      "OpenAICompatible": {
+        "name": "my-gateway",
+        "base_url": "https://gateway.example.com/v1",
+        "api_key": {
+          "env": "MY_GATEWAY_API_KEY"
+        }
+      }
+    }
+  }
+}
+"""),
+        ),
+    ],
+)
+def test_to_file_roundtrip_model_spec(tmp_path: Path, fmt: str, expected: str) -> None:
+    spec = AgentSpec.model_validate(
+        _model_spec({'OpenAICompatible': {**_GATEWAY_PROVIDER, 'api_key': {'env': 'MY_GATEWAY_API_KEY'}}})
+    )
+    spec_path = tmp_path / f'agent.{fmt}'
+    spec.to_file(spec_path)
+
+    assert spec_path.read_text(encoding='utf-8') == expected
+    assert AgentSpec.from_file(spec_path).model == spec.model
+
+
+def _provider_argument_defs(schema: dict[str, Any]) -> dict[str, str]:
+    """The name of the arguments definition for each provider name that takes arguments in an agent spec schema."""
+    return {
+        name: prop['$ref'].removeprefix('#/$defs/')
+        for item in schema['$defs']['ModelSpec']['properties']['provider']['anyOf']
+        if 'properties' in item
+        for name, prop in item['properties'].items()
+    }
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+def test_custom_provider_takes_over_class_style_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A custom provider can take a built-in class-style name, while provider names keep their built-in class."""
+    monkeypatch.setenv('MY_GATEWAY_API_KEY', 'gateway-key')
+
+    schema = AgentSpec.model_json_schema_with_capabilities(custom_provider_types=[RenamedGatewayProvider])
+    agent = Agent.from_spec(
+        _model_spec({'OpenAICompatible': {'region': 'eu', 'api_key': {'env': 'MY_GATEWAY_API_KEY'}}}),
+        custom_provider_types=[RenamedGatewayProvider],
+    )
+
+    assert {
+        name: _provider_argument_defs(schema)[name] for name in ['OpenAICompatible', 'openai-compatible']
+    } == snapshot(
+        {'OpenAICompatible': 'RenamedGatewayProviderSpec', 'openai-compatible': 'OpenAICompatibleProviderSpec'}
+    )
+    assert isinstance(agent.model, OpenAIChatModel)
+    assert isinstance(agent.model._provider, RenamedGatewayProvider)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+def test_model_spec_json_schema() -> None:
+    """Every provider name is a key in the schema, sharing one definition of arguments per provider class."""
+    # Unit (not VCR): the schema is generated from the provider classes, not from any API response.
+    schema = AgentSpec.model_json_schema_with_capabilities(custom_provider_types=[MyGatewayProvider])
+    defs = schema['$defs']
+    provider_items = defs['ModelSpec']['properties']['provider']['anyOf']
+    names_without_arguments = {item['const'] for item in provider_items if 'const' in item}
+    names_with_arguments = _provider_argument_defs(schema)
+
+    assert {
+        name: names_with_arguments[name]
+        for name in [
+            'OpenAICompatible',
+            'openai-compatible',
+            'Azure',
+            'azure',
+            'azure-responses',
+            'MyGateway',
+            'gateway/chat',
+        ]
+    } == snapshot(
+        {
+            'OpenAICompatible': 'OpenAICompatibleProviderSpec',
+            'openai-compatible': 'OpenAICompatibleProviderSpec',
+            'Azure': 'AzureProviderSpec',
+            'azure': 'AzureProviderSpec',
+            'azure-responses': 'AzureProviderSpec',
+            'MyGateway': 'MyGatewayProviderSpec',
+            'gateway/chat': 'GatewayProviderSpec',
+        }
+    )
+    assert {'OpenAI', 'openai', 'Azure', 'azure', 'OpenAICodex'} <= names_without_arguments
+    assert 'OpenAICompatible' not in names_without_arguments
+    assert 'MyGateway' not in names_without_arguments
+    assert remove_schema_descriptions(
+        {
+            name: defs[name]
+            for name in ['OpenAICompatibleProviderSpec', 'GatewayProviderSpec', 'MyGatewayProviderSpec', 'EnvVar']
+        }
+    ) == snapshot(
+        {
+            'OpenAICompatibleProviderSpec': {
+                'additionalProperties': False,
+                'properties': {
+                    'name': {'title': 'Name', 'type': 'string'},
+                    'base_url': {'title': 'Base Url', 'type': 'string'},
+                    'api_key': {'anyOf': [{'$ref': '#/$defs/EnvVar'}, {'type': 'null'}]},
+                    'canonical_system': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Canonical System'},
+                    'compatible_systems': {'items': {'type': 'string'}, 'title': 'Compatible Systems', 'type': 'array'},
+                },
+                'required': ['name', 'base_url'],
+                'title': 'OpenAICompatibleProviderSpec',
+                'type': 'object',
+            },
+            'GatewayProviderSpec': {
+                'additionalProperties': False,
+                'properties': {
+                    'route': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Route'},
+                    'api_key': {'anyOf': [{'$ref': '#/$defs/EnvVar'}, {'type': 'null'}]},
+                    'base_url': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Base Url'},
+                },
+                'title': 'GatewayProviderSpec',
+                'type': 'object',
+            },
+            'MyGatewayProviderSpec': {
+                'additionalProperties': False,
+                'properties': {'region': {'title': 'Region', 'type': 'string'}, 'api_key': {'$ref': '#/$defs/EnvVar'}},
+                'required': ['region', 'api_key'],
+                'title': 'MyGatewayProviderSpec',
+                'type': 'object',
+            },
+            'EnvVar': {
+                'additionalProperties': False,
+                'properties': {'env': {'title': 'Env', 'type': 'string'}},
+                'required': ['env'],
+                'title': 'EnvVar',
+                'type': 'object',
+            },
+        }
+    )
+
+
+def test_spec_provider_names() -> None:
+    """Each provider name a spec takes resolves to the built-in class with its class-style name, and covers every provider."""
+    # Unit (not VCR): this guards the provider-name table against drift from `infer_provider_class`.
+    resolved: set[type[Provider[Any]]] = set()
+    for name, class_key in _PROVIDER_CLASS_KEYS.items():
+        try:
+            provider_class = _builtin_provider_class(name)
+        except ImportError:  # pragma: no cover
+            continue
+        assert provider_class.get_serialization_name() == class_key
+        resolved.add(provider_class)
+
+    all_classes: set[type[Provider[Any]]] = set()
+    for module_info in pkgutil.iter_modules(pydantic_ai.providers.__path__):
+        if module_info.name.startswith('_'):
+            continue
+        try:
+            module = importlib.import_module(f'pydantic_ai.providers.{module_info.name}')
+        except ImportError:  # pragma: no cover
+            continue
+        members: list[Any] = list(vars(module).values())
+        provider_classes = [
+            cast(type[Provider[Any]], cls) for cls in members if isinstance(cls, type) and issubclass(cls, Provider)
+        ]
+        all_classes.update(
+            cls for cls in provider_classes if cls.__module__ == module.__name__ and not inspect.isabstract(cls)
+        )
+    assert sorted(cls.__name__ for cls in all_classes - resolved) == snapshot(
+        ['GitHubProvider', 'OpenAIChatGPTProvider', 'OpenAIDecisionsProvider']
+    )
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+def test_provider_takes_secret_str() -> None:
+    assert OpenAIProvider(api_key=SecretStr('openai-key')).client.api_key == 'openai-key'
+
+
+def test_provider_client_types_unknown() -> None:
+    """A client type that isn't a class, like a custom provider's type variable, makes the provider/model check skip."""
+    # Unit (not VCR): no built-in provider declares such a client type.
+    client_t = TypeVar('client_t')
+
+    class GenericClientProvider(Provider[client_t]):
+        pass
+
+    assert _provider_client_types(GenericClientProvider) is None
+
+
+@pytest.mark.skipif(not groq_imports_successful(), reason='groq not installed')
+def test_provider_overload_takes_secret_str() -> None:
+    assert GroqProvider(api_key=SecretStr('groq-key')).client.api_key == 'groq-key'
+
+
 def test_agent_from_spec_capabilities_merged():
     @dataclass
     class ExtraCap(AbstractCapability):
@@ -731,11 +1249,26 @@ def _open_nested_dataclass_defs(schema: dict[str, Any]) -> dict[str, Any]:
     return {**schema, '$defs': defs}
 
 
+def _without_provider_schemas(schema: dict[str, Any]) -> dict[str, Any]:
+    """Drop the provider schemas of a model spec, which vary with the installed provider packages.
+
+    `test_model_spec_json_schema` covers them.
+    """
+    defs = {
+        name: definition
+        for name, definition in schema['$defs'].items()
+        if not name.endswith('ProviderSpec') and name not in ('EnvVar', 'HttpRetryOptions')
+    }
+    model_spec = defs['ModelSpec']
+    defs['ModelSpec'] = {**model_spec, 'properties': {**model_spec['properties'], 'provider': {}}}
+    return {**schema, '$defs': defs}
+
+
 def test_model_json_schema_with_capabilities():
     # Unit (not VCR): this pins the generated JSON-schema/capabilities mapping, which is built internally
     # from the known-model enum and never produced by any API response — no cassette could exercise it.
     pytest.importorskip('mcp', reason='schema varies without mcp package')
-    schema = _open_nested_dataclass_defs(AgentSpec.model_json_schema_with_capabilities())
+    schema = _without_provider_schemas(_open_nested_dataclass_defs(AgentSpec.model_json_schema_with_capabilities()))
     assert remove_schema_descriptions(schema) == snapshot(
         {
             '$defs': {
@@ -1376,6 +1909,13 @@ def test_model_json_schema_with_capabilities():
                         'extra_body': {'title': 'Extra Body'},
                     },
                     'title': 'ModelSettings',
+                    'type': 'object',
+                },
+                'ModelSpec': {
+                    'additionalProperties': False,
+                    'properties': {'name': {'title': 'Name', 'type': 'string'}, 'provider': {}},
+                    'required': ['name', 'provider'],
+                    'title': 'ModelSpec',
                     'type': 'object',
                 },
                 'OpenAIImageGenerationToolSettings': {
@@ -2508,7 +3048,11 @@ def test_model_json_schema_with_capabilities():
             },
             'additionalProperties': False,
             'properties': {
-                'model': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Model'},
+                'model': {
+                    'anyOf': [{'type': 'string'}, {'$ref': '#/$defs/ModelSpec'}, {'type': 'null'}],
+                    'default': None,
+                    'title': 'Model',
+                },
                 'name': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Name'},
                 'description': {
                     'anyOf': [{'type': 'string'}, {'type': 'null'}],

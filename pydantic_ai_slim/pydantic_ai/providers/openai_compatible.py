@@ -2,9 +2,12 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable, Iterable
-from typing import overload
+from collections.abc import Callable, Iterable, Sequence
+from typing import Self, overload
 
+from pydantic import SecretStr
+
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles._family import ModelProfileFunc, vendor_family_model_profile
@@ -112,7 +115,7 @@ class OpenAICompatibleProvider(_OpenAISDKProvider):
         name: str,
         *,
         base_url: str,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         http_client: _OpenAIHTTPClient | None = None,
         profile: ModelProfile | Callable[[str], ModelProfile | None] | None = None,
         canonical_system: str | None = None,
@@ -124,7 +127,7 @@ class OpenAICompatibleProvider(_OpenAISDKProvider):
         name: str,
         *,
         base_url: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
         profile: ModelProfile | Callable[[str], ModelProfile | None] | None = None,
@@ -155,6 +158,7 @@ class OpenAICompatibleProvider(_OpenAISDKProvider):
             compatible_systems: Other canonical systems whose stateless data the service also verifies; see
                 [`compatible_systems`][pydantic_ai.providers.Provider.compatible_systems].
         """
+        api_key = secret_value(api_key)
         if openai_client is not None:
             if base_url is not None or api_key is not None or http_client is not None:
                 raise UserError('`base_url`, `api_key` and `http_client` cannot be used with `openai_client`.')
@@ -171,6 +175,25 @@ class OpenAICompatibleProvider(_OpenAISDKProvider):
         self._model_profile_override = profile
         self._canonical_system = canonical_system or name
         self._compatible_systems = frozenset(compatible_systems)
+
+    @classmethod
+    def from_spec(
+        cls,
+        name: str,
+        *,
+        base_url: str,
+        api_key: SecretStr | None = None,
+        canonical_system: str | None = None,
+        compatible_systems: Sequence[str] = (),
+    ) -> Self:
+        """Create the provider from an agent spec, which can't set a `profile` or a client."""
+        return cls(
+            name,
+            base_url=base_url,
+            api_key=api_key,
+            canonical_system=canonical_system,
+            compatible_systems=compatible_systems,
+        )
 
     @property
     def name(self) -> str:

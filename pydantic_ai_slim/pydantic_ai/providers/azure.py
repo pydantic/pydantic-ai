@@ -4,11 +4,14 @@ import os
 from typing import TYPE_CHECKING, Self, overload
 from urllib.parse import urlparse
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import (
     JsonSchema,
     JsonSchemaTransformerWithOutputOverride,
 )
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
@@ -256,9 +259,9 @@ class AzureProvider(_OpenAISDKProvider):
         *,
         azure_endpoint: str | None = None,
         api_version: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         voice_live_endpoint: str | None = None,
-        voice_live_api_key: str | None = None,
+        voice_live_api_key: str | SecretStr | None = None,
         voice_live_api_version: str | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
@@ -268,9 +271,9 @@ class AzureProvider(_OpenAISDKProvider):
         *,
         azure_endpoint: str | None = None,
         api_version: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         voice_live_endpoint: str | None = None,
-        voice_live_api_key: str | None = None,
+        voice_live_api_key: str | SecretStr | None = None,
         voice_live_api_version: str | None = None,
         openai_client: AsyncAzureOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
@@ -302,6 +305,8 @@ class AzureProvider(_OpenAISDKProvider):
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
+        api_key = secret_value(api_key)
+        voice_live_api_key = secret_value(voice_live_api_key)
         if openai_client is not None:
             assert azure_endpoint is None, 'Cannot provide both `openai_client` and `azure_endpoint`'
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'

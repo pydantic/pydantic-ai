@@ -376,6 +376,14 @@ class OpenAICodexProvider(OAuthCredentialsProvider[OpenAICodexCredentials]):
             credentials, credential_source=credential_source, openai_client=openai_client, http_client=http_client
         )
 
+    @classmethod
+    def from_spec(cls) -> Self:
+        """Create the provider from an agent spec, with the credentials from the Codex CLI's `auth.json`.
+
+        A spec can't hold the credentials themselves.
+        """
+        return cls()
+
     def _auth_headers(self, credentials: OpenAICodexCredentials) -> dict[str, str]:
         return {
             'Authorization': f'Bearer {credentials.access_token}',

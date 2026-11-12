@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import os
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
@@ -88,7 +91,7 @@ class SambaNovaProvider(_OpenAISDKProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
@@ -104,6 +107,7 @@ class SambaNovaProvider(_OpenAISDKProvider):
         Raises:
             UserError: If API key is not provided and SAMBANOVA_API_KEY env var is not set
         """
+        api_key = secret_value(api_key)
         if openai_client is not None:
             self._client = openai_client
             self._base_url = str(openai_client.base_url)

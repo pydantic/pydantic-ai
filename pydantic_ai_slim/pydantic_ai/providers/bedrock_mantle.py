@@ -3,7 +3,10 @@ from __future__ import annotations as _annotations
 import os
 from typing import Literal, assert_never, overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -141,10 +144,10 @@ class BedrockMantleProvider(_OpenAISDKProvider):
         *,
         region_name: str | None = None,
         base_url: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         aws_access_key_id: str | None = None,
-        aws_secret_access_key: str | None = None,
-        aws_session_token: str | None = None,
+        aws_secret_access_key: str | SecretStr | None = None,
+        aws_session_token: str | SecretStr | None = None,
         profile_name: str | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
@@ -154,10 +157,10 @@ class BedrockMantleProvider(_OpenAISDKProvider):
         *,
         region_name: str | None = None,
         base_url: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         aws_access_key_id: str | None = None,
-        aws_secret_access_key: str | None = None,
-        aws_session_token: str | None = None,
+        aws_secret_access_key: str | SecretStr | None = None,
+        aws_session_token: str | SecretStr | None = None,
         profile_name: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
@@ -180,6 +183,9 @@ class BedrockMantleProvider(_OpenAISDKProvider):
                 auth and transport) so every interface routes correctly.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` used to make requests.
         """
+        api_key = secret_value(api_key)
+        aws_secret_access_key = secret_value(aws_secret_access_key)
+        aws_session_token = secret_value(aws_session_token)
         if openai_client is not None:
             assert region_name is None, 'Cannot provide both `openai_client` and `region_name`'
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'

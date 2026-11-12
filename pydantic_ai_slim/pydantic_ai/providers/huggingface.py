@@ -6,7 +6,10 @@ from functools import partial
 from types import TracebackType
 from typing import overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
@@ -103,22 +106,26 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
         return merge_profile(profile, ModelProfile(supports_inline_system_prompts=True), route_profile)
 
     @overload
-    def __init__(self, *, base_url: str, api_key: str | None = None) -> None: ...
+    def __init__(self, *, base_url: str, api_key: str | SecretStr | None = None) -> None: ...
     @overload
-    def __init__(self, *, provider_name: str, api_key: str | None = None) -> None: ...
+    def __init__(self, *, provider_name: str, api_key: str | SecretStr | None = None) -> None: ...
     @overload
-    def __init__(self, *, hf_client: AsyncInferenceClient, api_key: str | None = None) -> None: ...
+    def __init__(self, *, hf_client: AsyncInferenceClient, api_key: str | SecretStr | None = None) -> None: ...
     @overload
-    def __init__(self, *, hf_client: AsyncInferenceClient, base_url: str, api_key: str | None = None) -> None: ...
+    def __init__(
+        self, *, hf_client: AsyncInferenceClient, base_url: str, api_key: str | SecretStr | None = None
+    ) -> None: ...
     @overload
-    def __init__(self, *, hf_client: AsyncInferenceClient, provider_name: str, api_key: str | None = None) -> None: ...
+    def __init__(
+        self, *, hf_client: AsyncInferenceClient, provider_name: str, api_key: str | SecretStr | None = None
+    ) -> None: ...
     @overload
-    def __init__(self, *, api_key: str | None = None) -> None: ...
+    def __init__(self, *, api_key: str | SecretStr | None = None) -> None: ...
 
     def __init__(
         self,
         base_url: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         hf_client: AsyncInferenceClient | None = None,
         http_client: AsyncClient | None = None,
         provider_name: str | None = None,
@@ -137,6 +144,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
                 defaults to "auto", which will select the first available provider for the model, the first of the providers available for the model, sorted by the user's order in https://hf.co/settings/inference-providers.
                 If `base_url` is passed, then `provider_name` is not used.
         """
+        api_key = secret_value(api_key)
         api_key = api_key or os.getenv('HF_TOKEN')
 
         if api_key is None:

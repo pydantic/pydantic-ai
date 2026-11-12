@@ -2,7 +2,10 @@ from __future__ import annotations as _annotations
 
 import os
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
@@ -83,7 +86,7 @@ class OllamaProvider(_OpenAISDKProvider):
     def __init__(
         self,
         base_url: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -99,6 +102,7 @@ class OllamaProvider(_OpenAISDKProvider):
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
+        api_key = secret_value(api_key)
         if openai_client is not None:
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
