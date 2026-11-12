@@ -16,7 +16,6 @@ from pydantic_ai_harness.computer_use import (
     Display,
     SupportsCursorPosition,
     SupportsDisplay,
-    SupportsScaledScreenshot,
     SupportsZoom,
 )
 from pydantic_ai_harness.docker_sandbox import DESKTOP_DOCKERFILE, DockerSandbox, DockerSandboxBackend
@@ -126,18 +125,14 @@ async def test_the_display_waits_for_the_window_manager(docker: FakeDocker, cont
     assert (bin_dir / 'xprop-probes').read_text().splitlines() == ['probe', 'probe']
 
 
-async def test_screenshots_zoom_scaling_and_the_pointer_come_from_the_display(
-    docker: FakeDocker, container_dir: Path
-) -> None:
+async def test_screenshots_zoom_and_the_pointer_come_from_the_display(docker: FakeDocker, container_dir: Path) -> None:
     workspace = _screen(_desktop(container_dir, image='my-desktop'))
     assert isinstance(workspace, SupportsZoom)
     assert isinstance(workspace, SupportsCursorPosition)
-    assert isinstance(workspace, SupportsScaledScreenshot)
 
     assert await workspace.screenshot() == FAKE_SCREENSHOT
     assert await workspace.zoom(Region(left=0, top=0, right=10, bottom=10)) == FAKE_SCREENSHOT
     assert await workspace.cursor_position() == Point(x=640, y=400)
-    assert await workspace.scaled_screenshot(640, 400) == FAKE_SCREENSHOT
 
 
 async def test_commands_see_the_desktop(docker: FakeDocker, container_dir: Path) -> None:

@@ -516,46 +516,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert 'Positions are on a 0-999 grid' in (seen[0].function_tools[0].description or '')
         assert provider.actions == [Click(x=640, y=400)]
 
-    async def test_after_a_fallback_the_native_tool_declares_the_screenshot_the_model_sees(self) -> None:
-        provider = ScreenProvider()
-        seen: list[AgentInfo] = []
-        # The primary looks, taking a 1000x625 screenshot of the 1280x800 screen, then is unavailable.
-        primary = _unavailable('small', _SMALL, answers=1)
-        fallback = _answering(
-            'large', ModelProfile(), seen, [{'type': 'screenshot'}], [{'type': 'click', 'x': 999, 'y': 624}]
-        )
-        agent = Agent(primary, capabilities=[provider.capability(), ComputerUse(), ModelFallback(fallback)])
-        await agent.run('Click the bottom right.')
-        assert seen[0].model_request_parameters.native_tools == [ComputerTool(display_size=(1000, 625), optional=True)]
-        assert provider.actions == [Click(x=1279, y=799)]
-
-    @pytest.mark.parametrize(
-        'primary, size',
-        [
-            pytest.param(ModelProfile(), (1000, 625), id='as-the-fallback-takes-them'),
-            # The primary takes smaller screenshots than the fallback, and each step starts at it.
-            pytest.param(ModelProfile(computer_use_screenshot_max_side=900), (900, 562), id='also-as-the-primary-does'),
-        ],
-    )
-    async def test_with_a_sticky_fallback_each_screenshot_fits_the_model_that_answers(
-        self, primary: ModelProfile, size: tuple[int, int]
-    ) -> None:
-        seen: list[AgentInfo] = []
-        fallback = _answering('small', _SMALL, seen, [{'type': 'screenshot'}], [{'type': 'screenshot'}])
-        agent = Agent(
-            _unavailable('large', primary),
-            capabilities=[
-                ScreenProvider().capability(),
-                ComputerUse(),
-                ModelFallback(fallback, sticky=True),
-            ],
-        )
-        result = await agent.run('Look twice.')
-        assert [part.result for part in _returns(result.all_messages()) if isinstance(part, ComputerReturnPart)] == [
-            {'performed': 1, 'screenshot_size': size},
-            {'performed': 1, 'screenshot_size': size},
-        ]
-
     @pytest.mark.parametrize(
         'looks, profiles, message',
         [
@@ -570,12 +530,6 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                 [_SMALL],
                 r"The latest screenshot is 1280x800, larger than 'fallback-1' can see",
                 id='smaller-screenshots',
-            ),
-            pytest.param(
-                0,
-                [_SMALL, ModelProfile(computer_use_screenshot_max_side=800)],
-                r"The latest screenshot is 1000x625, larger than 'fallback-2' can see",
-                id='a-later-fallback-takes-smaller-screenshots',
             ),
         ],
     )
@@ -905,24 +859,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         )
         assert tool_return.metadata == {'performed': 1, 'changed': True, 'screenshot_size': (1280, 800)}
 
-    async def test_a_screen_larger_than_the_model_takes_is_sent_scaled_down_and_its_positions_scaled_up(
-        self,
-    ) -> None:
-        provider = ScreenProvider()
-        model = _scripted(
-            [{'type': 'screenshot'}],
-            [{'type': 'click', 'x': 500, 'y': 300}],
-            profile=ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000),
-        )
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
-        first, second = _returns((await agent.run('Go.')).all_messages())
-
-        assert first.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
-        assert second.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
-        assert provider.actions == [Click(x=640, y=384)]
-
     async def test_a_screen_within_what_the_model_takes_is_sent_as_it_is(self) -> None:
-        # The display can't scale, so a scaled screenshot would end the run.
         model = _scripted(
             [{'type': 'screenshot'}],
             profile=ModelProfile(computer_use_screenshot_max_side=2576, computer_use_screenshot_max_pixels=10**7),
@@ -932,30 +869,15 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         (tool_return,) = _returns(result.all_messages())
         assert tool_return.metadata == {'performed': 1, 'screenshot_size': (1280, 800)}
 
-    async def test_after_a_failed_call_the_next_one_is_in_the_size_the_model_is_sent(self) -> None:
-        # A failed call returns no screenshot, so the model has still seen none.
-        provider = ScreenProvider()
-        model = _scripted(
-            [{'type': 'click', 'x': 1100, 'y': 10}],
-            [{'type': 'click', 'x': 500, 'y': 300}],
-            profile=ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000),
-        )
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
-        failed, ran = _returns((await agent.run('Go.')).all_messages())
-
-        assert failed.content == 'Action 1 (click) at (1100, 10) is outside the 1000x625 screen, so no action ran.'
-        assert ran.metadata == {'performed': 1, 'screenshot_size': (1000, 625)}
-        assert provider.actions == [Click(x=640, y=384)]
-
-    async def test_a_screen_larger_than_the_model_takes_ends_the_run_when_the_display_cannot_scale_it(self) -> None:
+    async def test_a_screen_larger_than_the_model_takes_ends_the_run(self) -> None:
         provider = ScreenProvider()
         model = _scripted(
             [{'type': 'click', 'x': 1, 'y': 1}],
             profile=ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000),
         )
-        agent = Agent(model, capabilities=[ComputerUse()])
+        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
         with pytest.raises(UserError, match=r'The screen is 1280x800, larger than .* Start the display at 1000x625'):
-            await agent.run('Go.', workspace=DisplayOnlyBackend(provider.backend(None)))
+            await agent.run('Go.')
         # The closing screenshot could never be taken, so the click didn't run either.
         assert provider.actions == []
 
@@ -1086,19 +1008,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert len(provider.environments) == 2
         assert waited == [True]
 
-    @pytest.mark.parametrize(
-        'resuming',
-        [
-            pytest.param(ModelProfile(computer_use_coordinate_grid=1000), id='grid'),
-            pytest.param(
-                ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000),
-                id='smaller-screenshots',
-            ),
-        ],
-    )
-    async def test_a_call_made_before_any_screenshot_runs_in_pixels_whichever_model_resumes(
-        self, resuming: ModelProfile
-    ) -> None:
+    async def test_a_call_made_before_any_screenshot_runs_in_pixels_when_a_grid_model_resumes(self) -> None:
         provider = ScreenProvider()
         agent = Agent(
             _scripted([{'type': 'click', 'x': 500, 'y': 300}]),
@@ -1110,68 +1020,11 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         (call,) = paused.output.approvals
 
         await agent.run(
-            model=_scripted(profile=resuming),
+            model=_scripted(profile=ModelProfile(computer_use_coordinate_grid=1000)),
             message_history=paused.all_messages(),
             deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
         )
         assert provider.actions == [Click(x=500, y=300)]
-
-    async def test_on_a_scaled_screen_the_pointer_reads_back_where_the_model_moved_it(self) -> None:
-        provider = ScreenProvider()
-        model = _scripted(
-            [{'type': 'move', 'x': 701, 'y': 401}, {'type': 'cursor_position'}],
-            profile=ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000),
-        )
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
-        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
-
-        # 701 x 1.28 is 897.28, and 401 x 1.28 is 513.28: rounded to nearest both ways, they map back exactly.
-        assert provider.actions == [MoveMouse(x=897, y=513)]
-        assert tool_return.content_items()[1] == 'The pointer is at (701, 401).'
-
-    async def test_a_zoom_larger_than_the_model_can_see_is_refused_before_anything_runs(self) -> None:
-        provider = ScreenProvider()
-        model = _scripted(
-            [
-                {'type': 'click', 'x': 1, 'y': 1},
-                # The whole screen, as the model sees it at 1000x625, is 1280x800 at full resolution.
-                {'type': 'zoom', 'region': {'left': 0, 'top': 0, 'right': 1000, 'bottom': 625}},
-            ],
-            profile=ModelProfile(computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000),
-        )
-        agent = Agent(model, capabilities=[provider.capability(), ComputerUse()])
-        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
-
-        assert tool_return.outcome == 'failed'
-        assert tool_return.content == (
-            'Action 2 (zoom) is 1000x625, larger than can be shown at full resolution, so no action ran. Zoom into '
-            '781x488 or smaller.'
-        )
-        assert provider.actions == []
-
-    async def test_an_approved_call_runs_on_the_screenshot_before_it_whichever_model_runs_it(self) -> None:
-        provider = ScreenProvider()
-        agent = Agent(
-            _scripted(
-                [{'type': 'screenshot'}],
-                [{'type': 'click', 'x': 320, 'y': 200}],
-                profile=ModelProfile(
-                    computer_use_screenshot_max_side=1000, computer_use_screenshot_max_pixels=1_000_000
-                ),
-            ),
-            capabilities=[provider.capability(), ComputerUse(), _ask_before_acting()],
-            output_type=[str, DeferredToolRequests],
-        )
-        paused = await agent.run('Go.')
-        assert isinstance(paused.output, DeferredToolRequests)
-        (call,) = paused.output.approvals
-        await agent.run(
-            model=_scripted(),  # takes the full screen
-            message_history=paused.all_messages(),
-            deferred_tool_results=DeferredToolResults(approvals={call.tool_call_id: True}),
-        )
-        # (320, 200) on the 1000x625 screenshot is (410, 256) on the 1280x800 screen.
-        assert provider.actions == [Click(x=410, y=256)]
 
     async def test_a_model_that_would_see_the_latest_screenshot_scaled_down_is_refused(self) -> None:
         provider = ScreenProvider()

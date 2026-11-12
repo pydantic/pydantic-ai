@@ -19,7 +19,6 @@ on the sandbox's display. Re-check these before changing the mapping, by running
 - After the sandbox stops and starts, `computer_use.get_status()` says `inactive` and `start()` brings the desktop
   back; an input request before that start answers 500 and breaks the desktop for good: every later request answers
   503 until the sandbox stops and starts again (checked 2026-10-28).
-- `take_compressed` with a PNG `scale` from 0.1 to 1.0 returns the screen scaled (checked 2026-10-28).
 """
 
 from __future__ import annotations as _annotations
@@ -29,7 +28,7 @@ from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING
 
 import anyio
-from daytona import ScreenshotOptions, ScreenshotRegion
+from daytona import ScreenshotRegion
 
 from pydantic_ai.computer_use import (
     Click,
@@ -160,18 +159,6 @@ class DaytonaDesktop:
 
     async def screenshot(self) -> bytes:
         response = await self._computer_use.screenshot.take_full_screen(request_timeout=_REQUEST_TIMEOUT)
-        return png_from_base64(response.screenshot, 'Daytona')
-
-    async def scaled_screenshot(self, width: int, height: int) -> bytes:
-        screen_width, screen_height = await self.display_size()
-        scale = min(width / screen_width, height / screen_height, 1)
-        if scale < 0.1:
-            # Daytona scales by a tenth at the least, which would come back larger than asked.
-            raise UnsupportedActionError(
-                f"Daytona's desktop cannot scale its {screen_width}x{screen_height} screen down to {width}x{height}."
-            )
-        options = ScreenshotOptions(fmt='png', scale=scale)
-        response = await self._computer_use.screenshot.take_compressed(options, request_timeout=_REQUEST_TIMEOUT)
         return png_from_base64(response.screenshot, 'Daytona')
 
     async def zoom(self, region: Region) -> bytes:
