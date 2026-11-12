@@ -87,6 +87,7 @@ def test_remembered_approval_holds_on_replay_and_in_the_next_run(dbos: DBOS) -> 
             raise _Crash
         if len(attempts) == 2:
             # Recovery runs on a DBOS executor thread, where `run_sync` sets a new event loop that nothing else closes.
+            # Attempts 1 and 3 run on the main thread, whose current loop is the shared `session_event_loop`.
             asyncio.get_event_loop().close()
 
     workflow_id = str(uuid.uuid4())
