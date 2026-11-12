@@ -201,3 +201,8 @@ async def _ask_for_json(ask: Callable[[str], Awaitable[JsonValue]], token: str) 
     """Call `ask`, and record an answer as the JSON string a resolver would send, so both are read back the same way."""
     answer = await ask(token)
     return None if answer is None else to_json(answer).decode()
+
+
+def operation_config(durability: AWSLambdaDurability[Any]) -> AWSLambdaOperationConfig:
+    """The resolved config `durability` checkpoints its operations with."""
+    return durability._operation_config  # pyright: ignore[reportPrivateUsage]
