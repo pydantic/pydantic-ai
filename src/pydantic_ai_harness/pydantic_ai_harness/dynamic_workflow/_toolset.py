@@ -65,9 +65,7 @@ from pydantic_ai_harness._warn import renamed_duration_limit
 
 if TYPE_CHECKING:
     from aws_durable_execution_sdk_python.config import ParallelConfig
-    from dbos import StepReservation
 
-    from pydantic_ai.durable_exec.dbos._operation_backend import SnapshotStepReservation
     from pydantic_ai_harness.aws_lambda._bridge import StepBridge
 
 # Set while a workflow script is executing, so `get_tools` hides `run_workflow` from sub-agents
@@ -278,27 +276,21 @@ class _LambdaBranches:
                     future.set_result(result)
 
 
-def _reserve_dbos_step(agent: AbstractAgent[Any, object]) -> StepReservation | SnapshotStepReservation | None:
-    """Draw the DBOS step that records the sub-agent's run, when it runs under `DBOSDurability` in a workflow.
+def _runs_under_dbos(agent: AbstractAgent[Any, object]) -> bool:
+    """Whether the sub-agent runs under `DBOSDurability` in a DBOS workflow.
 
-    DBOS numbers steps in the order they start, so the steps of concurrent sub-agents would
-    interleave by timing, and recovery could replay one sub-agent's results into another call.
-    Each run is instead recorded as one step, whose ID is drawn here in the order the script
-    dispatches the calls, the way `DBOSDurability` reserves its event-handler steps.
+    DBOS numbers a workflow's steps in the order they start, so the steps of concurrent sub-agents
+    would interleave by timing, and recovery could replay one sub-agent's results into another call.
+    The script then runs its sub-agent calls one at a time, as plain workflow code, so each call
+    keeps its own step checkpoints and DBOS still checks the roles its `@DBOS.step` tools require.
     """
     durability = BaseDurabilityCapability.from_agent(agent)
     # Only an agent with `DBOSDurability` attached has imported it, so other engines import nothing.
     if durability is None or 'pydantic_ai.durable_exec.dbos' not in sys.modules:
-        return None
+        return False
     from pydantic_ai.durable_exec.dbos import DBOSDurability
 
-    if not isinstance(durability, DBOSDurability) or not durability.in_durable_context:
-        return None
-    from dbos import DBOS
-
-    from pydantic_ai.durable_exec.dbos._operation_backend import SnapshotStepReservation
-
-    return DBOS.reserve_step() if hasattr(DBOS, 'reserve_step') else SnapshotStepReservation()
+    return isinstance(durability, DBOSDurability) and durability.in_durable_context
 
 
 def _agent_return_schema(agent: AbstractAgent[AgentDepsT, object]) -> dict[str, Any] | None:
@@ -828,15 +820,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             if 'error' in recorded:
                 raise RuntimeError(recorded['error'])
             return recorded['output']
-        # Also suspension-free: concurrent dispatches draw their DBOS steps in dispatch order.
-        reservation = _reserve_dbos_step(agent)
-        if reservation is None:
-            return await self._run_sub_agent(agent_name, task, ctx)
-
-        async def run_sub_agent() -> Any:
-            return await self._run_sub_agent(agent_name, task, ctx)
-
-        return await reservation.run_async({'name': f'{self.tool_name}.{agent_name}'}, run_sub_agent)
+        return await self._run_sub_agent(agent_name, task, ctx)
 
     async def _run_recorded(self, agent_name: str, task: str, ctx: RunContext[AgentDepsT]) -> dict[str, Any]:
         """Run one sub-agent with its failure carried as data, so its branch records it rather than failing."""
@@ -947,6 +931,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             completed = await MontyExecutor(
                 dispatch=dispatch,
                 valid_names=self._by_name,
+                global_sequential=any(_runs_under_dbos(entry.agent) for entry in self._by_name.values()),
                 flush=branches.flush if branches is not None else None,
                 portal=monty.portal,
                 max_sleep_seconds=limits.get('max_feed_duration_secs'),

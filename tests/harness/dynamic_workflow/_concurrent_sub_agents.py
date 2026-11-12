@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -62,13 +62,17 @@ def build_orchestrator(
     durable_orchestrator: bool = True,
     durable_sub_agents: bool = True,
     script: str = SCRIPT,
+    tools: Sequence[Tool[None]] | None = None,
 ) -> Agent[None, str]:
-    """An orchestrator that runs `script`, by default gathering two `summarize` sub-agents, which carry `durability()`."""
+    """An orchestrator that runs `script`, by default gathering two `summarize` sub-agents, which carry `durability()`.
+
+    The sub-agents get `tools`, by default a `noop` tool.
+    """
     summarize_agent = Agent(
         summarize,
         name='summarize',
         description='Summarize a text.',
-        tools=[noop],
+        tools=list(tools) if tools is not None else [noop],
         capabilities=[durability()] if durable_sub_agents else [],
     )
     return Agent(
