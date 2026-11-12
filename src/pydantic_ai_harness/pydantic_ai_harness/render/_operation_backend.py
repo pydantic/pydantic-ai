@@ -25,6 +25,7 @@ from ._compat import (
     BoundDurableOperation,
     DurableOperation,
     dump_operation_params,
+    durable_metadata_opts_out,
     load_operation_params,
     operation_run_context,
 )
@@ -34,7 +35,6 @@ from ._protocol import (
     RenderProtocolError,
     apply_effects,
     control_flow_error,
-    durable_metadata_opts_out,
     make_request,
     permanent_error,
     read_outcome,
