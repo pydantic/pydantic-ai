@@ -26,7 +26,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   on_session_end, on_turn_start, on_turn_end, on_conversation_changed, or
   on_command_end. Follow delegated tasks with on_task_progress, which fires for every
   stream event of every task, text deltas included, so keep it cheap. It also gets
-  the task's sub_agents events, such as TaskQuestionEvent when a task asks its parent.
+  the task's sub_agents events, such as TaskQuestionAskedEvent when a task asks its parent.
 - Drive the prompt from somewhere other than the keyboard, such as a remote UI:
   host.send_input(text) enters a prompt or /command as if typed, host.interrupt()
   cancels the running turn or command, await host.complete(text) returns what Tab offers, and
@@ -172,7 +172,7 @@ or to a program inside the project that a list command runs, such as
 needs approval again (a string command is approved as written), and so does
 any change to a project plugin's file. The user's own table is the settings of
 the built-in hooks plugin (pydantic_clai2.builtin_plugins.hooks). Outside a session,
-clai2 plugins add NAME module[:Class] [JSON] saves for the next startup.
+clai2 plugins only lists declarations, since the agent can run clai2 too.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
 

@@ -110,6 +110,8 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         ),
         diff_tokens=re.compile(r'otel_|include_content|gen_ai\.|set_attribute|record_exception|span_name'),
         token_paths=re.compile(r'pydantic_ai_slim/pydantic_ai/(messages\.py|durable_exec/.*)'),
+        # The gh-aw provider-health controller exports its decisions as spans; the general check keeps owning it.
+        joint_paths=re.compile(r'\.github/scripts/agent_provider_health\.py'),
     ),
     SpecialistCheck(
         name='sandboxes',
@@ -117,7 +119,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         scope='sandboxes, workspaces, shells and Code Mode execution boundaries',
         paths=re.compile(
             r'src/pydantic_ai_harness/pydantic_ai_harness/'
-            r'([^/]*_sandbox|code_mode|ipython_code_mode|ssh_workspace|shell)/.*'
+            r'([^/]*_sandbox|docker_container|code_mode|ipython_code_mode|ssh_workspace|shell)/.*'
         ),
     ),
     SpecialistCheck(

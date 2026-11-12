@@ -14,7 +14,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Part
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.subagents import DelegationStartedEvent, DelegationTask, TaskQuestionEvent
+from pydantic_ai_harness.subagents import DelegationStartedEvent, DelegationTask, TaskQuestionAskedEvent
 from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.builtin_plugins.web.protocol import (
     PROTOCOL,
@@ -261,7 +261,7 @@ def test_a_prompted_task_runs_beside_a_turn_with_code_mode_on(make_web: MakeWeb)
         messages, finished = until_finished(socket)
         assert finished.outcome == 'ok', record.output
         assert not [message for message in messages if isinstance(message, TurnEnded)], 'the turn still runs'
-        assert prompts(record.messages) == ['child', 'and the docs?']
+        assert prompts(web_.shell.tasks.history(record.id)) == ['child', 'and the docs?']
         web_.portal.call(release.set)
         receive_until(socket, TurnEnded)
         assert prompts(web_.shell.session.messages) == ['hold']
@@ -289,7 +289,7 @@ def test_a_task_takes_no_prompt_once_its_agent_delegates_no_more(make_web: MakeW
             'This agent delegates no tasks now, so its tasks take no prompts. Turn sub-agents on first.'
         )
         assert record.user_stopped and record.status == 'finished', 'left as it was'
-        assert prompts(record.messages) == ['child']
+        assert prompts(web_.shell.tasks.history(record.id)) == ['child']
         assert web_.shell.session.messages == conversation
         assert web_.post('/api/input', {'text': '/exit'}).json() == {'menu': None}
 
@@ -358,7 +358,7 @@ def test_a_resumed_or_joined_run_starts_from_the_tasks_history() -> None:
     )
     workers.observe(TaskProgress(task=task))
     assert workers.items() == {}, 'a change of the task alone, such as a question it waits on, starts no transcript'
-    question = TaskQuestionEvent(task_id='t', agent_name='self', question_id='q', question='Which?')
+    question = TaskQuestionAskedEvent(task_id='t', agent_name='self', question_id='q', question='Which?')
     workers.observe(TaskProgress(task=task, event=question))
     assert workers.items() == {}, 'nor does its question, a task-control message'
     start = DelegationStartedEvent(

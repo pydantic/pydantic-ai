@@ -1,4 +1,4 @@
-"""Usage, Responses finish reasons and status, logprobs, compaction items and response-scoped tool call IDs."""
+"""Usage, Responses finish reasons, status and refusals, logprobs, compaction items and response-scoped tool call IDs."""
 
 from __future__ import annotations as _annotations
 
@@ -36,6 +36,18 @@ def response_status_to_state(status: ResponseStatus | None, *, background: bool)
     if status in ('queued', 'in_progress'):
         return 'suspended' if background else 'incomplete'
     return 'complete'
+
+
+def response_refusal(response: responses.Response) -> str | None:
+    """The text of the last refusal in a Responses API response's output messages, if any."""
+    refusals = [
+        content.refusal
+        for item in response.output
+        if isinstance(item, responses.ResponseOutputMessage)
+        for content in item.content
+        if isinstance(content, responses.ResponseOutputRefusal)
+    ]
+    return refusals[-1] if refusals else None
 
 
 # Convert logprobs to a serializable format
@@ -139,14 +151,7 @@ def map_usage(
     if isinstance(response_usage, responses.ResponseUsage):
         api_flavor = 'responses'
         input_tokens_details = usage_data.get('input_tokens_details')
-
-        if getattr(response_usage, 'output_tokens_details', None) is not None:
-            details['reasoning_tokens'] = getattr(response_usage.output_tokens_details, 'reasoning_tokens', 0)
-        else:
-            details['reasoning_tokens'] = 0
-
-        if web_search_requests:
-            details['web_search_requests'] = web_search_requests
+        details.update(responses_usage_details(response_usage, web_search_requests))
     else:
         api_flavor = 'chat'
         input_tokens_details = usage_data.get('prompt_tokens_details')
@@ -176,6 +181,19 @@ def map_usage(
         if isinstance(cache_write_tokens, int):
             request_usage.cache_write_tokens = cache_write_tokens
     return request_usage
+
+
+def responses_usage_details(response_usage: responses.ResponseUsage, web_search_requests: int) -> dict[str, int]:
+    """The usage details only the Responses API reports: reasoning tokens, and the web searches billed."""
+    details: dict[str, int] = {}
+    if getattr(response_usage, 'output_tokens_details', None) is not None:
+        details['reasoning_tokens'] = getattr(response_usage.output_tokens_details, 'reasoning_tokens', 0)
+    else:
+        details['reasoning_tokens'] = 0
+
+    if web_search_requests:
+        details['web_search_requests'] = web_search_requests
+    return details
 
 
 def response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:

@@ -389,7 +389,7 @@ reports; they do not fail the agent turn.
 ## Agent of Empires integration
 
 The built-in `aoe` plugin (`pydantic_clai2.builtin_plugins.aoe`) starts disabled. Run
-`clai2 plugins enable aoe` (or `/plugins enable aoe`) to let
+`/plugins enable aoe` in a CLAI session to let
 [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires) (AoE)
 track CLAI2 like its built-in agents. Register CLAI2 as an AoE custom agent:
 
@@ -1070,10 +1070,10 @@ Three ways to install one:
    `$XDG_CONFIG_HOME/pydantic-clai2/plugins/` (default `~/.config/pydantic-clai2/plugins/`).
    Its name is the file name without `.py`. CLAI creates the folder at startup, so it
    is there to copy into after the first run.
-2. Point CLAI at anything importable, from the shell or from inside CLAI:
+2. Point CLAI at anything importable, from inside CLAI:
 
-   ```sh
-   clai2 plugins add notify my_package.notify
+   ```text
+   /plugins add notify my_package.notify
    /plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": true}'
    ```
 3. From inside CLAI, clone a trusted Git repository:
@@ -1114,8 +1114,9 @@ Three ways to install one:
 
 No restart needed when you do it from inside CLAI. A plugin you add or enable is
 active for the next prompt; one you disable or remove is gone for the next
-prompt. From the shell, `clai2 plugins ...` only saves; it loads on the next
-start. Plugins in the folder and the ones you added by name are managed the
+prompt. From the shell, `clai2 plugins` only lists declarations: the agent can
+run `clai2` too, and turning off a plugin such as `hooks` can let it do more, so only
+`/plugins` adds, enables, disables, or removes one. Plugins in the folder and the ones you added by name are managed the
 same way. Explicit module declarations take precedence over a same-named drop-in
 file. Reloading a disabled plugin is rejected; enable it first. Drop-in entry
 modules are compiled from current source. Installed modules use `importlib.reload`,
@@ -1267,7 +1268,8 @@ tagged `coder-task-control`, so a CLAI build without it ignores a saved value
 instead of failing to load `coder`.
 
 `delegate_models` is an optional mapping from tool-facing keys to objects with `model`, optional
-`description`, and optional `settings` (the fields of `ModelSettingsForm`). For example,
+`description`, and optional `settings` (the fields of `ModelSettingsForm`, except `base_url`, which is
+set in `/model settings`). For example,
 `{"custom": {"model": "chain:my-chain"}}` offers a user-defined `custom` menu option.
 Models, accounts, saved chains, and saved settings
 resolve through the session's model services. An empty mapping preserves inheritance and the
@@ -1576,7 +1578,8 @@ source, as in the terminal, which prints what each one saved. Any other bare com
 terminal menu, such as `/model`, opens it in the terminal; the browser's model picker selects with
 `/model NAME` instead. When CLAI has no terminal, as for `clai2 --web` started from a script or
 service, a command that opens a terminal menu or prompt, such as `/model add`, fails with an error
-notice instead of closing as cancelled.
+notice instead of closing as cancelled; `/login openai-codex` and a plugin's `read_line` ask in the
+page instead.
 
 The sidebar's **Workers** tree, under the current session, is what `/tasks` shows, from
 `host.tasks` and `on_task_progress`: each delegated task under the one that started it, with its
@@ -2532,9 +2535,10 @@ failed. A plugin that is installed but fails to import one of its dependencies
 is still reported, and `/plugins enable`, `add`, and `reload` always report
 failures.
 
-With arguments `/plugins` is a plain command. The standalone `clai2 plugins ...`
-commands edit saved declarations without loading plugin code. Git installation,
-configuration menus, and live reloading are available only inside a CLAI session:
+With arguments `/plugins` is a plain command. The standalone `clai2 plugins list`
+reads saved declarations without loading plugin code. Adding, enabling, disabling,
+removing, configuring, and reloading plugins are
+available only inside a CLAI session, since the agent can run `clai2` from its shell:
 
 | Command | Does |
 |---|---|
@@ -2741,7 +2745,7 @@ the terminal; the shell has already printed them.
 `on_task_progress` receives a `TaskProgress` for everything a task the agent delegated does, and its
 descendants: `task` is a `TaskInfo` (see `host.tasks` below) as it is now, and `event` the event
 from the task's own run (text, thinking, tool calls and results), its `DelegationStartedEvent` or
-`DelegationFinishedEvent`, one of its `sub_agents` task events, such as `TaskQuestionEvent` when it asks
+`DelegationFinishedEvent`, one of its `sub_agents` task events, such as `TaskQuestionAskedEvent` when it asks
 its parent, or `None` when only the task changed, such as when it started, finished, or began
 waiting for an answer. Its own run's events never reach the main run's hooks: they are the feed
 `/tasks` shows. Its `sub_agents` task events also go into the stream of the run that delegated it,
@@ -3307,8 +3311,6 @@ The contract:
 
 A capability class declared as `module:Class` has no `Plugin` subclass; CLAI lists its
 tags in `CAPABILITY_REQUIREMENTS`, keyed by that factory string.
-`clai2 plugins add` from the command line imports nothing, so it attaches only
-those; a plugin's own tags are attached the next time it saves or is enabled.
 
 If an untagged setting still makes a capability that CLAI built from a
 `module:Class` declaration (such as `coder`) raise `UserError` while a run is
@@ -3842,7 +3844,10 @@ such as an authorization code. Cancelling the task that awaits it, because the
 browser's callback won the race, closes the prompt. A slash command or
 `/login` handler can call it directly; a tool or hook asking mid-run takes the
 screen first, inside `async with host.full_screen()`. Without the live editor it
-is a plain terminal prompt.
+is a plain terminal prompt. Where CLAI has no terminal and the web UI runs, it is
+a dialog in the page, titled with the prompt; what you printed is not shown there.
+Esc cancels that dialog too, so keep any other terminal-only key hint out of the
+prompt.
 
 Do not draw a prompt yourself from a `run_worker` operation. By default
 `run_worker` takes the live panel, and the transcript with your URL, off the

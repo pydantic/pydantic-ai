@@ -80,7 +80,9 @@ def test_specialist_owns_its_files_and_general_reviews_the_rest() -> None:
     }
 
 
-@pytest.mark.parametrize('backend', ['docker_sandbox', 'smol_sandbox', 'boxlite_sandbox', 'e2b_sandbox'])
+@pytest.mark.parametrize(
+    'backend', ['docker_container', 'docker_sandbox', 'smol_sandbox', 'boxlite_sandbox', 'e2b_sandbox']
+)
 def test_sandboxes_check_owns_every_sandbox_backend(backend: str) -> None:
     """Every sandbox backend, local or cloud, gets the sandbox review."""
     path = f'src/pydantic_ai_harness/pydantic_ai_harness/{backend}/_sandbox.py'
@@ -104,6 +106,7 @@ def test_telemetry_check_owns_the_version_check() -> None:
     [
         ('pydantic_ai_slim/pydantic_ai/messages.py', 'ui'),
         ('pydantic_ai_slim/pydantic_ai/realtime/_utils.py', 'url-fetch'),
+        ('.github/scripts/agent_provider_health.py', 'telemetry'),
     ],
 )
 def test_joint_path_runs_its_check_and_the_general_check(path: str, check: str) -> None:

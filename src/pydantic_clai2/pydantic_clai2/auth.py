@@ -34,7 +34,7 @@ from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.plugins.menus import Dialogs
 from pydantic_clai2.ui.browser import open_browser
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
-from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.menu_worker import menu_key, remote_dialogs, run_worker
 from pydantic_clai2.ui.prompt import line_input
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.rendering import markdown_style
@@ -66,6 +66,8 @@ async def login_command(
     `dialogs` asks wherever a menu was opened, such as the web UI: subscriptions wait on their waiting
     screen and API keys come from `/keys`;
     connections and plugin sign-ins, which ask in the terminal, raise `ValueError` saying so.
+    Without them, where CLAI has no terminal, Codex waits on `remote_dialogs`' screen and a plugin's
+    handler asks there through `line_input.read_line`.
     """
     plugins = plugins or {}
     if len(args) > 1:
@@ -119,7 +121,9 @@ async def _sign_in(
     dialogs: Dialogs | None,
 ) -> str:
     if name == CODEX:
-        return await codex.login([] if profile is None else [account(name, profile)], dialogs=dialogs)
+        return await codex.login(
+            [] if profile is None else [account(name, profile)], dialogs=dialogs or remote_dialogs()
+        )
     if name == github_copilot.ACCOUNT:
         return await github_copilot.login(console=codex.console, account=account(name, profile), dialogs=dialogs)
     if (login := plugins.get(name)) is not None:
@@ -270,7 +274,7 @@ class CodexAuth:
             if credentials is None:
                 return f'{who} sign-in cancelled.'
             await source.save_login(credentials)
-            self._providers.pop(name, None)
+            self.forget(name)
             return await anyio.to_thread.run_sync(self._connected, name, profile)
         self.console.print(
             f'Sign in to {who} in your browser. Waiting up to five minutes.', style=theme.color(theme.INFO)
@@ -290,7 +294,7 @@ class CodexAuth:
             with fail_after(self.login_timeout):
                 credentials = await self._receive(flow)
             await source.save_login(credentials)
-            self._providers.pop(name, None)
+            self.forget(name)
         except TimeoutError:
             raise UserError(f'Codex login timed out. Run /login {name} to try again.') from None
         finally:
@@ -372,18 +376,23 @@ class CodexAuth:
                 return await flow.exchange_code(code_from_paste(text=text, state=flow.state))
 
     def forget(self, account: str) -> None:
-        """Drop an account's cached provider after it signs out, so the next request asks to sign in."""
-        self._providers.pop(account, None)
+        """Drop an account's cached providers after it signs in or out, so the next request reads its sign-in."""
+        for key in [key for key in self._providers if key.partition(' ')[0] == account]:
+            del self._providers[key]
 
-    def model(self, name: str) -> OpenAICodexModel:
+    def model(self, name: str, *, base_url: str | None = None) -> OpenAICodexModel:
         """Reuse each profile's core provider so it owns refresh and credential persistence."""
         ref = parse_model(name)
-        return OpenAICodexModel(ref.name, provider=self.account_provider(ref.account))
+        return OpenAICodexModel(ref.name, provider=self.account_provider(ref.account, base_url))
 
-    def account_provider(self, account: str) -> OpenAICodexProvider:
-        """The core provider for `openai-codex` or `openai-codex@PROFILE`, shared by models and usage checks."""
-        provider = self._providers.get(account)
+    def account_provider(self, account: str, base_url: str | None = None) -> OpenAICodexProvider:
+        """The core provider for `openai-codex` or `openai-codex@PROFILE`, shared by models and usage checks.
+
+        One with a `base_url` is cached as `ACCOUNT BASE_URL`, so its endpoint refreshes its tokens once too.
+        """
+        key = account if base_url is None else f'{account} {base_url}'
+        provider = self._providers.get(key)
         if provider is None:
             source = self.source if account == CODEX else CodexCredentials(account=account)
-            provider = self._providers[account] = OpenAICodexProvider(credential_source=source)
+            provider = self._providers[key] = OpenAICodexProvider(credential_source=source, base_url=base_url)
         return provider
