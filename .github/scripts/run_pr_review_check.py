@@ -34,9 +34,7 @@ _TSV_ESCAPES: dict[str, str] = {'\\': '\\', 't': '\t', 'n': '\n', 'r': '\r'}
 # Slack reads `<url|label>`, `<!channel>` and entities in webhook text as formatting, so model text arrives escaped.
 _SLACK_ESCAPES = str.maketrans({'&': '&amp;', '<': '&lt;', '>': '&gt;'})
 PRIVATE_REPORT_LIMIT = 3000
-# Some models write prose, then the requested JSON object in a Markdown code fence, despite the prompt.
-# The last fenced block is the answer when it ends the text; text after it still fails.
-_FENCE = re.compile(r'\A(?:.*\n)?[ \t]*```[\w+-]*[ \t]*\n(.*?)\n[ \t]*```\s*\Z', re.DOTALL)
+_JSON = json.JSONDecoder()
 
 _EVENT = TypeAdapter(dict[str, object])
 _TOKENS = TypeAdapter(dict[str, float | dict[str, float]])
@@ -49,6 +47,30 @@ class ModelResult(BaseModel):
     findings: list[ReviewFinding] = Field(max_length=MAX_FINDINGS)
     coverage: str
     private_report: str
+
+
+def answer_result(text: str) -> ModelResult:
+    """Validate the last JSON object in the answer that matches the schema.
+
+    Some models put prose, a Markdown code fence, or both around the requested JSON object, despite the prompt.
+    Only an outermost object is a candidate, so an object nested in the answer never replaces it.
+    """
+    result: ModelResult | None = None
+    candidate = text
+    start = text.find('{')
+    while start != -1:
+        try:
+            _, end = _JSON.raw_decode(text, start)
+        except ValueError:
+            start = text.find('{', start + 1)
+            continue
+        try:
+            result = ModelResult.model_validate_json(text[start:end])
+        except ValidationError:
+            candidate = text[start:end]
+        start = text.find('{', end)
+    # Without a match, the error names why the last object, or else the whole answer, failed.
+    return result if result is not None else ModelResult.model_validate_json(candidate)
 
 
 @dataclass
@@ -231,10 +253,7 @@ def check_result(
         coverage = f'Review stopped at its time budget of {check.max_minutes} minutes.'
     else:
         try:
-            text = final_text(stream)
-            if fenced := _FENCE.match(text):
-                text = fenced[1]
-            result = ModelResult.model_validate_json(text)
+            result = answer_result(final_text(stream))
         except (ValueError, ValidationError) as error:
             if not at_step_budget:
                 # The error would repeat the answer, private report included, into the public job log.

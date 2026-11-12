@@ -348,22 +348,16 @@ def test_unparseable_answer_at_the_step_budget_is_incomplete(tmp_path: Path) -> 
         pytest.param('{"outcome": "COMPLETE"}', 'stop', 'validation failed: missing', id='not-the-schema'),
         pytest.param(_result('a.py'), 'tool-calls', 'OpenCode review did not stop normally', id='not-stopped'),
         pytest.param(
-            f'```json\n{_result("a.py")}\n```\nDone.',
+            'I read `a.py`; it maps `{key: value}`.\n\n```json\n{"outcome": "COMPLETE"}\n```\nDone.',
             'stop',
-            'validation failed: json_invalid',
-            id='text-after-the-fence',
+            'validation failed: missing',
+            id='prose-around-an-object-not-the-schema',
         ),
         pytest.param(
-            f"I've read the files.\n\n```json\n{_result('a.py')}",
+            f"I've read the files.\n\n```json\n{_result()[:-1]}\n```",
             'stop',
             'validation failed: json_invalid',
-            id='unterminated-fence',
-        ),
-        pytest.param(
-            f"I've read the files.\n\n{_result('a.py')}",
-            'stop',
-            'validation failed: json_invalid',
-            id='text-before-bare-json',
+            id='truncated-object',
         ),
     ],
 )
@@ -399,10 +393,21 @@ def test_rejected_answer_under_the_budget_fails_with_its_reason(
             f'The caller:\n\n```python\nf()\n```\n\n```json\n{_result("a.py", indent=2)}\n```',
             id='code-block-before-the-fence',
         ),
+        pytest.param(f'```json\n{_result("a.py")}\n```\nDone.', id='text-after-the-fence'),
+        pytest.param(f"I've read the files.\n\n```json\n{_result('a.py')}", id='unterminated-fence'),
+        pytest.param(f"I've read the files.\n\n{_result('a.py')}\n\nThat's all.", id='prose-around-bare-json'),
+        pytest.param(
+            f'It reads `{{"path": "a.py"}}` from its config.\n\n```json\n{_result("a.py")}\n```',
+            id='object-in-the-prose-before-the-answer',
+        ),
+        pytest.param(
+            f'Draft:\n\n```json\n{_result("b.py", outcome="INCOMPLETE")}\n```\n\nFinal:\n\n```json\n{_result("a.py")}\n```',
+            id='last-matching-object-wins',
+        ),
     ],
 )
 def test_accepted_answer_completes_the_review(tmp_path: Path, text: str) -> None:
-    """An answer that is the JSON object, or that ends with it in a Markdown code fence, completes the review."""
+    """The last JSON object in the answer that matches the schema completes the review, whatever text surrounds it."""
     result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=2), changed=CHANGED)
     assert (result.outcome, [finding.path for finding in result.findings]) == ('COMPLETE', ['a.py'])
 
