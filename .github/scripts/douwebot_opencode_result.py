@@ -73,7 +73,7 @@ def rejection_reason(error: ValueError) -> str:
 def review_result(path: Path) -> ReviewResult:
     """Return the final assistant result only after a normal completed stream."""
     text = unfenced(final_text(path))
-    # glm-5.3-flash writes prose before a bare JSON object too. Prose that holds a `{` itself still fails.
+    # glm-5.3-flash also writes prose before a bare JSON object. That prose still fails when it holds a `{`.
     return ReviewResult.model_validate_json(text[max(text.find('{'), 0) :])
 
 
