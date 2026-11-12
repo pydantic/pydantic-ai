@@ -32,14 +32,13 @@ def doc_descriptions(
 ) -> tuple[str | None, dict[str, str]]:
     """Extract the function description and parameter descriptions from a function's docstring.
 
-    The function parses the docstring using the specified format (or infers it if 'auto')
-    and extracts both the main description and parameter descriptions. Recognized admonition
-    sections (e.g. `Warning:` and `Note:`) are included in the main description in source order,
-    while other sections (e.g. `Raises` and `Examples`) keep their current handling. When
-    `has_return_annotation` says the function has a Python return annotation, a Google-style returns
-    section keeps its whole text as the return description instead of splitting a type off at the
-    first colon. If a returns section
-    is present in the docstring, the main description will be formatted as XML.
+    The function parses the docstring using the specified format (or infers it if 'auto') and extracts
+    both the main description and parameter descriptions. Text and recognized admonition sections
+    (e.g. `Warning:` and `Note:`) make up the main description in source order; other sections (e.g.
+    `Raises` and `Examples`) are dropped. When `has_return_annotation` says the function has a Python
+    return annotation, the whole text of a Google-style returns section is the return description;
+    otherwise any text before its first colon is the return type. If a returns section is present in
+    the docstring, the main description is formatted as XML.
 
     Returns:
         A tuple containing:

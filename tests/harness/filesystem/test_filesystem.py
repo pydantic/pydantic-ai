@@ -2538,7 +2538,7 @@ class TestFileSystemCapability:
         assert description == (
             '<summary>Search file contents using a regular expression.</summary>\n'
             '<returns>\n'
-            '<description>str: Matching lines formatted as file:line_number:text, with paths relative to the working directory.</description>\n'
+            '<description>Matching lines formatted as file:line_number:text, with paths relative to the working directory.</description>\n'
             '</returns>'
         )
 

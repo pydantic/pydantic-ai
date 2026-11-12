@@ -6013,7 +6013,7 @@ def test_google_warnings_section_opening_docstring():
     ],
 )
 def test_warns_section_still_dropped(docstring_format: Literal['google', 'numpy'], warns_section: str):
-    """A structured `Warns` section, listing the warnings a function emits, keeps its current handling.
+    """A structured `Warns` section, listing the warnings a function emits, is dropped from the tool description.
 
     Not a VCR test: the tool description is built from the docstring before any request is made.
     """
@@ -6078,7 +6078,7 @@ def test_admonition_sections_reach_tool_description_numpy():
 
 
 def test_raises_and_examples_sections_still_dropped():
-    """`Raises:` and `Examples:` sections keep their current handling and stay out of the tool description.
+    """`Raises:` and `Examples:` sections are dropped from the tool description.
 
     Not a VCR test: the tool description is built from the docstring before any request is made.
     """
@@ -6270,7 +6270,7 @@ def test_returns_written_text_after_unclosed_fence_in_section():
 
 
 def test_returns_with_colon_still_split_when_not_annotated():
-    """Without a Python return annotation, a `Returns:` type prefix keeps its current handling.
+    """Without a Python return annotation, a `Returns:` section is split at its first colon into type and description.
 
     Not a VCR test: the tool description is built from the docstring before any request is made.
     """
