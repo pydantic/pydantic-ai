@@ -103,10 +103,10 @@ def test_actions_round_trip_through_json_and_refuse_bad_shapes() -> None:
 @pytest.mark.parametrize(
     'build',
     [
-        lambda: Scroll(direction='down', amount=51),
+        lambda: Scroll(direction='down', amount=0),
         lambda: Region(left=5, top=0, right=5, bottom=10),
         lambda: TypeText(text='a\x00b'),
-        lambda: PressKeys(keys=('a+b+c+d+e+f+g+h+i',)),
+        lambda: PressKeys(keys=()),
         lambda: HoldKeys(keys=('',), seconds=1),
         # Splitting a combination can leave an empty key between two `+`.
         lambda: PressKeys(keys=('ctrl+++',)),
