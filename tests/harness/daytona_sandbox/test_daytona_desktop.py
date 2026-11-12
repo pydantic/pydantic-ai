@@ -213,17 +213,10 @@ async def test_looks_come_from_the_desktop(fake_daytona: FakeDaytona) -> None:
     assert await workspace.screenshot() == sandbox.computer_use.png
     assert await workspace.zoom(Region(left=10, top=20, right=110, bottom=70)) == sandbox.computer_use.png
     assert await workspace.cursor_position() == Point(x=7, y=8)
-    # Scaled by the ratio that fits; below a tenth, the least Daytona scales by, it would come back larger than asked.
-    assert await workspace.scaled_screenshot(640, 400) == sandbox.computer_use.png
-    with pytest.raises(UnsupportedActionError, match='cannot scale'):
-        await workspace.scaled_screenshot(100, 62)
     assert sandbox.desktop_calls == [
         'take_full_screen',
         'take_region 10 20 100 50',
         'get_position',
-        'get_info',
-        'take_compressed png 0.5',
-        'get_info',
     ]
 
 

@@ -148,14 +148,12 @@ Some models only take screenshots up to a size, set by
 [`computer_use_screenshot_max_side`][pydantic_ai.profiles.ModelProfile.computer_use_screenshot_max_side] and
 `computer_use_screenshot_max_pixels` in their profile:
 
-- Claude Opus 4.7, Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side.
+- Claude Opus 4.7, Opus 4.8 and the Claude 5 models: 2576 pixels on the longer side and 3.6 megapixels.
 - Earlier Claude models: 1568 pixels and about 1.15 megapixels.
 - GPT: 2560x1440, or 1920x1200 for GPT-5.5. It clicks less accurately on a larger screen.
 
-A 1280x800 screen fits every model. On a larger screen, `ComputerUse` sends a scaled-down screenshot and scales the
-model's positions back up, if the display can scale screenshots
-([`SupportsScaledScreenshot`][pydantic_ai_harness.computer_use.SupportsScaledScreenshot]). If it can't, the run stops
-with an error naming the largest size that fits.
+A 1280x800 screen fits every model. `ComputerUse` sends screenshots at the screen's size, so on a screen larger
+than the model takes, the run stops with an error naming the largest size that fits.
 
 ## When something goes wrong
 
@@ -224,8 +222,6 @@ A `Display` has three methods: `display_size()`, `screenshot()` (PNG bytes), and
 pixels. A display can also implement:
 
 - [`SupportsZoom`][pydantic_ai_harness.computer_use.SupportsZoom]: capture part of the screen at full resolution.
-- [`SupportsScaledScreenshot`][pydantic_ai_harness.computer_use.SupportsScaledScreenshot]: capture the whole screen
-  smaller, for a model with a screenshot size limit.
 - [`SupportsCursorPosition`][pydantic_ai_harness.computer_use.SupportsCursorPosition]: report where the pointer is.
 
 Without one of these, the model is told the action failed. Raise
@@ -267,8 +263,6 @@ assert isinstance(MyDisplay(), Display)
 ::: pydantic_ai_harness.computer_use.SupportsDisplay
 
 ::: pydantic_ai_harness.computer_use.SupportsZoom
-
-::: pydantic_ai_harness.computer_use.SupportsScaledScreenshot
 
 ::: pydantic_ai_harness.computer_use.SupportsCursorPosition
 
