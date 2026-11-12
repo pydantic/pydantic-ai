@@ -783,7 +783,7 @@ jobs:
           PAI_RESULT_METADATA: pydantic_ai_gh_aw_shim.agent:result_metadata
           PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
           PAI_MODEL: anthropic/${{ vars.GH_AW_MODEL }}
-          ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ steps.agent_start_health.outputs.account == 'backup' && secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}
           XDG_CONFIG_HOME: /tmp/gh-aw/clai2-config
           PYTHONPATH: /tmp/gh-aw/workflow-python
           PYDANTIC_AI_TASK_ID: stable-task
@@ -803,6 +803,30 @@ def test_compiled_runner_contract_allows_compatible_runtime_upgrades(tmp_path: P
     lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('0.64.0', version))
     violations = check_compiled_runner_contract(lock)
     assert bool(violations) == (version in {'0.59.0', 'invalid'})
+
+
+@pytest.mark.parametrize(
+    'credential',
+    [
+        pytest.param('${{ secrets.ZAI_API_KEY }}', id='primary-only'),
+        pytest.param(
+            "${{ steps.agent_start_health.outputs.account == 'backup' && secrets.ZAI_API_KEY || secrets.ZAI_BACKUP_API_KEY }}",
+            id='swapped-accounts',
+        ),
+        pytest.param(
+            "${{ needs.provider_health.outputs.account == 'backup' && secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}",
+            id='stale-gate-account',
+        ),
+    ],
+)
+def test_compiled_runner_contract_requires_the_account_selected_key(tmp_path: Path, credential: str):
+    """The proxy gets the backup key exactly when the agent-start recheck selected the backup account."""
+    workflow = yaml.safe_load(_PUBLIC_ENGINE_LOCK)
+    workflow['jobs']['agent']['steps'][0]['env']['ANTHROPIC_API_KEY'] = credential
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
+    violations = check_compiled_runner_contract(lock)
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'account-selected Z.ai key' in violations[0].message
 
 
 @pytest.mark.parametrize('variable', ['GH_AW_PROTECTED_SESSION_CAPTURE', 'GH_AW_PROTECTED_CAPTURE_ID'])
@@ -1880,6 +1904,7 @@ Prompt
 _GATE_ENV: dict[str, str] = {
     'GITHUB_TOKEN': '${{ github.token }}',
     'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}',
+    'ZAI_BACKUP_API_KEY': '${{ secrets.ZAI_BACKUP_API_KEY }}',
     'GITHUB_WORKFLOW': '${{ github.workflow }}',
     'PYDANTIC_AI_RUN_ATTEMPT': '${{ github.run_attempt }}',
     'PYDANTIC_AI_TASK_KEY': '${{ github.workflow }}:${{ github.event_name }}',
@@ -1905,27 +1930,30 @@ def _agent_start_steps(
     env: dict[str, str] = _GATE_ENV,
     stop_continues: bool = False,
     stop_name: str = AGENT_START_HEALTH_STEPS[2],
+    recheck_id: str = 'agent_start_health',
 ) -> list[dict[str, object]]:
     stop: dict[str, object] = {
         'name': stop_name,
-        'if': "steps.agent_start_health.outputs.ready != 'true'",
+        'if': f"steps.{recheck_id}.outputs.ready != 'true'",
         'run': 'echo "::error::blocked"\nexit 1\n',
     }
     if stop_continues:
         stop['continue-on-error'] = True
     return [
-        {'name': AGENT_START_HEALTH_STEPS[0], 'id': 'agent_start_health', 'env': env, 'run': run},
+        {'name': AGENT_START_HEALTH_STEPS[0], 'id': recheck_id, 'env': env, 'run': run},
         {'name': AGENT_START_HEALTH_STEPS[1], 'uses': 'actions/upload-artifact', 'continue-on-error': True},
         stop,
     ]
 
 
-def _write_agent_start_workflow(workflows: Path, agent_steps: list[dict[str, object]]) -> Path:
+def _write_agent_start_workflow(
+    workflows: Path, agent_steps: list[dict[str, object]], gate_env: dict[str, str] = _GATE_ENV
+) -> Path:
     source = _write(
         workflows / 'pydantic-ai-mini.md', '---\nname: Z.AI\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n'
     )
     jobs: dict[str, object] = {
-        'provider_health': {'steps': [{'id': 'health', 'env': _GATE_ENV, 'run': 'python3 controller check'}]},
+        'provider_health': {'steps': [{'id': 'health', 'env': gate_env, 'run': 'python3 controller check'}]},
         'agent': {'needs': ['activation', 'provider_health'], 'steps': agent_steps},
     }
     return _write(source.with_suffix('.lock.yml'), yaml.safe_dump({'jobs': jobs}, sort_keys=False))
@@ -1994,6 +2022,10 @@ def test_provider_health_agent_start_catches_the_queued_ci_review_defect(tmp_pat
             ],
             id='renamed-stop-step',
         ),
+        pytest.param(
+            [*_agent_start_steps(recheck_id='provider_recheck'), *_SHIPPED_AGENT_STEPS],
+            id='recheck-id-the-engine-key-does-not-read',
+        ),
     ],
 )
 def test_provider_health_agent_start_rejects_a_recheck_that_cannot_stop_inference(
@@ -2007,10 +2039,23 @@ def test_provider_health_agent_start_rejects_a_recheck_that_cannot_stop_inferenc
     ]
 
 
+@pytest.mark.parametrize('key', ['ZAI_API_KEY', 'ZAI_BACKUP_API_KEY'])
+def test_provider_health_agent_start_requires_both_keys_in_the_gate(tmp_path: Path, key: str):
+    """A gate and recheck without a key cannot select that account, even when their environments agree."""
+    workflows = tmp_path / '.github' / 'workflows'
+    env = {name: value for name, value in _GATE_ENV.items() if name != key}
+    _write_agent_start_workflow(workflows, [*_agent_start_steps(env=env), *_SHIPPED_AGENT_STEPS], gate_env=env)
+
+    assert [violation.check for violation in check_provider_health_agent_start(workflows)] == [
+        'provider-health-agent-start'
+    ]
+
+
 _RECORD_ENV: dict[str, str] = {key: value for key, value in _GATE_ENV.items() if key != 'GITHUB_TOKEN'}
 _RECORD_RUN = (
     'python3 -I .github/scripts/agent_provider_health.py record \\\n'
     '  --agent-session agent/agent-session.jsonl \\\n'
+    '  --health-artifact provider-health/provider-health.json \\\n'
     '  --output provider-health/run-result.json\n'
 )
 # The authored condition inside gh-aw's clean-detection guard, as the compiled lock carries it.
@@ -2171,6 +2216,16 @@ def test_provider_health_host_result_accepts_the_shipped_record_job(tmp_path: Pa
         pytest.param(
             _host_result_job(env={key: value for key, value in _RECORD_ENV.items() if key != 'ZAI_API_KEY'}),
             id='no-zai-key',
+        ),
+        pytest.param(
+            _host_result_job(env={key: value for key, value in _RECORD_ENV.items() if key != 'ZAI_BACKUP_API_KEY'}),
+            id='no-backup-key',
+        ),
+        pytest.param(
+            _host_result_job(
+                run=_RECORD_RUN.replace('  --health-artifact provider-health/provider-health.json \\\n', '')
+            ),
+            id='record-without-the-engine-account',
         ),
         pytest.param(
             _host_result_job(env={**_RECORD_ENV, 'PYDANTIC_AI_TASK_KEY': '${{ github.workflow }}'}),
@@ -2503,11 +2558,13 @@ jobs:
       - if: github.event_name == 'schedule'
         env:
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
         run: python3 .github/scripts/agent_provider_health.py monitor
       - if: github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           ISSUE_NUMBER: ${{ inputs.recover_issue }}
         run: |
           python3 .github/scripts/agent_provider_health.py monitor \

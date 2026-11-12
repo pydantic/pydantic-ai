@@ -1,6 +1,6 @@
 ---
-# Trusted host-side Z.AI health check. Keep ZAI_API_KEY in the provider_health job, the agent-start recheck below
-# and the record step of provider_health_record, never in the agent container.
+# Trusted host-side Z.AI health check. Keep ZAI_API_KEY and ZAI_BACKUP_API_KEY in the provider_health job, the
+# agent-start recheck below and the record step of provider_health_record, never in the agent container.
 jobs:
   provider_health:
     name: Check Z.AI provider health
@@ -25,6 +25,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}
           GITHUB_WORKFLOW: ${{ github.workflow }}
           PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
@@ -84,6 +85,7 @@ jobs:
         if: steps.agent_artifact.outcome == 'success' && steps.health_artifact.outcome == 'success'
         env:
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           GITHUB_WORKFLOW: ${{ github.workflow }}
           PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
           PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -91,6 +93,7 @@ jobs:
         run: |
           python3 -I .github/scripts/agent_provider_health.py record \
             --agent-session agent/agent-session.jsonl \
+            --health-artifact provider-health/provider-health.json \
             --output provider-health/run-result.json
       - name: Add the host-recorded agent result to the health decision artifact
         if: hashFiles('provider-health/run-result.json') != ''
@@ -106,7 +109,8 @@ jobs:
 # decided, and incidents opened in the meantime must still stop inference. Once the job
 # holds the slot, these steps rerun the default-branch controller with the gate's identity
 # and replace its artifact, so the monitor reconciles the decision the run acted on.
-# They run on the host before any workspace script; the key never reaches the container.
+# They run on the host before any workspace script; the keys never reach the container. The recheck's `account`
+# output selects the engine's key in `shared/engine-zai.md`; keep its step id.
 # A blocked decision fails the job before the engine starts: a `noop` would still spend
 # a threat-detection pass.
 pre-agent-steps:
@@ -115,6 +119,7 @@ pre-agent-steps:
     env:
       GITHUB_TOKEN: ${{ github.token }}
       ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+      ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
       PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}
       GITHUB_WORKFLOW: ${{ github.workflow }}
       PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
