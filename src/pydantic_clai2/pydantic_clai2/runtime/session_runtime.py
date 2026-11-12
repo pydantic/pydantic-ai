@@ -2,8 +2,16 @@
 
 import asyncio
 import math
+import sys
+from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    asynccontextmanager,
+    contextmanager,
+    nullcontext,
+)
 from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
@@ -20,9 +28,10 @@ from pydantic_ai._context_size import context_tokens
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, infer_model_profile
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
+from pydantic_ai_harness.subagents import DelegationTask, TaskQuestionAskedEvent
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
 from pydantic_clai2.cli.effort import effort_command, effort_completions
 from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff
@@ -37,67 +46,77 @@ from pydantic_clai2.commands import (
     is_silent,
     set_completions,
 )
-from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config import PERMISSION_MODES, PERMISSIONS_SETTING as PERMISSIONS, PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import login_names
 from pydantic_clai2.models.chains import settings_model as chain_settings_model
-from pydantic_clai2.models.profiles import provider_of
+from pydantic_clai2.models.profiles import base_model, provider_of
 from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import (
     CommandEnd,
     ConversationChanged,
+    InstallProgress,
+    QueuedInput,
     Renderer,
     SessionEndReason,
     SessionStart,
-    TaskEvent,
+    TaskProgress,
     TurnEnd,
     TurnStart,
-    UpdateProgress,
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, SessionPlugins
 from pydantic_clai2.plugins.menus import SettingsMenu
 from pydantic_clai2.plugins.process_plugins import LiveRuntime, handling
-from pydantic_clai2.runtime._session import (
+from pydantic_clai2.runtime import image_codec
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
+from pydantic_clai2.runtime.forks import Forks
+from pydantic_clai2.runtime.git_actions import git_commands
+from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
+from pydantic_clai2.runtime.live_runtimes import Served
+from pydantic_clai2.runtime.permissions import permissions_command, session_permissions
+from pydantic_clai2.runtime.process import ClaiProcess
+from pydantic_clai2.runtime.project_instructions import ProjectInstructions
+from pydantic_clai2.runtime.question_status import QuestionStatus
+from pydantic_clai2.runtime.session import (
     Session,
     StockAgent,
     agent_capabilities,
     current_session_id,
 )
-from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
-from pydantic_clai2.runtime.forks import Forks
-from pydantic_clai2.runtime.imported_sessions import IMPORT_SOURCES
-from pydantic_clai2.runtime.process import ClaiProcess
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
-from pydantic_clai2.runtime.tasks import Tasks, resume_prompt, task_row
+from pydantic_clai2.runtime.strict_schemas import NON_STRICT_SCHEMAS
+from pydantic_clai2.runtime.tasks import Tasks, question_row, resume_prompt
 from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.menus.dialogs import run_settings_menu
 from pydantic_clai2.ui.menus.key_menu import keys_command, keys_menu
+from pydantic_clai2.ui.menus.menu_worker import without_terminal
 from pydantic_clai2.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.rewind import rewind
 from pydantic_clai2.ui.menus.set_menu import set_command, settings_menu
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
 from pydantic_clai2.ui.menus.system_prompt_menu import system_prompt_command, system_prompt_menu
-from pydantic_clai2.ui.menus.task_menu import open_tasks
+from pydantic_clai2.ui.menus.task_view import open_tasks
 from pydantic_clai2.ui.menus.theme_picker import theme_command
 from pydantic_clai2.ui.menus.update_menu import update_menu
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup
+from pydantic_clai2.ui.prompt.prompt_queue import PromptInbox, QueuedPrompt, can_steer, find_queued, input_kind
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.prompt.terminal import Terminal
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering._rendering import StreamRenderer
 from pydantic_clai2.ui.rendering.history import render_history
+from pydantic_clai2.ui.rendering.rendering import StreamRenderer, print_prompt
 from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
-from pydantic_clai2.ui.rendering.tool_output import terminal_text
 from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
 from pydantic_clai2.ui.rendering.welcome import print_welcome
 
@@ -106,7 +125,6 @@ OutputT = TypeVar('OutputT')
 _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'configure')
 _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
 _PLUGINS_WAIT = 'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.'
-_RESTARTS = 'Restarts CLAI: enter it in the session the terminal shows'
 
 
 async def _default_model(
@@ -131,10 +149,6 @@ async def _default_model_name(*, store: SettingsStore, fallback: Model | str | N
     return fallback if fallback is None or isinstance(fallback, str) else fallback.model_name
 
 
-def _refuse_restart(args: list[str]) -> str:
-    raise ValueError(_RESTART_ELSEWHERE)
-
-
 def _process(
     *, process: ClaiProcess[DepsT] | None, store: SettingsStore | None, builtin_plugins: Sequence[PluginSettings]
 ) -> ClaiProcess[DepsT]:
@@ -143,6 +157,31 @@ def _process(
         raise TypeError('create_shell takes `store` or `process`, not both: the process holds its store.')
     return process or ClaiProcess[DepsT].open(
         store, builtin_plugins=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins)
+    )
+
+
+def _fast_command(
+    args: list[str],
+    *,
+    session: Session[DepsT, OutputT],
+    agent: AbstractAgent[DepsT, OutputT],
+    context: CommandContext,
+    store: SettingsStore,
+) -> str:
+    """`/fast [on|off]`: set the session model's `service_tier` to `priority` or `default`; no argument toggles it."""
+    if args not in ([], ['on'], ['off']):
+        raise ValueError('Usage: /fast [on|off]')
+    model = session.model or _model_label(agent)
+    current = context.model_settings(model) or {}
+    saved = store.model_settings(model)
+    custom = saved.get('custom_params')
+    if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
+        raise ValueError('Custom service_tier overrides fast mode. Remove it with /model settings first.')
+    enabled = args == ['on'] or (not args and current.get('service_tier') != 'priority')
+    tier = 'priority' if enabled else 'default'
+    store.save_model_settings(model, {**saved, 'service_tier': tier})
+    return f'Fast mode {"on" if enabled else "off"} for {model} (service_tier={tier}). Applies on the next prompt.' + (
+        ' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else ''
     )
 
 
@@ -166,6 +205,7 @@ def create_shell(
     workspace: Path | None = None,
     process: ClaiProcess[DepsT] | None = None,
     signals: bool = True,
+    settings_for: Callable[[ProjectSettings], Settings] | None = None,
 ) -> 'SessionRuntime[DepsT, OutputT]':
     """Build one session's runtime, without attaching terminal input in headless mode.
 
@@ -173,6 +213,7 @@ def create_shell(
     what the session shares with the others in this CLAI, its built-in plugins included; without one,
     it gets its own over `store` and `builtin_plugins`, which are otherwise unused.
     `signals` lets Ctrl-C cancel this session's turns; only the session the terminal shows takes it.
+    `settings_for` gives the settings CLAI starts with beside a project file, which `/project` applies from.
     """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
@@ -197,6 +238,7 @@ def create_shell(
     session.instructions = settings.instructions
     models = ModelResolver(console=console, store=store, codex_providers=process.codex_providers)
     session.resolve_model = models.resolve
+    session.expand_model = models.expand
     if session.model is None and agent.model is None:
         console.print('Add a model with /model add.', style=theme.color(theme.INFO))
 
@@ -208,25 +250,17 @@ def create_shell(
         # turn holds the change, and its model, until it ends.
         shell.show_model()
 
-    context = CommandContext(settings=settings, store=store, apply_setting=apply_setting, project=project)
+    context = CommandContext(
+        settings=settings,
+        store=store,
+        apply_setting=apply_setting,
+        project=project,
+        settings_for=settings_for,
+        workspace=lambda: Path(session.workspace),
+    )
+    session.project_instructions = lambda: ProjectInstructions[DepsT].pending(context.project)
     models.pool_accounts = lambda: context.settings.pool_accounts
-
-    def fast(args: list[str]) -> str:
-        if args not in ([], ['on'], ['off']):
-            raise ValueError('Usage: /fast [on|off]')
-        model = session.model or _model_label(agent)
-        current = context.model_settings(model) or {}
-        saved = store.model_settings(model)
-        custom = saved.get('custom_params')
-        if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
-            raise ValueError('Custom service_tier overrides fast mode. Remove it with /model settings first.')
-        enabled = args == ['on'] or (not args and current.get('service_tier') != 'priority')
-        tier = 'priority' if enabled else 'default'
-        store.save_model_settings(model, {**saved, 'service_tier': tier})
-        return (
-            f'Fast mode {"on" if enabled else "off"} for {model} (service_tier={tier}). Applies on the next prompt.'
-            + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
-        )
+    models.select_default = partial(_select_default, context)
 
     def effort_menu() -> SettingsMenu:
         # Model settings load provider SDKs; keep them off the startup path.
@@ -235,8 +269,16 @@ def create_shell(
         model = session.model or _model_label(agent)
         return model_settings_menu(store, model, settings_as=context.settings_model(model))
 
-    sessions = Sessions(session=session, store=conversations, context=context, launched=launched, namer=process.namer)
+    sessions = Sessions(
+        session=session,
+        store=conversations,
+        context=context,
+        launched=launched,
+        namer=process.namer,
+        tasks=process.tasks.owner,
+    )
     commands = Commands(workspace=lambda: Path(session.workspace))
+    commands.register_many(git_commands(workspace=lambda: Path(session.workspace), model=session.resolved_model))
     commands.register(
         Command(
             name='effort',
@@ -250,7 +292,7 @@ def create_shell(
         Command(
             name='fast',
             description='Toggle Codex priority processing: /fast [on|off] (uses more ChatGPT credits)',
-            handler=fast,
+            handler=partial(_fast_command, session=session, agent=agent, context=context, store=store),
             complete=lambda args: ('on', 'off') if len(args) <= 1 else (),
             available=lambda: (
                 provider_of(context.settings_model(session.model or _model_label(agent))) == 'openai-codex'
@@ -304,6 +346,14 @@ def create_shell(
     commands.register(replace(set_, name='settings', description='Alias of /set'))
     commands.register(
         Command(
+            name='project',
+            description='Review what .clai/settings.json sets: /project [approve NAME...|all | revoke NAME...|all]',
+            handler=context.project_command,
+            complete=context.project_completions,
+        )
+    )
+    commands.register(
+        Command(
             name='theme',
             description='Select a Termflow palette; no arguments opens the picker',
             handler=lambda args: theme_command(context, args),
@@ -311,6 +361,17 @@ def create_shell(
             during_turn=True,
             menu=lambda: settings_menu(context, keys=('display.theme',), title='Theme'),
             args_during_turn=True,
+        )
+    )
+    commands.register(
+        Command(
+            name='permissions',
+            description='Choose what runs without asking: /permissions [full|auto|read-only]',
+            handler=lambda args: permissions_command(context, args),
+            complete=lambda args: PERMISSION_MODES if len(args) <= 1 else (),
+            during_turn=True,
+            args_during_turn=True,
+            menu=lambda: settings_menu(context, keys=(PERMISSIONS,), title='Permissions'),
         )
     )
     commands.register(
@@ -391,6 +452,7 @@ def create_shell(
             name='usage',
             description='Show tokens and cost per turn',
             handler=lambda _: sessions.usage(console=console),
+            during_turn=True,
         )
     )
     commands.register(
@@ -398,17 +460,26 @@ def create_shell(
             name='cost',
             description='Show retained history cost and tokens',
             handler=lambda _: cost_line(session_usage(session.messages)),
+            during_turn=True,
         )
     )
     commands.register(Command(name='exit', description='Quit CLAI', handler=lambda _: 'Goodbye.'))
     updates = Updates(channel=lambda: context.settings.update_channel)
+
     commands.register(
         Command(
             name='update',
-            description='Install the newest CLAI from the updates.channel setting (stable or main)',
+            description='Show whether a newer CLAI is out on updates.channel (stable or main); /update now installs it',
             handler=lambda args: shell.update(args),
+            complete=lambda args: ('now',) if len(args) <= 1 else (),
             menu=lambda: update_menu(
-                context, updates, run=lambda text: shell.send_input(text), refusal=lambda: shell.restart_refusal()
+                context,
+                updates,
+                # Whichever session's page asks, the install runs in the session CLAI restarts from.
+                run=lambda text: shell.restarter().send_input(text),
+                refusal=lambda: shell.restarter().restart_refusal(),
+                # Every `host.command_menu('update')` caller is a remote UI; the terminal builds its own menu.
+                raise_refusal=True,
             ),
         )
     )
@@ -434,7 +505,7 @@ def create_shell(
         status=status,
         enabled=load_plugins,
         submit_prompt=lambda text: shell.submit_prompt(text),
-        send_input=lambda text: shell.send_input(text),
+        send_input=lambda text, images: shell.send_input(text, images=images),
         interrupt=lambda: shell.interrupts.cancel(exit_on_repeat=False),
         sessions=sessions,
         setting=context.setting,
@@ -443,12 +514,16 @@ def create_shell(
         running=lambda: shell.turning,
         default_model=partial(_default_model, store=store, models=models, fallback=agent.model),
         default_model_name=partial(_default_model_name, store=store, fallback=agent.model),
-        queued=lambda: shell.queued,
+        resolve_model=models.resolve,
+        model_settings=context.model_settings,
+        inputs=lambda: shell,
+        forks=lambda: shell.forks.listing(),
     )
     session.on_change = _ConversationFooter(status=status, fire=loader.fire, shown=session.conversation_id).changed
-    updates.report = lambda: loader.fire if loader.handles(UpdateProgress) else None
+    updates.report = lambda: loader.fire if loader.handles(InstallProgress) else None
     # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
     updates.capture = lambda: web_serving(loader) is not None
+    updates.serving = lambda: web_serving(loader)
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -587,6 +662,28 @@ class _ConversationFooter:
         await self.fire(event)
 
 
+class Inbox:
+    """Input waiting for a session's read loop, readable so the images its markers name are kept.
+
+    `SessionRuntime` now queues through `PromptInbox`, whose entries can be edited and removed;
+    this class stays so code that imports it keeps working.
+    """
+
+    def __init__(self) -> None:
+        self.texts = deque[str]()
+        self._arrived = asyncio.Event()
+
+    def put(self, text: str) -> None:
+        self.texts.append(text)
+        self._arrived.set()
+
+    async def get(self) -> str:
+        while not self.texts:
+            self._arrived.clear()
+            await self._arrived.wait()
+        return self.texts.popleft()
+
+
 @dataclass(kw_only=True)
 class SessionRuntime(Generic[DepsT, OutputT]):
     """One live session and its prompt loop; one turn is one `TurnStart`, one agent run, one `TurnEnd`.
@@ -618,14 +715,21 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     submitted: list[str] | None = None
     """Prompts the running `/command` submitted with `host.submit_prompt`; `None` while no command runs."""
     reload_requested: bool = False
+    served: bool = False
+    """Whether it runs with no terminal of its own, as one the browser opened: it restarts CLAI only while shown."""
     editor: LivePrompt | None = None
     """The terminal's editor, while the terminal shows this session and its console is a terminal."""
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
+    permissions: tuple[AgentCapability[DepsT], ...] = field(init=False)
+    """`Permissions` for `run.permissions`, read on each tool call, and its denial of last resort; kept across runs."""
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _steering: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
     _identity_pending: bool = field(default=False, init=False)
-    _inbox: asyncio.Queue[str] = field(default_factory=asyncio.Queue[str], init=False, repr=False)
+    _question_status: QuestionStatus[DepsT] = field(init=False, repr=False)
+    _measured_model: str | None = field(default=None, init=False, repr=False)
+    """The model whose completed turn measured the status row's figures; `None` once the model changes."""
+    _inbox: PromptInbox = field(default_factory=PromptInbox, init=False, repr=False)
     """Input `send_input` entered while no editor reads keys, as in a shell driven only by a plugin."""
     turning: bool = field(default=False, init=False)
     """Whether a turn runs: from its `TurnStart` until its run ends, before plugins hear `TurnEnd`."""
@@ -652,7 +756,42 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     @property
     def queued(self) -> int:
         """How many inputs wait for the running turn or command to end."""
-        return len(self.editor.queued_messages) if self.editor is not None else self._inbox.qsize()
+        return len(self._queued_prompts())
+
+    def _queued_prompts(self) -> list[QueuedPrompt]:
+        """What waits where input comes from now: the terminal's editor while it shows this session, else the inbox."""
+        return self.editor.queued_prompts() if self.editor is not None else self._inbox.entries
+
+    @property
+    def queue(self) -> list[QueuedInput]:
+        """The inputs waiting for the running turn or command to end, oldest first, as `host.live` lists them."""
+        return [QueuedInput(id=entry.id, text=entry.text) for entry in self._queued_prompts()]
+
+    def edit_queued(self, input_id: str, text: str) -> None:
+        """Rewrite a waiting input in place, as Enter on a recalled queued prompt does; blank text is refused."""
+        text = expand_bare_command(text.strip())
+        if not text:
+            raise ValueError('Type a prompt or a /command.')
+        entry = find_queued(self._queued_prompts(), input_id)
+        if self.editor is not None:
+            self.editor.rewrite(entry, text)  # which tells `host.live` through its `queue_changed`
+        else:
+            entry.text = text
+            self.live_session.changed()
+
+    def remove_queued(self, input_id: str) -> None:
+        """Drop a waiting input, as clearing a recalled queued prompt before Enter does."""
+        entry = find_queued(self._queued_prompts(), input_id)
+        if self.editor is not None:
+            self.editor.discard(entry)
+        else:
+            self._inbox.remove(entry)
+            self.live_session.changed()
+
+    @property
+    def handling(self) -> bool:
+        """Whether the prompt handles an input now: a turn, a command, or a rewind."""
+        return self._handling
 
     @property
     def idle(self) -> bool:
@@ -673,19 +812,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self.loader.load_all()
                 if resume is not None:
                     self.session.record_resumed()
-                for name in ('reload', 'update'):
-                    # Both restart CLAI, which only the session the terminal shows, or CLAI started with, can do.
-                    restart = next(command for command in self.commands if command.name == name)
-                    self.commands.unregister([name])
-                    self.commands.register(
-                        Command(
-                            name=name,
-                            description=_RESTARTS,
-                            handler=lambda args, restart=restart: (
-                                restart.handler if self.terminal is not None else _refuse_restart
-                            )(args),
-                        )
-                    )
+                self.served = True
                 ready()
                 reason = await self.run()
         except get_cancelled_exc_class():
@@ -696,12 +823,20 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self.close(reason)
         return reason
 
+    def join(self) -> None:
+        """Count this session among the process's live sessions, as again after a failed `/reload`; `close` leaves them."""
+        self.sessions.join()
+        self.tasks.join()
+        self.process.live.add(self)
+
     async def close(self, reason: SessionEndReason) -> None:
         """End this session's plugins and leave the process's live sessions."""
         self.process.live.leaving(self)
         try:
             await self.loader.close(reason)
         finally:
+            self.sessions.close()
+            self.tasks.close()
             self.process.live.remove(self)
 
     @contextmanager
@@ -716,7 +851,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def handoff(self) -> WebHandoff | None:
         """The web UI to serve again once `/update` restarts CLAI as this session; `None` when it does not, or none runs."""
-        return None if self.updates.relaunch is None else web_serving(self.loader)
+        return self.updates.web
 
     def relaunch(self, *, web: WebHandoff | None) -> Relaunch | None:
         """Restart as the build `/update` installed, resuming this conversation and serving `web` again; else `None`."""
@@ -747,13 +882,16 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         telemetry.conversation_selected()
 
     def __post_init__(self) -> None:
+        self._question_status = QuestionStatus(self.live_session)
         self.tasks = Tasks(
             console=self.console,
             conversation_id=lambda: self.session.summary.id,
             router=self.process.tasks,
             fire=self.loader.fire,
-            listening=lambda: self.loader.handles(TaskEvent),
+            listening=lambda: self.loader.handles(TaskProgress),
             send_input=self.send_input,
+            prompt_task=self.prompt_task,
+            show_task_models=lambda: self.context.settings.task_models,
         )
         self.status.subagent = self.tasks.focused
         self.forks = Forks(
@@ -765,15 +903,22 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         )
         self.sessions.quiet = self.forks.quiet
         self.session.on_setup_error = self.capability_failed
+        self.permissions = session_permissions(lambda: self.context.settings.permissions)
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
-        """Capabilities bound to the next run: supplied, plugin-registered (guarded), then speculation.
+        """Capabilities bound to the next run: supplied, plugin-registered (guarded), strict mode off, then speculation.
 
         Speculation sees the others unguarded, and the agent's own capabilities too, so its sandbox
         mount stays within every `FileSystem` and `ToolGuardrail` the run has.
         """
-        granted = (*self.plugins, *self.loader.capabilities())
-        bound = (*self.plugins, *self.loader.run_capabilities())
+        granted = (*self.plugins, *self.loader.capabilities(), *self.permissions)
+        bound = (
+            *self.plugins,
+            *self.loader.run_capabilities(),
+            *self.permissions,
+            self._question_status,
+            NON_STRICT_SCHEMAS,
+        )
         if self.session.delegations is not None:
             granted = (*granted, self.tasks.presentation)
             bound = (*bound, self.tasks.presentation)
@@ -785,7 +930,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         """Report that a failing settings-built capability is left out of later turns."""
         self.console.print(self.loader.suspend(error), style=theme.color(theme.WARNING), markup=False)
 
-    def fork_session(self, model: str | None, history: Sequence[ModelMessage]) -> Session[DepsT, OutputT]:
+    async def fork_session(self, model: str | None, history: Sequence[ModelMessage]) -> Session[DepsT, OutputT]:
         """A separately saved session configured like the foreground one, seeded with `history`."""
         child = Session(
             self.agent,
@@ -801,11 +946,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         child.tool_retries = self.session.tool_retries
         child.instructions = self.session.instructions
         child.resolve_model = self.session.resolve_model
+        child.expand_model = self.session.expand_model
         child.model_settings = self.context.live_model_overrides(child.model or _model_label(self.agent))
         child.model_defaults = self.context.model_defaults(child.model or _model_label(self.agent))
         child.on_setup_error = self.capability_failed
         if child.repl_states is not None:
-            child.repl_states.copy(source=self.session.summary.id, target=child.summary.id)
+            await to_thread.run_sync(
+                partial(child.repl_states.copy, source=self.session.summary.id, target=child.summary.id)
+            )
         return child
 
     async def tasks_command(self, args: list[str]) -> str:
@@ -825,6 +973,15 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             return f'Task {record.id} may now be resumed with delegate_task(resume={record.id!r}).'
         self.editor.submit(resume_prompt(record))
         return f'Resume requested for task {record.id[:8]}.'
+
+    async def prompt_task(self, record: DelegationTask, text: str) -> None:
+        """Resume `record` with `text` as the user's message, outside the conversation, with this session's plugins.
+
+        A turn running meanwhile keeps the plugins it bound, which the task gets too.
+        """
+        if not self.turning:
+            self.session.plugins = self.run_plugins()
+        await self.session.prompt_task(agent_name=record.agent_name, task_id=record.id, text=text)
 
     def submit_prompt(self, text: str) -> None:
         """Queue `text` to run as a turn once the running `/command` returns."""
@@ -847,22 +1004,37 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             raise ValueError(f'The cell failed:\n{cell.report()}')
         return cell.report() or '(no output)'
 
-    def send_input(self, text: str) -> None:
+    def send_input(self, text: str, *, images: Sequence[BinaryContent] = ()) -> None:
         """Enter `text` as Enter at the prompt does: trimmed, bare `clear` as `/clear`, blank ignored.
 
         A `during_turn` command opens over a running turn; other input queues in the editor, or, while no
         editor reads keys yet or at all, in the inbox the read loop takes it from. A line-mode prompt,
         used when CLAI's output is not a terminal, reads only its own input, so it takes none.
+
+        `images` are attached as pasted ones are, by markers in the text that the turn resolves.
         """
         if self.prompt is not None and self.editor is None:
             raise RuntimeError('This CLAI reads its prompts line by line, as its output is not a terminal.')
         text = expand_bare_command(text.strip())
+        if images:
+            if input_kind(text) != 'prompt':
+                raise ValueError('Images go with a prompt, not with a /command or ! line.')
+            if sum(len(image.data) for image in images) > image_codec.MAX_PENDING_BYTES:
+                raise ValueError('These images exceed the 32 MiB limit; send fewer at a time.')
+            try:
+                markers = self.images.attach(images)
+            except ValueError as exc:
+                # The sender may not see the images waiting here, such as a terminal draft's.
+                raise ValueError(
+                    "Images waiting in this session's prompt leave no room for these (32 MiB limit)."
+                ) from exc
+            text = f'{text} {markers}'.strip()
         if not text or self.run_now(text):
             return
         if self.editor is not None:
             self.editor.submit(text)
         else:
-            self._inbox.put_nowait(text)
+            self._inbox.put(QueuedPrompt(text))
         self.live_session.changed()
 
     def request_reload(self, args: list[str]) -> str:
@@ -873,18 +1045,40 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         return 'Reloading CLAI2...'
 
     async def update(self, args: list[str]) -> str:
-        """`/update`, refused while another live session runs a turn, which the restart would end."""
-        self._refuse_restart_while_others_run()
-        return await self.updates.command(args)
+        """`/update` opens the update menu and `/update now` installs, refused while another session runs a turn.
+
+        The restart after an install would end that turn. The menu's Update action installs here once it has closed.
+        """
+        if args:
+            self._refuse_restart_while_others_run()
+            return await self.updates.command(args)
+        if self.terminal is None:
+            raise ValueError(self.restart_refusal() or 'The update menu needs a terminal; open About in the web UI.')
+        entered: list[str] = []
+        menu = update_menu(self.context, self.updates, run=entered.append, refusal=self.restart_refusal)
+        messages = await run_settings_menu(menu)
+        if not entered:
+            return '\n'.join(messages)
+        self.console.print('\n'.join(messages), markup=False, highlight=False)
+        return await self.update(['now'])
 
     def _refuse_restart_while_others_run(self) -> None:
         if (refusal := self.restart_refusal()) is not None:
             raise ValueError(refusal)
 
+    def restarts_clai(self) -> bool:
+        """Whether CLAI restarts from this session: the one the terminal shows, or with no terminal, the one it started with."""
+        return self.terminal is not None or (
+            not self.served and self.process.live.focused in (None, self.live_session.id)
+        )
+
+    def restarter(self) -> Served:
+        """The live session CLAI restarts from, as the web UI's About installs in it; this one when none is."""
+        return self.process.live.restarter() or self
+
     def restart_refusal(self) -> str | None:
         """Why `/reload` and `/update` cannot restart CLAI from this session now; `None` when they can."""
-        if self.terminal is None and self.process.live.focused not in (None, self.live_session.id):
-            # The session CLAI started with, while the terminal shows another: the restart starts from that one.
+        if not self.restarts_clai():
             return _RESTART_ELSEWHERE
         home = self.terminal.home if self.terminal is not None else None
         if home is not None and home is not self and self.session.workspace != home.session.workspace:
@@ -918,7 +1112,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                     if isinstance(self.agent, StockAgent):
                         self.session.delegations = owner
                     # Reports a task left while no CLAI ran are known once the owner opened.
-                    if self.editor is not None and owner.reports(conversation_id=self.session.summary.id):
+                    if self.editor is not None and self.tasks.waiting(self.session.summary.id):
                         self.editor.wake()
                     reason = await self._read_loop()
                     return reason
@@ -934,27 +1128,42 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         The terminal hands its console output over itself.
         """
         self.terminal = terminal
-        self.images = terminal.images if terminal is not None else ImageInput()
+        previous, self.images = self.images, terminal.images if terminal is not None else ImageInput()
+        # Queued prompts, and the one rejected for retry, keep their images as the terminal moves.
+        self.images.pending.update(previous.pending)
+        if previous.retry_text:
+            # The terminal's goes with the session leaving it, and the one shown brings its own.
+            self.images.retry_text, previous.retry_text = previous.retry_text, ''
         self.interrupts.focus(signals=terminal is not None)
         if terminal is not None:
             self.process.live.focused = self.live_session.id
         self.bind(terminal.editor if terminal is not None else None)
+        # Both now hold every image; each keeps those its own texts use, so none counts twice against the limit.
+        self._retain_images()
         self.live_session.changed()
+
+    def _retain_images(self) -> None:
+        """Let go of images that neither the draft nor a queued prompt of this session uses."""
+        self.images.retain(
+            [self.editor.buffer.text, *self.editor.queued_messages]
+            if self.editor is not None
+            else [entry.text for entry in self._inbox.entries]
+        )
 
     def bind(self, editor: LivePrompt | None) -> None:
         """Read from `editor`, the open editor of the terminal showing this session; `None` stops that."""
         if self.editor is not None and editor is None:
             # Prompts queued for this session stay its own while the terminal shows another.
-            for text in self.editor.take_queued():
-                self._inbox.put_nowait(text)
+            for entry in self.editor.take_queued():
+                self._inbox.put(entry)
         self.editor = editor
         self.screen.editor = editor.suspended if editor is not None else None
         self.tasks.wake = editor.wake if editor is not None else None
         if editor is not None:
             # Input a plugin entered while the editor read for another session, or did not exist yet.
-            while not self._inbox.empty():
-                editor.submit(self._inbox.get_nowait())
-            if self.tasks.owner.reports(conversation_id=self.session.summary.id):
+            for entry in self._inbox.take():
+                editor.submit(entry)
+            if self.tasks.waiting(self.session.summary.id):
                 editor.wake()
         if self._reading is not None:
             self._reading.cancel()
@@ -991,7 +1200,12 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                     self._reading = None
 
     def steer(self, text: str) -> bool:
-        """Enqueue steering in core and hand transcript feedback to the active turn."""
+        """Enqueue steering in core and hand transcript feedback to the active turn.
+
+        `False` when no run takes it, and for a `/command` (bare `clear` included) or `!` shell line, which never steer.
+        """
+        if not can_steer(expand_bare_command(text)):
+            return False
         try:
             resolved, images = self.images.resolve(text)
         except ValueError as exc:
@@ -1004,8 +1218,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self._steering.send_nowait(text)
         else:
             # Direct session users have no active stream renderer to serialize against.
-            self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
-            self.console.print()
+            print_prompt(self.console, text)
         return True
 
     def _released(self) -> AbstractAsyncContextManager[None]:
@@ -1050,20 +1263,36 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _run_mid_turn(self, text: str) -> None:
         async with self.screen.overlay():
-            self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
-            self.console.print()
+            print_prompt(self.console, text)
             if await self._refused(text):
                 return
-            await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
+            with self._without_terminal(text):
+                await self.loader.fire(await _execute_command(self.commands, text, console=self.console))
             self._show_status_segments()
 
     def show_model(self) -> None:
-        """Show the model the next prompt runs on in the status row, forgetting the last one's window if it changed."""
+        """Show the model the next prompt runs on in the status row, forgetting the last one's window if it changed.
+
+        Its known window, a plugin model's taken from its `settings_from` provider, and the conversation's last
+        response's context (zero when empty) show until a turn on it measures them.
+        """
         model = self.session.model or _model_label(self.agent)
         if model != self.status.model:
             self.status.context_window = None
             self.status.context_alert = False
+            self._measured_model = None
         self.status.model = model
+        agent_model = self.agent.model
+        if self.status.context_tokens is not None and model == self._measured_model:
+            # A request left the window unresolved, as for a fallback model: the selected one's would be a guess.
+            self.status.model_window = None
+        elif self.session.model is None and isinstance(agent_model, Model):
+            self.status.model_window = agent_model.context_window
+        else:
+            profiled = base_model(self.loader.settings_model(model))
+            self.status.model_window = infer_model_profile(profiled).get('context_window')
+        if self.status.context_tokens is None:
+            self.status.context_tokens = _last_context_tokens(self.session.messages)
 
     def _show_status_segments(self) -> None:
         """Paint the status segments of the plugins loaded now."""
@@ -1076,19 +1305,18 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _rewind(self) -> None:
         assert self.editor is not None
-        async with self.forks.busy(), self._released():
-            try:
-                notice = await rewind(self.session, self.editor)
-            except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
-                self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
-            else:
-                self.console.print(notice, markup=False)
+        with self._handling_input():
+            async with self.forks.busy(), self._released():
+                try:
+                    notice = await rewind(self.session, self.editor)
+                except Exception as exc:  # noqa: BLE001 -- a failed save must not end the shell.
+                    self.console.print(f'Rewind failed: {exc}', style=theme.color(theme.WARNING), markup=False)
+                else:
+                    self.console.print(notice, markup=False)
 
     async def _read_loop(self) -> SessionEndReason:
         while True:
-            self.images.retain(
-                [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else []
-            )
+            self._retain_images()
             try:
                 self.show_model()
                 self.status.workspace = self.session.workspace
@@ -1098,32 +1326,49 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self._rewind()
                 continue
             except PromptWakeup:
-                if not self.tasks.owner.reports(conversation_id=self.session.summary.id):
-                    continue
-                with self._handling_input():
-                    async with self.forks.busy():
-                        if await self._turn(None):
-                            return 'exit'
-                continue
+                reason = await self._automated_turn()
             except KeyboardInterrupt:
-                if self.interrupts.press():
-                    return 'exit'
-                self.console.print(
-                    'Input cleared. Press Ctrl-C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
-                )
-                continue
+                reason = self._input_interrupted()
             except EOFError:
                 return 'eof'
-            self.images.notice = ''
-            if not text:
-                continue
-            # A line-mode prompt shows the line as it was typed; other input is echoed like the editor's.
-            if self.prompt is None:
-                self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
-            self.console.print()
-            with self._handling_input():
-                if await self._dispatch_input(text):
+            else:
+                reason = await self._handle_submission(text)
+            if reason is not None:
+                return reason
+
+    async def _automated_turn(self) -> SessionEndReason | None:
+        """Run the turn a waiting task's report starts, if this session still waits on a task; `'exit'` ends it."""
+        if not self.tasks.waiting(self.session.summary.id):
+            return None
+        with self._handling_input():
+            async with self.forks.busy():
+                if await self._turn(None):
                     return 'exit'
+        return None
+
+    def _input_interrupted(self) -> SessionEndReason | None:
+        """Ctrl-C at the prompt: `'exit'` on a second press in time, else clear the input and say how to exit."""
+        if self.interrupts.press():
+            return 'exit'
+        self.console.print(
+            'Input cleared. Press Ctrl-C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
+        )
+        return None
+
+    async def _handle_submission(self, text: str) -> SessionEndReason | None:
+        """Echo and run a line submitted at the prompt, skipping an empty one; `'exit'` ends the session."""
+        self.images.notice = ''
+        if not text:
+            return None
+        # A line-mode prompt shows the line as it was typed; other input is echoed like the editor's.
+        if self.prompt is None:
+            print_prompt(self.console, text)
+        else:
+            self.console.print()
+        with self._handling_input():
+            if await self._dispatch_input(text):
+                return 'exit'
+        return None
 
     async def _dispatch_input(self, text: str) -> bool:
         if (command := shell_command(text)) is not None:
@@ -1145,8 +1390,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.console.print('Choose a model first: /set model <Tab>', style=theme.color(theme.WARNING))
             return False
         try:
+            # Before waiting for the terminal: once the prompt left the queue, only this holds its images.
+            text, images = self.images.resolve(text)
+        except ValueError as exc:
+            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+            return False
+        try:
             async with self.forks.busy():
-                return await self._turn(text)
+                return await self._turn(text, images)
         finally:
             if self.editor is not None:
                 await self.editor.output.drain()
@@ -1181,7 +1432,26 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     async def _execute(self, text: str, ended: list[CommandEnd]) -> None:
         """Run a command, adding its `CommandEnd` to `ended` unless it is cancelled first."""
-        ended.append(await _execute_command(self.commands, text, console=self.console))
+        with self._without_terminal(text):
+            ended.append(await _execute_command(self.commands, text, console=self.console))
+
+    def _without_terminal(self, text: str) -> AbstractContextManager[None]:
+        """Fail the terminal menus and prompts command `text` opens while CLAI has no terminal for them.
+
+        That is when no terminal shows this session and stdin is not one either, as under `clai2 --web`
+        started from a script: a menu would read EOF and close as cancelled. What can ask through a
+        remote UI's dialogs asks there instead.
+        """
+        stdin = sys.stdin
+        if self.terminal is not None or (stdin is not None and not stdin.closed and stdin.isatty()):
+            return nullcontext()
+        return without_terminal(text, instead=self._page_menu(text), dialogs=self.process.live.dialogs)
+
+    def _page_menu(self, text: str) -> str | None:
+        """`/NAME` when `text` gives arguments to a command whose bare form opens its menu in the page."""
+        name, *args = text.split()
+        command = self.commands.get(name[1:])
+        return name if args and command is not None and command.menu is not None else None
 
     async def _live_command(self, text: str, editor: LivePrompt, ended: list[CommandEnd]) -> bool:
         """Run a slow `live` command such as `/compact` with the spinner up and its cancel keys working.
@@ -1203,14 +1473,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.console.print()
         return completed
 
-    async def _turn(self, text: str | None) -> bool:
+    async def _turn(self, text: str | None, images: Sequence[BinaryContent] = ()) -> bool:
+        """Run a turn on `text` and its resolved `images`, or an automated one, as a task's report, on `None`."""
         automated = text is None
-        try:
-            text, images = self.images.resolve(text) if text is not None else ('', [])
-        except ValueError as exc:
-            self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
-            return False
-        start = TurnStart(text=text)
+        start = TurnStart(text=text or '')
         ended: TurnEnd | None = None
 
         async def run_turn() -> None:
@@ -1322,7 +1588,20 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                     steering_send.close()
                     steering_receive.close()
                     send.close()
+        if ended.outcome == 'completed':
+            self._measured_model = model
         return ended
+
+
+def _last_context_tokens(messages: Sequence[ModelMessage]) -> int | None:
+    """The context a conversation's last response left, as a resumed one reads before its next turn.
+
+    An empty conversation reads `0`; one without a response that reported usage stays unknown.
+    """
+    if not messages:
+        return 0
+    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+    return None if response is None else context_tokens(response) or None
 
 
 def _report_interrupt(completed: bool, console: Console) -> None:
@@ -1346,6 +1625,14 @@ async def _execute_command(commands: Commands, text: str, *, console: Console) -
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
     return ended
+
+
+def _select_default(context: CommandContext, model: str) -> bool:
+    """Select `model` unless a model was chosen for this session; whether it did."""
+    if 'model' in context.settings.model_fields_set:
+        return False
+    context.set_setting(['model', model])
+    return True
 
 
 def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:
@@ -1407,6 +1694,23 @@ async def _prompt_with_steering(
     return result
 
 
+def _run_events(
+    observe: Callable[[AgentStreamEvent], Awaitable[None]], tasks: Tasks | None
+) -> Callable[[AgentStreamEvent], Awaitable[None]]:
+    """The main run's stream handler. With the tasks' feed, a task's question shows once, from that feed.
+
+    The run streams only the questions asked while it is open to them; the feed gets every one.
+    """
+    if tasks is None:
+        return observe
+
+    async def observe_run(event: AgentStreamEvent) -> None:
+        if not isinstance(event, TaskQuestionAskedEvent):
+            await observe(event)
+
+    return observe_run
+
+
 async def _run_prompt(
     session: Session[DepsT, OutputT],
     text: str | None,
@@ -1421,8 +1725,9 @@ async def _run_prompt(
     tasks: Tasks | None = None,
     steering: tuple[MemoryObjectSendStream[str], MemoryObjectReceiveStream[str]] | None = None,
 ) -> TurnEnd:
+    # Without the tasks' feed, a task-control run of a custom agent still shows its tasks' questions.
     renderer = _stream_renderer(
-        console, settings=settings, renderers=[*renderers, task_row] if tasks is not None else renderers
+        console, settings=settings, renderers=[*renderers, tasks.row if tasks is not None else question_row]
     )
     status.streamed_chars = 0
     status.output_tokens = None
@@ -1451,9 +1756,16 @@ async def _run_prompt(
         if status.context_window is None:
             status.context_window = window
 
+    def usage(messages: Sequence[ModelMessage]) -> None:
+        total = session_usage(messages).total
+        status.cost = total.cost
+        status.cost_is_lower_bound = bool(total.unmeasured_requests)
+
     session.on_context_usage = context_usage
+    session.on_usage = usage
     session.on_context_window = context_window
-    session.on_stream_event = observe
+
+    session.on_stream_event = _run_events(observe, tasks)
     # A session the terminal does not show yet prints nowhere: no footer of its own may draw over the editor later.
     status_line = StatusLine(console, status, enabled=screen.editor is None and console.is_terminal, spinner=spinner)
 
@@ -1495,7 +1807,8 @@ async def _run_prompt(
         if tasks is not None:
             tasks.sink = None
         status.activity = 'ready'
-        status.cost = session_usage(session.messages).total.cost
+        usage(session.messages)
         session.on_context_usage = None
+        session.on_usage = None
         session.on_context_window = None
         await renderer.finish()

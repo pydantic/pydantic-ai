@@ -40,9 +40,10 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartDeltaEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryInfo,
     SpeechPart,
     SpeechPartDelta,
+    SpeechTimestamp,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -188,7 +189,12 @@ async def test_tool_round_and_followup_turn(
     answer_part = answer.parts[0]
     assert isinstance(answer_part, SpeechPart)
     assert answer_part.speaker == 'assistant'
-    assert answer_part.transcript is not None and 'sunny' in answer_part.transcript.lower()
+    # The follow-up text went out while the answer was still playing, which cuts it off: ElevenLabs' correction says
+    # the user heard none of it, which history records after the fact, keeping what the agent said.
+    assert answer_part.transcript == snapshot('...')
+    assert answer_part.provider_details is not None
+    assert 'sunny' in answer_part.provider_details['original_transcript'].lower()
+    assert answer.state == 'interrupted'
     assert isinstance(answer_part.audio, BinaryContent)
     assert len(answer_part.audio.data) > 0
     # The conversation id from the handshake rides on the finalized response, so a consumer can
@@ -236,7 +242,11 @@ async def test_tool_sync_off_hands_an_undefined_tool_call_to_the_tool_manager(
     results = [event for event in events if isinstance(event, FunctionToolResultEvent)]
     assert len(results) >= 1
     for result in results:
-        assert isinstance(result.part, RetryPromptPart)
+        assert isinstance(result.part, ToolReturnPart)
+        assert (result.part.outcome, result.part.retry) == (
+            'retried',
+            RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
+        )
         assert 'Unknown tool name' in str(result.part.content) and 'get_weather' in str(result.part.content)
     # The tool manager's error text is what the agent received, as an ordinary result (the codec's
     # `ToolResult` carries no error flag).
@@ -253,7 +263,12 @@ async def test_tool_sync_off_hands_an_undefined_tool_call_to_the_tool_manager(
         if isinstance(part, ToolCallPart)
     ]
     assert [call.tool_name for call in calls] == ['get_weather'] * len(results)
-    retries = [part for message in messages for part in message.parts if isinstance(part, RetryPromptPart)]
+    retries = [
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+    ]
     assert len(retries) == len(results)
     final = messages[-1]
     assert isinstance(final, ModelResponse)
@@ -304,9 +319,74 @@ async def test_text_in_audio_out_turn(
     [part] = response.parts
     assert isinstance(part, SpeechPart)
     assert part.speaker == 'assistant'
-    assert part.transcript == snapshot('Hello there.')
+    assert part.transcript == snapshot('Hi there.')
     assert isinstance(part.audio, BinaryContent)
     assert len(part.audio.data) > 0
+
+
+async def test_speech_timestamps_time_each_word(
+    elevenlabs_agents_ws_cassette: tuple[ElevenLabsProvider, RealtimeCassette],
+) -> None:
+    """With `output_speech_timestamps`, the characters ElevenLabs times in each stretch of speech come as words.
+
+    Recorded fact: each stretch is timed from its own start, and the first ends mid-word (`wh`, of `while`), yet the
+    words match the transcript one for one, in order, each starting after the last ends.
+    """
+    provider, _ = elevenlabs_agents_ws_cassette
+    model = ElevenLabsAgentsRealtimeModel(TOOLLESS_AGENT_ID, provider=provider)
+    agent = Agent(instructions='Answer in two sentences.')
+    settings = ElevenLabsAgentsRealtimeModelSettings(output_speech_timestamps=True)
+
+    streamed: list[SpeechTimestamp] = []
+    async with agent.realtime(model, model_settings=settings).session() as session:
+        await session.send('Tell me a fun fact about otters.')
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
+                    streamed += event.delta.timestamps or ()
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    [part] = response.parts
+    assert isinstance(part, SpeechPart) and part.transcript is not None
+    assert part.timestamps == streamed
+    assert [timestamp.text for timestamp in streamed] == part.transcript.split()
+    assert all(
+        earlier.start_ms + earlier.duration_ms <= later.start_ms for earlier, later in zip(streamed, streamed[1:])
+    )
+    assert [(timestamp.text, timestamp.start_ms, timestamp.duration_ms) for timestamp in streamed] == snapshot(
+        [
+            ('Otters', 0, 313),
+            ('hold', 337, 162),
+            ('hands', 546, 220),
+            ('while', 789, 151),
+            ('they', 963, 105),
+            ('sleep', 1103, 255),
+            ('so', 1416, 93),
+            ('they', 1567, 104),
+            ("don't", 1718, 174),
+            ('float', 1915, 209),
+            ('away', 2147, 163),
+            ('from', 2345, 139),
+            ('each', 2519, 128),
+            ('other.', 2693, 232),
+            ('This', 3065, 221),
+            ('adorable', 3332, 430),
+            ('behavior', 3808, 488),
+            ('helps', 4377, 209),
+            ('them', 4621, 127),
+            ('stay', 4795, 174),
+            ('together', 5015, 314),
+            ('in', 5387, 58),
+            ('groups,', 5526, 430),
+            ('especially', 5991, 557),
+            ('in', 6583, 58),
+            ('strong', 6687, 267),
+            ('currents.', 7024, 557),
+        ]
+    )
 
 
 async def test_audio_in_server_vad_turn(
@@ -528,7 +608,8 @@ async def test_settings_overrides_reach_the_initiation_frame(
         for part in message.parts
         if isinstance(part, SpeechPart)
     ]
-    assert spoken == snapshot([('assistant', 'Welcome to the demo.'), ('assistant', 'Hello there.')])
+    # The text sent while the greeting played cut it off, as ElevenLabs' correction of it says.
+    assert spoken == snapshot([('assistant', 'Welcome to the demo...'), ('assistant', 'Hello there.')])
 
 
 def _weather_agent() -> Agent:

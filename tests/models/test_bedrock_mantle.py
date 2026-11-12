@@ -114,6 +114,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
                         cost=Decimal('0.00004257'),
                     ),
                     model_name='openai.gpt-5.6-luna',
+                    model_id='bedrock-mantle:openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
                     provider_name='bedrock-mantle',
                     provider_url='https://bedrock-mantle.us-east-1.api.aws/openai/v1/',
@@ -160,6 +161,7 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None, re
                         cost=Decimal('0.000045265'),
                     ),
                     model_name='openai.gpt-5.6-luna',
+                    model_id='bedrock-mantle:openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
                     provider_name='bedrock-mantle',
                     provider_url='https://bedrock-mantle.us-east-1.api.aws/openai/v1/',
@@ -215,6 +217,7 @@ Second tool result: `second result`\
                         cost=Decimal('0.000076285'),
                     ),
                     model_name='openai.gpt-5.6-luna',
+                    model_id='bedrock-mantle:openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
                     provider_name='bedrock-mantle',
                     provider_url='https://bedrock-mantle.us-east-1.api.aws/openai/v1/',
@@ -324,6 +327,24 @@ async def test_gpt_oss_responses(allow_model_requests: None) -> None:
     result = await Agent(model).run('Reply with exactly OSS.')
 
     assert result.output == 'OSS'
+
+
+async def test_gpt_oss_tool_output(allow_model_requests: None, request_capture: RequestCapture) -> None:
+    """Mantle's `/v1/responses` endpoint only accepts `tool_choice='auto'` for GPT-OSS, so the default `ToolOutput`
+    doesn't force the output tool there.
+    """
+
+    class City(BaseModel):
+        city: str
+        country: str
+
+    model = infer_model('bedrock-mantle:openai.gpt-oss-120b', lambda _: _provider(request_capture.client))
+    agent = Agent(model, output_type=City)
+
+    result = await agent.run('The Eiffel Tower is in which city and country?')
+
+    assert result.output == City(city='Paris', country='France')
+    assert [body['tool_choice'] for body in request_capture.bodies('/responses')] == snapshot(['auto'])
 
 
 async def test_safeguard_chat_routing(allow_model_requests: None) -> None:

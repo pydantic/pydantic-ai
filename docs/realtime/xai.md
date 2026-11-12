@@ -57,13 +57,22 @@ back but still responds when the user stops speaking, so use `turn_detection=Fal
 [push-to-talk](turns.md#push-to-talk) instead.
 
 xAI accepts the shared `max_tokens` and `parallel_tool_calls` settings but ignores them: replies
-aren't capped, and the model can still call several tools at once.
+aren't capped, and the model can still call several tools at once, so `parallel_tool_calls=False` warns
+with an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning].
 
 [Input transcription](audio.md#input-transcription) defaults to `'auto'`. Unlike the incremental
 deltas described in [live captions](audio.md#live-captions), xAI sends cumulative transcript
 snapshots that can revise earlier words, so caption UIs should render the full
 [`TranscriptUpdate.transcript`][pydantic_ai.realtime.TranscriptUpdate.transcript] rather than
 append deltas.
+
+### Speech timestamps
+
+With [`output_speech_timestamps=True`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps]
+(see [Speech timestamps](audio.md#speech-timestamps)), Grok Voice's speech is timed per `'segment'`: each
+piece of transcript xAI streams, a few words to a sentence, with where it starts in the part's audio. A
+segment lasts until the next one starts, or the audio ends, so it's reported once that's known, a moment
+after its own text. The segments' texts together make up the part's transcript.
 
 ### Reasoning
 
@@ -84,6 +93,7 @@ Other Grok Voice models ignore the setting.
 | Input transcription | Full feature support | [Dedicated provider path](audio.md#input-transcription); `'auto'` by default |
 | Native tools | Unsupported | xAI offers web search, X search, file search, and MCP tools, which Pydantic AI does not expose yet; configure [local fallbacks](tools.md#native-tools) for web capabilities |
 | Async tool calls | Full feature support | Grok Voice keeps talking, and answers the user, while a [tool runs](tools.md#concurrent-tool-execution) |
+| Speech timestamps | Limited parameter support | Per [segment](#speech-timestamps), not per word |
 | Usage | Full feature support | Audio-token buckets and `billable_audio_seconds` in `RunUsage.details` |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration) into a new conversation; in-flight media is lost |
 
@@ -112,8 +122,19 @@ Without one, or once the policy's reconnects are used up, the session raises a
 - xAI documents `conversation.item.truncate` and confirms it with `conversation.item.truncated`,
   but in our testing it only takes effect once the response has ended, and not reliably even then.
   Sent just before the cancel, as barge-in needs, it changes nothing, so the profile reports
-  `supports_output_truncation=False`. `interrupt(played_bytes=...)` still discards the unheard audio
-  and cancels the response, while a plain `interrupt()` only cancels. Either way xAI keeps everything
-  generated up to the cancel, which can be more than the user heard.
+  `supports_output_truncation=False`. `interrupt(played_bytes=...)` (and `handle_barge_in=True`) still
+  discards the unheard audio, cancels the response, and records the reply in history as interrupted
+  with `interrupted_at_ms` where playback stopped, as on OpenAI, including a reply that had finished
+  generating before the user spoke over it. A plain `interrupt()` only cancels. Either way xAI keeps
+  everything generated up to the cancel, which can be more than the user heard, so the model may take
+  the whole reply as heard.
+- With turn detection on, xAI commits a spoken turn a few hundred milliseconds after it hears the user
+  stop, and starts its reply in between. If the user carries on before the commit, xAI continues the same
+  turn and drops that reply without ending it. So
+  [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] and
+  [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] can come more than once
+  per turn. The session ends the dropped reply as cancelled, as it would a reply the user
+  [barged in on](turns.md#barge-in) before it spoke: history records it as an empty, interrupted
+  [`ModelResponse`][pydantic_ai.messages.ModelResponse], followed by the reply to the whole turn.
 - The protocol resembles OpenAI Realtime, but feature support comes from the xAI model profile;
   avoid assuming every OpenAI behavior is available.

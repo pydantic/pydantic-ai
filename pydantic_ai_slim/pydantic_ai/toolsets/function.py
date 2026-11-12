@@ -8,11 +8,17 @@ import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
 from .. import _utils
-from .._instructions import AgentInstructions, normalize_instructions
+from .._instructions import (
+    AgentInstructions,
+    InstructionFunc,
+    SourcedInstruction,
+    normalize_instructions,
+    resolve_instruction_function,
+    validate_instruction_name,
+)
 from .._run_context import AgentDepsT, RunContext
-from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
-from ..messages import InstructionPart, ToolKind, ToolKindLike, ToolPartKind
+from ..messages import InstructionChangePolicy, InstructionPart, ToolKind, ToolKindLike, ToolPartKind
 from ..tools import (
     ArgsValidatorFunc,
     DocstringFormat,
@@ -21,7 +27,6 @@ from ..tools import (
     KindContentT,
     KindedToolDecorator,
     KindedToolPlainDecorator,
-    SystemPromptFunc,
     Tool,
     ToolDefinition,
     ToolFuncContext,
@@ -109,7 +114,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, unless overridden when adding a tool.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances, unless overridden when adding a function.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
                 Applies to all tools, unless overridden when adding a tool, which will be merged with the toolset's metadata.
             defer_loading: Whether to hide tools from the model until they're revealed by tool search,
@@ -144,10 +149,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         # A part is kept whole rather than reduced to its text, because it carries the author's
         # declared `name` and its `dynamic` flag -- the flag that decides whether the part falls inside
         # the cacheable prefix, so toolset collection preserves the part rather than reducing it to text.
-        self._instructions: list[str | InstructionPart | SystemPromptRunner[AgentDepsT]] = [
+        self._instructions: list[str | InstructionPart | SourcedInstruction[AgentDepsT]] = [
             instruction
             if isinstance(instruction, (str, InstructionPart))
-            else SystemPromptRunner[AgentDepsT](instruction)
+            else SourcedInstruction(instruction, dynamic=True)
             for instruction in normalize_instructions(instructions)
         ]
 
@@ -512,11 +517,55 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         return tool_decorator if func is None else tool_decorator(func)
 
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], str | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | None]]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], str | None], /) -> Callable[[], str | None]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], Awaitable[str | None]], /) -> Callable[[], Awaitable[str | None]]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], str | InstructionPart | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | InstructionPart | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], str | InstructionPart | None], /
+    ) -> Callable[[], str | InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], Awaitable[str | InstructionPart | None]], /
+    ) -> Callable[[], Awaitable[str | InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, /, *, name: str | None = None, on_change: InstructionChangePolicy = 'rewrite'
+    ) -> Callable[[InstructionFunc[AgentDepsT]], InstructionFunc[AgentDepsT]]: ...
+
     def instructions(
         self,
-        func: SystemPromptFunc[AgentDepsT],
+        func: InstructionFunc[AgentDepsT] | None = None,
         /,
-    ) -> SystemPromptFunc[AgentDepsT]:
+        *,
+        name: str | None = None,
+        on_change: InstructionChangePolicy = 'rewrite',
+    ) -> Callable[[InstructionFunc[AgentDepsT]], InstructionFunc[AgentDepsT]] | InstructionFunc[AgentDepsT]:
         """Decorator to register an instructions function for this toolset.
 
         The function can be sync or async, and can optionally take a
@@ -539,9 +588,28 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         Args:
             func: The instructions function to register.
+            name: An optional name for the instruction part this function produces, keyed as
+                `'toolset:<toolset id>:<name>'` on
+                [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an application can
+                address this part specifically, where the toolset's own key addresses everything it
+                contributes. Requires the toolset to have an
+                [`id`][pydantic_ai.toolsets.AbstractToolset.id] — without one there is no source key to
+                qualify the name against, so the part stays unaddressable. See
+                [instruction parts](../agent.md#instruction-parts).
+            on_change: Whether to rewrite the instruction prefix (the default) or append full
+                replacements when this block changes. Appending requires an addressable instruction
+                identity; otherwise it warns and rewrites. The function still runs on every request.
+                Use `'append'` for instructions that change mid-conversation, to keep the cached
+                prefix; see [appending instruction changes](../agent.md#appending-instruction-changes).
         """
-        self._instructions.append(SystemPromptRunner(func))
-        return func
+        if name is not None:
+            validate_instruction_name(name)
+
+        def decorator(func_: InstructionFunc[AgentDepsT]) -> InstructionFunc[AgentDepsT]:
+            self._instructions.append(SourcedInstruction(func_, name=name, dynamic=True, on_change=on_change))
+            return func_
+
+        return decorator if func is None else decorator(func)
 
     def add_function(
         self,
@@ -655,10 +723,15 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             include_return_schema=include_return_schema,
         )
         self.add_tool(tool)
+        # `add_tool` applies the toolset's `requires_approval=True`; an explicit `False` passed here overrides it.
+        tool.requires_approval = requires_approval
         return tool
 
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
+
+        The toolset's `requires_approval=True` and `metadata` apply to the tool, and so does its `max_retries`
+        when the tool sets none.
 
         Args:
             tool: The tool to add.
@@ -667,6 +740,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
         if tool.max_retries is None and self.max_retries is not None:
             tool.max_retries = self.max_retries
+        if self.requires_approval:
+            tool.requires_approval = True
         if self.metadata is not None:
             tool.metadata = self.metadata | (tool.metadata or {})
         self.tools[tool.name] = tool
@@ -685,9 +760,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 if instruction.strip():
                     parts.append(InstructionPart(content=instruction, dynamic=False))
             else:
-                result = await instruction.run(ctx)
-                if result and result.strip():
-                    parts.append(InstructionPart(content=result, dynamic=True))
+                assert not isinstance(instruction.instruction, (str, InstructionPart))
+                if (part := await resolve_instruction_function(instruction, instruction.instruction, ctx)) is not None:
+                    # Keyed beneath this toolset when collected, like any part it returns.
+                    parts.append(part)
         return parts or None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -711,6 +787,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 retry=ctx.retries.get(exposed, 0),
                 max_retries=max_retries,
                 _tool_name_path=(),
+                # A listing nested in a tool call must not inherit that call's tool manager name.
+                _dispatched_tool_name=None,
             )
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:

@@ -3,7 +3,7 @@
 import inspect
 import io
 import threading
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
 
 import anyio
@@ -18,6 +18,15 @@ from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import (
+    LoadCapabilityReturnPart,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
@@ -137,7 +146,7 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 def keyed(name: str) -> LogfireMCP[None]:
-    return LogfireMCP[None](auth=SavedKey(name=name, setup=SETUP), read_only=True)
+    return LogfireMCP[None](defer_loading=True, auth=SavedKey(name=name, setup=SETUP), read_only=True)
 
 
 def test_declared_disabled_with_no_settings() -> None:
@@ -180,7 +189,11 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
     assert b'typed-secret' not in shell.path.read_bytes()
     capability = shell.capability()
     assert capability == LogfireMCP[None](
-        auth=SavedKey(name='LOGFIRE_API_KEY', setup=SETUP), url=SELF_HOSTED, read_only=False, include_instructions=False
+        defer_loading=True,
+        auth=SavedKey(name='LOGFIRE_API_KEY', setup=SETUP),
+        url=SELF_HOSTED,
+        read_only=False,
+        include_instructions=False,
     )
     # Observability setup starts from the same Logfire.
     assert remembered() == Destination(base_url='https://logfire.example.com')
@@ -215,7 +228,7 @@ async def test_resetting_the_key_clears_the_choice(tmp_path: Path, monkeypatch: 
     script(monkeypatch, lists=[menu.reset_marker(None, MenuItem('API key', value='key'))])
     assert await shell.loader.configure('logfire_mcp') == 'Reset API key.'
     assert shell.saved().get('key') is None
-    assert shell.capability() == LogfireMCP[None](read_only=True)
+    assert shell.capability() == LogfireMCP[None](defer_loading=True, read_only=True)
 
 
 async def test_a_new_key_is_typed_masked_when_no_keys_are_saved(tmp_path: Path) -> None:
@@ -325,7 +338,7 @@ async def test_environment_key_wins_over_the_conventional_saved_key(
     api_keys.save_key(name='LOGFIRE_API_KEY', value='saved')
     shell = Shell(tmp_path)
     await shell.loader.enable('logfire_mcp')
-    assert shell.capability() == LogfireMCP[None](read_only=True)
+    assert shell.capability() == LogfireMCP[None](defer_loading=True, read_only=True)
 
 
 async def test_conventional_saved_key_beats_browser_sign_in_and_resolves_each_run(
@@ -362,6 +375,29 @@ def stub_connections(monkeypatch: pytest.MonkeyPatch) -> list[str | None]:
     return connected
 
 
+def load_then_query(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Load `logfire-mcp`, whose tools stay hidden until then, query with it, and answer with the rows."""
+    names = {tool.name for tool in info.function_tools}
+    returns = [part for part in messages[-1].parts if isinstance(part, ToolReturnPart)]
+    if not returns:
+        assert 'logfire_query_run' not in names
+        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'logfire-mcp'})])
+    if returns[0].tool_name == 'load_capability':
+        assert 'logfire_query_run' in names
+        return ModelResponse(parts=[ToolCallPart('logfire_query_run', {'query': 'select 1'})])
+    return ModelResponse(parts=[TextPart(str(returns[0].content))])
+
+
+async def stream_load_then_query(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    """`load_then_query`, streamed as a session requests it."""
+    [part] = load_then_query(messages, info).parts
+    if isinstance(part, ToolCallPart):
+        yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+    else:
+        assert isinstance(part, TextPart)
+        yield part.content
+
+
 async def test_a_chosen_saved_key_gives_an_agent_run_the_logfire_tools(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -369,8 +405,8 @@ async def test_a_chosen_saved_key_gives_an_agent_run_the_logfire_tools(
     api_keys.save_key(name='SHARED', value='shared-secret')
     shell = Shell(tmp_path, {'key': {'name': 'SHARED'}, 'read_only': False})
     await shell.loader.enable('logfire_mcp')
-    agent = Agent(TestModel(), deps_type=type(None), capabilities=shell.loader.capabilities())
-    assert (await agent.run('Query Logfire.')).output == '{"logfire_query_run":"rows"}'
+    agent = Agent(FunctionModel(load_then_query), deps_type=type(None), capabilities=shell.loader.capabilities())
+    assert (await agent.run('Query Logfire.')).output == 'rows'
     assert connected == ['shared-secret']
     api_keys.delete_key(name='SHARED')
     with pytest.raises(UserError, match=r'Saved API key SHARED is missing\. Run /plugins configure logfire_mcp'):
@@ -384,8 +420,8 @@ async def test_an_environment_key_gives_an_agent_run_the_logfire_tools(
     monkeypatch.setenv('LOGFIRE_API_KEY', 'env-key')
     shell = Shell(tmp_path, {'read_only': False})
     await shell.loader.enable('logfire_mcp')
-    agent = Agent(TestModel(), deps_type=type(None), capabilities=shell.loader.capabilities())
-    assert (await agent.run('Query Logfire.')).output == '{"logfire_query_run":"rows"}'
+    agent = Agent(FunctionModel(load_then_query), deps_type=type(None), capabilities=shell.loader.capabilities())
+    assert (await agent.run('Query Logfire.')).output == 'rows'
     # `None` lets `LogfireMCP` read the environment itself.
     assert connected == [None]
 
@@ -402,13 +438,18 @@ async def test_a_session_with_logfire_and_skills_reads_the_skills_from_the_launc
     (skill / 'SKILL.md').write_text('---\ndescription: Review the change.\n---\n\nReview it.\n', encoding='utf-8')
     shell = Shell(tmp_path, {'read_only': False})
     await shell.loader.enable('logfire_mcp')
-    model = TestModel(call_tools=['logfire_query_run'])
+    model = FunctionModel(stream_function=stream_load_then_query)
     plugins = [Coder[None](repo_context=False, sub_agents=False), Skills[None]('.agents/skills')]
     session = Session(Agent(model, deps_type=type(None)), deps=None, plugins=[*plugins, *shell.loader.capabilities()])
     result = await session.prompt('Query Logfire.')
-    assert result.output == '{"logfire_query_run":"rows"}'
-    assert model.last_model_request_parameters is not None
-    assert 'load_capability' in [tool.name for tool in model.last_model_request_parameters.function_tools]
+    assert result.output == 'rows'
+    loads = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, LoadCapabilityReturnPart)
+    ]
+    assert len(loads) == 1
 
 
 async def test_browser_sign_in_is_the_default_and_runs_get_no_tools_until_signed_in(
@@ -643,6 +684,11 @@ async def test_the_settings_menu_reads_keys_and_sign_in_off_the_event_loop(
     assert threading.get_ident() not in threads
 
 
+def test_regions_serve_the_harness_mcp_urls() -> None:
+    """`logfire_destination` spells the regions out so startup does not import the MCP client; they must not drift."""
+    assert [region.mcp_url for region in REGIONS.values()] == [LOGFIRE_US_MCP_URL, LOGFIRE_EU_MCP_URL]
+
+
 async def test_a_new_setup_starts_from_the_logfire_last_set_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Pick the region once: observability setup, or this menu, remembers it for the other."""
     remember(REGIONS['Logfire EU'])
@@ -769,7 +815,7 @@ async def test_another_remembered_logfire_is_only_offered_never_connected_to_una
     _, [reopened] = await shell.act('url', [Back()])
     assert reopened.current == 'Logfire EU'
     assert shell.capability() == LogfireMCP[None](
-        auth=SavedKey(name='LOGFIRE_API_KEY', setup=SETUP), url=LOGFIRE_EU_MCP_URL, read_only=True
+        defer_loading=True, auth=SavedKey(name='LOGFIRE_API_KEY', setup=SETUP), url=LOGFIRE_EU_MCP_URL, read_only=True
     )
 
 

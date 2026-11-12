@@ -12,7 +12,9 @@ its codec events in the [`RealtimeFrame`][pydantic_ai.realtime.lifecycle.Realtim
   between;
 - [`ResponseStarted.answers`][pydantic_ai.realtime.lifecycle.ResponseStarted.answers] names the inputs whose
   reply the response is, which is what [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply]
-  waits for;
+  waits for, and [`AnswersRevised`][pydantic_ai.realtime.lifecycle.AnswersRevised] corrects them as the connection
+  learns better: `claimed` while the response is under way, `released` until its reply (tool rounds included) is
+  over;
 - a spoken user turn starts with [`UserTurnStarted`][pydantic_ai.realtime.lifecycle.UserTurnStarted], joins the
   conversation with [`UserTurnEnded`][pydantic_ai.realtime.lifecycle.UserTurnEnded], and gets no more audio or
   transcript after [`UserTurnClosed`][pydantic_ai.realtime.lifecycle.UserTurnClosed] (which drops one that hadn't
@@ -21,7 +23,11 @@ its codec events in the [`RealtimeFrame`][pydantic_ai.realtime.lifecycle.Realtim
   conversation, so history can follow the provider's order;
 - [`InputLost`][pydantic_ai.realtime.lifecycle.InputLost] and
   [`ResponseRequestRefused`][pydantic_ai.realtime.lifecycle.ResponseRequestRefused] settle the inputs no
-  response will ever answer.
+  response will ever answer, and [`ToolCallsAbandoned`][pydantic_ai.realtime.lifecycle.ToolCallsAbandoned] the
+  tool calls whose results none will;
+- [`OutputItemDetails`][pydantic_ai.realtime.lifecycle.OutputItemDetails] keeps what the provider says about an
+  output item on the part it makes, and [`OutputItemCut`][pydantic_ai.realtime.lifecycle.OutputItemCut] records
+  that the listener heard only part of it, even after its response ended.
 
 An input is identified by its position among every [`send()`][pydantic_ai.realtime.codec.RealtimeConnection.send]
 call made on the connection, counting from `0`, as
@@ -38,10 +44,12 @@ from __future__ import annotations as _annotations
 from ._inferred_lifecycle import InferredLifecycle
 from ._lifecycle import (
     AnswersBasis,
+    AnswersRevised,
     InputAdded,
     InputId,
     InputLost,
     LifecycleEvent,
+    OutputItemCut,
     OutputItemDetails,
     RealtimeFrame,
     ResponseEnded,
@@ -49,6 +57,7 @@ from ._lifecycle import (
     ResponseStarted,
     ResponseStatus,
     StaleEvent,
+    ToolCallsAbandoned,
     UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
@@ -56,11 +65,13 @@ from ._lifecycle import (
 
 __all__ = (
     'AnswersBasis',
+    'AnswersRevised',
     'InferredLifecycle',
     'InputAdded',
     'InputId',
     'InputLost',
     'LifecycleEvent',
+    'OutputItemCut',
     'OutputItemDetails',
     'RealtimeFrame',
     'ResponseEnded',
@@ -68,6 +79,7 @@ __all__ = (
     'ResponseStarted',
     'ResponseStatus',
     'StaleEvent',
+    'ToolCallsAbandoned',
     'UserTurnClosed',
     'UserTurnEnded',
     'UserTurnStarted',

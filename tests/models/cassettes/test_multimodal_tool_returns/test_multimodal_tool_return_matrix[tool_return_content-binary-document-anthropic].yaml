@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "371"
+      - "372"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -27,7 +27,7 @@ interactions:
               Use the get_file tool now to retrieve a document file, then describe what you
               received.
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -49,10 +49,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=99
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-80a326d597ed9f0c1f83e683f80a14a7-6643d85647045c3c-01
+      - 00-634ddc107c35f08904c632ec5c8532d7-d17ec409ba28a7d2-01
       transfer-encoding:
       - chunked
       vary:
@@ -61,39 +63,27 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3i1eZi1guKh7DSTV1v","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":558,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}         }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPHGKnK7B3phx52e5dP3","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01QqtaWkQyZSXjBzgnoVi6ot","name":"get_file","input":{},"caller":{"type":"direct"}}       }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll retrieve the document file for you"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}     }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0      }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01JD3A7mvrqPPMiHJ5twUyiB","name":"get_file","input":{},"caller":{"type":"direct"}}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}        }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1     }
+        data: {"type":"content_block_stop","index":0           }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":558,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":46}     }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":26,"output_tokens_details":{"thinking_tokens":0}}       }
 
         event: message_stop
-        data: {"type":"message_stop"    }
+        data: {"type":"message_stop"            }
 
-  recorded_at: 2026-09-29T16:29:21.627845+00:00
+  recorded_at: 2026-10-25T16:36:14.964607+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -101,11 +91,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "18499"
+      - "18434"
       content-type:
       - application/json
       host:
@@ -113,7 +103,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -123,15 +113,13 @@ interactions:
             type: text
         - role: assistant
           content:
-          - text: I'll retrieve the document file for you.
-            type: text
-          - id: toolu_01JD3A7mvrqPPMiHJ5twUyiB
+          - id: toolu_01QqtaWkQyZSXjBzgnoVi6ot
             type: tool_use
             name: get_file
             input: {}
         - role: user
           content:
-          - tool_use_id: toolu_01JD3A7mvrqPPMiHJ5twUyiB
+          - tool_use_id: toolu_01QqtaWkQyZSXjBzgnoVi6ot
             type: tool_result
             content:
             - text: File attached
@@ -143,7 +131,7 @@ interactions:
               media_type: application/pdf
               type: base64
             type: document
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -165,10 +153,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=115
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-875141e5ec0e218c1e22a968488be231-ec83be8945b0f963-01
+      - 00-ef35fac84bdeae86d02f702186296601-d7629274b7c9ab0d-01
       transfer-encoding:
       - chunked
       vary:
@@ -177,159 +167,105 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3i7BBpFHRCUW4KT1v2","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2222,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}            }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPHGP6VfRhBzG9gkn7o4","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2010,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":112,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}      }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I successfully"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" retrieved a"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" `"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" document file."}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"get_file` tool returned"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Here"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a PDF document"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s what I received:\n\n**"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". It's a single"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Document Type"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" page"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":** PDF"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", and the"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" file"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" only th"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ("}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ing on it is a"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"application/pdf)\n\n**Content"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" bold heading near"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":** The"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the top left"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" document is"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" that reads **\"Dumm"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a simple"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"y PDF file\"**."}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" The rest of the page is bl"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" minim"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ank. It"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"alist PDF containing"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" has no other text"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" only"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", images, t"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" one"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ables, or formatting."}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" page with the title \"Dummy PDF"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nIt"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" file\" displayed"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" looks like a placeholder"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" at"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" PDF,"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the top in"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a bold, large"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" kind used"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" font. The rest"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of the page"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" test file"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" appears"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" uploads or document"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to be blank"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" hand"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"/"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"empty white"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" space.\n\n**Summary"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":** This"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" appears to be a test"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" or"}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" placeholder"}    }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" PDF"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" document"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with minimal"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" content -"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" just a"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" heading"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and no"}              }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" additional"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" text,"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" images"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", or other"}           }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" elements."}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ling."}   }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0  }
+        data: {"type":"content_block_stop","index":0               }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2222,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":111}           }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2010,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":112,"output_tokens_details":{"thinking_tokens":0}}         }
 
         event: message_stop
-        data: {"type":"message_stop"   }
+        data: {"type":"message_stop"              }
 
-  recorded_at: 2026-09-29T16:29:25.380517+00:00
+  recorded_at: 2026-10-25T16:36:17.099765+00:00

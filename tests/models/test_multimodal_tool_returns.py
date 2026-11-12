@@ -9,6 +9,8 @@ product of test dimensions:
 
 The SUPPORT_MATRIX determines expected behavior for each (provider, file_type) pair:
 'in_tool_result', 'as_user_content', or an ExpectError with error type and match pattern.
+A file returned directly that the model's profile says it can't read is sent as a note instead; see
+NOTED_IN_TOOL_RESULTS.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    TextPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -42,6 +45,8 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 from tests.cassette_utils import CassetteContext
 
@@ -192,6 +197,32 @@ SUPPORT_MATRIX: dict[tuple[ProviderName, FileType], Expectation | ExpectError] =
     ),
 }
 
+NOTED_IN_TOOL_RESULTS: frozenset[tuple[ProviderName, FileType]] = frozenset(
+    {
+        ('anthropic', 'audio'),
+        ('anthropic', 'video'),
+        ('bedrock_nova', 'audio'),
+        ('bedrock_claude', 'audio'),
+        ('bedrock_claude', 'video'),
+        ('openai_chat', 'audio'),
+        ('openai_chat', 'video'),
+        ('openai_responses', 'audio'),
+        ('openai_responses', 'video'),
+        ('xai', 'audio'),
+        ('xai', 'video'),
+        ('groq', 'document'),
+        ('groq', 'audio'),
+        ('groq', 'video'),
+        ('mistral', 'audio'),
+        ('mistral', 'video'),
+    }
+)
+"""Pairs whose file, returned directly by a tool, is replaced by a note: the model's profile says it can't read it.
+
+The SUPPORT_MATRIX error still applies to the same file sent through `ToolReturn.content`, which goes on
+the user channel as the developer wrote it, and to an `UploadedFile`, which only its provider can read.
+"""
+
 # Overrides for specific (provider, file_type, content_source, return_style) combos where
 # the behavior differs from the general SUPPORT_MATRIX entry. Keys use None to match all
 # values of that dimension.
@@ -217,8 +248,9 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     ),
     # Claude on Bedrock doesn't support s3Uri for images
     ('bedrock_claude', 'image', 'uploaded_file', None): ExpectError(ModelHTTPError, r"doesn't support the s3Uri field"),
-    # Claude on Bedrock doesn't support s3Uri for documents in user content (tool_return_content fallback)
-    ('bedrock_claude', 'document', 'uploaded_file', 'tool_return_content'): ExpectError(
+    # Claude on Bedrock doesn't support s3Uri for documents, in tool results or in user content (tool_return_content
+    # fallback). Converse accepted them in tool results until at least March 2026.
+    ('bedrock_claude', 'document', 'uploaded_file', None): ExpectError(
         ModelHTTPError, r'document\.source\.type: Field required'
     ),
     # Nova doesn't support documents/videos with S3 sources inside tool results
@@ -228,6 +260,12 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     ('bedrock_nova', 'video', 'uploaded_file', 'direct'): ExpectError(ModelHTTPError, r'extraneous key \[toolResult\]'),
 }
 
+
+NOTE_ENDINGS: dict[FileType, str] = {
+    'document': 'documents.',
+    'audio': 'audio files.',
+    'video': 'video.',
+}
 
 _OverrideKey = tuple[ProviderName, FileType, ContentSource | None, ReturnStyle | None]
 
@@ -252,7 +290,7 @@ def get_error_info(
 
 
 MODEL_CONFIGS: dict[ProviderName, tuple[str, Any]] = {
-    'anthropic': ('claude-sonnet-4-5', anthropic_available),
+    'anthropic': ('claude-sonnet-5-5', anthropic_available),
     'bedrock_nova': ('us.amazon.nova-2-lite-v1:0', bedrock_available),
     'bedrock_claude': ('us.anthropic.claude-sonnet-4-5-20250929-v1:0', bedrock_available),
     'google_2_5': ('gemini-2.5-flash', google_available),
@@ -299,6 +337,28 @@ def create_model(
         assert_never(provider)
 
 
+class AnswerOnceToolReturned(WrapperModel):
+    """Sends requests as usual until one carries a tool result, then answers that one itself.
+
+    Lets a test assert what would have gone out after a tool ran without recording a model's reply to it.
+    """
+
+    def __init__(self, wrapped: Model):
+        super().__init__(wrapped)
+        self.follow_up: list[ModelMessage] | None = None
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        if any(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            self.follow_up = messages
+            return ModelResponse(parts=[TextPart('Received it.')])
+        return await super().request(messages, model_settings, model_request_parameters)
+
+
 def is_provider_available(provider: ProviderName) -> bool:
     _, available = MODEL_CONFIGS[provider]
     return bool(available() if callable(available) else available)
@@ -327,8 +387,8 @@ PROVIDER_TO_UPLOADED_FILE_NAME: dict[ProviderName, UploadedFileProviderName] = {
 UPLOADED_FILE_IDS: dict[tuple[UploadedFileProviderName, FileType], str] = {
     ('openai', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
     ('openai', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
-    ('anthropic', 'image'): 'file_011Ccn6h7bTbXrEWQKoQZqF9',
-    ('anthropic', 'document'): 'file_011Ccn6h59825RrtpAAPmrBv',
+    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
+    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
     ('xai', 'image'): 'file_20ac2a79-38a3-40ae-83d0-0a604d8fd316',
     ('xai', 'document'): 'file_dafc7e7e-f3ea-42d2-bb50-83f735a0bd9d',
     ('google-gla', 'image'): 'https://generativelanguage.googleapis.com/v1beta/files/3qswqtk02p7x',
@@ -393,8 +453,8 @@ XAI_CASSETTE_PATTERNS: dict[tuple[FileType, ContentSource], str | tuple[str, ...
 }
 
 UPLOADED_FILE_CASSETTE_PATTERNS: dict[tuple[ProviderName, FileType], str | tuple[str, ...]] = {
-    ('anthropic', 'image'): 'file_011Ccn6h7bTbXrEWQKoQZqF9',
-    ('anthropic', 'document'): 'file_011Ccn6h59825RrtpAAPmrBv',
+    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
+    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
     ('bedrock_nova', 'image'): 's3://pydantic-ai-test-files/test-files/kiwi.jpg',
     ('bedrock_nova', 'document'): 's3://pydantic-ai-test-files/test-files/dummy.pdf',
     ('bedrock_nova', 'video'): 's3://pydantic-ai-test-files/test-files/small_video.mp4',
@@ -603,6 +663,15 @@ async def test_multimodal_tool_return_matrix(
 
     error_info = get_error_info(provider, file_type, content_source, return_style)
     model = create_model(provider, api_keys, bedrock_provider, xai_provider, vertex_provider)
+    noted = (
+        return_style == 'direct'
+        and content_source != 'uploaded_file'
+        and (provider, file_type) in NOTED_IN_TOOL_RESULTS
+    )
+    if noted:
+        # The model's reply to the note is not recorded: what this pins is that the file is replaced
+        # by a note in the request instead of failing the run, which `follow_up` shows.
+        model = AnswerOnceToolReturned(model)
     if content_source == 'uploaded_file':
         assert uf_provider is not None and file_id is not None
         content: Any = UploadedFile(
@@ -626,7 +695,15 @@ async def test_multimodal_tool_return_matrix(
 
     prompt = f'Use the get_file tool now to retrieve a {file_type} file, then describe what you received.'
 
-    if error_info:
+    if isinstance(model, AnswerOnceToolReturned):
+        result = await agent.run(prompt, usage_limits=UsageLimits(output_tokens_limit=100000))
+        assert model.follow_up is not None
+        [sent] = iter_message_parts(model.follow_up, ModelRequest, ToolReturnPart)
+        assert isinstance(sent.content, str)
+        assert sent.content.endswith('was not sent: this model cannot read ' + NOTE_ENDINGS[file_type])
+        # The history keeps the file, for a model that can read it.
+        assert_file_in_tool_return(result.all_messages(), file_type)
+    elif error_info:
         with pytest.raises(error_info.error_type, match=error_info.match):
             await agent.run(prompt, usage_limits=UsageLimits(output_tokens_limit=100000))
     else:
@@ -793,7 +870,7 @@ async def test_text_plain_document_anthropic(
     if not anthropic_available():
         pytest.skip('anthropic dependencies not installed')
 
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     text_content = assets_path.joinpath('dummy.txt').read_bytes()
     document = BinaryContent(data=text_content, media_type='text/plain')
 
@@ -847,7 +924,7 @@ async def test_non_pdf_document_url_mistral() -> None:
             AssistantMessage(content=[TextChunk(text='OK')]),
             UserMessage(
                 content=[
-                    TextChunk(text='<tool_result tool_name="get_file" tool_call_id="call1" file_id="fb8964">'),
+                    TextChunk(text='<pyai:tool_result tool_name="get_file" tool_call_id="call1" file_id="fb8964">'),
                     TextChunk(
                         text="""\
 -----BEGIN FILE id="fb8964" type="text/plain"-----
@@ -855,7 +932,7 @@ Dummy TXT file
 -----END FILE id="fb8964"-----\
 """
                     ),
-                    TextChunk(text='</tool_result>'),
+                    TextChunk(text='</pyai:tool_result>'),
                 ]
             ),
         ]
@@ -1135,17 +1212,17 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                     'role': 'user',
                     'content': [
                         {
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
                             'type': 'text',
                         },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
-                        {'text': '</tool_result>', 'type': 'text'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
                         {
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
                             'type': 'text',
                         },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
-                        {'text': '</tool_result>', 'type': 'text'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
                     ],
                 },
             ]
@@ -1172,17 +1249,17 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                     'role': 'user',
                     'content': [
                         {
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
                             'type': 'text',
                         },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
-                        {'text': '</tool_result>', 'type': 'text'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
                         {
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
                             'type': 'text',
                         },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
-                        {'text': '</tool_result>', 'type': 'text'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
                     ],
                 },
             ]
@@ -1221,17 +1298,17 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                 {
                     'content': [
                         {
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
                             'type': 'text',
                         },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
-                        {'text': '</tool_result>', 'type': 'text'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
                         {
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
                             'type': 'text',
                         },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
-                        {'text': '</tool_result>', 'type': 'text'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
                     ],
                     'role': 'user',
                 },
@@ -1250,12 +1327,12 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                     'role': 'assistant',
                     'tool_calls': [
                         {
-                            'function': {'name': 'get_photo', 'parameters': None, 'description': None},
+                            'function': {'arguments': '{}', 'name': 'get_photo', 'description': None},
                             'id': 'photo1',
                             'type': 'function',
                         },
                         {
-                            'function': {'name': 'get_photo', 'parameters': None, 'description': None},
+                            'function': {'arguments': '{}', 'name': 'get_photo', 'description': None},
                             'id': 'photo2',
                             'type': 'function',
                         },
@@ -1269,17 +1346,17 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                         {
                             'type': 'text',
                             'image_url': None,
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
                         },
                         {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'text': None},
-                        {'type': 'text', 'image_url': None, 'text': '</tool_result>'},
+                        {'type': 'text', 'image_url': None, 'text': '</pyai:tool_result>'},
                         {
                             'type': 'text',
                             'image_url': None,
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
                         },
                         {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'text': None},
-                        {'type': 'text', 'image_url': None, 'text': '</tool_result>'},
+                        {'type': 'text', 'image_url': None, 'text': '</pyai:tool_result>'},
                     ],
                 },
             ]
@@ -1323,12 +1400,12 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                 },
                 {
                     'content': [
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">'},
+                        {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">'},
                         {'image_url': {'image_url': 'data:image/png;base64,cG5nLWJ5dGVz', 'detail': 'DETAIL_AUTO'}},
-                        {'text': '</tool_result>'},
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">'},
+                        {'text': '</pyai:tool_result>'},
+                        {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">'},
                         {'image_url': {'image_url': 'data:image/png;base64,cG5nLWJ5dGVz', 'detail': 'DETAIL_AUTO'}},
-                        {'text': '</tool_result>'},
+                        {'text': '</pyai:tool_result>'},
                     ],
                     'role': 'ROLE_USER',
                 },
@@ -1375,12 +1452,12 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                 {
                     'role': 'user',
                     'parts': [
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">'},
+                        {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">'},
                         {'inline_data': {'data': b'png-bytes', 'mime_type': 'image/png'}},
-                        {'text': '</tool_result>'},
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">'},
+                        {'text': '</pyai:tool_result>'},
+                        {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">'},
                         {'inline_data': {'data': b'png-bytes', 'mime_type': 'image/png'}},
-                        {'text': '</tool_result>'},
+                        {'text': '</pyai:tool_result>'},
                     ],
                 },
             ]
@@ -1487,9 +1564,11 @@ async def test_tool_media_is_framed_with_its_originating_call(case: ToolMediaWir
     # the property in a form it cannot rewrite.
     rendered = str(wire)
     for tool_call_id in ('photo1', 'photo2'):
-        open_tag = f'<tool_result tool_name="get_photo" tool_call_id="{tool_call_id}" file_id="{_PHOTO.identifier}">'
+        open_tag = (
+            f'<pyai:tool_result tool_name="get_photo" tool_call_id="{tool_call_id}" file_id="{_PHOTO.identifier}">'
+        )
         assert (open_tag in rendered) is case.framed
-    assert ('</tool_result>' in rendered) is case.framed
+    assert ('</pyai:tool_result>' in rendered) is case.framed
 
 
 @pytest.mark.skipif(not google_available(), reason='google not installed')
@@ -1540,9 +1619,9 @@ async def test_google_framed_media_precedes_tool_return_content() -> None:
             {
                 'role': 'user',
                 'parts': [
-                    {'text': '<tool_result tool_name="get_clip" tool_call_id="c1" file_id="clip">'},
+                    {'text': '<pyai:tool_result tool_name="get_clip" tool_call_id="c1" file_id="clip">'},
                     {'inline_data': {'data': b'aud', 'mime_type': 'audio/mpeg'}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                     {'text': 'and here is my note'},
                 ],
             },
@@ -1594,5 +1673,6 @@ async def test_tool_media_framing_reaches_the_provider(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert 'kiwi' in result.output.lower(), f'Model should identify kiwi fruit, got: {result.output}'
-    # Cassette bodies are JSON, so the framing's own quotes are backslash-escaped on the wire.
-    cassette_ctx.verify_contains(r'<tool_result tool_name=\"get_photo\" tool_call_id=\"', '</tool_result>')
+    # Cassette bodies are JSON, so the framing's own quotes are backslash-escaped on the wire. A frame carries no
+    # marker attribute, so the check starts at its first one.
+    cassette_ctx.verify_contains(r'tool_name=\"get_photo\" tool_call_id=\"', '</pyai:tool_result>')

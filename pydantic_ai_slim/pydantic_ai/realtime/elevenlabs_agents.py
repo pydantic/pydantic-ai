@@ -59,7 +59,6 @@ except ImportError as _import_error:  # pragma: no cover
 
 from .. import _utils
 from .._http import legacy_httpx
-from .._instrumentation import get_instructions
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
@@ -76,6 +75,7 @@ from ..messages import (
     PartStartEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
+    SpeechTimestamp,
     TextContent,
     UploadedFile,
     VideoUrl,
@@ -86,12 +86,33 @@ from ..profiles.elevenlabs import elevenlabs_agents_realtime_model_profile
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._elevenlabs_audio_tags import (
+    AudioTagStripper as _AudioTagStripper,
+    leading_audio_tag_length as _leading_audio_tag_length,
+    may_start_audio_tag as _may_start_audio_tag,
+    strip_audio_tags as _strip_audio_tags,
+)
 from ._inferred_lifecycle import InferredLifecycle
-from ._lifecycle import LifecycleEvent, RealtimeFrame, ResponseEnded, StaleEvent
-from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_tools
+from ._lifecycle import (
+    AnswersRevised,
+    InputId,
+    LifecycleEvent,
+    OutputItemCut,
+    RealtimeFrame,
+    ResponseEnded,
+    StaleEvent,
+)
+from ._utils import (
+    inject_trace_context,
+    reject_forced_tool_choice,
+    require_pcm_audio,
+    resolve_advertised_tools,
+    session_instructions,
+)
 from .codec import (
     AudioDelta,
     InputTranscript,
+    OutputSpeechTimestamps,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
@@ -147,6 +168,16 @@ _CONTEXT_USAGE_MISSING = (
     'in the ElevenLabs dashboard) for both.'
 )
 
+_REALTIME_MODE_MANAGED_OVERRIDES = {('agent', 'prompt', 'llm'), ('tts', 'model_id')}
+"""The overrides Pydantic AI sends whose settings ElevenLabs manages itself for an agent in Realtime voice mode.
+
+Verified live: the server accepts them, then answers with the agent's Realtime model and TTS model all the same."""
+
+_TEXT_ID_PREFIX = 'pydantic_ai_input_'
+"""What the `id` a text input goes out under starts with, ahead of the input's id."""
+_TEXT_ID = re.compile(rf'{_TEXT_ID_PREFIX}(\d+)')
+"""The `id` a text input went out under, naming the input; an echoed id that doesn't parse names none."""
+
 _MCP_APPROVAL_DENIED = (
     'The ElevenLabs agent asked to approve a call to one of its MCP server tools, which a Pydantic AI session cannot '
     'do, so the call was denied. Give the agent the tools through a Pydantic AI MCP toolset instead, or turn approval '
@@ -177,65 +208,96 @@ class _AudioTail:
     provider_details: dict[str, Any] | None = None
 
 
-_TAG_LETTER = r'[^\W\d_]'
-_AUDIO_TAG = re.compile(rf"\[({_TAG_LETTER}(?:{_TAG_LETTER}|[ '\u2019-]){{1,49}})\](?!\()")
-"""An expressive audio tag such as `[laughs]` or `[strong French accent]`: words in square brackets.
-
-Tags are lowercase by convention, so a bracketed phrase starting with a capital (`[Your Name]`) is kept, as are
-citations (`[1]`), checkboxes (`[x]`), and Markdown links (`[text](url)`).
-"""
-_AUDIO_TAG_START = re.compile(rf"\[(?:{_TAG_LETTER}(?:{_TAG_LETTER}|[ '\u2019-]){{0,49}}\]?)?")
-"""What the rest of an audio tag could still follow: an opening bracket, part of a tag, or a whole one (which a `(`
-could yet turn into a Markdown link)."""
-
-
-def _strip_audio_tags(text: str, *, started: bool = False) -> tuple[str, list[str]]:
-    """Remove the audio tags from `text`, returning what is left and the tags removed (without brackets).
-
-    A tag goes with the whitespace before it, or after it at the start of the text (unless the text continues
-    output that has already `started`), so `Hi [laughs] there` becomes `Hi there` and `[laughs] Hi` becomes `Hi`.
-    """
-    tags: list[str] = []
-    result = ''
-    position = 0
-    for match in _AUDIO_TAG.finditer(text):
-        if match[1][0].isupper():
-            continue
-        result = (result + text[position : match.start()]).rstrip()
-        tags.append(match[1])
-        position = match.end()
-    result += text[position:]
-    return (result if started else result.lstrip()), tags
+_TIMED_MESSAGES = 8
+"""How many recent agent messages' word timestamps are kept, for a barge-in that cuts them: a turn's messages."""
 
 
 @dataclass
-class _AudioTagStripper:
-    """Strips audio tags from streamed text so that the pieces add up to the whole text stripped at once.
+class _WordTimer:
+    """Groups ElevenLabs' per-character timing of a response's audio into word timestamps, in the response's audio.
 
-    A tag can be split across pieces, so text from an opening bracket that may yet start one is held back until
-    it is known, as is trailing whitespace, which a tag that follows would remove.
+    Each `alignment` times one stretch of synthesized speech from the stretch's own start. Stretches and audio frames
+    don't line up: a stretch can start mid-frame, a long one runs on through frames without an `alignment`, and one
+    can come a frame after the one it starts in. But the stretches add up to the audio, to within a few milliseconds
+    each (verified live), so a stretch starts where the ones before it ended. A stretch can end mid-word, so a word
+    runs from its first character's start to its last character's end, whichever stretches they come in.
+
+    The audio tags an expressive voice reads, like `[laughs]`, are timed too (verified live): unless the session keeps
+    them in the transcript, their characters go, as `strip_audio_tags` removes them from it.
     """
 
-    held: str = ''
-    started: bool = False
+    strip_audio_tags: bool
+    timed_ms: int = 0
+    """Where the stretches timed so far end."""
+    word: str = ''
+    """The word under way, until whitespace (or the response's end) ends it."""
+    word_start_ms: int = 0
+    word_end_ms: int = 0
+    tag: list[tuple[str, int, int]] = field(default_factory=list[tuple[str, int, int]])
+    """The characters since an opening bracket, with when each starts and ends, held back until it's known whether
+    they start with an audio tag."""
 
-    def feed(self, text: str) -> str:
-        buffer = self.held + text
-        end = buffer.rfind('[')
-        if end == -1 or not _AUDIO_TAG_START.fullmatch(buffer, end):
-            end = len(buffer)
-        head = buffer[:end].rstrip()
-        self.held = buffer[len(head) :]
-        stripped, _ = _strip_audio_tags(head, started=self.started)
-        self.started = self.started or bool(stripped)
-        return stripped
+    def feed(self, alignment: _AudioAlignment) -> list[SpeechTimestamp]:
+        """Time a stretch of speech, returning the words it finishes."""
+        offset_ms = self.timed_ms
+        words: list[SpeechTimestamp] = []
+        for char, start_ms, duration_ms in zip(
+            alignment.chars, alignment.char_start_times_ms, alignment.char_durations_ms, strict=False
+        ):
+            self.timed_ms = max(self.timed_ms, offset_ms + start_ms + duration_ms)
+            words += self._char(char, offset_ms + start_ms, offset_ms + start_ms + duration_ms)
+        return words
+
+    def end_reply(self) -> list[SpeechTimestamp]:
+        """The response's last words, if its audio ended mid-word; the next response's audio is timed from its start."""
+        words: list[SpeechTimestamp] = []
+        while self.tag:
+            words += self._end_tag()
+        words += self._end_word()
+        self.timed_ms = 0
+        return words
+
+    def _char(self, char: str, start_ms: int, end_ms: int) -> list[SpeechTimestamp]:
+        if self.strip_audio_tags and (self.tag or char == '['):
+            self.tag.append((char, start_ms, end_ms))
+            return [] if _may_start_audio_tag(''.join(char for char, _, _ in self.tag)) else self._end_tag()
+        return self._word_char(char, start_ms, end_ms)
+
+    def _word_char(self, char: str, start_ms: int, end_ms: int) -> list[SpeechTimestamp]:
+        if char.isspace():
+            return self._end_word()
+        if not self.word:
+            self.word_start_ms = start_ms
+        self.word += char
+        self.word_end_ms = end_ms
+        return []
+
+    def _end_tag(self) -> list[SpeechTimestamp]:
+        """Drop the audio tag the held characters start with, or let their `[` through if they don't start with one."""
+        held, self.tag = self.tag, []
+        tag_length = _leading_audio_tag_length(''.join(char for char, _, _ in held))
+        words = [] if tag_length else self._word_char(*held[0])
+        for char in held[tag_length or 1 :]:
+            words += self._char(*char)
+        return words
+
+    def _end_word(self) -> list[SpeechTimestamp]:
+        if not self.word:
+            return []
+        word = SpeechTimestamp(
+            text=self.word, start_ms=self.word_start_ms, duration_ms=self.word_end_ms - self.word_start_ms
+        )
+        self.word = ''
+        return [word]
 
 
 class ElevenLabsAgentsTTSSettings(TypedDict, total=False):
     """Per-conversation TTS overrides, each gated by its own override toggle on the agent."""
 
     model_id: str
-    """The ElevenLabs TTS model to synthesize with, e.g. `eleven_v3_conversational`."""
+    """The ElevenLabs TTS model to synthesize with, e.g. `eleven_v3_conversational`.
+
+    Raises for an agent in Realtime voice mode, whose TTS model ElevenLabs picks."""
     stability: float
     """Voice stability (0-1); lower is more expressive, higher more consistent."""
     speed: float
@@ -254,11 +316,13 @@ class ElevenLabsAgentsRealtimeModelSettings(RealtimeModelSettings, total=False):
     Of the shared settings, `output_modality='text'` maps to the `conversation.text_only` override, and
     a `tool_choice` of `'none'` or an allow-list to the `agent.prompt.tool_ids` override, which narrows
     the agent's attached tools for the conversation (a choice that forces a tool call raises). `max_tokens`,
-    `parallel_tool_calls`, `async_tool_calls`, and `thinking` have no per-conversation surface on the
-    agent WebSocket and are silently ignored, per the shared settings contract. `turn_detection` cannot be configured
-    (ElevenLabs' server-side turn model is always on), `input_transcription_model=None` cannot be
-    honored (ASR cannot be disabled per-conversation), and `reconnect` is unsupported (ElevenLabs'
-    experimental, text-only resume isn't used), so each of those raises rather than silently under-delivering.
+    `parallel_tool_calls`, `async_tool_calls`, `thinking`, the [`TurnDetection`][pydantic_ai.realtime.TurnDetection]
+    knobs, `input_transcription_model`, and `reconnect` have no per-conversation surface on the agent WebSocket
+    and are ignored, as on a standard model. `parallel_tool_calls=False` and a `reconnect` policy warn with an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]: a dropped conversation
+    isn't resumed (ElevenLabs' experimental, text-only resume isn't used), so a drop ends the session. Input is
+    always transcribed, since ASR drives the agent pipeline. `turn_detection=False` raises, since ElevenLabs'
+    server-side turn model is always on.
     """
 
     elevenlabs_agents_voice_id: str
@@ -268,7 +332,9 @@ class ElevenLabsAgentsRealtimeModelSettings(RealtimeModelSettings, total=False):
     elevenlabs_agents_first_message: str
     """The greeting the agent opens with (the `agent.first_message` override)."""
     elevenlabs_agents_llm: str
-    """The LLM the ElevenLabs agent pipeline runs, e.g. `gpt-5.2` (the `agent.prompt.llm` override)."""
+    """The LLM the ElevenLabs agent pipeline runs, e.g. `gpt-5.2` (the `agent.prompt.llm` override).
+
+    Raises for an agent in Realtime voice mode, whose LLM ElevenLabs picks."""
     elevenlabs_agents_tts: ElevenLabsAgentsTTSSettings
     """TTS model and voice-delivery knobs (the `tts.*` overrides)."""
     elevenlabs_agents_dynamic_variables: dict[str, str | int | float | bool]
@@ -359,6 +425,8 @@ class _ConversationConfig(BaseModel):
 
     agent: _AgentSectionConfig | None = None
     conversation: _ConversationSettings | None = None
+    realtime_model: str | None = None
+    """The Eleven Realtime model of an agent in Realtime voice mode, e.g. `eleven_realtime_v1_mini`; `None` in Custom mode."""
 
 
 class _AgentAuthSettings(BaseModel):
@@ -496,12 +564,21 @@ class _ConversationInitiationMetadataEvent(BaseModel):
     conversation_initiation_metadata_event: _ConversationInitiationMetadata
 
 
+class _AudioAlignment(BaseModel):
+    """When each character of a stretch of synthesized speech is heard, in milliseconds from the stretch's start."""
+
+    chars: list[str] = []
+    char_start_times_ms: list[int] = []
+    char_durations_ms: list[int] = []
+
+
 class _AudioPayload(BaseModel):
     model_config = ConfigDict(extra='allow')
 
     audio_base_64: str
     event_id: int | None = None
     """The agent turn the audio belongs to: the `event_id` of the `agent_response` with its text."""
+    alignment: _AudioAlignment | None = None
 
 
 class _AudioEvent(BaseModel):
@@ -514,6 +591,10 @@ class _AgentResponsePayload(BaseModel):
     agent_response: str
     response_id: str | None = None
     event_id: int | None = None
+    in_response_to_ids: list[str] | None = None
+    """The `id`s of the `user_message`s the reply answers (verified live): the one sent for it, and any sent while the
+    agent spoke, which fold into its next reply. Empty for a reply nothing asked for, like the greeting; the server
+    makes ids up for what the user said."""
 
 
 class _AgentResponseEvent(BaseModel):
@@ -532,6 +613,10 @@ class _TextResponsePart(BaseModel):
     text: str = ''
     type: str | None = None
     """`start`, `delta`, or `stop`."""
+    response_id: str | None = None
+    """The agent message the part belongs to, the `response_id` its `agent_response` will carry."""
+    event_id: int | None = None
+    """The agent turn the message belongs to."""
 
 
 class _AgentChatResponsePartEvent(BaseModel):
@@ -543,10 +628,25 @@ class _AgentResponseCorrectionPayload(BaseModel):
 
     original_agent_response: str | None = None
     corrected_agent_response: str
+    response_id: str | None = None
+    """The agent message corrected. A turn can hold several (text said before a tool call, then the answer to its
+    result), and one barge-in corrects each the user didn't hear in full, with a correction of its own (verified
+    live): the message cut off is cut down to what was heard, and those after it, never heard, to `''`."""
 
 
 class _AgentResponseCorrectionEvent(BaseModel):
     agent_response_correction_event: _AgentResponseCorrectionPayload
+
+
+class _AgentResponseCompletePayload(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
+    event_id: int | None = None
+    """The agent turn whose audio has played out in full."""
+
+
+class _AgentResponseCompleteEvent(BaseModel):
+    agent_response_complete_event: _AgentResponseCompletePayload
 
 
 class _UserTranscriptionPayload(BaseModel):
@@ -723,6 +823,16 @@ class _ElevenLabsSchemaTransformer(JsonSchemaTransformer):
 
     def __init__(self, schema: JsonSchema):
         super().__init__(schema, prefer_inlined_defs=True, simplify_nullable_unions=True)
+
+    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
+        # The dialect has no `propertyNames`, and walking it would refuse a recursive `$ref` the projection never reads.
+        schema.pop('propertyNames', None)
+        return super()._handle_object(schema)
+
+    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
+        # Nor `contains`: same reason as `_handle_object`.
+        schema.pop('contains', None)
+        return super()._handle_array(schema)
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         return schema
@@ -993,6 +1103,8 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
     agent_id: str
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
+    # A conversation isn't resumed after a drop, so a `reconnect` policy is ignored and a drop ends the session.
+    unsupported_settings = frozenset({'max_tokens', 'parallel_tool_calls', 'input_transcription_model', 'reconnect'})
     _provider: ElevenLabsProvider = field(init=False, repr=False)
     _warned_context_usage: bool = field(default=False, init=False, repr=False)
     """Whether a session has warned that the agent sends no `context_usage` reports (once per model)."""
@@ -1297,22 +1409,13 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
 
     def _check_settings(self, settings: ElevenLabsAgentsRealtimeModelSettings) -> None:
         """Reject shared settings whose intent the agent WebSocket cannot honor."""
-        if settings.get('reconnect') is not None:
-            raise UserError(
-                'ElevenLabs Agents conversations are not resumed after a drop, so a `reconnect` policy '
-                'would silently reconnect into a conversation that remembers nothing. Remove the `reconnect` '
-                'policy and open a new session instead.'
-            )
-        if 'turn_detection' in settings and settings['turn_detection'] is not True:
+        # `TurnDetection` knobs and `input_transcription_model=None` are ignored, as on a standard model: the
+        # agent's turn model tunes itself (configure it on the agent's `conversation_config.turn`), and ASR
+        # drives the agent pipeline, so input is always transcribed.
+        if settings.get('turn_detection') is False:
             raise UserError(
                 "ElevenLabs Agents own turn-taking server-side (the agent's turn model is always on), so "
-                '`turn_detection` cannot be disabled or configured per conversation. Remove the setting, or '
-                "configure turn-taking on the agent's `conversation_config.turn` instead."
-            )
-        if 'input_transcription_model' in settings and settings['input_transcription_model'] is None:
-            raise UserError(
-                'ElevenLabs Agents cannot disable input transcription per conversation (ASR drives the '
-                'agent pipeline), so `input_transcription_model=None` cannot be honored. Remove the setting.'
+                '`turn_detection` cannot be disabled per conversation. Remove the setting.'
             )
 
     @staticmethod
@@ -1349,8 +1452,18 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         settings: ElevenLabsAgentsRealtimeModelSettings,
         requested: Sequence[tuple[tuple[str, ...], Any, str]],
     ) -> None:
-        """Raise a `UserError` naming the toggle for a requested override the agent doesn't permit."""
+        """Raise a `UserError` naming the toggle for a requested override the agent doesn't permit.
+
+        Also for one the agent would ignore: in Realtime voice mode, ElevenLabs picks the LLM and TTS model itself.
+        """
+        realtime_model = agent.conversation_config.realtime_model if agent.conversation_config is not None else None
         for path, _, source in requested:
+            if realtime_model is not None and path in _REALTIME_MODE_MANAGED_OVERRIDES:
+                raise UserError(
+                    f'The ElevenLabs agent {self.agent_id!r} is in Realtime voice mode ({realtime_model!r}), where '
+                    f'ElevenLabs manages the `{".".join(path)}` setting and ignores the override required by {source}. '
+                    'Remove the setting, or switch the agent to Custom voice mode in the ElevenLabs dashboard.'
+                )
             if not _override_allowed(agent.override_permissions, path):
                 dotted = '.'.join(path)
                 raise UserError(
@@ -1413,16 +1526,16 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
     ) -> AsyncGenerator[ElevenLabsAgentsRealtimeConnection]:
         settings = cast('ElevenLabsAgentsRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         self._check_settings(settings)
-        instructions = get_instructions(messages, model_request_parameters) or ''
+        instructions = session_instructions(messages, model_request_parameters)
         tools = model_request_parameters.function_tools or []
         advertised_tools, tool_choice = resolve_advertised_tools(tools, settings.get('tool_choice'))
-        if (tool_choice[0] if isinstance(tool_choice, tuple) else tool_choice) == 'required':
-            raise UserError(
-                "A realtime session can't force a tool call: ElevenLabs Agents have no per-response tool "
-                "choice, so `tool_choice='required'` or a list of tool names would never let the agent "
-                'answer. To restrict which tools the agent can use, pass `ToolOrOutput(function_tools=[...])` '
-                'instead.'
-            )
+        reject_forced_tool_choice(
+            tool_choice,
+            "A realtime session can't force a tool call: ElevenLabs Agents have no per-response tool "
+            "choice, so `tool_choice='required'` or a list of tool names would never let the agent "
+            'answer. To restrict which tools the agent can use, pass `ToolOrOutput(function_tools=[...])` '
+            'instead.',
+        )
 
         # One REST round-trip yields the override-permission allowlist, the client tools, and the
         # agent's auth mode, so every fail-loudly check happens before the socket is dialed.
@@ -1504,10 +1617,21 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
                 conversation_id=metadata.conversation_id,
                 text_output=settings.get('output_modality', 'audio') == 'text',
                 strip_audio_tags=settings.get('elevenlabs_agents_strip_audio_tags', True),
+                speech_timestamps=settings.get('output_speech_timestamps', False),
             )
         finally:
             if ws is not None:
                 await opening.__aexit__(None, None, None)
+
+
+def _ends_before_reply(events: Sequence[RealtimeCodecEvent]) -> bool:
+    """Whether the codec events end a response before a reply's text (a reply that was still being voiced, say)."""
+    for event in events:
+        if isinstance(event, OutputTranscript):
+            return False
+        if isinstance(event, ResponseDone) or (isinstance(event, SessionUsage) and event.response_scoped):
+            return True
+    return False
 
 
 class _CascadeLifecycle(InferredLifecycle):
@@ -1516,10 +1640,88 @@ class _CascadeLifecycle(InferredLifecycle):
     ElevenLabs' speech recognition hands the agent's LLM the user's words, and sends their transcript, before
     the LLM answers them. So audio with no transcript is never what a reply answers: microphone audio streamed
     before the agent's greeting (a reply nobody asked for) makes no spoken turn ahead of it.
+
+    A reply's text names the typed turns it answers, by the `id` each went out with (`in_response_to_ids`), which
+    revises what the order said (`AnswersRevised`): a greeting that text cut off as it started answers none of it.
     """
 
     transcripts_lag_replies = False
     untranscribed_audio_is_a_turn = False
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._text: set[InputId] = set()
+        """The text inputs sent, which a reply names by the `id` they went out with."""
+        self._named: tuple[InputId, ...] | None = None
+        """The text inputs the reply whose text is being mapped names, for its revision."""
+        self._named_others = False
+        """Whether that reply also names an input that isn't one of the text inputs sent (what the user said)."""
+
+    def text_sent(self, input_id: InputId) -> str:
+        """A text input is going out: the `id` to send it under, which the reply answering it names."""
+        self._text.add(input_id)
+        return f'{_TEXT_ID_PREFIX}{input_id}'
+
+    def reply_named(self, ids: Sequence[str]) -> None:
+        """The text of a reply came, naming (by their `id`s) the text inputs it answers; ids of others are ignored."""
+        matches = [_TEXT_ID.fullmatch(text_id) for text_id in ids]
+        named = tuple(int(match[1]) for match in matches if match is not None and int(match[1]) in self._text)
+        self._named = named
+        self._named_others = len(named) < len(ids)
+
+    def revise_open(self) -> list[LifecycleEvent]:
+        """Revise the response under way by the inputs its text named, ahead of the frame with that text.
+
+        The connection calls this when that response is the text's, so the revision comes before anything in the
+        frame can end it (a reply cut off, say, whose text trails its end, or empty text, which is no output). With
+        no response under way, the text starts one, and the revision comes with it (see `_output`).
+        """
+        named = self._named
+        if named is None or self._open is None:
+            return []
+        self._named = None
+        return self._revise_open(named)
+
+    def reply_mapped(self) -> None:
+        """The frame with a reply's text is through: names it didn't apply had no response to apply to."""
+        self._named = None
+
+    def _revision(
+        self, named: tuple[InputId, ...], answers: tuple[InputId, ...]
+    ) -> tuple[tuple[InputId, ...], tuple[InputId, ...]]:
+        """The text inputs a reply claims and releases, given those it names and those it was taken to answer.
+
+        A text sent while the agent spoke folds into its next reply, which may name only the latest of them: verified
+        live, two texts sent back to back while the agent spoke got one reply, to both, naming only the second. No
+        reply would ever name the first, so it would be owed a reply forever (and `wait_for_reply()` would hang): a
+        reply also answers the text sent before one it names. Text sent after any it names reached the agent after the
+        reply started, and is the next reply's. Unless the reply also names something else (what the user said, by an
+        id the server made up): that may well be what came after the text, folded in with it, so it releases nothing.
+        """
+        latest = max(named, default=-1)
+        claimed = tuple(input_id for input_id in self._unanswered if input_id in self._text and input_id <= latest)
+        if self._named_others:
+            return claimed, ()
+        released = tuple(input_id for input_id in answers if input_id in self._text and input_id > latest)
+        return claimed, released
+
+    def _revise_open(self, named: tuple[InputId, ...]) -> list[LifecycleEvent]:
+        """Revise the response under way by the inputs its text named."""
+        response_id = self._open
+        assert response_id is not None
+        claimed, released = self._revision(named, self._open_answers)
+        if not (claimed or released):
+            return []
+        self._unanswered = [input_id for input_id in self._unanswered if input_id not in claimed]
+        self._unanswered[:0] = released
+        self._open_answers = (*(input_id for input_id in self._open_answers if input_id not in released), *claimed)
+        return [AnswersRevised(response_id=response_id, claimed=claimed, released=released)]
+
+    def _output(self, event: RealtimeCodecEvent, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
+        super()._output(event, before, after)
+        if (named := self._named) is not None:
+            self._named = None
+            before.extend(self._revise_open(named))
 
 
 class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
@@ -1535,6 +1737,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         conversation_id: str | None = None,
         text_output: bool = False,
         strip_audio_tags: bool = True,
+        speech_timestamps: bool = False,
     ) -> None:
         self._ws = ws
         self._conversation_id = conversation_id
@@ -1542,12 +1745,23 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         self._text_output = text_output
         # The streamed text of the response under way, with its audio tags removed (see `_AudioTagStripper`).
         self._tag_stripper = _AudioTagStripper() if strip_audio_tags else None
+        # With `output_speech_timestamps`, the words of the response whose audio is under way, and those of recent
+        # agent messages by `response_id`, to tell from what a barge-in let the user hear where their playback stopped.
+        self._word_timer = _WordTimer(strip_audio_tags) if speech_timestamps else None
+        self._timed_words: list[SpeechTimestamp] = []
+        self._timed_messages: dict[str, list[SpeechTimestamp]] = {}
         # Calls the agent fired without expecting a result (`expects_response=false`): the session
         # still settles them locally, but their `ToolResult` must never go back on the wire.
         self._fire_and_forget_tool_call_ids: set[str] = set()
         # Whether the model has streamed response output since the last turn boundary, so a boundary
         # event never finalizes a turn that produced nothing.
         self._response_open = False
+        # The agent message the open response streams, once its text parts have named it, and the turn it is in.
+        self._open_response_id: str | None = None
+        self._open_event_id: int | None = None
+        # What ElevenLabs said the user heard of the agent messages, by `agent_response_correction`, for the frame
+        # under way to record on them, whether their responses are under way or over.
+        self._cuts: list[OutputItemCut] = []
         self._turn_interrupted = False
         self._tail: _AudioTail | None = None
         # The MCP calls ElevenLabs runs itself, reported as native tool parts: those whose call part is out, and
@@ -1565,7 +1779,8 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         # received. The protocol does carry ids (`event_id` per turn, `response_id` on the whole-text
         # `agent_response`, `in_response_to_ids`), but each arrives only with a response's *end*, while
         # a response has to be announced with its first audio, and a tool round shares one `event_id`
-        # between the response that calls the tool and the one that answers its result.
+        # between the response that calls the tool and the one that answers its result. So the ids only
+        # correct what the order said: `in_response_to_ids` names the text inputs a reply answers.
         # The user's words are transcribed (and sent) before the agent's LLM answers them, never after.
         self._lifecycle = _CascadeLifecycle()
         # A barge-in on the response under way, which only its (truncated) terminal is yet to follow.
@@ -1609,21 +1824,23 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         cancellation, truncation, and images are not supported by the conversation WebSocket.
         """
         with self._lifecycle.sending(content) as input_id:
-            sent = await self._send(content)
+            sent = await self._send(content, input_id)
         if not sent:
             # A fire-and-forget call's result: the agent asked for none, so none will be answered.
             self._lifecycle.input_unanswerable(input_id)
         # ElevenLabs acknowledges nothing: where the input joined the conversation is known now.
         return self._lifecycle.take_pending()
 
-    async def _send(self, content: RealtimeInput) -> bool:
+    async def _send(self, content: RealtimeInput, input_id: InputId) -> bool:
         """Send `content` on the wire, returning whether anything was sent."""
         if isinstance(content, BinaryAudio):
             require_pcm_audio(content, provider_name=_PROVIDER_LABEL)
             # The one client message without a `type` discriminator.
             await self._send_event({'user_audio_chunk': base64.b64encode(content.data).decode('ascii')})
         elif isinstance(content, str):
-            await self._send_event({'type': 'user_message', 'text': content})
+            # Under an id of ours, which the agent's reply names in its `in_response_to_ids`.
+            text_id = self._lifecycle.text_sent(input_id)
+            await self._send_event({'type': 'user_message', 'text': content, 'id': text_id})
         elif isinstance(content, TextContext):
             # Injected into the LLM's view of the conversation without a user turn, so the agent
             # neither stops speaking nor replies; the optional `context_id` (which lets a later update
@@ -1722,7 +1939,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
                     # condition as a failed receive.
                     yield self._connection_lost(e)
                     return
-                if events:
+                if events or self._cuts:
                     yield self._frame(events)
         finally:
             if read is not None:
@@ -1730,7 +1947,15 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
 
     def _frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
         """The frame for the codec events one server message makes, with their lifecycle events."""
-        return self._name_conversation(self._lifecycle_frame(events))
+        # A reply's text revises the response under way ahead of the frame, so before anything in it can end that
+        # response; unless the frame ends a response before the text, which then starts one of its own.
+        revision = [] if _ends_before_reply(events) else self._lifecycle.revise_open()
+        frame = [*revision, *self._name_conversation(self._lifecycle_frame(events))] if events else revision
+        self._lifecycle.reply_mapped()
+        cuts, self._cuts = self._cuts, []
+        # Last, so that a response the frame ends is recorded by the time its cut applies (one still under way gets
+        # it when it is).
+        return [*frame, *cuts]
 
     def _name_conversation(self, frame: RealtimeFrame) -> RealtimeFrame:
         """Name the conversation on every response the frame ends, as `_finalize_response` does on its terminal.
@@ -1818,7 +2043,55 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         """End the response whose tool calls are all in: the agent goes on once their results are."""
         self._calls_open = False
         # (ElevenLabs reports no usage per response: this one only ends it.)
-        return [SessionUsage(usage=RequestUsage(), response_scoped=True)]
+        return [*self._end_speech(), SessionUsage(usage=RequestUsage(), response_scoped=True)]
+
+    def _time_speech(self, alignment: _AudioAlignment | None) -> list[RealtimeCodecEvent]:
+        """The words an audio frame's `alignment` finishes, with `output_speech_timestamps`, timed in their response."""
+        words = [] if self._word_timer is None or alignment is None else self._word_timer.feed(alignment)
+        self._timed_words += words
+        return [OutputSpeechTimestamps(words)] if words else []
+
+    def _end_speech(self, response_id: str | None = None) -> list[RealtimeCodecEvent]:
+        """The last word of a response's audio, ahead of its end: the next response's audio is timed from its start.
+
+        The response's words are kept under its agent message's `response_id`, if it has one.
+        """
+        words = [] if self._word_timer is None else self._word_timer.end_reply()
+        timed, self._timed_words = [*self._timed_words, *words], []
+        if response_id is not None and timed:
+            self._timed_messages[response_id] = timed
+            if len(self._timed_messages) > _TIMED_MESSAGES:
+                del self._timed_messages[next(iter(self._timed_messages))]
+        return [OutputSpeechTimestamps(words)] if words else []
+
+    def _heard_ms(self, response_id: str, heard: str) -> int | None:
+        """Where playback of a timed agent message stopped: the start of the first word the user didn't hear.
+
+        The message's response is over by then. A barge-in cuts the message's transcript down to the words heard, which its timed words match one for one.
+        """
+        words = self._timed_messages.get(response_id, [])
+        heard_words = len(heard.split())
+        return words[heard_words].start_ms if heard_words < len(words) else None
+
+    def _end_message(
+        self, transcript: OutputTranscript, response_id: str | None, details: dict[str, Any] | None
+    ) -> list[RealtimeCodecEvent]:
+        """End the response of an agent message whose whole text has arrived, in text mode or cut off.
+
+        A message cut off while it was generated arrives as what the user heard of it (verified live).
+        """
+        interrupted = self._turn_interrupted
+        events = [
+            transcript,
+            *self._finalize_response(
+                interrupted=interrupted, provider_response_id=response_id, provider_details=details
+            ),
+        ]
+        if interrupted and response_id is not None:
+            # (Once the response's last word is timed.)
+            if (heard_ms := self._heard_ms(response_id, transcript.text)) is not None:
+                self._cuts.append(OutputItemCut(item_id=response_id, heard_ms=heard_ms))
+        return events
 
     async def _map_frame(self, event_type: object, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
         if event_type == 'queue_status':
@@ -1839,7 +2112,8 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # Audio of another turn than the reply whose text is complete: that reply was voiced in full.
             ended = self._end_tail() if self._tail is not None and payload.event_id != self._tail.event_id else []
             self._response_open = True
-            return [*ended, AudioDelta(data=audio)]
+            self._open_event_id = payload.event_id
+            return [*ended, AudioDelta(data=audio), *self._time_speech(payload.alignment)]
         if event_type == 'client_tool_call':
             call = _ClientToolCallEvent.model_validate(data).client_tool_call
             # Every call goes through, including one naming a tool this run does not define (possible
@@ -1960,66 +2234,53 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             # `client_events` set). Deltas map incrementally; the empty start/stop markers carry
             # nothing (a tool-call-only model response is exactly one empty start/stop pair).
             part = _AgentChatResponsePartEvent.model_validate(data).text_response_part
+            if part.type == 'start':
+                # (A message's `stop` part can trail its `agent_response`, so only its `start` names the open one.)
+                self._open_response_id = part.response_id
+                self._open_event_id = part.event_id
             if part.type == 'delta' and part.text:
                 self._response_open = True
                 text = part.text if self._tag_stripper is None else self._tag_stripper.feed(part.text)
                 if text:
-                    return [OutputTranscript(text=text, is_final=False, output_text=self._text_output)]
+                    # Named by its message, which a correction names to say what of it the user heard.
+                    return [
+                        OutputTranscript(
+                            text=text, is_final=False, output_text=self._text_output, item_id=part.response_id
+                        )
+                    ]
             return []
         if event_type == 'agent_response':
             # The whole response text, once per reply, after any tool loop. In text mode it follows the streamed
             # parts and ends the reply; the session reconciles the full text against them. In audio mode it arrives
             # when the LLM finishes writing, while TTS can still be voicing the reply (verified live), so the reply
             # ends with its last audio instead (see `_AudioTail`). A reply already cut off has no more audio coming:
-            # this is its text, cut down to what was heard. (`agent_response_complete` never arrives in audio mode,
-            # and `is_final` is never set on audio, both verified live.)
+            # this is its text, cut down to what was heard. (Audio's `is_final` marks the end of one TTS generation,
+            # which can come mid-reply, so it isn't read.)
             payload = _AgentResponseEvent.model_validate(data).agent_response_event
+            if (answered := payload.in_response_to_ids) is not None:
+                # Which of the text inputs the reply answers, revising what the lifecycle worked out from the order.
+                self._lifecycle.reply_named(answered)
             self._response_open = True
+            self._open_event_id = payload.event_id
             text, details = payload.agent_response, None
             if self._tag_stripper is not None:
                 # The whole text, stripped at once, which is what the stripped pieces streamed before it add up to.
                 self._tag_stripper = _AudioTagStripper()
                 text, tags = _strip_audio_tags(text)
                 details = {'audio_tags': tags} if tags else None
-            transcript = OutputTranscript(text=text, is_final=True, output_text=self._text_output)
+            transcript = OutputTranscript(
+                text=text, is_final=True, output_text=self._text_output, item_id=payload.response_id
+            )
             if self._text_output or self._turn_interrupted:
-                return [
-                    transcript,
-                    *self._finalize_response(
-                        interrupted=self._turn_interrupted,
-                        provider_response_id=payload.response_id,
-                        provider_details=details,
-                    ),
-                ]
+                return self._end_message(transcript, payload.response_id, details)
             self._tail = _AudioTail(
                 event_id=payload.event_id, response_id=payload.response_id, provider_details=details
             )
             return [transcript]
         if event_type == 'agent_response_correction':
-            # After an interruption the server truncates the stored transcript to what was actually
-            # spoken. The already-emitted transcript cannot be shrunk through the codec (a final
-            # `OutputTranscript` only extends), so the corrected text is retained on the finalized
-            # response's `provider_details` and the interruption closes the turn here. When the user
-            # barged in during *playback*, after the reply's last audio had already arrived and ended it
-            # (the common audio-mode case: synthesis outruns playback), there is nothing left to finalize
-            # and the correction is dropped.
-            correction = _AgentResponseCorrectionEvent.model_validate(data).agent_response_correction_event
-            corrected = correction.corrected_agent_response
-            if self._tag_stripper is not None:
-                corrected, _ = _strip_audio_tags(corrected)
-            details = {'corrected_agent_response': corrected}
-            if (tail := self._tail) is not None:
-                # The reply was still being voiced when the user cut in: the correction ends it, with what was heard.
-                tail.interrupted = True
-                tail.provider_details = {**(tail.provider_details or {}), **details}
-                return self._end_tail()
-            return self._finalize_response(interrupted=True, provider_details=details)
+            return self._map_correction(data)
         if event_type == 'agent_response_complete':
-            # Gated behind `client_events` (off by default) and text-mode only, arriving right after
-            # `agent_response` has already closed the turn (verified live), so this is normally a
-            # dropped no-op; kept as a defensive boundary for agents whose `client_events` omit
-            # `agent_response` itself.
-            return self._finalize_response(interrupted=self._turn_interrupted)
+            return self._map_complete(data)
         if event_type == 'user_transcript':
             payload = _UserTranscriptEvent.model_validate(data).user_transcription_event
             # One final transcript per utterance; no tentative variants were observed live even with
@@ -2043,6 +2304,62 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         # failing the stream.
         return []
 
+    def _map_complete(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
+        """End the reply of the turn `agent_response_complete` names, if it is still under way."""
+        # Gated behind `client_events` (off by default). Verified live: in text mode it arrives right after the
+        # `agent_response` that ended the turn's reply, and in audio mode once the turn's audio has played out,
+        # long after its reply ended with its last audio; never for a turn cut off. So it is normally a dropped
+        # no-op, kept as a boundary for agents whose `client_events` omit `agent_response`. It names its turn, and
+        # ends the reply only if that is the reply's turn: a later turn's reply can be under way by then.
+        complete = _AgentResponseCompleteEvent.model_validate(data).agent_response_complete_event
+        if (tail := self._tail) is not None and complete.event_id in (None, tail.event_id):
+            return self._end_tail()
+        if tail is None and complete.event_id in (None, self._open_event_id):
+            return self._finalize_response(interrupted=self._turn_interrupted)
+        return []
+
+    def _map_correction(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
+        """End the reply a barge-in cut off with what the user heard of it, as `agent_response_correction` says."""
+        # After an interruption the server cuts each message of the turn the user didn't hear in full down to
+        # what was heard: the one cut off ends in `...`, later ones are `''`. The streamed transcript can't be
+        # shrunk through the codec (a final `OutputTranscript` only extends), so the message's part in history is
+        # cut by an `OutputItemCut` instead, which applies whether its response is under way or, as usual in
+        # audio mode (synthesis outruns playback), already over. A response still under way also ends here, with
+        # the corrected text in its `provider_details` if the correction names it: one naming an earlier message
+        # of the turn says nothing about the response under way.
+        correction = _AgentResponseCorrectionEvent.model_validate(data).agent_response_correction_event
+        corrected = correction.corrected_agent_response
+        if self._tag_stripper is not None:
+            corrected, _ = _strip_audio_tags(corrected)
+        details = {'corrected_agent_response': corrected}
+        events = self._end_corrected(correction.response_id, details)
+        if correction.response_id is not None:
+            # History records what the user heard of the message the correction names, its response over or not
+            # (and, once the response the correction may have ended has its last word timed, where playback stopped).
+            self._cuts.append(
+                OutputItemCut(
+                    item_id=correction.response_id,
+                    heard_transcript=corrected,
+                    heard_ms=self._heard_ms(correction.response_id, corrected),
+                )
+            )
+        return events
+
+    def _end_corrected(self, response_id: str | None, details: dict[str, Any]) -> list[RealtimeCodecEvent]:
+        """End the response under way a correction cuts off, if any, with the corrected text if it names it."""
+        if (tail := self._tail) is not None:
+            if None not in (response_id, tail.response_id) and response_id != tail.response_id:
+                # An earlier message's: the reply being voiced gets a correction of its own in the same batch, or
+                # ends with its audio as the interruption left it.
+                return []
+            # The reply was still being voiced when the user cut in: the correction ends it, with what was heard.
+            tail.interrupted = True
+            tail.provider_details = {**(tail.provider_details or {}), **details}
+            return self._end_tail()
+        # The turn was cut off, so the response under way ends; it keeps the correction only if it is the one named.
+        names_open = response_id is None or response_id == self._open_response_id
+        return self._finalize_response(interrupted=True, provider_details=details if names_open else None)
+
     def _end_tail(self) -> list[RealtimeCodecEvent]:
         """End the reply whose text is complete: its audio, if any more was coming, won't."""
         tail, self._tail = self._tail, None
@@ -2060,6 +2377,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
     ) -> list[RealtimeCodecEvent]:
         """Close the open turn with a `ResponseDone`; a boundary with nothing streamed is dropped."""
         self._turn_interrupted = False
+        timed = self._end_speech(provider_response_id)
         if not self._response_open:
             return []
         # A denied call whose outcome ElevenLabs never reported still gets its return, in the response it was in.
@@ -2067,6 +2385,8 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         self._mcp_denied.clear()
         self._native_part_index = 0
         self._response_open = False
+        self._open_response_id = None
+        self._open_event_id = None
         # The conversation id rides on every response's `provider_details`: nothing billable reaches
         # the socket, so it is the key a consumer needs for the post-hoc cost lookup on the
         # conversations API, and the response is where it survives into persisted history. A
@@ -2075,6 +2395,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         if self._conversation_id is not None:
             details.setdefault('conversation_id', self._conversation_id)
         return [
+            *timed,
             *denied,
             ResponseDone(
                 interrupted=interrupted, provider_response_id=provider_response_id, provider_details=details or None

@@ -9,6 +9,7 @@ import warnings
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.pydantic_ai_docs import PydanticAIDocs, PydanticAIDocsToolset, PydanticAIDocsTopic
 
@@ -58,6 +59,22 @@ class TestPreRenameSpecCompatibility:
         )
         loaded = [c for c in agent.root_capability.capabilities if isinstance(c, PydanticAIDocs)]
         assert len(loaded) == 1
+
+    def test_old_spec_block_name_publishes_its_fields(self) -> None:
+        # The dataclass rebuilds `__init__` in the shim module, so `Path` must resolve there.
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            from pydantic_ai_harness.docs import PyaiDocs  # importing is the assertion
+
+        definitions = AgentSpec.model_json_schema_with_capabilities([PyaiDocs])['$defs']
+
+        assert set(definitions['spec_params_PyaiDocs']['properties']) == {
+            'local_docs_path',
+            'cache',
+            'id',
+            'description',
+            'defer_loading',
+        }
 
     def test_experimental_shim_exposes_the_same_class(self) -> None:
         with warnings.catch_warnings():

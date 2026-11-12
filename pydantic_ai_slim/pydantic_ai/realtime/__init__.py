@@ -1,7 +1,7 @@
 """Realtime multimodal session support for bidirectional streaming models.
 
 This package adds support for native speech-to-speech models (OpenAI Realtime, Azure OpenAI,
-Gemini Live, xAI Grok Voice, and ElevenLabs Agents) which use a persistent bidirectional connection
+Gemini Live, xAI Grok Voice, ElevenLabs' Eleven Realtime, and ElevenLabs Agents) which use a persistent bidirectional connection
 rather than the request-response pattern of the standard [`Model`][pydantic_ai.models.Model]
 interface.
 
@@ -46,6 +46,7 @@ from .profiles import AsyncToolCallMode, RealtimeModelProfile, RealtimeModelProf
 from .settings import (
     AudioRetention,
     KnownRealtimeTranscriptionModelName,
+    RealtimeModelSettingName,
     RealtimeModelSettings,
     ReconnectPolicy,
     TurnDetection,
@@ -74,6 +75,7 @@ __all__ = (
     'RealtimeModel',
     'RealtimeModelProfile',
     'RealtimeModelProfileSpec',
+    'RealtimeModelSettingName',
     'RealtimeModelSettings',
     'RealtimeSession',
     'RealtimeSessionInput',

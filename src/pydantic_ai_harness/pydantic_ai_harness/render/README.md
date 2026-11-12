@@ -16,12 +16,34 @@ If you only need background execution, a native Render task around `agent.run(..
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Render Workflows: each model request and tool call as its own task run
+    accDescr: Your app gets run.id at once from start_task('support', [prompt]) and status and results later from get_task_run. The Render workflow service's support root task run from @workflows.task calls agent.run. RenderWorkflows chains one task run and instance per call, support__model.request or a call_tool run under support__function_toolset__, each with its own retries, timeout and plan.
+    subgraph app["Your app"]
+        start["start_task('support',<br/>[prompt])"]
+        check["get_task_run(id)"]
+    end
+    subgraph render["Render workflow service"]
+        root["support<br/>root task run, from<br/>@workflows.task"]
+        workflows["RenderWorkflows(app)<br/>one chained task run<br/>and instance per call"]:::capability
+        request["support__model.request<br/>own retries, timeout<br/>and plan"]:::capability
+        tool["support__function_toolset__<br/>&lt;agent&gt;.call_tool<br/>own retries, timeout, plan"]:::capability
+    end
+    start <-->|"run.id back at once"| root
+    check <-->|"status and results, later"| root
+    root -->|"agent.run(prompt)"| workflows
+    workflows <-->|"model request"| request
+    workflows <-->|"tool call"| tool
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
+
 ## Prerequisites
 
 The example uses Pydantic AI's `TestModel` and a mock weather tool, so it needs no LLM API key or Render deployment.
 The model generates sample tool arguments and returns fixed text rather than interpreting the prompt.
 
-You need Python 3.11 or later. Install the [Render CLI](https://render.com/docs/cli) 2.28.0 or later separately. The integration requires Render SDK 1.2.0 or later.
+You need Python 3.11 or later. Install the [Render CLI](https://render.com/docs/cli) 2.28.0 or later separately. The integration requires Render SDK 1.6.0 or later.
 
 ## 1. Install dependencies
 
@@ -180,8 +202,8 @@ updated task still runs. These settings are fixed when tasks register and cannot
 For task configuration, see [Task options and tool opt-out](#task-options-and-tool-opt-out).
 
 A failed chained task run can retry while the entry task run waits. Retrying the entry task run restarts
-`agent.run(...)`, so model and tool calls that already finished may run again. There is no checkpoint resume or replay
-of completed steps. The Render SDK also does not let this integration assign stable idempotency keys to chained calls.
+`agent.run(...)`, so model and tool calls that already finished may run again. The Render SDK also does not let this
+integration assign stable idempotency keys to chained calls.
 Either kind of retry can repeat an external action performed before its result was recorded; use application-level
 idempotency keys or deduplication for writes and API requests that must not happen twice.
 
@@ -395,6 +417,9 @@ shared toolset definitions remain registered. `False` is rejected for MCP and dy
 - **Streaming and cancellation:** Model responses and events are buffered until the chained task run finishes;
   provider tokens do not stream live to the caller. Pydantic AI cancellation tokens are unsupported inside a
   workflow, so use Render's native task cancellation. Cancellation does not undo external tool side effects.
+- **Batched requests:** Under [`BatchModelRequests`](https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution), the waits between checks of a batch are plain
+  sleeps, so the task has to stay up for as long as the batch takes, and a retried entry task submits a waiting
+  request again in a new batch.
 
 Retry behavior is described in [Configure retries and timeouts](#6-configure-retries-and-timeouts).
 

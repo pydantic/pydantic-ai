@@ -2,6 +2,7 @@ import os
 import re
 import warnings
 from copy import deepcopy
+from dataclasses import dataclass
 from importlib import import_module
 from unittest.mock import patch
 
@@ -12,9 +13,11 @@ from pydantic_ai import Agent, UserError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -33,9 +36,10 @@ from pydantic_ai.models import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
-from ..conftest import try_import
+from ..conftest import legacy_retry_prompt_part, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -313,33 +317,33 @@ def test_infer_model_with_provider():
     [
         pytest.param('foobar', 'Unknown model: foobar', id='unqualified'),
         pytest.param(
-            'claude:sonnet-5',
-            "Unknown model: claude:sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            'claude:sonnet-5-5',
+            "Unknown model: claude:sonnet-5-5. Did you mean 'anthropic:claude-sonnet-5-5'?",
             id='close-match',
         ),
         pytest.param(
-            'claude:potato-5',
-            "Unknown model: claude:potato-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            'claude:potato-5-5',
+            "Unknown model: claude:potato-5-5. Did you mean 'anthropic:claude-sonnet-5-5'?",
             id='loose-match',
         ),
         pytest.param(
-            'anthropicc:claude-sonnet-5',
-            "Unknown model: anthropicc:claude-sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            'anthropicc:claude-sonnet-5-5',
+            "Unknown model: anthropicc:claude-sonnet-5-5. Did you mean 'anthropic:claude-sonnet-5-5'?",
             id='provider-typo',
         ),
         pytest.param(
-            'unknown:claude-sonnet-5',
-            "Unknown model: unknown:claude-sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            'unknown:claude-sonnet-5-5',
+            "Unknown model: unknown:claude-sonnet-5-5. Did you mean 'anthropic:claude-sonnet-5-5'?",
             id='known-model-name',
         ),
         pytest.param(
-            'anthropic-claude-sonnet-5',
-            "Unknown model: anthropic-claude-sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            'anthropic-claude-sonnet-5-5',
+            "Unknown model: anthropic-claude-sonnet-5-5. Did you mean 'anthropic:claude-sonnet-5-5'?",
             id='missing-colon',
         ),
         pytest.param(
-            'openia:gpt-5.2',
-            "Unknown model: openia:gpt-5.2. Did you mean 'openai:gpt-5.2'?",
+            'openia:gpt-5.6-sol',
+            "Unknown model: openia:gpt-5.6-sol. Did you mean 'openai:gpt-5.6-sol'?",
             id='prefer-direct-provider',
         ),
         pytest.param('unknown:potato', 'Unknown model: unknown:potato', id='no-match'),
@@ -351,8 +355,8 @@ def test_infer_str_unknown(model_name: str, message: str):
 
 
 def test_agent_suggests_known_model_name():
-    with pytest.raises(UserError, match="Did you mean 'anthropic:claude-sonnet-5'"):
-        Agent('claude:sonnet-5')
+    with pytest.raises(UserError, match="Did you mean 'anthropic:claude-sonnet-5-5'"):
+        Agent('claude:sonnet-5-5')
 
 
 def test_infer_model_allows_unknown_name_for_known_provider():
@@ -546,6 +550,9 @@ def _request_parts(messages: list[ModelMessage]) -> list[list[tuple[str, object]
     ]
 
 
+HI_REF = 'pydantic-ai'
+
+
 @pytest.mark.parametrize(
     'supports_inline,messages,expected',
     [
@@ -646,7 +653,7 @@ def test_prepare_messages_system_prompt_wrapping(
 
 
 def test_prepare_messages_orders_tool_results_by_call():
-    """Results answering the preceding response's calls go out in call order; every other part keeps its slot."""
+    """Tool results go out first, those answering the preceding response's calls in call order; other parts follow."""
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='go')]),
         ModelResponse(
@@ -659,8 +666,8 @@ def test_prepare_messages_orders_tool_results_by_call():
         ModelRequest(
             parts=[
                 ToolReturnPart('c', 'C', tool_call_id='cc'),
-                RetryPromptPart('output invalid'),
-                RetryPromptPart('bad args', tool_name='b', tool_call_id='cb'),
+                RetryFeedbackPart('output invalid', retry=RetryInfo(cause='model_retry')),
+                ToolReturnPart('b', 'bad args', tool_call_id='cb', outcome='retried'),
                 ToolReturnPart('z', 'Z', tool_call_id='not-a-call'),
                 ToolReturnPart('a', 'A', tool_call_id='ca'),
                 UserPromptPart(content='file from c'),
@@ -672,10 +679,14 @@ def test_prepare_messages_orders_tool_results_by_call():
 
     assert _request_parts(prepared)[1] == [
         ('ToolReturnPart', 'A'),
-        ('RetryPromptPart', 'output invalid'),
-        ('RetryPromptPart', 'bad args'),
+        ('ToolReturnPart', 'bad args'),
         ('ToolReturnPart', 'Z'),
         ('ToolReturnPart', 'C'),
+        (
+            'UserPromptPart',
+            "Your previous response failed the application's validation (this is automated feedback, not a message "
+            'from the user):\n<pyai:retry_feedback>\noutput invalid\n</pyai:retry_feedback>',
+        ),
         ('UserPromptPart', 'file from c'),
     ]
     # Only the outgoing copy is reordered; the history keeps the order it was stored in.
@@ -691,13 +702,13 @@ def test_prepare_messages_keeps_history_identity_when_tool_results_are_in_call_o
     assert TestModel().prepare_messages(messages) is messages
 
 
-def _tool_call_ids(messages: list[ModelMessage]) -> list[tuple[str, str]]:
-    """Each call, return and retry prompt in history order, as `(type, tool_call_id)`."""
+def _tool_call_ids(messages: list[ModelMessage]) -> list[tuple[str, str, str | None]]:
+    """Each call and return in history order, as `(type, tool_call_id, outcome)`; a retry is a return too."""
     return [
-        (type(part).__name__, part.tool_call_id)
+        (type(part).__name__, part.tool_call_id, part.outcome if isinstance(part, ToolReturnPart) else None)
         for message in messages
         for part in message.parts
-        if isinstance(part, ToolCallPart | ToolReturnPart | RetryPromptPart)
+        if isinstance(part, ToolCallPart | ToolReturnPart)
     ]
 
 
@@ -723,38 +734,40 @@ def test_prepare_messages_fits_tool_call_ids_to_profile_length():
         ModelRequest(
             parts=[
                 ToolReturnPart('a', 'A', tool_call_id='aB3dE5gH9'),
-                RetryPromptPart('bad args', tool_name='b', tool_call_id='aB3dE5gH'),
-                ToolReturnPart('c', 'C', tool_call_id='ab_cd_efg'),
+                # A legacy retry is translated into the retried return it always meant before IDs are fitted.
+                legacy_retry_prompt_part('bad args', tool_name='b', tool_call_id='aB3dE5gH'),
+                ToolReturnPart('c', 'C', tool_call_id='ab_cd_efg', outcome='retried'),
                 ToolReturnPart('d', 'D', tool_call_id='aB3dE5gH9X'),
                 ToolReturnPart('e', 'E', tool_call_id='aB3dE5gHé'),
                 ToolReturnPart('f', 'F', tool_call_id='call_abc123def456ghi789jkl012'),
             ]
         ),
     ]
-    stored = deepcopy(messages)
+    # Dumped rather than deep-copied: copying the deprecated part would construct it again, and warn.
+    stored = ModelMessagesTypeAdapter.dump_json(messages)
     model = TestModel(profile=ModelProfile(tool_call_id_length=9))
 
     prepared = model.prepare_messages(messages)
 
     assert _tool_call_ids(prepared) == snapshot(
         [
-            ('ToolCallPart', 'aB3dE5gH9'),
-            ('ToolCallPart', 'BsnFb66F9'),
-            ('ToolCallPart', '5ZoXBIVHV'),
-            ('ToolCallPart', 'BgySIGZn7'),
-            ('ToolCallPart', 'pFwy2hHZJ'),
-            ('ToolCallPart', '2pESUE4jw'),
-            ('ToolReturnPart', 'aB3dE5gH9'),
-            ('RetryPromptPart', 'BsnFb66F9'),
-            ('ToolReturnPart', '5ZoXBIVHV'),
-            ('ToolReturnPart', 'BgySIGZn7'),
-            ('ToolReturnPart', 'pFwy2hHZJ'),
-            ('ToolReturnPart', '2pESUE4jw'),
+            ('ToolCallPart', 'aB3dE5gH9', None),
+            ('ToolCallPart', 'BsnFb66F9', None),
+            ('ToolCallPart', '5ZoXBIVHV', None),
+            ('ToolCallPart', 'BgySIGZn7', None),
+            ('ToolCallPart', 'pFwy2hHZJ', None),
+            ('ToolCallPart', '2pESUE4jw', None),
+            ('ToolReturnPart', 'aB3dE5gH9', 'success'),
+            ('ToolReturnPart', 'BsnFb66F9', 'retried'),
+            ('ToolReturnPart', '5ZoXBIVHV', 'retried'),
+            ('ToolReturnPart', 'BgySIGZn7', 'success'),
+            ('ToolReturnPart', 'pFwy2hHZJ', 'success'),
+            ('ToolReturnPart', '2pESUE4jw', 'success'),
         ]
     )
     # The same history prepares to the same IDs every time, and only the outgoing copy changes.
     assert _tool_call_ids(model.prepare_messages(messages)) == _tool_call_ids(prepared)
-    assert messages == stored
+    assert ModelMessagesTypeAdapter.dump_json(messages) == stored
 
 
 def test_prepare_messages_keeps_history_identity_when_tool_call_ids_fit():
@@ -899,3 +912,107 @@ def test_wrapper_model_deepcopy():
     assert copied.wrapped is not model.wrapped
     assert copied.model_name == 'test'
     assert copied.custom_output_text == 'wrapped'
+
+
+@dataclass(init=False)
+class _DataclassTestModel(TestModel):
+    """A user's dataclass subclass, which would generate its own `__eq__` and `__repr__` from its fields."""
+
+
+class _PlainModel(Model):
+    """A subclass that isn't a dataclass, so it has no fields to compare."""
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        raise NotImplementedError
+
+    @property
+    def model_name(self) -> str:
+        return 'plain'
+
+    @property
+    def system(self) -> str:
+        raise NotImplementedError
+
+
+@dataclass(eq=False)
+class _IdentityDataclassModel(_PlainModel):
+    """A `@dataclass(eq=False)` subclass, which keeps identity hashing."""
+
+    tag: str = 'model'
+
+
+class _OwnMethodsModel(_PlainModel):
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _OwnMethodsModel)
+
+    def __repr__(self) -> str:
+        return 'own repr'
+
+
+def test_models_that_differ_only_in_settings_or_profile_are_not_equal():
+    """`settings` and `profile` live on the `Model` base, outside the fields a dataclass subclass compares.
+
+    Not a VCR test: equality makes no request.
+    """
+    assert TestModel(settings={'temperature': 0.0}) != TestModel(settings={'temperature': 1.0})
+    assert TestModel(profile=ModelProfile(supports_tools=True)) != TestModel(profile=ModelProfile(supports_tools=False))
+    assert WrapperModel(TestModel(settings={'temperature': 0.0})) != WrapperModel(
+        TestModel(settings={'temperature': 1.0})
+    )
+    assert _DataclassTestModel(settings={'temperature': 0.0}) != _DataclassTestModel(settings={'temperature': 1.0})
+    assert TestModel(settings={'temperature': 0.0}) == TestModel(settings={'temperature': 0.0})
+    assert TestModel() != object()
+
+
+def test_a_model_without_dataclass_fields_compares_by_identity():
+    """Not a VCR test: equality and hashing make no request."""
+    model = _PlainModel()
+
+    assert model == model
+    assert model != _PlainModel()
+    assert {model: 'kept'}[model] == 'kept'
+
+    identity_dataclass = _IdentityDataclassModel()
+    assert identity_dataclass == identity_dataclass
+    assert identity_dataclass != _IdentityDataclassModel(), 'equal models must hash equal, and these hash by identity'
+
+
+def test_a_model_subclass_keeps_its_own_eq_and_repr():
+    """Not a VCR test: equality and `repr` make no request."""
+    assert _OwnMethodsModel() == _OwnMethodsModel()
+    assert repr(_OwnMethodsModel()) == 'own repr'
+
+
+def test_model_repr_shows_its_name_settings_and_profile():
+    """A provider adapter keeps its name and provider out of its dataclass fields' repr.
+
+    Not a VCR test: `repr` makes no request.
+    """
+    model = OpenAIChatModel('gpt-5', provider=openai.OpenAIProvider(api_key='x'), settings={'temperature': 1.0})
+
+    assert repr(model) == "OpenAIChatModel(model_name='gpt-5', settings={'temperature': 1.0})"
+    assert repr(TestModel(seed=1, profile=ModelProfile(supports_tools=False))) == (
+        "TestModel(model_name='test', call_tools='all', custom_output_text=None, custom_output_args=None, seed=1, "
+        "last_model_request_parameters=None, profile={'supports_tools': False})"
+    )
+    assert repr(_PlainModel()) == "_PlainModel(model_name='plain')"
+
+
+@dataclass(init=False)
+class _SelfReferencingModel(TestModel):
+    """A model whose field reaches back to it, as a routing model holding an agent built on it would."""
+
+    itself: Model | None = None
+
+
+def test_a_self_referencing_model_repr_does_not_recurse():
+    """Not a VCR test: `repr` makes no request."""
+    model = _SelfReferencingModel()
+    model.itself = model
+
+    assert repr(model).endswith('itself=...)')

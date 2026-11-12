@@ -2,9 +2,9 @@
 
 import io
 import signal
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, cast
 
 import anyio
 import pytest
@@ -14,11 +14,13 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from pydantic import JsonValue
 from rich.console import Console
+from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, UserPromptPart
+from pydantic_ai.messages import BinaryContent, ModelMessage, UserContent, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_clai2 import chat
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -26,12 +28,14 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LiveSessions, Plugin, SessionStart
 from pydantic_clai2.runtime.live_runtimes import LiveRuntimes
 from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
+from pydantic_clai2.ui.menus import dialogs
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 from pydantic_clai2.ui.menus.update_menu import VERSION
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.terminal import NOWHERE, Terminal
 from tests.clai2.dialog_script import ScriptedDialogs
+from tests.clai2.menu_script import Script, pick
 from tests.clai2.surface_terminal import SurfaceTerminal
 from tests.clai2.test_live_runtimes import Fleet, Recorder, blocked, until
 
@@ -101,6 +105,11 @@ async def test_resume_of_a_session_live_in_the_browser_shows_it_without_forking(
         await started['b'].wait()
         assert ' 2 live' in toolbar(home)
         conversation = b.conversation.conversation_id
+        # A copy saved to continue it while another process ran it: the live session holding it still wins.
+        await desk.process.conversations.save(
+            summary=ConversationSummary(workspace=str(desk.folder('b')), title='Copy', forked_from=conversation),
+            messages=[],
+        )
         home.send_input(f'/resume {conversation}')
         await until(desk.live, lambda: terminal.shown is other and home.idle)
         assert desk.live.focused == b.id and other.terminal is terminal and home.terminal is None
@@ -160,31 +169,44 @@ async def test_restarts_are_refused_while_other_sessions_run_turns(
             c.send_input('go')
             await started['b'].wait()
             await started['c'].wait()
-            for command in ('/reload', '/update'):
+            for command in ('/reload', '/update now'):
                 with pytest.raises(ValueError, match='2 other sessions are running turns; try again when they finish'):
                     await home.commands.execute_async(command)
-            # The web UI's Settings > About says so too, instead of entering `/update`.
+            # Bare `/update` can still show its read-only status and channel while an install is refused; its
+            # Update action says why and stays in the menu.
+            shown = Script(lists=[pick(VERSION), MenuResult(cancelled=True)], choices=[], texts=[])
+            monkeypatch.setattr(dialogs, 'RUNNERS', shown.runners)
+            home.updates.fetch = lambda channel: home.updates.current.version
+            home.updates.spawn = lambda work: work()
+            assert (
+                await home.commands.execute_async('/update')
+                == '2 other sessions are running turns; try again when they finish.'
+            )
+            assert shown.opened == ['list', 'list']
+            # The web UI's About menu refuses an install as an error, so the page shows no saved row.
             about = next(command for command in home.commands if command.name == 'update').menu
             assert about is not None
-            assert await about().actions[VERSION](ScriptedDialogs([])) == [
-                '2 other sessions are running turns; try again when they finish.'
-            ]
+            with pytest.raises(ValueError, match='2 other sessions are running turns; try again when they finish'):
+                await about().actions[VERSION](ScriptedDialogs([]))
             release['c'].set()
             await until(desk.live, lambda: not c.running)
             with pytest.raises(ValueError, match='1 other session is running a turn; try again when it finishes'):
                 await home.commands.execute_async('/reload')
             release['b'].set()
             await until(desk.live, lambda: not b.running)
-            assert await home.commands.execute_async('/update') == 'Updated.'
+            assert await home.commands.execute_async('/update now') == 'Updated.'
             assert await home.commands.execute_async('/reload') == 'Reloading CLAI2...'
     assert home.reload_requested
     await home.close('exit')
 
 
-async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path) -> None:
-    """`/reload` works in the session shown, which then ends the terminal's run; elsewhere it is refused."""
+async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hidden session cannot open a terminal menu or restart CLAI; the shown session can restart."""
     desk = Desk(tmp_path)
     home, terminal = desk.home, desk.terminal
+    monkeypatch.setattr(dialogs, 'RUNNERS', Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[]).runners)
+    home.updates.fetch = lambda channel: home.updates.current.version
+    home.updates.spawn = lambda work: work()
 
     async def body() -> None:
         b = await desk.live.new()
@@ -192,8 +214,8 @@ async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path) -> 
         with pytest.raises(ValueError, match='Enter them in the session the terminal shows'):
             await other.commands.execute_async('/reload')
         assert await home.show_live(b.conversation.conversation_id) == ''
-        # Hidden now, the session CLAI started with takes input from the browser, but not a restart.
-        for command in ('/reload', '/update'):
+        # Hidden now, the session CLAI started with cannot borrow the terminal's menu or restart.
+        for command in ('/reload', '/update', '/update now'):
             with pytest.raises(ValueError, match='Enter them in the session the terminal shows'):
                 await home.commands.execute_async(command)
         assert not home.reload_requested
@@ -216,7 +238,7 @@ async def test_a_session_shown_from_another_folder_does_not_restart_clai(tmp_pat
     async def body() -> None:
         b = await desk.live.new(workspace=desk.folder('b'))
         assert await home.show_live(b.conversation.conversation_id) == ''
-        for command in ('/reload', '/update'):
+        for command in ('/reload', '/update now'):
             with pytest.raises(ValueError, match=r'where it started, and this session works in .*b; restart it'):
                 await desk.runtimes[b.id].commands.execute_async(command)
         b.send_input('/exit')
@@ -448,6 +470,69 @@ async def test_a_session_shown_mid_answer_streams_the_rest_in_the_terminal(tmp_p
     await home.close('exit')
 
 
+async def test_queued_images_stay_with_their_prompt_as_the_terminal_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prompts queued with images behind running turns keep them, whether the terminal leaves or shows their session."""
+    started = {name: anyio.Event() for name in ('home', 'b')}
+    release = {name: anyio.Event() for name in ('home', 'b')}
+    calls = {'home': 0, 'b': 0}
+    desk = Desk(tmp_path, agent=blocked('home', started, release, calls))
+    desk.agents['b'] = blocked('b', started, release, calls)
+    home, terminal = desk.home, desk.terminal
+    red, blue = BinaryContent(b'red', media_type='image/png'), BinaryContent(b'blue', media_type='image/png')
+    green = BinaryContent(b'green', media_type='image/png')
+
+    async def body() -> None:
+        b = await desk.live.new(workspace=desk.folder('b'))
+        other = desk.runtimes[b.id]
+
+        def pick(browser: SessionBrowser) -> str:
+            return b.conversation.conversation_id
+
+        monkeypatch.setattr(SessionBrowser, 'run', pick)
+        home.send_input('first')
+        b.send_input('first')
+        await started['home'].wait()
+        await started['b'].wait()
+        # Home's in the terminal's editor, B's in its inbox; then the resume browser, open over the turn, shows B.
+        home.send_input('home look', images=[red])
+        b.send_input('b look', images=[blue])
+        # As a prompt rejected for want of a model keeps its images for the retry.
+        rejected = f'retry {home.images.attach([green])}'
+        home.images.retry_text = rejected
+        home.send_input('/resume')
+        await until(desk.live, lambda: terminal.shown is other)
+        held = {
+            name: sorted(image.data for image in images.pending.values())
+            for name, images in [('home', home.images), ('terminal', terminal.images)]
+        }
+        assert held == {'home': [b'green', b'red'], 'terminal': [b'blue']}, 'no image is held, and counted, twice'
+        assert home.images.retry_text == rejected and home.images.resolve(rejected)[1] == [green]
+        assert terminal.images.retry_text == '', 'it went with its session, not left for the one shown'
+        release['home'].set()
+        release['b'].set()
+        await until(desk.live, lambda: calls == {'home': 2, 'b': 2} and home.idle and other.idle)
+        b.send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
+    (other,) = desk.runtimes.values()
+    assert (user_content(home), user_content(other)) == (
+        ['first', ['home look', red]],
+        ['first', ['b look', blue]],
+    )
+    await home.close('exit')
+
+
+def user_content(runtime: SessionRuntime[None, str]) -> list[str | Sequence[UserContent]]:
+    return [
+        part.content
+        for message in runtime.session.messages
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+
+
 def prompts(runtime: SessionRuntime[None, str]) -> list[str]:
     return [
         part.content
@@ -504,7 +589,7 @@ async def test_chat_opens_sessions_for_the_browser_beside_the_terminal(tmp_path:
     seen: list[dict[str, JsonValue]] = []
 
     def settings_for(project: ProjectSettings) -> Settings:
-        seen.append(project.overrides)
+        seen.append(project.pending)  # Not approved, so it waits; read from that folder all the same.
         return Settings(model='test')
 
     async def drive() -> None:
@@ -547,7 +632,7 @@ async def test_a_failed_reload_from_a_shown_session_keeps_its_conversation(
     def broken(build: Callable[[], object]) -> object:
         raise RuntimeError('broken source')
 
-    monkeypatch.setattr('pydantic_clai2._app.reload_clai', broken)
+    monkeypatch.setattr('pydantic_clai2.app.reload_clai', broken)
     conversations: list[str] = []
 
     async def drive() -> None:
@@ -567,6 +652,12 @@ async def test_a_failed_reload_from_a_shown_session_keeps_its_conversation(
         await Opener.started.wait()
         (again,) = live.listing()
         assert again.conversation.conversation_id == conversations[0]
+        served = live.runtime(again.conversation.conversation_id)
+        assert isinstance(served, SessionRuntime)
+        runtime = cast(SessionRuntime[None, str], served)
+        # Closed for the reload, it hears titles and task events again, once.
+        assert runtime.process.namer.listeners.count(runtime.sessions.named) == 1
+        assert runtime.process.tasks.views.count(runtime.tasks) == 1
         again.send_input('/exit')
 
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(20):

@@ -10,7 +10,7 @@ from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
-from pydantic_clai2.cli import _cli
+from pydantic_clai2.cli import cli
 
 
 @dataclass(frozen=True)
@@ -43,7 +43,7 @@ class CliRunner:
             pipe.send_text(input)
             pipe.close()
             try:
-                _cli.run()
+                cli.run()
             except SystemExit as exit:
                 assert isinstance(exit.code, int)
                 returncode = exit.code

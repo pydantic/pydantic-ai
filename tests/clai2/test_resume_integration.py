@@ -25,7 +25,7 @@ from pydantic_clai2 import DEFAULT_PLUGINS, chat
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session import Session
 from pydantic_clai2.runtime.session_naming import SessionNamer
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
@@ -36,7 +36,7 @@ async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pyte
     def rebuild(factory: Callable[[], object]) -> object:
         return factory()
 
-    monkeypatch.setattr('pydantic_clai2._app.reload_clai', rebuild)
+    monkeypatch.setattr('pydantic_clai2.app.reload_clai', rebuild)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
         pipe.send_text('first\r/reload\rsecond\r/exit\r')
         await chat(

@@ -38,6 +38,7 @@ from pydantic_ai.messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -48,7 +49,8 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
@@ -79,7 +81,7 @@ from pydantic_ai.realtime import (
     WebRTCSession,
 )
 from pydantic_ai.realtime._instrumentation import SessionInstrumentation
-from pydantic_ai.realtime._lifecycle import ResponseStarted, UserTurnEnded, UserTurnStarted
+from pydantic_ai.realtime._lifecycle import ResponseEnded, ResponseStarted, StaleEvent, UserTurnEnded, UserTurnStarted
 from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
     _user_content_items,  # pyright: ignore[reportPrivateUsage]
@@ -89,6 +91,7 @@ from pydantic_ai.realtime._openai_protocol import (
     seed_items,
     server_vad_from_turn_detection,
 )
+from pydantic_ai.realtime._utils import session_instructions
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     CancelResponse,
@@ -114,7 +117,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsDatetime, try_import
+from ..conftest import IsDatetime, legacy_retry_prompt_part, try_import
 from ..realtime_connections import lifecycle_events
 from .test_session import FakeRealtimeModel, make_tool_manager
 from .ws_helpers import collect_codec_events, collect_session_events
@@ -133,9 +136,12 @@ with try_import() as imports_successful:
     )
     from openai.types.realtime.realtime_audio_config_output import Voice as SDKVoice, VoiceID
 
-    from pydantic_ai.models.openai import _map_usage as _map_standard_usage  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.models.openai._response_fields import map_usage as _map_standard_usage
+    from pydantic_ai.providers import Provider
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
     from pydantic_ai.realtime import openai as rt_openai
     from pydantic_ai.realtime.openai import (
         KnownOpenAIRealtimeVoiceName,
@@ -1247,6 +1253,8 @@ def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None
 
     assert reasoning('low') == {'effort': 'low'}
     assert reasoning('high') == {'effort': 'high'}
+    # The realtime reasoning efforts stop at `xhigh`, where `max` lands.
+    assert reasoning('max') == {'effort': 'xhigh'}
     assert reasoning(True) == {'effort': 'medium'}
     # `thinking=False` sends effort `'none'`, which the SDK type omits but the reasoning models accept
     # and honor with zero reasoning tokens; omitting `reasoning` would leave them at their default effort.
@@ -1661,6 +1669,120 @@ async def test_connect_without_tools_omits_tools(monkeypatch: pytest.MonkeyPatch
     assert 'voice' not in session['audio']['output']
 
 
+class _OpenWebSocket(FakeWebSocket):
+    """A websocket that stays open after the handshake, as a server would until the session closes."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        await asyncio.Event().wait()
+        yield  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    ('profile', 'expected'),
+    [
+        (None, ('system', 'The caller is Jamie.')),
+        ({'supports_system_messages': False}, ('user', '<system>The caller is Jamie.</system>')),
+    ],
+)
+async def test_mid_session_system_prompt_channel_follows_the_profile(
+    monkeypatch: pytest.MonkeyPatch, profile: RealtimeModelProfile | None, expected: tuple[str, str]
+) -> None:
+    """A system prompt goes out as a `system` message where the profile says the model heeds one, else as tagged text."""
+    ws = _OpenWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'), profile=profile)
+    assert model.profile.get('supports_system_messages') is (profile is None)
+
+    async with Agent().realtime(model).session() as session:
+        await session.send(SystemPromptPart(content='The caller is Jamie.'), respond=False)
+
+    [item] = [json.loads(frame)['item'] for frame in ws.sent if json.loads(frame)['type'] == 'conversation.item.create']
+    assert (item['role'], item['content'][0]['text']) == expected
+    assert not any(json.loads(frame)['type'] == 'response.create' for frame in ws.sent)
+
+
+async def test_connect_sends_seeded_system_prompts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The standing system prompt opens the session instructions; a later one is seeded in place as `<system>` text."""
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='Standing prompt.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Mid-conversation note.'), UserPromptPart(content='more')]),
+        ModelResponse(parts=[TextPart(content='sure')]),
+    ]
+    model = OpenAIRealtimeModel('gpt-realtime')
+    async with model.connect(
+        messages=[*history, ModelRequest(parts=[])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            instruction_parts=[InstructionPart(content='Agent instructions.')]
+        ),
+    ):
+        pass
+
+    assert json.loads(ws.sent[0])['session']['instructions'] == 'Standing prompt.\n\nAgent instructions.'
+    assert [
+        (item['item']['role'], [content['text'] for content in item['item']['content']])
+        for item in map(json.loads, ws.sent[1:])
+    ] == snapshot(
+        [
+            ('user', ['hi']),
+            ('assistant', ['hello']),
+            ('user', ['<system>Mid-conversation note.</system>']),
+            ('user', ['more']),
+            ('assistant', ['sure']),
+        ]
+    )
+
+
+async def test_seed_items_drop_answered_request_scoped_system_prompts() -> None:
+    """A request-scoped system prompt whose request was answered isn't seeded; the current request's still is.
+
+    That's what `Model.prepare_messages` does for a model that can't clear request-scoped prompts itself.
+    """
+    history = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='Standing prompt.'),
+                SystemPromptPart(content='Answered note.', scope='request'),
+                UserPromptPart(content='hi'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(
+            parts=[SystemPromptPart(content='Current note.', scope='request'), UserPromptPart(content='more')]
+        ),
+    ]
+    items = await seed_items(history, profile=RealtimeModelProfile(), provider_name='openai')
+    assert [(item['role'], [content['text'] for content in item['content']]) for item in items] == (
+        snapshot(
+            [
+                ('user', ['hi']),
+                ('assistant', ['hello']),
+                ('user', ['<system>Current note.</system>']),
+                ('user', ['more']),
+            ]
+        )
+    )
+
+    # A system prompt after a leading request-scoped one isn't the standing prompt, so dropping the
+    # request-scoped one doesn't make it one: it's seeded in place rather than lost.
+    history[0] = ModelRequest(
+        parts=[
+            SystemPromptPart(content='Answered note.', scope='request'),
+            SystemPromptPart(content='Later prompt.'),
+            UserPromptPart(content='hi'),
+        ]
+    )
+    assert session_instructions(history, ModelRequestParameters()) == ''
+    items = await seed_items(history, profile=RealtimeModelProfile(), provider_name='openai')
+    assert [(item['role'], [content['text'] for content in item['content']]) for item in items][:2] == [
+        ('user', ['<system>Later prompt.</system>']),
+        ('user', ['hi']),
+    ]
+
+
 async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
     async def download_image(*args: Any, **kwargs: Any) -> Any:
         return {'data': b'url-image', 'data_type': 'image/png'}
@@ -1698,8 +1820,13 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='weather', content='sunny', tool_call_id='call-1'),
-                RetryPromptPart(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
-                RetryPromptPart(content='answer in prose'),
+                legacy_retry_prompt_part(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
+                legacy_retry_prompt_part(content='answer in prose'),
+                RetryFeedbackPart(content='answer in prose', retry=RetryInfo(cause='model_retry')),
+                RetryFeedbackPart(
+                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an integer', 'input': 'lots'}],
+                    retry=RetryInfo(cause='validation_error'),
+                ),
                 UserPromptPart(
                     content=[
                         ImageUrl(url='https://example.com/a.png'),
@@ -1772,7 +1899,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                 'item': {
                     'type': 'function_call_output',
                     'call_id': 'call-2',
-                    'output': 'invalid id\n\nFix the errors and try again.',
+                    'output': '{"error":"invalid id"}',
                 },
             },
             {
@@ -1783,7 +1910,48 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+answer in prose
+</pyai:retry_feedback>\
+""",
+                        }
+                    ],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+answer in prose
+</pyai:retry_feedback>\
+""",
+                        }
+                    ],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
+</pyai:validation_errors>\
+""",
                         }
                     ],
                 },
@@ -1890,10 +2058,10 @@ async def test_connect_seeds_multimodal_tool_return(monkeypatch: pytest.MonkeyPa
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': '<tool_result tool_name="inspect" tool_call_id="call-image" file_id="result.png">',
+                            'text': '<pyai:tool_result tool_name="inspect" tool_call_id="call-image" file_id="result.png">',
                         },
                         {'type': 'input_image', 'image_url': 'data:image/png;base64,cmVzdWx0LWltYWdl'},
-                        {'type': 'input_text', 'text': '</tool_result>'},
+                        {'type': 'input_text', 'text': '</pyai:tool_result>'},
                     ],
                 },
             },
@@ -2450,7 +2618,7 @@ async def test_connection_send_commit_and_clear_audio() -> None:
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     await conn.send(CommitAudio())
     await conn.send(ClearAudio())
-    assert json.loads(ws.sent[0]) == {'type': 'input_audio_buffer.commit'}
+    assert json.loads(ws.sent[0]) == {'type': 'input_audio_buffer.commit', 'event_id': 'pydantic_ai.commit.0'}
     assert json.loads(ws.sent[1]) == {'type': 'input_audio_buffer.clear'}
 
 
@@ -2917,7 +3085,7 @@ async def test_function_call_only_response_without_usage_finalizes_before_answer
     assert isinstance(tool_result, ModelRequest)
     assert isinstance(tool_result.parts[0], ToolReturnPart)
     assert isinstance(answer, ModelResponse)
-    assert answer.parts == [SpeechPart(speaker='assistant', transcript='Sunny')]
+    assert answer.parts == [SpeechPart(speaker='assistant', transcript='Sunny', id='answer-1', provider_name='openai')]
     assert answer.usage == RequestUsage(output_tokens=3)
 
 
@@ -2966,7 +3134,7 @@ async def test_session_stamps_openai_response_metadata(
     assert response.provider_details == expected_details
     speech = response.parts[0]
     assert isinstance(speech, SpeechPart)
-    assert (speech.id, speech.provider_name) == (None, None)
+    assert (speech.id, speech.provider_name) == ('item-1', 'openai')
 
 
 @pytest.mark.parametrize(
@@ -3011,6 +3179,15 @@ class DroppingWebSocket(FakeWebSocket):
     async def __aiter__(self) -> AsyncIterator[Any]:
         raise rt_openai.websockets.ConnectionClosed(None, None)
         yield  # pragma: no cover  (makes this an async generator)
+
+
+class _DropAfterFrames(FakeWebSocket):
+    """Yields its frames, then drops abnormally."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        while self._incoming:
+            yield self._incoming.pop(0)
+        raise rt_openai.websockets.ConnectionClosed(None, None)
 
 
 class _DroppableAfterHandshake(FakeWebSocket):
@@ -3527,6 +3704,40 @@ async def test_reconnect_does_not_re_solicit_a_response_that_was_streaming() -> 
     events = [e async for e in conn]
     assert [type(e).__name__ for e in events] == ['RealtimeSessionReconnectEvent', 'RealtimeSessionErrorEvent']
     assert not any(json.loads(frame).get('type') == 'response.create' for frame in replacement.sent)
+
+
+async def test_reconnect_closes_the_reply_it_orphaned() -> None:
+    # The re-dialed socket replays only finalized turns, so a reply that was streaming when the old one dropped is
+    # never continued and its `response.done` never comes (verified live on OpenAI, Azure and xAI). The lifecycle
+    # ends it as lost; the connection also closes it on the codec stream with an interrupted `ResponseDone` ahead
+    # of the reconnect event, the boundary messages queued behind the reply wait for (#7192).
+    created = json.dumps({'type': 'response.created', 'response': {'id': 'resp-1'}})
+    delta = json.dumps({'type': 'response.output_text.delta', 'response_id': 'resp-1', 'delta': 'once upon'})
+    replacements = iter([FakeWebSocket([])])
+
+    async def dial() -> Any:
+        try:
+            return next(replacements)
+        except StopIteration:
+            raise OSError('server is down')
+
+    conn = OpenAIRealtimeConnection(
+        _DropAfterFrames([created, delta]),  # type: ignore[arg-type]
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1},
+    )
+
+    frames = [frame async for frame in conn.frames()]
+    reconnect_frame = next(
+        frame for frame in frames if any(isinstance(e, RealtimeSessionReconnectEvent) for e in frame)
+    )
+    assert reconnect_frame == snapshot(
+        [
+            ResponseEnded(response_id='resp-1', status='lost'),
+            StaleEvent(event=ResponseDone(interrupted=True)),
+            RealtimeSessionReconnectEvent(),
+        ]
+    )
 
 
 async def test_reconnect_replay_failure_consumes_an_attempt() -> None:
@@ -4380,10 +4591,24 @@ async def test_custom_provider_base_url_derives_websocket_url(monkeypatch: pytes
     assert fake_connect.headers == {'Authorization': 'Bearer k'}
 
 
-def test_azure_provider_is_rejected() -> None:
-    from pydantic_ai.providers.azure import AzureProvider
+@pytest.mark.parametrize('kind', ['azure', 'renamed-azure', 'compatible-named-azure'])
+def test_azure_provider_is_rejected(kind: str) -> None:
+    """An `AzureProvider`, renamed or not, and any other provider named `azure` are pointed at `AzureRealtimeModel`."""
 
-    provider = AzureProvider(azure_endpoint='https://res.openai.azure.com/openai/v1/', api_key='k')
+    class RenamedAzureProvider(AzureProvider):
+        @property
+        def name(self) -> str:
+            return 'my-azure'
+
+    endpoint = 'https://res.openai.azure.com/openai/v1/'
+    provider: Provider[AsyncOpenAI]
+    if kind == 'azure':
+        provider = AzureProvider(azure_endpoint=endpoint, api_key='k')
+    elif kind == 'renamed-azure':
+        provider = RenamedAzureProvider(azure_endpoint=endpoint, api_key='k')
+        assert provider.name == 'my-azure'
+    else:
+        provider = OpenAICompatibleProvider('azure', base_url=endpoint, api_key='k')
     with pytest.raises(UserError, match='Azure OpenAI is not supported'):
         OpenAIRealtimeModel('gpt-realtime', provider=provider)
 
@@ -5355,15 +5580,6 @@ async def test_a_chat_spans_input_is_the_conversation_ahead_of_its_response(monk
     assert [type(message).__name__ for message in input_messages] == ['ModelRequest']
 
 
-class _DropAfterFrames(FakeWebSocket):
-    """Yields its frames after the handshake, then drops abnormally."""
-
-    async def __aiter__(self) -> AsyncIterator[Any]:
-        while self._incoming:
-            yield self._incoming.pop(0)
-        raise rt_openai.websockets.ConnectionClosed(None, None)
-
-
 @pytest.mark.parametrize('transcript', ['Weather?', None])
 async def test_reconnect_replays_a_reply_held_back_behind_a_missing_transcript(
     monkeypatch: pytest.MonkeyPatch, transcript: str | None
@@ -5587,6 +5803,58 @@ async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_th
     assert part.audio.data[44:] == sent
     [streamed_part] = streamed
     assert streamed_part.audio is not None and streamed_part.audio.data[44:] == sent
+
+
+def _push_to_talk_session(ws: _QueuedWebSocket) -> RealtimeSession:
+    connection = OpenAIRealtimeConnection(ws, manual_turns=True)  # type: ignore[arg-type]
+    return RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='input_audio',
+    )
+
+
+@pytest.mark.anyio
+async def test_push_to_talk_turn_closed_before_its_commit_is_acknowledged_keeps_its_audio() -> None:
+    """A turn `commit_audio()` committed is recorded with its retained audio though the session closes before
+    reading the provider's `input_audio_buffer.committed`: the provider has it, and no transcript is coming."""
+    ws = _QueuedWebSocket()
+    session = _push_to_talk_session(ws)
+    pcm = b'\x01\x00' * 2_400
+    async with session:
+        await session.send_audio(pcm)
+        await session.commit_audio()
+
+    [request] = session.all_messages()
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.speaker == 'user' and part.transcript is None
+    assert part.audio is not None and part.audio.data[44:] == pcm
+
+
+@pytest.mark.anyio
+async def test_push_to_talk_commits_the_provider_refuses_or_of_nothing_make_no_turn_at_close() -> None:
+    """A commit with no audio sent since the last one, or one the provider refused as too short, is no turn when
+    the session closes before anything acknowledges it."""
+    ws = _QueuedWebSocket()
+    session = _push_to_talk_session(ws)
+    async with session:
+        await session.send_audio(b'\x01\x00' * 100)
+        await session.commit_audio()
+        ws.push(
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'code': 'input_audio_buffer_commit_empty',
+                    'message': 'Error committing input audio buffer: buffer too small.',
+                },
+            }
+        )
+        assert isinstance(await anext(aiter(session)), RealtimeSessionErrorEvent)
+        await session.commit_audio()
+
+    assert session.all_messages() == []
 
 
 @pytest.mark.anyio

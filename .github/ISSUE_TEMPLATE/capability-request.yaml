@@ -1,0 +1,62 @@
+name: 🧩 Pydantic AI Capability Request
+description: "Suggest a new first-party capability for Pydantic AI or Pydantic AI Harness"
+labels: ["new-capability"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for contributing to Pydantic AI! ✊
+
+        [Capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) bundle tools, hooks, instructions, and model settings into a reusable unit.
+        Before requesting one, check the [built-in capabilities](https://pydantic.dev/docs/ai/capabilities/overview/),
+        [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/), and [third-party capabilities](https://pydantic.dev/docs/ai/capabilities/third-party/).
+        You can also [build your own](https://pydantic.dev/docs/ai/capabilities/custom/) and publish it as a package.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Initial Checks
+      options:
+        - label: I've checked that no existing first-party or third-party capability covers this
+          required: true
+        - label: I've searched for my request in [the issue tracker](https://github.com/pydantic/pydantic-ai/issues) before opening this issue
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: |
+        What should the capability do, and what problem does it solve for you?
+    validations:
+      required: true
+
+  - type: textarea
+    id: example
+    attributes:
+      label: Example Usage
+      description: >
+        Show how you'd like to use the capability.
+
+        (This will be automatically formatted as code, so no need for backticks.)
+      placeholder: |
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-5', capabilities=[...])
+      render: Python
+
+  - type: textarea
+    id: why-first-party
+    attributes:
+      label: Why First-Party?
+      description: |
+        Why should this live in Pydantic AI or Pydantic AI Harness instead of a third-party package?
+        If it needs changes to core capability mechanics (hooks, lifecycle, state), say which.
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: |
+        Links to provider APIs, similar features in other libraries, or related issues. 📚
