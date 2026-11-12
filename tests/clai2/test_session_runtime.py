@@ -215,7 +215,10 @@ async def test_the_owner_opens_once_for_overlapping_users(tmp_path: Path, monkey
             trims.append(pad)
             return 1
 
-    monkeypatch.setattr(runtime_tasks.ctypes, 'CDLL', lambda name: Glibc())
+    def load(name: str | None) -> Glibc:
+        return Glibc()
+
+    monkeypatch.setattr(runtime_tasks.ctypes, 'CDLL', load)
     monkeypatch.setattr(runtime_tasks.sys, 'platform', 'linux')
     router = TaskRouter(directory=tmp_path / 'tasks')
     first, second = (
@@ -242,8 +245,13 @@ async def test_the_owner_opens_where_memory_cannot_be_trimmed(
     platform: str, library: object, loads: list[None], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A C library without `malloc_trim` (musl), and a platform that isn't glibc's, open the owner as usual."""
-    loaded: list[object] = []
-    monkeypatch.setattr(runtime_tasks.ctypes, 'CDLL', lambda name: loaded.append(name) or library)
+    loaded: list[str | None] = []
+
+    def load(name: str | None) -> object:
+        loaded.append(name)
+        return library
+
+    monkeypatch.setattr(runtime_tasks.ctypes, 'CDLL', load)
     monkeypatch.setattr(runtime_tasks.sys, 'platform', platform)
     router = TaskRouter(directory=None)
     view = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', router=router)
