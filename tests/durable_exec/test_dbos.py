@@ -2950,6 +2950,35 @@ async def test_dbos_durability_model_error_retry_after_continues_the_backoff(
     assert intervals == [80.0, 160.0]
 
 
+async def test_dbos_durability_model_error_retry_after_caps_at_dbos_maximum_backoff(
+    dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DBOS caps its own backoff at an hour, so a step's backoff past that raises the cap no higher."""
+    model, _ = _retry_after_model(_rate_limited(5000))
+    agent = Agent(
+        model,
+        name='durability_retry_after_maximum',
+        capabilities=[
+            DBOSDurability(model_step_config=StepConfig(retries_allowed=True, max_attempts=2, interval_seconds=4000))
+        ],
+    )
+    waits: list[float] = []
+
+    async def record_wait(seconds: float) -> None:
+        waits.append(seconds)
+
+    monkeypatch.setattr(DBOS, 'sleep_async', record_wait)
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello DBOS')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_durable_agent() == 'answered'
+
+    assert waits == [3600.0]
+
+
 def test_dbos_retry_after_uses_dbos_step_defaults() -> None:
     """The step defaults the `retry_after` wait is worked out with are DBOS's own."""
     assert (
