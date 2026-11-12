@@ -1,12 +1,25 @@
-"""Docker sandbox capability: runs the agent's commands and file edits in a local Docker (or Podman) container.
+"""Deprecated import location for `pydantic_ai_harness.docker_container`.
 
-`DockerSandbox` is the supported entry point; build an agent with it and add tools that use the
-workspace, such as `Coder`. `DockerSandboxBackend` is the workspace backend itself, public for
-applications that want to build one and pass it to a run as `workspace=`.
+This capability was renamed because "sandbox" implied a security boundary that a plain
+container, which shares the host's kernel, doesn't give. Importing from here still works
+but emits a `HarnessDeprecationWarning`. Import from `pydantic_ai_harness.docker_container` instead.
 """
 
-from pydantic_ai_harness.docker_sandbox._backend import DockerSandboxBackend
-from pydantic_ai_harness.docker_sandbox._capability import DockerSandbox
+from pydantic_ai_harness._warn import warn_module_renamed
+from pydantic_ai_harness.docker_container import DockerContainerBackend
+from pydantic_ai_harness.docker_container._deprecated import DockerSandbox
+
+DockerSandboxBackend = DockerContainerBackend
+
+warn_module_renamed(
+    'docker_sandbox',
+    'docker_container',
+    reason=(
+        '`DockerSandbox` is now `DockerContainer` and `DockerSandboxBackend` is now `DockerContainerBackend`: '
+        'the old names implied a security sandbox, but a container shares the host kernel and its commands run as '
+        "the image's user, usually root."
+    ),
+)
 
 __all__ = [
     'DockerSandbox',
