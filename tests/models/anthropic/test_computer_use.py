@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import ModelProfile, merge_profile
+from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
 from ...computer_fakes import FAKE_DISPLAY_SIZE, FakeComputer
@@ -42,6 +43,7 @@ with try_import() as imports_successful:
         AsyncAnthropicBedrockMantle,
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
+        Omit,
     )
     from anthropic.types.beta import (
         BetaInputJSONDelta,
@@ -677,6 +679,36 @@ async def test_a_streamed_member_cut_off_mid_input_runs_nothing(allow_model_requ
     # The tool refuses the call instead of typing part of it.
     (call,) = [part for part in stream.get().parts if isinstance(part, ToolCallPart)]
     assert call.args_as_dict() == {'actions': [{'type': 'type', 'incomplete_input': True}]}
+
+
+async def test_a_call_named_computer_is_a_function_tools_when_tool_choice_leaves_out_the_computer(
+    allow_model_requests: None,
+) -> None:
+    client = MockAnthropic.create_mock(
+        _turn(
+            BetaToolUseBlock(
+                id='toolu_1', name='computer', input={'action': 'left_click', 'coordinate': [5, 6]}, type='tool_use'
+            )
+        )
+    )
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+    function = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'})
+    desktop = ToolDefinition(name='desktop', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    params = ModelRequestParameters(
+        function_tools=[function, desktop], native_tools=[COMPUTER_TOOL], allow_text_output=True
+    )
+
+    response = await model.request(
+        [ModelRequest.user_text_prompt('Go.')], {'tool_choice': ToolOrOutput(function_tools=['computer'])}, params
+    )
+
+    (sent,) = get_mock_chat_completion_kwargs(client)
+    assert [tool['name'] for tool in sent['tools']] == ['computer']
+    assert isinstance(sent['betas'], Omit)  # nor the computer use beta
+    # The computer use tool wasn't sent, so the call is the function tool's, not the `desktop` tool's.
+    (call,) = response.parts
+    assert isinstance(call, ToolCallPart) and not isinstance(call, ComputerCallPart)
+    assert (call.tool_name, call.args) == ('computer', {'action': 'left_click', 'coordinate': [5, 6]})
 
 
 async def test_forcing_the_computer_offers_the_toolset_alone(allow_model_requests: None) -> None:
