@@ -311,6 +311,13 @@ def test_go_refusal_skips_a_coding_plan_account_without_a_key(
         pytest.param('3188', None, PLAN_REFUSED, 'error type provider.quota, status 429', id='no-backup-key'),
         # Without the backup account, an odd run starts on the primary, as an even one does.
         pytest.param('3189', None, PLAN_REFUSED, 'error type provider.quota, status 429', id='no-backup-key-odd-run'),
+        pytest.param(
+            '3188',
+            None,
+            [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.rate-limit', 'status': 429}}],
+            'error type provider.rate-limit, status 429',
+            id='no-backup-key-rate-limit',
+        ),
         pytest.param('3188', '', PLAN_REFUSED, 'error type provider.quota, status 429', id='empty-backup-key'),
         pytest.param(
             '3188',

@@ -146,8 +146,9 @@ def run_with_fallback(
 
     A provider hands the run to the next one whose key is set only when it refused the run with one of its
     `handover_errors` before the run finished a step. The workflow's run number plus `matrix_index`, the run's place in
-    its job matrix, picks the account tried first: the primary when the sum is even, the backup when it is odd. `launch` runs the command in the environment it is given and writes the event stream to the
-    stream it is given, which `output` holds after each run. Each run gets a config that allows only its provider,
+    its job matrix, picks the account tried first: the primary when the sum is even, the backup when it is odd.
+    `launch` runs the command in the environment it is given and writes the event stream to the stream it is given,
+    which `output` holds after each run. Each run gets a config that allows only its provider,
     and an environment that holds only that account's key. A run whose process fails prints its model and OpenCode
     error type.
     """

@@ -328,17 +328,20 @@ this chain:
 The workflow's run number plus the run's place in its job matrix picks the first account: the primary when the sum is
 even, the backup when it is odd. Run numbers count up within a workflow, so consecutive runs alternate accounts. Each
 `PR Review Checks` review passes its check's place in the `detect` matrix, so the checks of one run alternate too.
-Every other caller is a single job and passes 0. On the 12 `PR Review Checks` runs that started together at 06:28Z on
-2026-11-12, such as [run 43168376242](https://github.com/pydantic/pydantic-ai/actions/runs/43168376242), this splits
-the 33 reviews 16 and 17. Without `ZAI_BACKUP_API_KEY`, the chain is Go, then the primary.
+Every other caller is a single job and passes 0. Replayed on the 12 `PR Review Checks` runs that started together at
+06:28Z on 2026-11-12, such as [run 43168376242](https://github.com/pydantic/pydantic-ai/actions/runs/43168376242),
+this rule puts 16 of their 33 reviews on the primary first and 17 on the backup. Without `ZAI_BACKUP_API_KEY`, the
+chain is Go, then the primary.
 
 A run moves to the next provider only when all of these hold:
 
 - OpenCode exited non-zero, and its event stream has no `step_finish` event.
 - The stream's last `error` event has a type the refusing provider hands over: `provider.go-limit` or
   `provider.quota` from Go, and `provider.quota` or `provider.rate-limit` from the first Coding Plan account. OpenCode
-  2.2.5 writes `provider.rate-limit` only after its own retries within the run, and does not retry the other types;
-  see `toSessionError` in
+  2.2.5 retries a rate limit within the run before it writes `provider.rate-limit`, and does not retry the other
+  types; see `isRetryable` in
+  [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts) and
+  `toSessionError` in
   [`to-session-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts).
 - The next account's key is set. The chain leaves out a Z.AI account without a key.
 
