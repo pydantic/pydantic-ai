@@ -5,8 +5,18 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelResponse
-from pydantic_ai.models import ModelRequestContext, _standing_system_prompt  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    SystemPromptPart,
+)
+from pydantic_ai.models import (
+    ModelRequestContext,
+    _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.profiles import CompactionInstructionsMode
 
 from .compaction import CompactionRequest, CompactionResult
@@ -61,6 +71,17 @@ async def compact_with_model(
         usage=response.usage,
         kept_from=len(opening) + 1,
     )
+
+
+def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
+    """The parts of the standing system prompt of `messages`: the opening parts of the requests it starts with, merged."""
+    parts: list[ModelRequestPart] = []
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            break
+        parts.extend(message.parts)
+    count = _standing_system_prompt_count(ModelRequest(parts=parts))
+    return [part for part in parts[:count] if isinstance(part, SystemPromptPart)]
 
 
 def _turn_start(messages: Sequence[ModelMessage]) -> int:
