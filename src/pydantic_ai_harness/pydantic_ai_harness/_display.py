@@ -95,7 +95,13 @@ class LazyDisplay:
         # One start at a time: two would both find no display and start two.
         async with self._lock:
             if even_if_running or not self._running:
-                self._unseen |= await self._start()
+                try:
+                    launched = await self._start()
+                except BaseException:
+                    # It may have launched one before failing, such as when its reply was lost.
+                    self._unseen = True
+                    raise
+                self._unseen |= launched
                 self._running = True
 
     async def _look(self, call: Callable[[DisplayDriver], Awaitable[bytes]]) -> bytes:
