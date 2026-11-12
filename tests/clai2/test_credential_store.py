@@ -28,7 +28,7 @@ from tests.clai2.conftest import stored_accounts
 Vault = dict[tuple[str, str], str]
 KEY = ('pydantic-clai2', 'encryption-key')
 LEGACY = ('pydantic-clai2', 'openai-codex')
-PLAINTEXT_WARNING = 'No OS keyring is available; falling back to 0600 plaintext credential files in'
+PLAINTEXT_WARNING = 'No OS keyring is available; falling back to 0600 plaintext credential files.'
 
 
 def fake_browser(url: str) -> bool:
@@ -233,18 +233,19 @@ def no_keyring(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) 
 
 @pytest.mark.parametrize('no_keyring', [NoKeyringError, InitError], indirect=True)
 def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None, caplog: pytest.LogCaptureFixture) -> None:
-    expected = f'{PLAINTEXT_WARNING} {credentials_path().parent}.'
     with caplog.at_level('WARNING', logger=credential_store.__name__):
         assert load_codex_credentials(fallback=fallback) is None
         assert caplog.records == []
         save_codex_credentials(fallback=fallback, value='{"access_token":"first"}')
-        assert [record.getMessage() for record in caplog.records] == [expected]
+        assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING]
+        assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
+        assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING]
         new_session()
         assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
-        assert [record.getMessage() for record in caplog.records] == [expected, expected]
+        assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING, PLAINTEXT_WARNING]
         save_codex_credentials(fallback=fallback, value='{"access_token":"refreshed"}')
         assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
-    assert [record.getMessage() for record in caplog.records] == [expected, expected]
+    assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING, PLAINTEXT_WARNING]
     assert list(fallback.parent.glob('credentials.*')) == [fallback]
     if sys.platform != 'win32':  # pragma: no branch
         assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
@@ -260,7 +261,7 @@ def test_file_fallback_when_set_password_has_no_keyring(
     with caplog.at_level('WARNING', logger=credential_store.__name__):
         save_codex_credentials(fallback=fallback, value='{"access_token":"first"}')
         assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
-    assert [record.getMessage() for record in caplog.records] == [f'{PLAINTEXT_WARNING} {credentials_path().parent}.']
+    assert [record.getMessage() for record in caplog.records] == [PLAINTEXT_WARNING]
     if sys.platform != 'win32':  # pragma: no branch
         assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
 

@@ -35,10 +35,7 @@ _logger = logging.getLogger(__name__)
 @cache
 def _warn_plaintext_fallback() -> None:
     """Log a single warning per process when falling back to plaintext credential files."""
-    _logger.warning(
-        'No OS keyring is available; falling back to 0600 plaintext credential files in %s.',
-        credentials_path().parent,
-    )
+    _logger.warning('No OS keyring is available; falling back to 0600 plaintext credential files.')
 
 
 def credentials_path(*, account: str = _ACCOUNT) -> Path:
