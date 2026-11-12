@@ -152,6 +152,7 @@ def assert_runs_on(launch: Launch, provider: Provider) -> None:
     assert launch.args[launch.args.index('--model') + 1] == provider.model
     assert launch.config.agents['title']['model'] == provider.model
     assert launch.config.agents['compaction']['model'] == provider.model
+    assert launch.config.agents['summary']['model'] == provider.model
     assert [policy for policy in launch.config.policies if policy['action'] == 'provider.use'] == [
         {'action': 'provider.use', 'resource': '*', 'effect': 'deny'},
         {'action': 'provider.use', 'resource': provider.name, 'effect': 'allow'},
