@@ -361,8 +361,20 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         assert struct.unpack('>II', zoomed.data[16:24]) == zoomed_size
         assert pointer == 'The pointer is at (500, 500).'
 
-    async def test_a_call_its_provider_flagged_waits_for_approval(self) -> None:
+    @pytest.mark.parametrize('hook', [pytest.param(False, id='alone'), pytest.param(True, id='also-asked-by-a-hook')])
+    async def test_a_call_its_provider_flagged_waits_for_approval(self, hook: bool) -> None:
         provider = ScreenProvider()
+        # A hook that also asks for approval while validating the call leads to one approval, not two.
+        asks = Hooks[Any]()
+
+        @asks.on.after_tool_validate
+        async def ask(
+            ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+        ) -> ValidatedToolArgs:
+            if not ctx.tool_call_approved:
+                raise ApprovalRequired
+            return args
+
         check = {'id': 'sc_1', 'code': 'malicious_instructions', 'message': 'The page asks for a password.'}
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -375,7 +387,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
 
         agent = Agent(
             FunctionModel(respond),
-            capabilities=[provider.capability(), ComputerUse()],
+            capabilities=[provider.capability(), ComputerUse(), *([asks] if hook else [])],
             output_type=[str, DeferredToolRequests],
         )
         paused = await agent.run('Go.')
@@ -461,6 +473,18 @@ You can see and control a computer screen with the `computer` tool. Each call ru
     )
     async def test_a_run_without_a_display_fails_at_its_start(self, workspace: list[AbstractCapability[Any]]) -> None:
         agent = Agent(_scripted([{'type': 'click', 'x': 1, 'y': 1}]), capabilities=[*workspace, ComputerUse()])
+        with pytest.raises(UserError, match='`ComputerUse` needs a workspace with a display'):
+            await agent.run('Go.')
+
+    @pytest.mark.parametrize('native', [pytest.param(True, id='native-tool'), pytest.param(False, id='function-tool')])
+    async def test_a_durable_run_without_a_display_fails_at_its_first_display_read(self, native: bool) -> None:
+        # Durable workflow code can't reach the backend, so the read inside its durable unit reports it: the native
+        # tool's size before the request, or the call's own read.
+        agent = Agent(
+            _scripted([{'type': 'click', 'x': 1, 'y': 1}]),
+            name='computer',
+            capabilities=[WorkspaceCapability(), ComputerUse(native=native), RecordingDurability()],
+        )
         with pytest.raises(UserError, match='`ComputerUse` needs a workspace with a display'):
             await agent.run('Go.')
 
@@ -902,7 +926,7 @@ You can see and control a computer screen with the `computer` tool. Each call ru
                 for workspace in workspaces:
                     await workspace.display_size()  # creates its own environment, with a ref of its own
                 assert workspaces[0].ref != workspaces[1].ref
-        else:
+        else:  # one ref
 
             class Provider(ScreenProvider):
                 def backend(self, ref: WorkspaceRef | None) -> ScreenBackend:
@@ -910,10 +934,9 @@ You can see and control a computer screen with the `computer` tool. Each call ru
 
             provider = Provider()
             capabilities.append(provider.capability())
-            if shared == 'ref':
-                backend = provider.backend(None)
-                await backend.display_size()
-                workspaces = [backend.ref, backend.ref]  # each run builds its own backend for the environment
+            backend = provider.backend(None)
+            await backend.display_size()
+            workspaces = [backend.ref, backend.ref]  # each run builds its own backend for the environment
 
         agents = [
             Agent(
@@ -1145,6 +1168,17 @@ You can see and control a computer screen with the `computer` tool. Each call ru
         with pytest.raises(ValidationError, match='greater than 0'):
             ComputerUseActionLimits(max_typed_chars=0)
 
+    async def test_a_button_a_call_presses_and_releases_is_released_once(self) -> None:
+        provider = ScreenProvider()
+        agent = Agent(
+            _scripted([{'type': 'mouse_down'}, {'type': 'move', 'x': 5, 'y': 5}, {'type': 'mouse_up'}]),
+            capabilities=[provider.capability(), ComputerUse()],
+        )
+        (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+        assert tool_return.metadata is not None and tool_return.metadata['performed'] == 3
+        assert provider.actions == [MouseDown(), MoveMouse(x=5, y=5), MouseUp()]
+
     async def test_a_button_pressed_by_a_call_that_fails_is_released(self) -> None:
         provider = ScreenProvider()
         agent = Agent(
@@ -1288,12 +1322,13 @@ def test_the_call_helpers_fall_back_when_the_messages_lack_what_they_look_for() 
 class _Realtime(AbstractModel):
     """A model outside the request-response `Model` hierarchy, as a realtime model is."""
 
+    # `AbstractModel` requires both, but nothing in the test reads them.
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> str:  # pragma: no cover
         return 'realtime'
 
     @property
-    def system(self) -> str:
+    def system(self) -> str:  # pragma: no cover
         return 'test'
 
 
