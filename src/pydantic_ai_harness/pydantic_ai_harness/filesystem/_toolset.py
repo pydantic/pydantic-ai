@@ -841,24 +841,31 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         return descended
 
     async def read_file(
-        self, path: str, *, offset: int = 0, limit: int | None = None, workspace: WorkspaceBackend
+        self, path: str, *, offset: int = 1, limit: int | None = None, workspace: WorkspaceBackend
     ) -> str | list[str | BinaryContent]:
         """Read a file in `workspace` directly, outside an agent run.
 
         An image or PDF comes back as its header followed by a `BinaryContent`;
         everything else is text.
+
+        Args:
+            path: File path relative to the working directory.
+            offset: Line number to start reading from (1-indexed, matching the printed line
+                numbers). An `offset` below 1 raises `ModelRetry`.
+            limit: Maximum number of lines to return; defaults to, and is capped at, the configured read limit.
+            workspace: The workspace backend to read from.
         """
         return await self._read_file(await self._scope(workspace), None, path, offset=offset, limit=limit)
 
     async def _read_file_tool(
-        self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 0, limit: int | None = None
+        self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 1, limit: int | None = None
     ) -> str | list[str | BinaryContent]:
         """Read a text file with line numbers, or view an image or PDF.
 
         Args:
             ctx: The current agent run context.
             path: File path relative to the working directory.
-            offset: Zero-based line offset to start reading from.
+            offset: Line number to start reading from (1-indexed).
             limit: Maximum number of lines to return; defaults to, and is capped at, the configured read limit.
 
         Returns:
@@ -872,10 +879,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
     @_recoverable
     async def _read_file(
-        self, scope: _Scope, ctx: RunContext[AgentDepsT] | None, path: str, *, offset: int = 0, limit: int | None = None
+        self, scope: _Scope, ctx: RunContext[AgentDepsT] | None, path: str, *, offset: int = 1, limit: int | None = None
     ) -> str | list[str | BinaryContent]:
-        if offset < 0:
-            raise ValueError('offset must be non-negative.')
+        if offset < 1:
+            raise ValueError('offset counts lines from 1; use offset=1 for the first line.')
         if limit is not None and limit < 1:
             raise ValueError('limit must be at least 1.')
         limit = self._max_read_lines if limit is None else min(limit, self._max_read_lines)

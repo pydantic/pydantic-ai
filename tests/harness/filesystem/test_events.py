@@ -458,7 +458,7 @@ class TestFileSystemEvents:
     async def test_read_rejected_for_out_of_range_offset_emits_no_event(self, tmp_path: Path) -> None:
         (tmp_path / 'short.txt').write_text('one\ntwo\n')
 
-        events = await _run_and_collect(tmp_path, 'read_file', '{"path":"short.txt","offset":2}')
+        events = await _run_and_collect(tmp_path, 'read_file', '{"path":"short.txt","offset":3}')
 
         assert not any(isinstance(event, FileReadEvent) for event in events)
 

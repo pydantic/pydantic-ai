@@ -503,7 +503,7 @@ class TestCoder:
 
     async def test_read_write(self, tmp_path: Path) -> None:
         assert 'hash:' not in await call(tmp_path, 'write_file', {'path': 'test.txt', 'content': 'one\ntwo\n'})
-        output = await call(tmp_path, 'read_file', {'path': 'test.txt', 'offset': 1, 'limit': 1})
+        output = await call(tmp_path, 'read_file', {'path': 'test.txt', 'offset': 2, 'limit': 1})
         assert 'two' in output and 'one' not in output and 'hash:' not in output
 
     async def test_long_reads_page_without_gaps(self, tmp_path: Path) -> None:
@@ -511,7 +511,7 @@ class TestCoder:
         output = await call(tmp_path, 'read_file', {'path': 'big.py'})
         numbers = [int(line.split('\t')[0]) for line in output.splitlines()[1:-1]]
         assert numbers == list(range(1, len(numbers) + 1)) and len(numbers) < 2000
-        assert output.endswith(f'Use offset={len(numbers)} to continue reading.)\n')
+        assert output.endswith(f'Use offset={len(numbers) + 1} to continue reading.)\n')
         assert '[truncated' not in output
 
     async def test_batch_edit(self, tmp_path: Path) -> None:

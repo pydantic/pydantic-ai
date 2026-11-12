@@ -1591,7 +1591,7 @@ The capability's 16 KB event preview cap can shorten the preview further. Full
 output remains in the displayed log path. Background commands can keep writing
 after the snapshot; those future lines are not included in its count.
 
-Read headers show the path, zero-based offset, and effective line limit (Coder
+Read headers show the path, 1-indexed offset, and effective line limit (Coder
 default and maximum: 2000). Listing headers show the directory, recursive mode,
 result limit (default 200), and optional glob. Coder listings recurse using
 ripgrep and honor ignore rules. These displayed defaults describe Coder tools.

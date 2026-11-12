@@ -11,8 +11,8 @@ _CALLS = (
     ('shell', 'git status'),
     ('shell', 'git diff'),
     ('shell', 'pytest -q'),
-    ('read_file', "'src/app.py' offset=0 limit=2000 lines"),
-    ('read_file', "'src/util.py' offset=0 limit=2000 lines"),
+    ('read_file', "'src/app.py' offset=1 limit=2000 lines"),
+    ('read_file', "'src/util.py' offset=1 limit=2000 lines"),
     ('shell', 'ruff check'),
 )
 

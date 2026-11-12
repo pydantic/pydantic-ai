@@ -180,7 +180,7 @@ or allowlist commands.
 
 | Tool | Behavior |
 | --- | --- |
-| `read_file(path, offset=0, limit=None)` | Zero-based line offset, one-based displayed line numbers, 2,000 lines unless `limit` says otherwise, and at most 50,000 characters of complete lines; the continuation hint names the exact next offset, and a line too long for the window is named and skippable. No hash header. |
+| `read_file(path, offset=1, limit=None)` | 1-indexed line offset, matching the displayed line numbers, 2,000 lines unless `limit` says otherwise, and at most 50,000 characters of complete lines; the continuation hint names the exact next offset, and a line too long for the window is named and skippable. No hash header. |
 | `write_file(path, content)` | Create a file in an existing directory, or replace one. No `expected_hash`. |
 | `edit_file(path, old_text, new_text)` or `edit_file(path, replacements=[...])` | Exact replacements, each matching once; a batch is checked in memory and written only if every replacement matches. |
 | `list_files(path='.', glob=None)` | `rg --files`, sorted by path, respecting ignore files and skipping hidden files. |

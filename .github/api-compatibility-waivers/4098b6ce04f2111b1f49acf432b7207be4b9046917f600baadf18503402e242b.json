@@ -1,0 +1,5 @@
+{
+  "against": "v2.68.0",
+  "reason": "Harness 0.x: `FileSystemToolset.read_file`'s `offset` is now the 1-indexed line to start from, matching the line numbers it prints (#9200). The default moves from 0 to 1 and still reads from the first line; an explicit `offset=N` from Python becomes `N + 1`, and `offset=0` raises.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13250"
+}
