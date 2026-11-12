@@ -1757,8 +1757,12 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
         _, parts, second = await self._run(tmp_path, workspace, first.all_messages())
         assert parts == []
         _write(tmp_path / 'AGENTS.md', 'new repo rules')
-        _, parts, _ = await self._run(tmp_path, workspace, second.all_messages())
+        _, parts, third = await self._run(tmp_path, workspace, second.all_messages())
         assert [part.content for part in parts] == ['new repo rules']
+        # Changed back: the latest copy the model saw is the new one, so the old text goes out again.
+        _write(tmp_path / 'AGENTS.md', 'repo rules')
+        _, parts, _ = await self._run(tmp_path, workspace, third.all_messages())
+        assert [part.content for part in parts] == ['repo rules']
 
 
 class TestForRunAndMisc:

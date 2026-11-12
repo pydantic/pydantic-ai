@@ -438,9 +438,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if self._ancestors_sent:
             return request_context
         self._ancestors_sent = True
-        in_window = _context_files_in_window(ctx.messages)
+        latest = _latest_context_files(ctx.messages)
         for part in self._ancestor_parts:
-            if (part.directory, part.content) not in in_window:
+            if latest.get(part.directory) != part.content:
                 ctx.enqueue(part)
         return request_context
 
@@ -630,10 +630,10 @@ def _walk_up_view(
     return AuthorityWorkspace(workspace, authority='operator', path_authority=dict.fromkeys(paths, 'operator'))
 
 
-def _context_files_in_window(messages: Sequence[ModelMessage]) -> set[tuple[str, str]]:
-    """The directory and text of each `ContextFilePart` in the post-compaction window."""
+def _latest_context_files(messages: Sequence[ModelMessage]) -> dict[str, str]:
+    """The text of the latest `ContextFilePart` for each directory in the post-compaction window."""
     return {
-        (part.directory, part.content)
+        part.directory: part.content
         for message in post_compaction_window(messages)
         if isinstance(message, ModelRequest)
         for part in message.parts
