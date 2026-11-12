@@ -366,7 +366,13 @@ def main() -> None:
     changed = {change.path: change.positions for change in changes}
     result, private_report = check_result(check, files, stream, usage, changed=changed)
     if token:
-        export_span(endpoint, token, result, {**attributes, 'pr_review_checks.provider': provider.name}, started)
+        export_span(
+            endpoint,
+            token,
+            result,
+            {**attributes, 'pr_review_checks.provider': provider.name, 'pr_review_checks.plan': provider.plan},
+            started,
+        )
     else:
         print('::warning::LOGFIRE_TOKEN is empty, so this review exports no telemetry.')
     if private_report:
