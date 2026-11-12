@@ -2070,7 +2070,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         request_model = unwrap_model(request_context.model)
         # Set when `provenance` is a `RetryModelRequest`'s string, to the model that string was resolved to.
         resolved_to = request_context._model_id_resolved_to  # pyright: ignore[reportPrivateUsage]
-        if provenance is not None and resolved_to is not None and request_model is unwrap_model(resolved_to):
+        if (
+            provenance is not None
+            and resolved_to is not None
+            and self._still_targets(request_context.model, resolved_to)
+        ):
             return provenance
         # A hook may move a retried attempt back to the run's model: the run's own string names it then.
         run_provenance = provenance if resolved_to is None else ctx.model_id
@@ -2084,6 +2088,20 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if resolved is not None:
             return resolved.model_id
         return self._find_model_id(request_context.model)
+
+    def _still_targets(self, model: Model, resolved_to: Model) -> bool:
+        """Whether `model` is `resolved_to`, under wrappers none of which is registered in `models=`.
+
+        A registered wrapper is a selection of its own, even around the same model, so it keeps its own ID.
+        """
+        candidate: Model | None = model
+        while candidate is not None:
+            if candidate is resolved_to:
+                return True
+            if self._registered_model_id(candidate)[0]:
+                return False
+            candidate = candidate.wrapped if isinstance(candidate, WrapperModel) else None
+        return False
 
     def _record_resolved_request_model(self, model: Model, model_id: str | None, *, registered: bool) -> None:
         model_key = id(model)

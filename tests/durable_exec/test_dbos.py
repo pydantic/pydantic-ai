@@ -4715,6 +4715,63 @@ async def test_dbos_durability_fallback_alias_cleared_by_hook_is_rejected(dbos: 
         await run_agent()
 
 
+class _LabelModel(WrapperModel):
+    """A behavior-changing wrapper: answers with its label instead of calling the model it wraps."""
+
+    def __init__(self, wrapped: Model, label: str) -> None:
+        super().__init__(wrapped)
+        self.answer = label
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(self.answer)])
+
+
+_labelled_inner = FunctionModel(_dbos_failing_primary, model_name='labelled')
+_first_label = _LabelModel(_labelled_inner, 'first')
+_second_label = _LabelModel(_labelled_inner, 'second')
+
+
+@dataclass
+class _SwapToSecondLabelCapability(AbstractCapability[str]):
+    """Moves a fallback attempt to another registered wrapper around the same model, keeping its `model_id`."""
+
+    async def prepare_model_request(
+        self, ctx: RunContext[str], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if request_context.attempt > 1:
+            request_context.model = _second_label
+        return request_context
+
+
+async def test_dbos_durability_fallback_moved_to_other_registered_wrapper_keeps_hook_choice(dbos: DBOS) -> None:
+    """A hook that moves a fallback attempt to another registered wrapper of the candidate's model is served by it.
+
+    Both wrappers wrap the same model, but each is its own registered selection, so the hook's crosses the step
+    boundary rather than the candidate's string.
+    """
+    agent = Agent(
+        FunctionModel(_dbos_failing_primary, model_name='primary'),
+        name='durability_fallback_other_wrapper',
+        deps_type=str,
+        capabilities=[
+            ModelFallback('first'),
+            _SwapToSecondLabelCapability(),
+            DBOSDurability(models={'first': _first_label, 'second': _second_label}),
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hi', deps='acme')).output
+
+    assert await run_agent() == 'second'
+
+
 @dataclass
 class _RetryOnAliasCapability(AbstractCapability[str]):
     """Moves a failed request to the 'tenant-model' alias, as a fallback does."""
