@@ -1492,7 +1492,8 @@ def _apply_instruction_parts(
     instructions the model never received.
 
     `None` means "unset" rather than "no instructions" — it's what makes `Model._get_instruction_parts`
-    fall back to the request's own `instructions` — so it leaves the request alone.
+    fall back to the request's own `instructions` — so it leaves the request alone. The rendered text reuses
+    the string of the latest earlier request in `history` when equal, so requests share one copy.
     """
     if instruction_parts is not None:
         request.instructions = _shared_instructions(_messages.InstructionPart.join(instruction_parts), request, history)
@@ -1506,6 +1507,8 @@ def _shared_instructions(
     Every request records the instructions it was sent with, and they rarely change between requests, so
     sharing one string keeps a long conversation from holding a copy per request.
     """
+    if instructions is None:
+        return None
     previous = next(
         (
             message.instructions
