@@ -65,6 +65,35 @@ def git_checkout(identity: ProjectIdentity) -> GitCheckout | None:
     return GitCheckout(repository=identity.key, name=identity.name, root=identity.root, branch=identity.checkout)
 
 
+def worktree_roots(identity: ProjectIdentity) -> list[str]:
+    """The checkouts of the identity's repository that Git lists, the main one first; none outside Git.
+
+    A bare repository's own folder is not a checkout, and one deleted without `git worktree remove` is not listed.
+    """
+    if git_checkout(identity) is None:
+        return []
+    try:
+        listing = subprocess.run(
+            # `-z` ends each field with NUL: Git's line delimiter is also legal inside a directory name.
+            ['git', '-C', identity.root, 'worktree', 'list', '--porcelain', '-z'],
+            check=True,
+            capture_output=True,
+            text=True,
+            # Git for Windows emits UTF-8; POSIX Git preserves path bytes for Python's locale decoder.
+            encoding='utf-8' if sys.platform == 'win32' else None,
+            timeout=2,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    # Each checkout is a run of fields, the first `worktree PATH`, ended by an empty field.
+    records = [record.split('\0') for record in listing.split('\0\0') if record]
+    return [
+        fields[0].removeprefix('worktree ')
+        for fields in records
+        if not any(field == 'bare' or field.startswith('prunable') for field in fields)
+    ]
+
+
 def placements(
     entries: Sequence[ConversationSummary], *, identities: Mapping[str, ProjectIdentity]
 ) -> dict[str, ProjectIdentity]:

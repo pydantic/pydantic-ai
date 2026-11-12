@@ -120,6 +120,8 @@ print([t.name for t in test_model.last_model_request_parameters.function_tools])
 
 _(This example is complete, it can be run "as is")_
 
+A tool that joins the run after its first model request, however it got there, is recorded in the message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], unless no plainly visible tool from before is still present to keep stable. A new tool with `defer_loading=True` joins the [tool search](tools-advanced.md#tool-search) corpus instead. See [Tools that appear mid-run](tools-advanced.md#mid-run-tool-additions) for how each provider delivers it.
+
 ### Toolset Instructions
 
 A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can provide instructions that are automatically included in the model request. This lets each toolset carry its own usage guidance alongside its tools, so you don't need to duplicate instructions on every agent that uses the toolset.
@@ -152,7 +154,7 @@ print(first_request.instructions)
 
 _(This example is complete, it can be run "as is")_
 
-You can also use the [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions] decorator to register dynamic instruction functions that can access the run context:
+You can also use the [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions] decorator to register dynamic instruction functions that can access the run context. Like [`@agent.instructions`][pydantic_ai.agent.Agent.instructions], it takes `name=` and [`on_change='append'`](agent.md#appending-instruction-changes), which keeps the cached prefix when the instructions change mid-conversation:
 
 ```python {title="toolset_instructions_decorator.py"}
 from pydantic_ai import Agent, FunctionToolset, ModelRequest, RunContext
@@ -253,6 +255,62 @@ Use weather tools for forecasts.
 Use calendar tools for scheduling.
 """
 ```
+
+_(This example is complete, it can be run "as is")_
+
+#### Toolset instructions that change {#toolset-instructions-that-change}
+
+Instruction functions run before every model request, so their text can change during a run, for example after a tool updates some state. By default each change rewrites the instruction prefix, which stops the provider from reusing the cached conversation behind it. For instructions that change mid-conversation, we recommend having the changes [appended](agent.md#appending-instruction-changes) to the history instead: the prefix stays cached, at the cost of the block's complete new text being added to the history for each change. Build them only from state you control: [keep untrusted text out of instructions](agent.md#untrusted-instruction-text).
+
+To opt in, give the toolset an [`id`][pydantic_ai.toolsets.AbstractToolset.id] and register the function with `@toolset.instructions(name=..., on_change='append')`. A [custom toolset](#building-a-custom-toolset) can instead return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with `on_change='append'` from [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions]:
+
+```python {title="toolset_instruction_changes.py"}
+from dataclasses import dataclass, field
+
+from pydantic_ai import Agent, FunctionToolset, RunContext
+from pydantic_ai.messages import InstructionDeltaPart, ModelRequest
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class Cart:
+    items: list[str] = field(default_factory=list[str])
+
+
+cart_toolset = FunctionToolset[Cart](id='cart')
+
+
+@cart_toolset.instructions(name='count', on_change='append')
+def cart_count(ctx: RunContext[Cart]) -> str:
+    return f'Items in the cart: {len(ctx.deps.items)}.'  # (1)!
+
+
+@cart_toolset.tool
+def add_to_cart(ctx: RunContext[Cart], item: str) -> str:
+    """Add an item to the cart."""
+    ctx.deps.items.append(item)
+    return 'Added.'
+
+
+agent = Agent(TestModel(), deps_type=Cart, toolsets=[cart_toolset])
+result = agent.run_sync('Add an apple.', deps=Cart())
+first_request = result.all_messages()[0]
+assert isinstance(first_request, ModelRequest)
+print(first_request.instructions)
+#> Items in the cart: 0.
+print(
+    [
+        part.content
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ]
+)
+#> ['Items in the cart: 1.']
+```
+
+1. Only the count goes into the instructions, not the item names, which come from the model's tool arguments: [keep untrusted text out of instructions](agent.md#untrusted-instruction-text).
 
 _(This example is complete, it can be run "as is")_
 
@@ -545,6 +603,8 @@ mcp = MCPToolset('http://localhost:8000/mcp')
 agent = Agent('{{ openai:medium }}', toolsets=[mcp.defer_loading()])
 ```
 
+Deferred loading hides each tool individually, and the model searches for the ones it needs. To instead hide a group of tools behind a workflow or skill, so they only appear once the model loads it along with its instructions, pass the toolset to an [on-demand capability](capabilities/on-demand.md#hide-tools-until-loaded). Use tool search for a large catalog of independent tools; use an on-demand capability when tools belong to a workflow that the model opts into as a unit.
+
 ### Including Return Schemas
 
 [`IncludeReturnSchemasToolset`][pydantic_ai.toolsets.IncludeReturnSchemasToolset] wraps a toolset and sets `include_return_schema=True` on all its tools, causing the model to receive return type information. For models that natively support return schemas (e.g. Google Gemini), the schema is passed as a structured API field. For other models, it is injected into the tool description as JSON text.
@@ -820,6 +880,8 @@ To register a dynamic toolset, you can pass a function that takes [`RunContext`]
 
 By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run.
 
+Instructions from the toolset the function returns are attributed to the dynamic toolset, so for them to use `on_change='append'`, give the decorator an `id`: `@agent.toolset(id='orders')`.
+
 ```python {title="dynamic_toolset.py", requires="function_toolset.py"}
 from dataclasses import dataclass
 from typing import Literal
@@ -883,6 +945,10 @@ You can also override the [`get_instructions()`][pydantic_ai.toolsets.AbstractTo
 
 If the toolset has an [`id`][pydantic_ai.toolsets.AbstractToolset.id] and contributes instructions, that id must be unique among the toolsets registered with an agent, counting the ones a [capability](capabilities/overview.md) contributes. Its instructions reach the model as [instruction parts](agent.md#instruction-parts) identified by `'toolset:<toolset id>'`, so an application can address them by a key that outlives their wording. Every part the toolset returns carries that one key; if you want a part to be addressable on its own, return an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with a `name` relative to your toolset (`'limits'`), which the framework qualifies to `'toolset:weather:limits'`. Don't spell out your own id — you'd be repeating what the framework already knows, and a name of your own can't be mistaken for a top-level key.
 
+A [wrapper toolset](#changing-tool-execution) with an `id` that overrides `get_instructions()` can pass on what it wraps by returning the very part objects `super().get_instructions(ctx)` gave it, unchanged: those keep the ids of the toolsets that wrote them, or no id if their toolset has none. Every other part is keyed by the wrapper's own id: the ones it adds, the ones it changes in place, and copies, even an unchanged copy such as `replace(part)` that still carries the id of the part it came from. A toolset that a [dynamic toolset](#dynamically-building-a-toolset) builds isn't wrapped this way, so everything it says is keyed by the dynamic toolset's id.
+
+`get_instructions()` is called before each model request. If what it returns can change during a conversation, set `on_change='append'` on the `InstructionPart` so changes are [appended](agent.md#appending-instruction-changes) to the history instead of rewriting the cached prefix; see [Toolset instructions that change](#toolset-instructions-that-change).
+
 !!! tip
     If your toolset also needs to provide model settings or hooks, consider building a [custom capability](capabilities/custom.md) instead.
 
@@ -901,34 +967,11 @@ Toolsets support lifecycle hooks for per-run isolation and per-step state manage
 
 ## Third-Party Toolsets
 
-Third-party toolsets can also be wrapped as [capabilities](capabilities/overview.md), which bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem.
+Third-party toolsets can also be wrapped as [capabilities](capabilities/overview.md), which bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem. For skills, planning, file system and shell access, sandboxed code execution, and more, see the [capability index](capabilities/overview.md#available-capabilities), which covers Pydantic AI and [Pydantic AI Harness](harness/index.md).
 
 ### MCP Servers
 
 Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting to and calling tools on local and remote MCP servers, with the [`MCP` capability](capabilities/mcp.md) as the recommended higher-level entry point. See the [MCP overview](./mcp/overview.md) and [MCP client](./mcp/client.md) documentation for details.
-
-### Agent Skills
-
-[Agent Skills](https://agentskills.io) are loaded as [on-demand capabilities](capabilities/on-demand.md) rather than as toolsets, so each skill can stay collapsed to a catalog entry until the model needs it. See [Agent Skills](capabilities/third-party.md#agent-skills) on the third-party capabilities page.
-
-### Task Management
-
-Toolsets for task planning and progress tracking help agents organize complex work and provide visibility into agent progress:
-
-* [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) - `TodoToolset` with `read_todos` and `write_todos` tools. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
-
-### File Operations
-
-Toolsets for file operations help agents read, write, and edit files:
-
-* [`pydantic-ai-filesystem-sandbox`](https://github.com/zby/pydantic-ai-filesystem-sandbox) - `FileSystemToolset` with a sandbox and LLM-friendly errors
-* [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) — Deep agent framework that includes a `FilesystemToolset` with multiple backends (in-memory, real filesystem, Docker sandbox).
-
-### Code Execution
-
-Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
-
-* [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPToolset(StdioTransport(command='uv', args=['run', 'mcp-run-python', 'stdio']))`.
 
 ### LangChain Tools {#langchain-tools}
 

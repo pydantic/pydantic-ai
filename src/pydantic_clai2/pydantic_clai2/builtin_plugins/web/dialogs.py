@@ -24,7 +24,7 @@ class _Open:
 
 
 class BrowserDialogs:
-    """`Dialogs` shown in the browser, for a settings menu opened there.
+    """`Dialogs` shown in the browser, for a settings menu opened there or a command entered with no terminal.
 
     A dialog stays open until a browser answers or cancels it, so one that connects later, or
     reloads, still sees it. What a browser types into a secret dialog goes to the asker alone.

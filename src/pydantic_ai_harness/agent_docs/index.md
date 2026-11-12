@@ -21,9 +21,16 @@ For any code change:
   streams, async context managers or generators, thread or event-loop
   boundaries, or testing any of those: `concurrency.md`
 - Unsure whether behavior belongs in harness or Pydantic AI core: `core-boundary.md`
+- Adding to or editing message history, instructions or tools, or wrapping
+  content in tags (tag naming, escaping, attributes, preambles): core's
+  `agent_docs/message-history-and-caching.md`, "One voice tag, and every
+  wrapper escapes its payload"
 - Adding a retry, fallback or error-handling field to a capability that takes a
   pluggable dependency: `capability-authoring.md` "Policy Lives In The Pluggable
   Component"
+- Adding an immediately dispatched event that a listener can stop:
+  `capability-authoring.md` "A Listener Stops An Immediate Event With
+  `cancel()` Or `veto()`"
 - Deciding what a capability emits to OpenTelemetry, or documenting that it
   emits nothing: `capability-authoring.md` "Telemetry"
 - `src/pydantic_ai_harness/README.md`, `docs/harness/` pages, or capability READMEs: `docs-conventions.md`

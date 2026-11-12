@@ -21,13 +21,8 @@ try:
     from openai.types import chat
     from openai.types.chat import chat_completion
 
-    from .openai import (
-        _CHAT_FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
-        OpenAIChatModel,
-        OpenAIChatModelSettings,
-        OpenAIStreamedResponse,
-        _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
-    )
+    from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
+    from .openai._chat_completions import CHAT_FINISH_REASON_MAP, LenientChatCompletion
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the Z.AI model, '
@@ -53,7 +48,7 @@ See [the Z.AI docs](https://docs.z.ai/api-reference/llm/chat-completion) for Z.A
 """
 
 _ZAI_FINISH_REASON_MAP: dict[_ZaiFinishReason, FinishReason] = {
-    **_CHAT_FINISH_REASON_MAP,
+    **CHAT_FINISH_REASON_MAP,
     # Blocked by Z.AI's content moderation.
     'sensitive': 'content_filter',
     'model_context_window_exceeded': 'length',
@@ -68,7 +63,7 @@ class _ZaiChoice(chat_completion.Choice):
     finish_reason: _ZaiFinishReason  # pyright: ignore[reportIncompatibleVariableOverride]
 
 
-class _ZaiChatCompletion(_ChatCompletion):
+class _ZaiChatCompletion(LenientChatCompletion):
     """Wraps the OpenAI chat completion with Z.AI's choice type."""
 
     choices: list[_ZaiChoice]  # pyright: ignore[reportIncompatibleVariableOverride]
@@ -77,26 +72,13 @@ class _ZaiChatCompletion(_ChatCompletion):
 LatestZaiModelNames = Literal[
     'glm-5.3',
     'glm-5.3-flash',
-    'glm-5.2',
-    'glm-5.1',
-    'glm-5',
+    'glm-5.3-flashx',
     'glm-5-turbo',
     'glm-5v-turbo',
     'glm-4.7',
     'glm-4.7-flash',
-    'glm-4.7-flashx',
-    'glm-4.6',
-    'glm-4.6v',
-    'glm-4.6v-flash',
-    'glm-4.6v-flashx',
-    'glm-4.5',
-    'glm-4.5v',
     'glm-4.5-air',
-    'glm-4.5-airx',
-    'glm-4.5-x',
-    'glm-4.5-flash',
-    'glm-4-32b-0414-128k',
-    'autoglm-phone-multilingual',
+    'glm-4.6v',
 ]
 
 ZaiModelName = str | LatestZaiModelNames
@@ -172,6 +154,7 @@ class ZaiModel(OpenAIChatModel):
             cast(ZaiModelSettings, merged_settings or {}),
             customized_parameters,
             supports_thinking=profile.get('supports_thinking', False),
+            thinking_always_enabled=profile.get('thinking_always_enabled', False),
             supports_reasoning_effort=profile.get('zai_supports_reasoning_effort', False),
             reasoning_effort_mapping=profile.get('zai_reasoning_effort_mapping', {}),
         )
@@ -189,11 +172,17 @@ class ZaiModel(OpenAIChatModel):
         return omit
 
     @override
-    def _validate_completion(self, response: chat.ChatCompletion) -> _ZaiChatCompletion:
-        return _ZaiChatCompletion.model_validate(response.model_dump())
+    def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # Unified `thinking` always reaches `extra_body`, and `_translate_thinking` drops `openai_reasoning_effort`.
+        del model_settings
+        return ()
 
     @override
-    def _map_finish_reason(self, key: _ZaiFinishReason) -> FinishReason | None:
+    def _validate_completion(self, response: chat.ChatCompletion) -> _ZaiChatCompletion:
+        return _ZaiChatCompletion.model_validate(response.model_dump(warnings=False))
+
+    @override
+    def _map_finish_reason(self, key: _ZaiFinishReason) -> FinishReason | None:  # pyright: ignore[reportIncompatibleMethodOverride]
         return _ZAI_FINISH_REASON_MAP.get(key)
 
     @property
@@ -220,6 +209,7 @@ def _zai_settings_to_openai_settings(
     model_request_parameters: ModelRequestParameters,
     *,
     supports_thinking: bool,
+    thinking_always_enabled: bool,
     supports_reasoning_effort: bool,
     reasoning_effort_mapping: Mapping[str, str] = MappingProxyType({}),
 ) -> OpenAIChatModelSettings:
@@ -233,6 +223,8 @@ def _zai_settings_to_openai_settings(
         model_settings: The 'ZaiModelSettings' object to transform.
         model_request_parameters: The request parameters carrying the resolved unified `thinking` value.
         supports_thinking: Whether the model supports thinking, gating the default `clear_thinking`.
+        thinking_always_enabled: Whether the model rejects `thinking.type: 'disabled'` (GLM-5.3), so
+            `thinking=False` keeps thinking on at the lowest effort the model accepts instead.
         supports_reasoning_effort: Whether the model accepts a per-request `reasoning_effort` (GLM-5.2 and GLM-5.3).
         reasoning_effort_mapping: Substitutions applied to the effort level before it is forwarded, for
             models that only accept a subset of the unified levels (GLM-5.3).
@@ -244,10 +236,13 @@ def _zai_settings_to_openai_settings(
 
     thinking_payload: dict[str, Any] = {}
     thinking_level = model_request_parameters.thinking
+    if thinking_level is False and thinking_always_enabled:
+        # GLM-5.3 can't turn thinking off, so it thinks as little as it can instead.
+        thinking_level = 'minimal'
     if thinking_level is False:
         thinking_payload['type'] = 'disabled'
     elif thinking_level is not None:
-        # `True` and any effort level (`'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`)
+        # `True` and any effort level (`'minimal'` through `'max'`)
         # enable thinking. Effort granularity is forwarded separately via `reasoning_effort`
         # on models that support it.
         thinking_payload['type'] = 'enabled'

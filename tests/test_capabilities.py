@@ -25,6 +25,7 @@ from pydantic_ai.capabilities import (
     Capability,
     CapabilityOrdering,
     DynamicCapability,
+    HandleDeferredToolCalls,
     PrefixTools,
     ResolveModelId,
     Thinking,
@@ -39,6 +40,7 @@ from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     AgentNode,
     NodeResult,
+    ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapNodeRunHandler,
 )
@@ -46,7 +48,9 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.exceptions import (
     AgentRunError,
+    CallDeferred,
     ModelRetry,
+    ToolFailed,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -79,7 +83,7 @@ from pydantic_ai.output import OutputContext, ToolOutput
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import (
     resolve_capability_id,
@@ -90,6 +94,7 @@ from pydantic_ai.toolsets._deferred_capability_loader import (
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
+from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -389,6 +394,7 @@ def test_stale_loaded_eager_capability_is_not_revealed() -> None:
     assert tool_defs_from_pre_definition_load_returns(ctx, [tool_def]) == {}
 
 
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
     """A caller-held definition stays available after an aggregator removes it from resolved tools."""
     capability_tools = FunctionToolset()
@@ -445,6 +451,9 @@ async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
     assert folding_toolset.availability == [False, True, True]
 
 
+@pytest.mark.moves_cache_prefix(
+    reason="the second run is given a hand-built history that branches from the first run's"
+)
 async def test_stale_loaded_eager_capability_tool_stays_hidden() -> None:
     """Resumed loaded state does not reveal a tool owned by a capability that is now eager."""
     toolset = FunctionToolset()
@@ -1504,6 +1513,40 @@ class TestHooksCapability:
         result = await agent.run('hello')
         assert result.output == 'recovered from run error'
 
+    async def test_on_run_error_recovery_run_stream(self):
+        """A run that fails before streaming a final result yields the result `on_run_error` recovered with."""
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def recover(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output=f'recovered from {error}')
+
+        async def failing_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            raise RuntimeError('model exploded')
+            yield  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=failing_stream), capabilities=[hooks])
+        async with agent.run_stream('hello') as stream:
+            assert await stream.get_output() == 'recovered from model exploded'
+            assert [output async for output in stream.stream_output()] == ['recovered from model exploded']
+
+    async def test_on_run_error_no_recovery_run_stream(self):
+        """`run_stream` still raises the run's error when `on_run_error` re-raises it."""
+        hooks = Hooks()
+
+        @hooks.on.run_error
+        async def reraise(ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            raise error
+
+        async def failing_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            raise RuntimeError('model exploded')
+            yield  # pragma: no cover
+
+        agent = Agent(FunctionModel(stream_function=failing_stream), capabilities=[hooks])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            async with agent.run_stream('hello'):
+                pass  # pragma: no cover
+
     async def test_on_run_error_chaining(self):
         hooks = Hooks()
 
@@ -1879,7 +1922,7 @@ class TestHooksCapability:
         def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
+                    if isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                         return make_text_response(f'got: {part.content}')
             if info.function_tools:
                 tool = info.function_tools[0]
@@ -1938,7 +1981,7 @@ class TestHooksCapability:
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
+                    if isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                         return make_text_response(f'got: {part.content}')
             if info.function_tools:
                 return ModelResponse(
@@ -1972,7 +2015,7 @@ class TestHooksCapability:
             call_count += 1
             for msg in messages:
                 for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
+                    if isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                         return make_text_response(f'got: {part.content}')
             if info.function_tools:
                 tool = info.function_tools[0]
@@ -2517,8 +2560,10 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
     assert result.output == 'done'
     # The deferred capability is surfaced in the catalog under the wrapped capability's id.
     assert first_request_instructions == [
+        '<pyai:context id="capability:deferred_capabilities">\n'
         "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:\n"
-        '- refunds: Refund policy tools.'
+        '- refunds: Refund policy tools.\n</pyai:context>\n'
+        'A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     ]
 
 
@@ -2860,6 +2905,7 @@ async def test_prefix_tools_tool_call_strips_prefix():
                 ],
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='function:respond:',
+                model_id='function:function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -2881,6 +2927,7 @@ async def test_prefix_tools_tool_call_strips_prefix():
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=54, output_tokens=6),
                 model_name='function:respond:',
+                model_id='function:function:respond:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3299,6 +3346,13 @@ def test_ordering_mixed_positions_in_nested():
     combined = CombinedCapability([inner, PlainCapA()])
     # `OutermostCap` first (outermost tier), `PlainCapA` middle, `InnermostCap` last (innermost tier).
     assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, InnermostCap]
+
+
+def test_ordering_nested_combined_with_only_an_id_is_merged():
+    """A nested `CombinedCapability` with an `id` but no `defer_loading` is still splatted into the outer sort."""
+    named = CombinedCapability([PlainCapB(), OutermostCap()], id='named')
+    combined = CombinedCapability([PlainCapA(), named])
+    assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, PlainCapB]
 
 
 def test_ordering_conflicting_positions_in_custom_nested_capability():
@@ -4792,3 +4846,196 @@ def test_a_synthetic_key_retries_until_it_is_unused(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr('pydantic_ai.agent.uuid4', lambda: next(minted))
 
     assert _synthetic_capability_id(_Unnamed, taken={'<_unnamed:aaaaaa>'}) == '<_unnamed:bbbbbb>'
+
+
+async def test_an_answer_given_during_the_run_passes_the_tools_result_hooks() -> None:
+    """A question the tool raised itself, answered by a handler, passes `after_tool_execute` as the tool's own result would."""
+    seen: list[Any] = []
+
+    class Redact(AbstractCapability[None]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            seen.append(result)
+            return result.replace('hunter2', '[redacted]') if isinstance(result, str) else result
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('ask', {}, tool_call_id='question'),
+                    ToolCallPart('look_up', {}, tool_call_id='external'),
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    ' | '.join(str(part.content) for part in messages[-1].parts if isinstance(part, ToolReturnPart))
+                )
+            ]
+        )
+
+    def answer(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(calls={'question': 'my password is hunter2', 'external': 'hunter2 found'})
+
+    agent = Agent(
+        FunctionModel(model),
+        deps_type=type(None),
+        capabilities=[Redact(), HandleDeferredToolCalls(answer)],
+    )
+
+    @agent.tool_plain
+    def ask() -> str:
+        raise CallDeferred(kind='question')
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise CallDeferred
+
+    result = await agent.run('go')
+
+    assert result.output == 'my password is [redacted] | hunter2 found'
+    assert seen == ['my password is hunter2'], "an external result is not the tool's own, so it is passed on as is"
+
+
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    [
+        (ModelRetry('Answer in English.'), 'Answer in English.'),
+        (ToolFailed('The answer was blocked.'), 'The answer was blocked.'),
+    ],
+)
+async def test_a_result_hook_can_reject_an_answer_given_during_the_run(error: Exception, expected: str) -> None:
+    class Block(AbstractCapability[None]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            raise error
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('ask', {}, tool_call_id='question')])
+        return ModelResponse(parts=[TextPart(str([getattr(part, 'content', None) for part in messages[-1].parts]))])
+
+    def answer(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        return requests.build_results(calls={'question': ToolReturn('nein', content='notes')})
+
+    agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=[Block(), HandleDeferredToolCalls(answer)])
+
+    @agent.tool_plain
+    def ask() -> str:
+        raise CallDeferred(kind='question')
+
+    assert expected in (await agent.run('go')).output
+
+
+def _call_outer_then_echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('outer', {}, tool_call_id='outer')])
+    return ModelResponse(
+        parts=[
+            TextPart(' | '.join(str(part.content) for part in messages[-1].parts if isinstance(part, ToolReturnPart)))
+        ]
+    )
+
+
+def _answer_by_tool_name(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    answers = {'ask': 'my password is hunter2', 'look_up': 'hunter2 found'}
+    return requests.build_results(calls={call.tool_call_id: answers[call.tool_name] for call in requests.calls})
+
+
+async def test_an_answer_given_to_a_call_made_with_handle_call_passes_the_tools_result_hooks() -> None:
+    """As in the graph, a question the tool raised itself passes `after_tool_execute` when `handle_call` resolves it inline."""
+
+    class Redact(AbstractCapability[None]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            return result.replace('hunter2', '[redacted]') if call.tool_name == 'ask' else result
+
+    agent = Agent(
+        FunctionModel(_call_outer_then_echo),
+        deps_type=type(None),
+        capabilities=[Redact(), HandleDeferredToolCalls(_answer_by_tool_name)],
+    )
+
+    @agent.tool
+    async def outer(ctx: RunContext[None]) -> str:
+        assert ctx.tool_manager is not None
+        answer = await ctx.tool_manager.handle_call(ToolCallPart('ask', {}, tool_call_id='inner-ask'))
+        found = await ctx.tool_manager.handle_call(ToolCallPart('look_up', {}, tool_call_id='inner-look-up'))
+        return f'{answer}; {found}'
+
+    @agent.tool_plain
+    def ask() -> str:
+        raise CallDeferred(kind='question')
+
+    @agent.tool_plain
+    def look_up() -> str:
+        raise CallDeferred
+
+    result = await agent.run('go')
+
+    assert result.output == 'my password is [redacted]; hunter2 found'
+
+
+@pytest.mark.parametrize('error', [ModelRetry('Answer in English.'), ToolFailed('The answer was blocked.')])
+async def test_a_result_hook_rejecting_an_answer_raises_raw_from_handle_call_when_asked(error: Exception) -> None:
+    """With `wrap_validation_errors=False`, as sandboxed dispatch uses, the hook's error propagates as raised."""
+
+    class Block(AbstractCapability[None]):
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            result: Any,
+        ) -> Any:
+            if call.tool_name == 'ask':
+                raise error
+            return result
+
+    agent = Agent(
+        FunctionModel(_call_outer_then_echo),
+        deps_type=type(None),
+        capabilities=[Block(), HandleDeferredToolCalls(_answer_by_tool_name)],
+    )
+
+    @agent.tool
+    async def outer(ctx: RunContext[None]) -> str:
+        assert ctx.tool_manager is not None
+        try:
+            await ctx.tool_manager.handle_call(
+                ToolCallPart('ask', {}, tool_call_id='inner'), wrap_validation_errors=False
+            )
+        except (ModelRetry, ToolFailed) as raised:
+            return f'raw {type(raised).__name__}: {raised}'
+        return 'no error'  # pragma: no cover
+
+    @agent.tool_plain
+    def ask() -> str:
+        raise CallDeferred(kind='question')
+
+    result = await agent.run('go')
+
+    assert result.output == f'raw {type(error).__name__}: {error}'

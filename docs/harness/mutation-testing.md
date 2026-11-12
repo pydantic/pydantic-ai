@@ -17,6 +17,27 @@ scripts/run-mutmut.sh results
 scripts/run-mutmut.sh show <mutant-name>
 ```
 
+```mermaid
+flowchart TB
+    accTitle: Mutation testing: check that the tests pin the behavior down
+    accDescr: For filesystem/_toolset.py and shell/_toolset.py, mutmut makes each mutant with one small change, such as a flipped condition, and runs the test suite against the mutated code. A mutant is killed if a test failed and survived if no test failed. Triage each survivor: it is a missing test, so write one that kills it, or an equivalent mutant no test could tell from the original.
+    code["filesystem/_toolset.py<br/>shell/_toolset.py"]
+    subgraph mutmut["mutmut, per mutant"]
+        mutant["mutant<br/>one small change, such<br/>as a flipped condition"]
+        tests["test suite<br/>runs against<br/>the mutated code"]
+    end
+    killed["killed"]
+    survived["survived<br/>triage each one"]
+    missing["missing test<br/>write one that kills it"]
+    equivalent["equivalent mutant<br/>no test could tell it<br/>from the original"]
+    code --> mutant
+    mutant --> tests
+    tests -->|"a test failed"| killed
+    tests -->|"no test failed"| survived
+    survived --> missing
+    survived --> equivalent
+```
+
 ## Interpreting survivors
 
 A surviving mutant is either a missing test or an equivalent mutant -- a change

@@ -13,7 +13,7 @@ from termflow.tui.pager import Pager
 from pydantic_clai2.plugins.menus import Action, Option, SettingsMenu
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, Runners, run_flow_async
 from pydantic_clai2.ui.menus.menu_worker import full_terminal, menu_key, run_worker
-from pydantic_clai2.ui.rendering._rendering import markdown_style
+from pydantic_clai2.ui.rendering.rendering import markdown_style
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 _REDRAW = 'dialogs:changed'

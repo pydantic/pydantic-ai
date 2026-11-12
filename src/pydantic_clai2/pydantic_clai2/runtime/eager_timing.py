@@ -20,9 +20,12 @@ from pydantic_ai.tools import AgentDepsT, ToolDefinition
 NESTED_CALL = re.compile(r'(?P<parent>.+)__(?P<speculative>spec_)?\d+')
 """Harness CodeMode ids: `parent__N` for a sandbox dispatch, `parent__spec_N` for a speculative launch."""
 
+EAGER_TIMING_EVENTS = 'eager_timing'
+"""The namespace of the events `EagerTiming` emits."""
+
 
 @dataclass(kw_only=True)
-class EagerExecutionCompletedEvent(CapabilityEvent, namespace='pydantic_clai2'):
+class EagerExecutionCompletedEvent(CapabilityEvent, namespace=EAGER_TIMING_EVENTS):
     """A completed snippet whose sandbox calls overlapped `run_code` argument streaming."""
 
     saved_ms: float

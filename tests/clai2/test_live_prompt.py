@@ -33,6 +33,7 @@ from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_clai2.ui.prompt.prompt_surface import ENTER, LEAVE, MODES_OFF, MODES_ON, WHEEL_ROWS
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
+from tests.conftest import no_leaked_tasks
 
 
 @asynccontextmanager
@@ -42,12 +43,21 @@ async def editor(
     toolbar: Callable[[], list[tuple[str, str]]] = lambda: [('', 'ready')],
     clock: Callable[[], float] = lambda: 0,
     panel: Callable[[str], Sequence[str]] = lambda _: (),
+    key_wait_limit: float = 5,
 ) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
+    """An opened editor on a pipe; `key_wait_limit` fails a test left waiting for keys that never come.
+
+    A test that feeds no keys and writes to a real store passes a limit no stall reaches: a slow disk is no hang.
+    """
     output = output if output is not None else io.StringIO()
     console = Console(file=output, force_terminal=True, width=80, height=24)
     commands = Commands()
     commands.register(Command(name='help', description='Help', handler=lambda args: 'help'))
-    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(5):
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+        anyio.fail_after(key_wait_limit),
+    ):
         live = LivePrompt(
             console=console,
             commands=commands,
@@ -174,18 +184,17 @@ async def test_menu_suspension_preserves_draft_and_output() -> None:
 
 @pytest.mark.parametrize('menu', [False, True])
 async def test_outer_cancellation_releases_terminal_and_tasks(menu: bool) -> None:
-    before = asyncio.all_tasks()
-    with anyio.CancelScope() as scope:
-        async with editor() as (live, _, _):
-            if menu:
-                async with live.suspended():
+    with no_leaked_tasks():
+        with anyio.CancelScope() as scope:
+            async with editor() as (live, _, _):
+                if menu:
+                    async with live.suspended():
+                        scope.cancel()
+                        await anyio.sleep_forever()
+                else:
                     scope.cancel()
                     await anyio.sleep_forever()
-            else:
-                scope.cancel()
-                await anyio.sleep_forever()
-    assert scope.cancelled_caught
-    assert asyncio.all_tasks() <= before
+        assert scope.cancelled_caught
 
 
 @pytest.mark.parametrize('key', ['\x03', '\x1b'])
@@ -281,6 +290,61 @@ async def test_image_paste_and_failure_notice(monkeypatch: pytest.MonkeyPatch) -
         assert 'clipboard unavailable' in live.images.notice
         live.feed('paste', 'plain\r\ntext')
         assert live.buffer.text.endswith('plain\ntext')
+
+
+@pytest.mark.parametrize('replacement', ['none', 'error', 'success', 'unrelated'])
+async def test_paste_error_expires_without_input_or_state_loss(
+    monkeypatch: pytest.MonkeyPatch, replacement: str
+) -> None:
+    clock = FrameClock()
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, clock=clock) as (live, _, _):
+        image = BinaryContent(data=b'png', media_type='image/png')
+        marker = live.images.attach([image])
+        live.submit(marker + 'queued caption')
+        live.buffer.replace(marker + 'draft caption')
+        original = live.buffer.display()
+
+        def fail() -> list[BinaryContent]:
+            raise ValueError('No image in the clipboard')
+
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.clipboard_images', fail)
+        live.feed('ctrl-v')
+        assert 'No image in the clipboard' in terminal.lines()[-1]
+        assert 'Linux' not in live.images.notice
+        clock.now = 29.999
+        live.tick()
+        assert 'Image paste failed' in terminal.lines()[-1]
+        assert live.tick() == pytest.approx(0.001), 'the next wake cannot pass the deadline'
+        if replacement == 'error':
+            live.feed('ctrl-v')
+        elif replacement == 'success':
+            monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.clipboard_images', lambda: [image])
+            live.feed('alt-v')
+        elif replacement == 'unrelated':
+            live.images.notice = 'An unrelated image notice'
+        clock.now = 30
+        live.tick()
+        if replacement == 'none':
+            assert live.images.notice == ''
+            assert terminal.lines()[-1].strip() == 'ready | queued: 1'
+        elif replacement == 'error':
+            assert 'Image paste failed' in live.images.notice
+            clock.now = 59.999
+            live.tick()
+            assert live.images.notice == ''
+        elif replacement == 'success':
+            assert live.images.notice.startswith('Image attached')
+        else:
+            assert live.images.notice == 'An unrelated image notice'
+        if replacement != 'success':
+            assert live.buffer.display() == original
+        assert live.queued_messages == (marker + 'queued caption',)
+        assert live.images.resolve(marker) == ('', [image])
+        live.notice = 'A separate editor notice'
+        clock.now = 100
+        live.tick()
+        assert live.notice == 'A separate editor notice'
 
 
 async def test_queue_labels_and_small_terminal() -> None:
@@ -867,6 +931,42 @@ async def test_an_idle_editor_rebuilds_its_frame_once_a_second_not_ten_times(mon
         assert clock.run(live, until=5.25) == [5.25], 'a resize without SIGWINCH paints on the next tick'
         async with live.suspended():
             assert clock.run(live, until=7) == [], 'a menu owns the screen'
+
+
+async def test_an_idle_editor_sleeps_until_its_next_repaint_is_due() -> None:
+    clock = FrameClock()
+    forks: list[str] = []
+    async with editor(clock=clock, panel=lambda _: forks) as (live, _, _):
+        clock.now = 5
+        assert live.tick() == IDLE_REPAINT, 'it just repainted'
+        clock.now += 0.25
+        assert live.tick() == 0.75
+        live.feed('x')
+        assert live.tick() == IDLE_REPAINT, 'a key paints, which restarts the wait'
+        async with live.suspended():
+            clock.now += 3
+            assert live.tick() == IDLE_REPAINT, 'a menu owns the screen'
+        forks.append('FORK #1 running')
+        clock.now += IDLE_REPAINT
+        assert live.tick() == 0.1, 'forks animate'
+
+
+async def test_a_read_wakes_the_timed_repaint_to_animate_the_work_it_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = FrameClock()
+    async with editor(clock=clock) as (live, _, _):
+        await anyio.wait_all_tasks_blocked()
+        delays: list[float] = []
+        tick = live.tick
+
+        def recorded() -> float:
+            delays.append(tick())
+            return delays[-1]
+
+        monkeypatch.setattr(live, 'tick', recorded)
+        live.submit('hi')
+        assert await live.read() == 'hi'
+        await anyio.wait_all_tasks_blocked()
+        assert delays == [0.1], 'the turn it starts shows its spinner at once'
 
 
 async def test_running_forks_animate_every_tick_until_a_second_after_they_settle(

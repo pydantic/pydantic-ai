@@ -52,7 +52,7 @@ overrides only what it needs, and the agent asks for each contribution.
 |---|---|
 | constructor arguments | `Plugin[Settings]`, validated from the saved JSON into `self.settings` |
 | `get_toolset()`, `get_instructions()`, ... | `get_capabilities()`, `get_commands()`, `get_status_segments()`, `get_spinners()`, `get_model_providers()`, `get_logins()` |
-| `before_run`, `after_tool_execute`, ... | `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_event`, `on_update_progress` |
+| `before_run`, `after_tool_execute`, ... | `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_conversation_changed`, `on_command_end`, `on_plugin_load_failed`, `on_task_progress`, `on_fork_end`, `on_install_progress` |
 | `@on_event(EventClass)` | `render(event)` for display; `@on_event` / `Hooks` inside `get_capabilities` for observing |
 | `RunContext` | `self.host`, a `PluginHost` holding the console, conversation, status, full screen, and saved settings, the prompt (`send_input`/`interrupt`/`complete`), the saved `sessions`, the session's `workspace`, and, for a process-scoped plugin, the `live` sessions |
 
@@ -97,10 +97,15 @@ report earlier failures through its own configured instance without changing loa
 A delegated task runs detached from the run that started it, and a background one
 outlives it, so the parent run's hooks and stream events never see the child's own
 events: the harness owner hands them to one observer instead, CLAI's `Tasks`, which
-also drives `/tasks`. `on_task_event` passes that same feed on to plugins.
+also drives `/tasks`. `on_task_progress` passes that same feed on to plugins.
+
+A background `/fork` runs a copy of the conversation as a separate session, so its run's
+hooks are that session's, and its `on_turn_end` looks like any turn's. The terminal prints
+its answer itself; `on_fork_end` says which fork ended and how, so a plugin with no
+terminal, such as the web UI, can show the same.
 
 `/update` installs a newer CLAI with uv, which takes a while, then restarts. Commands never
-reach the agent, and `on_command_end` fires once uv has finished, so `on_update_progress`
+reach the agent, and `on_command_end` fires once uv has finished, so `on_install_progress`
 tells plugins as it goes, such as the web UI, whose page has no terminal to watch.
 
 ## Scope: one instance per live session, or one per process

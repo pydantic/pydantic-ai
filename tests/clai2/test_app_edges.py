@@ -10,6 +10,7 @@ from typing import Generic, TypeVar
 
 import pytest
 from prompt_toolkit.styles import BaseStyle
+from prompt_toolkit.utils import Event
 from rich.color import Color
 from rich.console import Console
 from rich.text import Text
@@ -23,7 +24,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.auth import CodexAuth
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command
@@ -47,6 +48,8 @@ PromptT = TypeVar('PromptT')
 def inputs(monkeypatch: pytest.MonkeyPatch, values: list[str | BaseException]) -> None:
     class Prompt(Generic[PromptT]):
         def __init__(self, **kwargs: object) -> None:
+            self.app = self
+            self.on_reset: Event[Prompt[PromptT]] = Event(self)
             style = kwargs['style']
             assert isinstance(style, BaseStyle)
             for selector in ('class:bottom-toolbar', 'class:bottom-toolbar.text'):
@@ -337,19 +340,16 @@ async def test_codex_login_and_turns_share_lazy_auth(tmp_path: Path, monkeypatch
 async def test_lazy_add_model_menu_and_named_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     inputs(monkeypatch, ['/model add', '/add_model test', '/exit'])
 
-    async def add_model(context: CommandContext, *, runners: Runners) -> str:
-        return await open_add_model_menu(context, run=lambda menu: [])
+    output = io.StringIO()
+    shell = Console(file=output)
+
+    async def add_model(context: CommandContext, *, console: Console, runners: Runners) -> str:
+        assert console is shell, 'a provider sign-in prints through the shell console, into the transcript'
+        return await open_add_model_menu(context, console=console, run=lambda menu: [])
 
     monkeypatch.setattr('pydantic_clai2.ui.menus.model_menu.open_add_model_menu', add_model)
-    output = io.StringIO()
     store = SettingsStore(tmp_path / 'config.db')
-    await chat(
-        Agent(TestModel()),
-        deps=None,
-        settings=Settings(model=None),
-        store=store,
-        console=Console(file=output),
-    )
+    await chat(Agent(TestModel()), deps=None, settings=Settings(model=None), store=store, console=shell)
     assert 'No changes.' in output.getvalue()
     assert 'Saved model. Applied.' in output.getvalue()
     assert store.load().model == 'test'

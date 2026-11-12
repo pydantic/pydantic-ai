@@ -4,12 +4,11 @@ from pydantic import BaseModel, ValidationError
 from rich.console import Console
 
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
-from pydantic_ai.messages import ToolReturnPart
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.tool_output import print_tool_header, terminal_text
 
 
-class GrepArguments(BaseModel):
+class GrepArgs(BaseModel):
     """Only the display fields; other search options belong to the tool."""
 
     pattern: str
@@ -32,7 +31,7 @@ class GrepOutput:
             if event.part.tool_name != 'grep':
                 return False
             try:
-                args = GrepArguments.model_validate_json(event.part.args_as_json_str())
+                args = GrepArgs.model_validate_json(event.part.args_as_json_str())
             except (ValidationError, ValueError):
                 return False
             label = f'grep {args.pattern!r} in {args.path!r}'
@@ -44,7 +43,7 @@ class GrepOutput:
             return False
         if not self.show_output:
             return True
-        if not isinstance(event.part, ToolReturnPart) or not isinstance(event.part.content, str):
+        if event.part.outcome == 'retried' or not isinstance(event.part.content, str):
             self.console.print(
                 f'{terminal_text(label)}: tool did not return text results.',
                 style=theme.color(theme.MUTED),

@@ -3,17 +3,18 @@
 `WebClient` makes the page's calls: the state, a prompt or `/command`, an interrupt, a saved session's
 transcript, and answers to questions and dialogs, plus the WebSocket stream of `ServerMessage`s.
 `SessionView` follows that stream as the page does, keeping the transcript's items, whether a turn runs,
-and what is asked, so a caller can wait for a turn to end.
+and what is asked, so a caller can wait for a turn to end. It follows any `SessionClient`: `WebClient`, or
+`local_client.LocalClient` for a session of this CLAI.
 
 The token goes in a header for API calls and in the WebSocket's query, with the server's own address as
 the `Host` and `Origin`, as `app.Guard` requires. Nothing here prints or logs it.
 """
 
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Literal, Self
+from typing import Literal, Protocol, Self
 from urllib.parse import urlsplit
 
 import anyio
@@ -26,6 +27,7 @@ from websockets.typing import Origin
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_clai2.builtin_plugins.web.app import HEADER, Answer, Answers, DialogAnswer, Entered, Input, Interrupted
 from pydantic_clai2.builtin_plugins.web.protocol import (
+    PROTOCOL,
     Dialog,
     DialogClosed,
     DialogOpened,
@@ -140,7 +142,7 @@ class WebClient:
     @asynccontextmanager
     async def messages(self) -> AsyncGenerator[AsyncIterator[ServerMessage]]:
         """The WebSocket's messages, a `Snapshot` first; iteration ends when the connection closes."""
-        address = f'ws://{self._netloc}/ws?token={self._token}'
+        address = f'ws://{self._netloc}/ws?token={self._token}&protocol={PROTOCOL}'
         async with connect(address, origin=Origin(f'http://{self._netloc}'), max_size=None, proxy=None) as socket:
 
             async def received() -> AsyncIterator[ServerMessage]:
@@ -160,6 +162,30 @@ def _answer(answer: AskUserAnswer) -> Answer:
     return Answer(header=answer.header, selected=list(answer.selected))
 
 
+class SessionClient(Protocol):
+    """What `SessionView` drives a session through: the calls a page makes, and the messages it receives."""
+
+    async def send(self, text: str) -> None:
+        """Enter a prompt or `/command`; it queues behind a running turn."""
+        ...
+
+    async def interrupt(self) -> bool:
+        """Cancel the running turn; whether something was running."""
+        ...
+
+    async def answer(self, request_id: str, answers: Sequence[AskUserAnswer] | None) -> None:
+        """Answer an open question request, or decline it with `None`."""
+        ...
+
+    async def answer_dialog(self, dialog_id: str, value: str | None) -> None:
+        """Answer an open dialog; `None` backs out."""
+        ...
+
+    def messages(self) -> AbstractAsyncContextManager[AsyncIterator[ServerMessage]]:
+        """The session's messages, a `Snapshot` first; iteration ends when the connection closes."""
+        ...
+
+
 WaitOutcome = Literal['idle', 'asking', 'timeout', 'closed']
 """What `SessionView.wait` stopped for: no turn runs or is queued, a question or dialog waits for an answer,
 the time ran out, or the connection ended."""
@@ -174,7 +200,7 @@ class _Sent:
 
 
 class SessionView:
-    """One CLAI's session as its page follows it, kept current by `follow` from the WebSocket.
+    """One CLAI's session as its page follows it, kept current by `follow` from the client's messages.
 
     Prompts and commands sent through `send` count as queued until their turn starts or the command ends,
     so `wait` right after `send` waits for that turn, not for a session that has not started it yet. The
@@ -182,7 +208,7 @@ class SessionView:
     command sent while another page edits plugins may count as ended early.
     """
 
-    def __init__(self, client: WebClient) -> None:
+    def __init__(self, client: SessionClient) -> None:
         self.client = client
         self.session: SessionInfo | None = None
         self.running = False
@@ -221,37 +247,39 @@ class SessionView:
 
     def apply(self, message: ServerMessage) -> None:
         """Change the view as the page changes on `message`."""
-        if isinstance(message, Snapshot):
-            self.session, self.running = message.session, message.running
-            self.questions = {questions.id: questions for questions in message.questions}
-            self.dialogs = {dialog.id: dialog for dialog in message.dialogs}
-            self._log.clear()
-            self._log.items.update((item.id, item) for item in message.items)
-            self._ready.set()
-        elif isinstance(message, TurnStarted):
-            self.running = True
-            self._dequeue(command=False)
-            if message.item is not None:
-                self._log.items[message.item.id] = message.item
-        elif isinstance(message, TurnEnded):
-            self.running, self.last_turn = False, message
-        elif isinstance(message, QuestionAsked):
-            self.questions[message.questions.id] = message.questions
-        elif isinstance(message, QuestionClosed):
-            self.questions.pop(message.id, None)
-        elif isinstance(message, DialogOpened):
-            self.dialogs[message.dialog.id] = message.dialog
-        elif isinstance(message, DialogClosed):
-            self.dialogs.pop(message.id, None)
-        elif isinstance(message, Notice):
-            self.notices.append(message)
-        elif isinstance(message, PluginsChanged):
-            self._dequeue(command=True)  # The page hears this once every command ends.
-        elif isinstance(message, TitleChanged):
-            if self.session is not None:
-                self.session.title = message.title
-        elif isinstance(message, ItemMessage):
-            self._log.apply(message)
+        match message:
+            case Snapshot():
+                self.session, self.running = message.session, message.running
+                self.questions = {questions.id: questions for questions in message.questions}
+                self.dialogs = {dialog.id: dialog for dialog in message.dialogs}
+                self._log.clear()
+                self._log.items.update((item.id, item) for item in message.items if isinstance(item, Item))
+                self._ready.set()
+            case TurnStarted():
+                self.running = True
+                self._dequeue(command=False)
+                if message.item is not None:
+                    self._log.items[message.item.id] = message.item
+            case TurnEnded():
+                self.running, self.last_turn = False, message
+            case QuestionAsked():
+                self.questions[message.questions.id] = message.questions
+            case QuestionClosed():
+                self.questions.pop(message.id, None)
+            case DialogOpened():
+                self.dialogs[message.dialog.id] = message.dialog
+            case DialogClosed():
+                self.dialogs.pop(message.id, None)
+            case Notice():
+                self.notices.append(message)
+            case PluginsChanged():
+                self._dequeue(command=True)  # The page hears this once every command ends.
+            case TitleChanged():
+                if self.session is not None:
+                    self.session.title = message.title
+            case _:
+                if isinstance(message, ItemMessage):
+                    self._log.apply(message)
         self._changed.set()
         self._changed = anyio.Event()
 

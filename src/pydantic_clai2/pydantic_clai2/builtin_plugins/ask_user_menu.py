@@ -5,15 +5,12 @@ The built-in `ask_user` plugin: inline questions that keep the transcript visibl
 
 from collections.abc import Callable, Sequence
 from contextlib import nullcontext
-from dataclasses import dataclass, field
 from functools import partial
 
 import anyio
 from pydantic import BaseModel, ValidationError
 from rich.console import Console, RenderableType
 from rich.text import Text
-from termflow.tui.layout import truncate
-from termflow.tui.terminal import raw_mode
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
 from pydantic_ai.capabilities import AgentCapability
@@ -24,175 +21,17 @@ from pydantic_ai_harness.ask_user import (
     AskUserAnsweredEvent,
     AskUserRequest,
     AskUserResponse,
-    Question,
 )
+from pydantic_ai_harness.permissions import Approver, PermissionDecision, PermissionRequest
 from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.plugins import FullScreen, Plugin
+from pydantic_clai2.runtime.permissions import approval_handler, approval_question, decision, shown_in_full
 from pydantic_clai2.ui.menus.menu_worker import run_worker
-from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
-from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
-from pydantic_clai2.ui.prompt.question_input import Paste, QuestionKey, TranscriptKey, question_input
+from pydantic_clai2.ui.menus.question_menu import QuestionMenu
+from pydantic_clai2.ui.prompt.question_input import QuestionKey, question_input
 from pydantic_clai2.ui.rendering import theme
-from pydantic_clai2.ui.rendering.tool_output import tool_header
-
-
-@dataclass(kw_only=True)
-class QuestionMenu:
-    """Inline picker state, independent of terminal input and rendering."""
-
-    question: Question
-    position: int
-    total: int
-    asker: str | None = None
-    """Who asks, such as `Task [1a2b3c4d]`, when it is not the run the user prompted."""
-    cursor: int = 0
-    selected: set[int] = field(default_factory=set[int])
-    custom: PromptBuffer = field(default_factory=PromptBuffer)
-    editing_custom: bool = False
-
-    @property
-    def title(self) -> str:
-        """Include who asks, and progress when the request contains several questions."""
-        title = self.question.header if self.asker is None else f'{self.asker}: {self.question.header}'
-        if self.total == 1:
-            return title
-        return f'{title} (question {self.position} of {self.total})'
-
-    @property
-    def hint(self) -> str:
-        """Show the available actions without a separate Space-key convention."""
-        if self.editing_custom:
-            return 'Enter submits - Esc back - Ctrl+C decline'
-        if self.cursor == self.other:
-            return 'Up/Down move - type your answer - Esc decline'
-        action = 'toggle; Done submits' if self.question.multi_select else 'select'
-        return f'Up/Down move - number/Enter {action} - Esc decline'
-
-    @property
-    def other(self) -> int:
-        """The row index of `Other (type answer)`, after the options and any `Done` row."""
-        return len(self.question.options) + int(self.question.multi_select)
-
-    def edit_custom(self, key: str | Paste) -> str | None:
-        """Edit the typed answer; return it when Enter submits nonblank text."""
-        if isinstance(key, Paste):
-            self.custom.insert(key.text.replace('\t', '    '))
-        elif key == 'escape':
-            self.editing_custom = False
-        elif key == 'enter':
-            return self.custom.text.strip() or None
-        elif key != 'ctrl-r':
-            self.custom.edit(key)
-        return None
-
-    def choose(self, key: str | Paste) -> tuple[str, ...] | str | None:
-        """Apply a key; return selections only when a nonempty answer is submitted."""
-        typed = isinstance(key, Paste) or (len(key) == 1 and key.isprintable())
-        if typed and self.cursor == self.other:
-            # Text typed on the highlighted `Other` row starts the answer, without an Enter first.
-            self.editing_custom = True
-        if self.editing_custom:
-            return self.edit_custom(key)
-        if isinstance(key, Paste):
-            return None
-        count = len(self.question.options)
-        rows = self.other + 1
-        if key in ('up', 'down', 'tab'):
-            self.cursor = (self.cursor + (-1 if key == 'up' else 1)) % rows
-        elif key == 'enter' or key in tuple(str(i) for i in range(1, rows + 1)):
-            if key != 'enter':
-                self.cursor = int(key) - 1
-            if self.cursor == self.other:
-                self.editing_custom = True
-                return None
-            if not self.question.multi_select:
-                return (self.question.options[self.cursor].label,)
-            if self.cursor == count:
-                if self.selected:
-                    return tuple(option.label for i, option in enumerate(self.question.options) if i in self.selected)
-            elif self.cursor in self.selected:
-                self.selected.remove(self.cursor)
-            else:
-                self.selected.add(self.cursor)
-        return None
-
-    def frame(self, *, width: int, height: int) -> tuple[str, ...]:
-        """Bound the picker to half the viewport, scrolling choices around the cursor.
-
-        The question is pinned between the title and its choices: output that streams while it is
-        open, from a delegated task say, lands in the transcript above and cannot push it away.
-        """
-        budget = max(3, height // 2)
-        question = self._question_rows(width=width, limit=max(1, (budget - 2) // 2))
-        if self.editing_custom:
-            return (
-                theme.sgr(theme.ACCENT) + truncate(f'{self.title}: Other (type answer)', width) + '\x1b[0m',
-                *question,
-                *self.custom.rows(width=width, limit=max(1, budget - 2 - len(question))),
-                theme.sgr(theme.MUTED) + truncate(self.hint, width) + '\x1b[0m',
-            )
-        choices: list[str] = []
-        for index, option in enumerate(self.question.options):
-            marker = ('[x] ' if index in self.selected else '[ ] ') if self.question.multi_select else ''
-            description = f' - {option.description}' if option.description else ''
-            choices.append(f'{index + 1}. {marker}{option.label}{description}')
-        if self.question.multi_select:
-            choices.append(f'{len(choices) + 1}. Done' + ('' if self.selected else ' (select at least one)'))
-        choices.append(f'{len(choices) + 1}. Other (type answer)')
-        lines: list[str] = []
-        focus = 0
-        for index, choice in enumerate(choices):
-            if index == self.cursor:
-                focus = len(lines)
-            for line_index, line in enumerate(_wrap(choice, width=width - 2)):
-                prefix = '> ' if index == self.cursor and line_index == 0 else '  '
-                role = theme.ACCENT if index == self.cursor else theme.INFO
-                lines.append(theme.sgr(role) + truncate(prefix + line, width) + '\x1b[0m')
-        visible = max(1, budget - 2 - len(question))
-        start = min(focus, max(0, len(lines) - visible))
-        title = truncate(self.title, width)
-        return (
-            theme.sgr(theme.ACCENT, bold=True) + title + '\x1b[0m',
-            *question,
-            *lines[start : start + visible],
-            theme.sgr(theme.MUTED) + truncate(self.hint, width) + '\x1b[0m',
-        )
-
-    def _question_rows(self, *, width: int, limit: int) -> list[str]:
-        """The question's wrapped text, cut to `limit` rows with an ellipsis so the choices keep room."""
-        rows = _wrap(self.question.question, width=width)
-        if len(rows) > limit:
-            rows = [*rows[: limit - 1], rows[limit - 1] + '…']
-        return [truncate(row, width) for row in rows]
-
-    def run(self, *, console: Console, key_source: Callable[[], QuestionKey]) -> tuple[str, ...] | str | None:
-        """Borrow the released editor's live panel, or open one for this question alone."""
-        surface = console.file
-        owned = not isinstance(surface, PromptSurface)
-        if not isinstance(surface, PromptSurface):
-            surface = PromptSurface(output=surface, size=lambda: console.size)
-            console = Console(file=surface, width=console.width, height=console.height)
-        try:
-            with raw_mode():
-                while True:
-                    surface.paint(self.frame(width=console.width, height=console.height))
-                    key = key_source()
-                    if isinstance(key, TranscriptKey):
-                        # Reading back through or copying the transcript must not answer or edit the question.
-                        surface.transcript_key(key.key, key.data)
-                        continue
-                    if key == 'ctrl-c' or (key == 'escape' and not self.editing_custom):
-                        return None
-                    result = self.choose(key)
-                    if result is not None:
-                        return result
-        finally:
-            # The panel showed the question while it was open; the transcript keeps it above the answer.
-            console.print(Text(self.question.question, style=theme.color(theme.ACCENT)))
-            if owned:
-                surface.restore()
-            else:
-                surface.release()
+from pydantic_clai2.ui.rendering.rendering import prompt_line
+from pydantic_clai2.ui.rendering.tool_output import terminal_text, tool_header
 
 
 class TerminalAnswerer:
@@ -213,11 +52,31 @@ class TerminalAnswerer:
 
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         """Answer every question or decline the entire request."""
+        return await self._ask(request)
+
+    async def ask_approval(self, request: PermissionRequest) -> AskUserResponse:
+        """Ask `approval_question` about a held call, first printing what it runs in full.
+
+        The picker cuts its question to the rows the terminal leaves it, which a resize can shrink while
+        it is open, so a command is always printed in full, and a path when the question cuts it.
+        """
+        held = (
+            None
+            if request.action == 'write' and shown_in_full(request)
+            else Text(f'{terminal_text(request.call.tool_name)} waits for approval to run:\n')
+        )
+        if held is not None:
+            held.append(terminal_text(request.subject, keep='\t\n'))
+        return await self._ask(approval_question(request), held=held)
+
+    async def _ask(self, request: AskUserRequest, *, held: Text | None = None) -> AskUserResponse:
         async with self._terminal, self._full_screen():
             child_id = DelegationTasks.child_id()
             asker = None if child_id is None else f'Task [{child_id[:8]}]'
             if asker is not None:
                 self._console.print(f'{asker} requests your input', markup=False)
+            if held is not None:
+                self._console.print(held)
             with question_input() if self._runner is None else nullcontext(None) as key_source:
                 return await self.answer_questions(request=request, key_source=key_source, asker=asker)
 
@@ -244,11 +103,6 @@ class TerminalAnswerer:
         return AskUserResponse(answers=tuple(answers))
 
 
-def _wrap(text: str, *, width: int) -> list[str]:
-    """Fold `text` to plain rows of at most `width` cells, keeping its own line breaks."""
-    return [line.plain for line in Text(text).wrap(Console(), width=max(1, width), overflow='fold')]
-
-
 class _Header(BaseModel):
     header: str
 
@@ -271,6 +125,9 @@ def render_call(event: FunctionToolCallEvent) -> RenderableType:
 def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
     """Leave a record of what was picked in the transcript, since the menu itself is gone."""
     text = Text()
+    if event.failed:
+        text.append('● The question failed', style=theme.color(theme.MUTED))
+        return text
     if event.response.cancelled:
         text.append('● You declined to answer', style=theme.color(theme.MUTED))
         return text
@@ -279,8 +136,12 @@ def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
             text.append('\n')
         text.append('● ', style=theme.color(theme.MUTED))
         text.append(answer.header, style=theme.color(theme.ACCENT))
-        value = answer.custom_answer if answer.custom_answer is not None else ', '.join(answer.selected)
-        text.append(f': {value}', style=theme.color(theme.MUTED))
+        if answer.custom_answer is not None:
+            # A typed answer is the user's own words, so it reads like a prompt they typed, not muted output.
+            text.append(':\n', style=theme.color(theme.MUTED))
+            text.append_text(prompt_line(answer.custom_answer))
+        else:
+            text.append(f': {", ".join(answer.selected)}', style=theme.color(theme.MUTED))
     return text
 
 
@@ -291,14 +152,24 @@ def render_question(event: AgentStreamEvent) -> RenderableType | None:
     return render_answer(event) if isinstance(event, AskUserAnsweredEvent) else None
 
 
+def terminal_approver(answerer: TerminalAnswerer) -> Approver:
+    """Ask about each call `Permissions` holds in the terminal's picker."""
+
+    async def approve(request: PermissionRequest) -> PermissionDecision:
+        return decision(await answerer.ask_approval(request))
+
+    return approve
+
+
 class AskUserPlugin(Plugin):
-    """`AskUser` with the terminal answerer, a readable call header, and a transcript line per answer."""
+    """`AskUser` and `/permissions` approvals with the terminal answerer, a readable call header, and answer lines."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         # The picker needs a terminal; a session without one, such as one the browser runs, gets no question tool.
         if not self.host.console.is_terminal:
             return ()
-        return (AskUser(answerer=TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)),)
+        answerer = TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)
+        return (AskUser(answerer=answerer), approval_handler(terminal_approver(answerer)))
 
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
         return render_question(event)
