@@ -901,6 +901,7 @@ def test_xai_grok_4_7():
             'thinking_always_enabled': True,
             'grok_supports_builtin_tools': True,
             'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'grok_supports_stop_sequences': False,
             'grok_default_effort_omitted': True,
             'needs_sealed_system_blocks': True,
         }
@@ -1847,6 +1848,7 @@ def test_openrouter_x_ai_grok_4_7():
             'thinking_always_enabled': True,
             'grok_supports_builtin_tools': True,
             'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'grok_supports_stop_sequences': False,
             'grok_default_effort_omitted': True,
             'needs_sealed_system_blocks': True,
             'openai_chat_send_back_thinking_parts': 'field',
