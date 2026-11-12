@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any
 
 import pytest
 
@@ -25,7 +24,7 @@ CAPABILITIES = [
 ]
 
 
-def _capability(name: str) -> type[AbstractCapability[Any]]:
+def _capability(name: str) -> type[AbstractCapability[object]]:
     try:
         return getattr(pydantic_ai_harness, name)
     except ImportError:  # pragma: lax no cover - only without the capability's extra
@@ -43,6 +42,8 @@ def test_constructor_and_spec_take_authority(name: str) -> None:
 
 
 def test_modal_keeps_authority_through_its_own_init() -> None:
-    modal_sandbox: Any = _capability('ModalSandbox')
-    sandbox = modal_sandbox(authority='none', path_authority={'docs': 'user'})
+    pytest.importorskip('modal')
+    from pydantic_ai_harness.modal_sandbox import ModalSandbox
+
+    sandbox = ModalSandbox[object](authority='none', path_authority={'docs': 'user'})
     assert (sandbox.authority, sandbox.path_authority) == ('none', {'docs': 'user'})
