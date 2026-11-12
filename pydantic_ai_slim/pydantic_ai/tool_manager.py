@@ -336,10 +336,9 @@ class _ValidationDeferral(Exception):
 
 def _has_safety_checks(call: ToolCallPart) -> bool:
     """Whether `call` is a `computer` call carrying a provider's safety checks."""
-    from .computer_use import _SAFETY_CHECKS, COMPUTER_KIND  # pyright: ignore[reportPrivateUsage]
+    from .computer_use import COMPUTER_KIND, _safety_checks  # pyright: ignore[reportPrivateUsage]
 
-    # Read raw so a malformed list still asks for approval rather than slipping through.
-    return call.tool_kind == COMPUTER_KIND.id and bool((call.provider_details or {}).get(_SAFETY_CHECKS))
+    return call.tool_kind == COMPUTER_KIND.id and bool(_safety_checks(call.provider_details))
 
 
 def _require_safety_approval(validated: ValidatedToolCall[AgentDepsT]) -> ValidatedToolCall[AgentDepsT]:
