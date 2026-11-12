@@ -283,6 +283,8 @@ class DelegationTasks:
         self._unsteered: dict[str, list[str]] = {}
         self._queued: dict[str, tuple[str, int]] = {}
         self._save_locks: dict[str, anyio.Lock] = {}
+        self._holding: set[str] = set()
+        """Settling tasks whose history `save` keeps in memory until their observers have been told."""
         self._history_on_disk: dict[str, tuple[Path, bytes]] = {}
         """Each settled task whose history is kept in its saved file only, so idle histories don't fill memory.
 
@@ -418,7 +420,8 @@ class DelegationTasks:
         a resume loads it back first.
         """
         await self._write(record)
-        self._release(record)
+        if record.id not in self._holding:
+            self._release(record)
 
     async def _write(self, record: DelegationTask) -> None:
         """Save `record` with its history, loading that back first when it is in the saved file only."""
@@ -433,6 +436,15 @@ class DelegationTasks:
                 self._history_on_disk.pop(record.id, None)
                 await temporary.write_bytes(_ADAPTER.dump_json(record))
                 await temporary.replace(destination)
+
+    @contextmanager
+    def _holding_history(self, record: DelegationTask) -> Generator[None]:
+        """Keep `record`'s history in memory through `save` while the block runs."""
+        self._holding.add(record.id)
+        try:
+            yield
+        finally:
+            self._holding.discard(record.id)
 
     def _release(self, record: DelegationTask) -> None:
         """Keep a settled, saved task's history in its file only."""
@@ -462,9 +474,10 @@ class DelegationTasks:
             await anyio.Path(self.directory).mkdir(parents=True, exist_ok=True)
         self.records[record.id] = record
         # Observers are told with its history, which it then keeps in the file only.
-        await self._write(record)
-        if self._open:
-            await self.notify(record)
+        with self._holding_history(record):
+            await self.save(record)
+            if self._open:
+                await self.notify(record)
         self._release(record)
         return True
 
@@ -639,11 +652,12 @@ class DelegationTasks:
                         await self.cancel(child.id, user=record.user_stopped)
             with anyio.move_on_after(5, shield=True):
                 # Observers are told it settled with its history, which it then keeps in the file only.
-                await self._write(record)
-                try:
-                    await self.notify(record)
-                except Exception:
-                    logging.getLogger(__name__).exception('Task completion observer failed for %s', record.id)
+                with self._holding_history(record):
+                    await self.save(record)
+                    try:
+                        await self.notify(record)
+                    except Exception:
+                        logging.getLogger(__name__).exception('Task completion observer failed for %s', record.id)
                 self._release(record)
                 self.queue_reports(conversation_id=record.conversation_id, parent_id=record.parent_id)
         return f'Task {record.id} ({record.outcome}):\n{record.output}'
