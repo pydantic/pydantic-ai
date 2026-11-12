@@ -909,10 +909,11 @@ def test_main_reports_a_github_http_error_and_closes_it(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A GitHub HTTP error that escapes a command fails the run with its status, and is closed."""
+    error = health.urllib.error.HTTPError('issues', 502, 'Bad Gateway', Message(), None)
 
     class _UnreadableIncidents(FakeGitHub):
         def open_incidents(self) -> list[health.Issue]:
-            raise health.urllib.error.HTTPError('issues', 502, 'Bad Gateway', Message(), None)
+            raise error
 
     monkeypatch.setattr(health, 'GitHubClient', lambda *_: _UnreadableIncidents())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
@@ -920,6 +921,8 @@ def test_main_reports_a_github_http_error_and_closes_it(
 
     assert health.main(['monitor']) == 1
     assert capsys.readouterr().err == 'provider-health failed: HTTP Error 502: Bad Gateway\n'
+    # Only Python 3.14+ warns about an unclosed `HTTPError`, and CI runs this file on 3.13.
+    assert error.closed
 
 
 @pytest.mark.parametrize('run_attempt', [None, True, 0, -1, '2'])
