@@ -920,6 +920,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         in_temporal = in_temporal_workflow()
         bridge = _lambda_bridge()
         branches = _LambdaBranches(bridge, self.tool_name) if bridge is not None else None
+        sequential = any(_runs_under_dbos(w.agent) for w in self._by_name.values())
         limits = _resolve_resource_limits(self.resource_limits)
         capture = PrintCapture()
         type_check_stubs = self._build_type_check_stubs()
@@ -935,8 +936,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             completed = await MontyExecutor(
                 dispatch=dispatch,
                 valid_names=self._by_name,
-                flush=branches.flush if branches is not None else None,
-                global_sequential=any(_runs_under_dbos(w.agent) for w in self._by_name.values()),
+                # Exclusive: under `global_sequential`, calls start only after `flush`.
+                flush=branches.flush if branches is not None and not sequential else None,
+                global_sequential=sequential,
                 portal=monty.portal,
                 max_sleep_seconds=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))
