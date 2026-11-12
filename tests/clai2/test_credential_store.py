@@ -232,21 +232,19 @@ def no_keyring(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) 
 
 @pytest.mark.parametrize('no_keyring', [NoKeyringError, InitError], indirect=True)
 def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None, caplog: pytest.LogCaptureFixture) -> None:
+    expected_warning = (
+        f'No OS keyring is available; falling back to 0600 plaintext credential files in {credentials_path().parent}.'
+    )
     with caplog.at_level('WARNING', logger='pydantic_clai2.config.credential_store'):
         assert load_codex_credentials(fallback=fallback) is None
         assert caplog.records == []
         save_codex_credentials(fallback=fallback, value='{"access_token":"first"}')
-        assert [record.getMessage() for record in caplog.records] == [
-            'No OS keyring backend available; falling back to 0600 plaintext credential files.'
-        ]
+        assert [record.getMessage() for record in caplog.records] == [expected_warning]
         new_session()
         assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
         save_codex_credentials(fallback=fallback, value='{"access_token":"refreshed"}')
         assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
-    assert [record.getMessage() for record in caplog.records] == [
-        'No OS keyring backend available; falling back to 0600 plaintext credential files.',
-        'No OS keyring backend available; falling back to 0600 plaintext credential files.',
-    ]
+    assert [record.getMessage() for record in caplog.records] == [expected_warning, expected_warning]
     assert list(fallback.parent.glob('credentials.*')) == [fallback]
     if sys.platform != 'win32':  # pragma: no branch
         assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
@@ -259,12 +257,13 @@ def test_file_fallback_when_set_password_has_no_keyring(
         raise NoKeyringError('No recommended backend was available')
 
     monkeypatch.setattr(keyring, 'set_password', fail_set)
+    expected_warning = (
+        f'No OS keyring is available; falling back to 0600 plaintext credential files in {credentials_path().parent}.'
+    )
     with caplog.at_level('WARNING', logger='pydantic_clai2.config.credential_store'):
         save_codex_credentials(fallback=fallback, value='{"access_token":"first"}')
         assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
-    assert [record.getMessage() for record in caplog.records] == [
-        'No OS keyring backend available; falling back to 0600 plaintext credential files.'
-    ]
+    assert [record.getMessage() for record in caplog.records] == [expected_warning]
     if sys.platform != 'win32':  # pragma: no branch
         assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
 
