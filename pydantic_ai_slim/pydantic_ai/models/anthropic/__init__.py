@@ -2696,6 +2696,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if not (native_computer and t.name == native_computer.name)
         ]
         if native_computer and native_computer.name in tool_defs:
+            if not native_computer.is_toolset and native_computer.name != 'computer' and 'computer' in tool_defs:
+                # Its calls would be told apart from the function tool's by name alone.
+                raise UserError(
+                    f"Anthropic's computer use tool is named `computer`, so the `{native_computer.name}` computer tool "
+                    'cannot be sent beside a function tool named `computer`. Rename one of them.'
+                )
             tools.append(native_computer.tool_param())
 
         # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
