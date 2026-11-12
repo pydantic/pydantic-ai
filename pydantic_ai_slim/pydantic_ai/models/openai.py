@@ -8461,23 +8461,30 @@ _OBJECT_TA = TypeAdapter(dict[str, Any])
 _OBJECTS_TA = TypeAdapter(list[dict[str, Any]])
 
 
+def _object_or_empty(value: Any) -> dict[str, Any]:
+    try:
+        return _OBJECT_TA.validate_python(value)
+    except ValidationError:
+        return {}
+
+
 def _map_computer_call(
     item: responses.ResponseComputerToolCall, tool_name: str, tool_call_id: str, provider_name: str
 ) -> ComputerCallPart:
     """A `computer_call` as a call of the `computer` tool, keeping the item to send back as it was."""
-    actions = item.actions if item.actions is not None else ([item.action] if item.action else [])
-    provider_details: dict[str, Any] = {'computer_call': item.model_dump(mode='json', exclude_none=True)}
-    if item.pending_safety_checks:
+    dumped = item.model_dump(mode='json', exclude_none=True)
+    provider_details: dict[str, Any] = {'computer_call': dumped}
+    if checks := dumped.get('pending_safety_checks'):
         # Read by `ComputerCallPart.safety_checks`, and sent back as acknowledged once the call is approved.
-        provider_details[_SAFETY_CHECKS] = [
-            check.model_dump(mode='json', exclude_none=True) for check in item.pending_safety_checks
-        ]
+        provider_details[_SAFETY_CHECKS] = checks
     args: dict[str, Any] | str
     if item.status == 'incomplete':
         # Cut off mid-generation: like a truncated function call, its arguments don't parse, so none of it runs.
         args = '{"actions": ['
     else:
-        mapped = [_map_computer_action(action.model_dump(mode='json', exclude_none=True)) for action in actions]
+        actions: list[Any] = dumped.get('actions') or ([dumped['action']] if dumped.get('action') else [])
+        # The SDK builds a response without validating it, so an action may not be an object: nothing in it maps.
+        mapped = [_map_computer_action(_object_or_empty(action)) for action in actions]
         # How many tool actions each became, so its result is described without mapping the call again.
         provider_details[_ACTION_COUNTS] = [len(tool_actions) for tool_actions in mapped]
         # A call with no actions only asks to look.
