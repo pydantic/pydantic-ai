@@ -847,6 +847,13 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
         An image or PDF comes back as its header followed by a `BinaryContent`;
         everything else is text.
+
+        Args:
+            path: File path relative to the working directory.
+            offset: Line number to start reading from (1-indexed, matching the printed line
+                numbers). An `offset` below 1 raises `ModelRetry`.
+            limit: Maximum number of lines to return; defaults to, and is capped at, the configured read limit.
+            workspace: The workspace backend to read from.
         """
         return await self._read_file(await self._scope(workspace), None, path, offset=offset, limit=limit)
 
