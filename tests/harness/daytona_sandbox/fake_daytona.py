@@ -38,7 +38,6 @@ from daytona import (
     DaytonaServiceUnavailableError,
     DaytonaTimeoutError,
     SandboxState,
-    ScreenshotOptions,
     ScreenshotRegion,
 )
 from daytona.common.errors import SOURCE_PROXY
@@ -430,13 +429,6 @@ class FakeComputerUse:
 
     async def take_full_screen(self, request_timeout: float | None = None) -> SimpleNamespace:
         await self._call('take_full_screen')
-        return SimpleNamespace(screenshot=base64.b64encode(self.png).decode())
-
-    async def take_compressed(
-        self, options: ScreenshotOptions | None = None, request_timeout: float | None = None
-    ) -> SimpleNamespace:
-        assert options is not None
-        await self._call(f'take_compressed {options.fmt} {options.scale}')
         return SimpleNamespace(screenshot=base64.b64encode(self.png).decode())
 
     async def take_region(self, region: ScreenshotRegion, request_timeout: float | None = None) -> SimpleNamespace:

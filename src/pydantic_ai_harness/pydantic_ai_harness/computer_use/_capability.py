@@ -62,7 +62,6 @@ from pydantic_ai_harness.computer_use._protocol import (
     Display,
     SupportsCursorPosition,
     SupportsDisplay,
-    SupportsScaledScreenshot,
     SupportsZoom,
     UnsupportedActionError,
 )
@@ -134,10 +133,8 @@ class _Plan:
     """The size of the screenshot the model pointed on, if it saw one."""
     changed: list[ComputerToolAction] | None
     """The actions to run, when they differ from the ones the model asked for."""
-    seen_limit: _Limit
-    """The largest screenshot the model that made the call takes, which sizes the one it expected without one seen."""
     limit: _Limit
-    """The largest screenshot both that model and the run's model take, which the next screenshot is taken at."""
+    """The largest screenshot both that model and the run's model take; a larger screen is refused."""
     model_name: str
     acts: bool
     """Whether any action changes the screen."""
@@ -202,7 +199,7 @@ def _min_limit(first: _Limit, second: _Limit) -> _Limit:
 
 
 def _fit(size: tuple[int, int], limit: _Limit) -> tuple[int, int]:
-    """The size an image of `size` is sent at: scaled down to the limit, keeping its shape."""
+    """The largest size of `size`'s shape within the limit: `size` itself when it fits."""
     if limit is None:
         return size
     width, height = size
@@ -242,33 +239,8 @@ def _scale(value: int, to: int, scale_from: int) -> int:
     return min(to - 1, (2 * value * to + scale_from) // (2 * scale_from))
 
 
-def _too_large_zoom(
-    actions: list[ComputerToolAction],
-    pixels: list[ComputerToolAction],
-    display: tuple[int, int],
-    space: tuple[int, int],
-    limit: _Limit,
-) -> str | None:
-    """Why the first zoom into more than the model can see at full resolution is refused, if there is one."""
-    for index, (action, scaled) in enumerate(zip(actions, pixels), 1):
-        if not (isinstance(action, Zoom) and isinstance(scaled, Zoom)):
-            continue
-        region = scaled.region
-        size = (region.right - region.left, region.bottom - region.top)
-        if (fitted := _fit(size, limit)) != size:
-            # The largest region of this shape that fits, in the model's coordinates.
-            width = max(1, fitted[0] * space[0] // display[0])
-            height = max(1, fitted[1] * space[1] // display[1])
-            asked = action.region
-            return (
-                f'Action {index} (zoom) is {asked.right - asked.left}x{asked.bottom - asked.top}, larger than can be '
-                f'shown at full resolution, so no action ran. Zoom into {width}x{height} or smaller.'
-            )
-    return None
-
-
 def _to_pixels(action: ComputerToolAction, display: tuple[int, int], space: tuple[int, int]) -> ComputerToolAction:
-    """Scale an action's positions from the model's `space`, a grid or a scaled-down screenshot, to display pixels."""
+    """Scale an action's positions from the model's `space`, a grid or a screenshot taken before the display changed size, to display pixels."""
     (width, height), (space_width, space_height) = display, space
 
     def x(value: int) -> int:
@@ -306,22 +278,13 @@ class _Call:
         )
 
 
-def _check_can_scale(display: Display, plan: _Plan, size: tuple[int, int]) -> None:
-    """Refuse a screen the model can only see scaled down, on a display that can't scale screenshots."""
-    if (fitted := _fit(size, plan.limit)) != size and not isinstance(display, SupportsScaledScreenshot):
+def _check_fits(plan: _Plan, size: tuple[int, int]) -> None:
+    """Refuse a screen larger than the model can see: screenshots are sent at the screen's size."""
+    if (fitted := _fit(size, plan.limit)) != size:
         raise UserError(
-            f'The screen is {size[0]}x{size[1]}, larger than {plan.model_name!r} can see, and its display cannot '
-            f'scale screenshots down. Start the display at {fitted[0]}x{fitted[1]} or smaller.'
+            f'The screen is {size[0]}x{size[1]}, larger than {plan.model_name!r} can see. Start the display at '
+            f'{fitted[0]}x{fitted[1]} or smaller.'
         )
-
-
-async def _screenshot(display: Display, plan: _Plan, size: tuple[int, int]) -> bytes:
-    """The screen, scaled down by the display to what the model takes."""
-    if (fitted := _fit(size, plan.limit)) == size:
-        return await display.screenshot()
-    _check_can_scale(display, plan, size)
-    assert isinstance(display, SupportsScaledScreenshot)
-    return await display.scaled_screenshot(*fitted)
 
 
 def _unbalanced(actions: list[ComputerToolAction]) -> str | None:
@@ -614,7 +577,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             grid=grid,
             # The model pointed on the latest screenshot before its call.
             seen=_last_screenshot_size(ctx.messages[: made[0]]) if made else None,
-            seen_limit=made_limit,
             changed=actions if call and _changed(call, actions) else None,
             # The next request starts at the run's model, or with a sticky `ModelFallback` at the model that made the
             # call, so the screenshot fits both. Another model is refused before its request if it can't see it.
@@ -667,18 +629,14 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             raise UserError(_NO_DISPLAY)
         # Also starts a display that stopped, before anything acts.
         size = await _display_size(display)
-        # A screenshot the model saw, or the next one, may be scaled down from the display.
-        call = _Call(
-            space=(plan.grid, plan.grid) if plan.grid else plan.seen or _fit(size, plan.seen_limit), display=size
-        )
+        # The call ends with a screenshot, so a screen the model can't see ends the run before anything acts.
+        _check_fits(plan, size)
+        # The model pointed on its grid, or on the screenshot it saw, even if the display has changed size since.
+        call = _Call(space=(plan.grid, plan.grid) if plan.grid else plan.seen or size, display=size)
         # The backend would move a position outside the screen to its edge and act there.
         if refused := _off_screen(actions, *call.space, 'grid' if plan.grid else 'screen'):
             raise ToolFailed(refused)
         pixels = actions if call.space == size else [_to_pixels(a, size, call.space) for a in actions]
-        if refused := _too_large_zoom(actions, pixels, size, call.space, plan.limit):
-            raise ToolFailed(refused)
-        # The call ends with a screenshot, so a display that can't take it ends the run before anything acts.
-        _check_can_scale(display, plan, size)
 
         async with _taking_turns(ctx, display):
             return await self._act_and_look(display, pixels, call, plan)
@@ -704,7 +662,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 summary.append(f'The {_plural(skipped, "action")} after it did not run.')
 
         try:
-            png = await _screenshot(display, plan, call.display)
+            png = await display.screenshot()
         except WorkspaceUnavailableError:
             raise
         except WorkspaceError as e:
@@ -740,8 +698,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     async def _native_computer(self, ctx: RunContext[AgentDepsT]) -> ComputerTool | None:
         """The provider's native computer tool, declaring the size of the screenshot the model points on.
 
-        That's the latest screenshot, which the model's positions are scaled from, or before the first one the size
-        the model will get it at. Resolved again for each model a step is attempted at, as `ctx.model`.
+        That's the latest screenshot, which the model's positions are scaled from, or before the first one the
+        display's size. Resolved again for each model a step is attempted at, as `ctx.model`.
         """
         # Read every step, also with a screenshot, so a durable run reads the display at the same steps on replay.
         size = await self._screen_size(ctx)
@@ -750,7 +708,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
                 return None  # the call itself will report the display's error
             raise size.error()
         seen = _last_screenshot_size(ctx.messages)
-        return ComputerTool(display_size=seen or _fit(size, _model_limit(ctx.model)), optional=True)
+        return ComputerTool(display_size=seen or size, optional=True)
 
     @durable_operation('display_size')
     async def _screen_size(self, ctx: RunContext[AgentDepsT]) -> tuple[int, int] | _NotRun:
