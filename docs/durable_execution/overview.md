@@ -94,7 +94,7 @@ agent = Agent('{{ openai:medium }}', name='planner', capabilities=[PrepareTools(
 
 Only async function tools can leave their durable unit this way. On a sync tool, an [MCP](../mcp/client.md) tool or a dynamic toolset's tool that the engine runs in a durable unit, `durable=False` raises a [`UserError`][pydantic_ai.exceptions.UserError] when the tool is called, because those run in a thread or perform I/O. DBOS runs function tools in workflow code without wrapping them, so it doesn't check them: keep an agent you may move to another engine to async tools.
 
-An engine's own metadata key wins when a tool sets it, so a tool with `durable=False` and `metadata={'temporal': ActivityConfig(...)}` still runs in a Temporal activity. Engine keys also carry the engine's unit config, and some allow tools `durable=False` refuses. `durable=False` in turn wins over per-tool config set in code, such as Azure Durable Task's and Render Workflows' `resolve_tool_options`:
+An engine's own metadata key wins when a tool sets it, so a tool with `durable=False` and `metadata={'temporal': ActivityConfig(...)}` still runs in a Temporal activity. Engine keys also carry the engine's own configuration for the unit, which `durable` can't express, and follow the engine's own rules on which tools may opt out. `durable=False` in turn wins over per-tool config set in code, such as Azure Durable Task's and Render Workflows' `resolve_tool_options`:
 
 | Engine | Where `durable=False` runs the tool | Engine's own metadata key |
 |---|---|---|

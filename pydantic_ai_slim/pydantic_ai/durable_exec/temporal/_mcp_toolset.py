@@ -92,7 +92,7 @@ def temporalize_mcp_toolset(
         # reaches here.
         if config is False:  # pragma: no cover
             raise UserError(
-                f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled), '
+                f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled by `durable=False` or its Temporal metadata), '
                 'but MCP tools require the use of IO and so cannot be run outside of an activity.'
             )
         return config
