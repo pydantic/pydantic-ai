@@ -466,8 +466,10 @@ jobs:
           # exceeded it.
           # From 2026-11-09 to 12 the step ran 169 to 335 s over 100 `main` push runs (median 249 s,
           # p95 300 s), and three pull request runs failed on the 280 s budget at 291 to 307 s with
-          # zero type errors; 370 is about 1.1x the `main` maximum, and a run 1.5x the `main` median
-          # still fails it.
+          # zero type errors. No change is known to explain the rise from the 2026-10-29 to 30 median
+          # of 231 s. 370 is about 1.1x the `main` maximum. Passing `main` runs now reach the 328 s of
+          # #8077's fastest regressed run, so the budget no longer fails that absolute range; #8077 took
+          # the median from 88.5 s to at least 3.7x that, and a run 1.5x today's median fails 370.
           PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '370' || '' }}
           UV_NO_SYNC: "1"
         run: make typecheck-changed
