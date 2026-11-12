@@ -136,12 +136,16 @@ _START_VIEWER = (
     '[ -s "$d/password" ] || tr -dc A-Za-z0-9 </dev/urandom | head -c 8 > "$d/password"; '
     'if ! pgrep -x x11vnc >/dev/null; then '
     'x11vnc -storepasswd "$(cat "$d/password")" "$d/passwd" >/dev/null 2>&1; '
+    # Each log is emptied before its program starts: the redirect runs in the background child, so a check could
+    # otherwise read the line an earlier run left, before the child empties it.
+    ': >"$d/x11vnc.log"; '
     f'setsid x11vnc -display {DISPLAY} -forever -shared -localhost -noipv6 -rfbport 5900 -rfbauth "$d/passwd" '
     '>"$d/x11vnc.log" 2>&1 9>&- & '
     # It writes its port once it listens, and exits without one, such as when the port is taken. On IPv4 only, where
     # the viewer connects: with the IPv4 port taken it would otherwise listen on IPv6 alone and still write it.
     + wait_until_ready('grep -q "^PORT=5900" "$d/x11vnc.log" 2>/dev/null', '$!', 'the VNC server', '"$d/x11vnc.log"')
     + "fi; if ! pgrep -f '[w]ebsockify' >/dev/null; then "
+    ': >"$d/novnc.log"; '
     f'setsid /opt/noVNC/utils/novnc_proxy --vnc 127.0.0.1:5900 --listen {_VIEWER_PORT} >"$d/novnc.log" 2>&1 9>&- & '
     + wait_until_ready(
         'grep -q "Navigate to this URL" "$d/novnc.log" 2>/dev/null', '$!', 'the viewer', '"$d/novnc.log"'
