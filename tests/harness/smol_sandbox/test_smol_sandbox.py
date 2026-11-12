@@ -152,6 +152,13 @@ async def test_commands_get_the_working_dir_and_layered_env(fake_smol: FakeSmol,
     assert options is not None and options.workdir == working_dir and options.timeout is None
 
 
+async def test_env_reaches_the_program_unchanged_by_the_launcher(fake_smol: FakeSmol, working_dir: str) -> None:
+    """The launcher script runs in the command's environment, so a variable it assigned would replace the caller's."""
+    backend = SmolSandboxBackend(working_dir=working_dir)
+    result = await backend.run(['sh', '-c', 'printf "%s %s" "$p" "$q"'], env={'p': 'first', 'q': 'second'})
+    assert result.stdout == 'first second'
+
+
 async def test_no_working_dir_uses_the_vms_own(fake_smol: FakeSmol) -> None:
     backend = SmolSandboxBackend(working_dir=None)
     assert await backend.working_dir() == str(fake_smol.root)
