@@ -533,6 +533,8 @@ async def test_registered_work_handles_and_waiting_for_idle():
         untracked = registry.register(kind='other', name='untracked', id='untracked')
         with pytest.raises(UserError, match=r'`ctx\.in_flight\.settle\(\)` must be called from the event loop'):
             await anyio.to_thread.run_sync(registry.settle, untracked)
+        with pytest.raises(UserError, match=r'`ctx\.in_flight\.live\(\)` must be called from the event loop'):
+            await anyio.to_thread.run_sync(registry.live)
         untracked.cancel()
         # Settling work that has already settled does nothing.
         registry.settle(untracked)

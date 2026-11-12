@@ -415,7 +415,11 @@ class InFlightRegistry:
 
         Args:
             kind: Only list work of this kind.
+
+        Raises:
+            UserError: If this isn't called from the event loop running the agent, which changes the live work.
         """
+        _check_on_loop('live')
         return tuple(work for work in self._live.values() if kind is None or work.kind == kind)
 
     async def wait_idle(self, *, kind: str | None = None) -> None:
@@ -426,7 +430,11 @@ class InFlightRegistry:
 
         Args:
             kind: Only wait for work of this kind.
+
+        Raises:
+            UserError: If this isn't called from the event loop running the agent.
         """
+        _check_on_loop('wait_idle')
         while any(work.on_end != 'detach' for work in self.live(kind=kind)):
             await self._changed.wait()
 
