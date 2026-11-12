@@ -717,3 +717,15 @@ def test_a_run_result_whose_whole_conversation_holds_a_bool_does_not_read_it_as_
                 'conversation_run_start': 0,
             }
         )
+
+
+def test_a_run_result_whose_whole_conversation_is_not_a_list_fails_validation() -> None:
+    with pytest.raises(ValidationError, match='`conversation_messages` must be a list'):
+        TYPE_ADAPTER.validate_python(
+            {
+                'output': 'done',
+                'messages': [{'kind': 'request', 'parts': []}],
+                'conversation_messages': {'0': 0},
+                'conversation_run_start': 0,
+            }
+        )

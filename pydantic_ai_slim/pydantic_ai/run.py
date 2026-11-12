@@ -1078,8 +1078,10 @@ def _appended_messages_data(data: dict[str, Any]) -> dict[str, Any]:
     messages = data.get('messages')
     history = cast('list[Any]', messages) if isinstance(messages, list) else []
     full = data['conversation_messages']
+    if not isinstance(full, list):
+        raise ValueError('`conversation_messages` must be a list.')
     messages_data: list[Any] = []
-    for item in cast('list[Any]', full) if isinstance(full, list) else []:
+    for item in cast('list[Any]', full):
         if type(item) is int and not 0 <= item < len(history):
             raise ValueError(
                 f'`conversation_messages` refers to message {item}, but `messages` holds {len(history)} messages.'
