@@ -1867,8 +1867,8 @@ not the filesystem the file tools act on there.
 - **Read-only:** `read_file` registered but `write_file` missing, `read_only`,
   `read_only_patterns` set, or a `ToolGuardrail` or `ToolCallJudge` (a plugin's
   or the agent's own) that checks or hides `write_file`, `edit_file`, `shell`,
-  or `run_code`. A `Permissions` in `read-only` mode, the session's or the
-  agent's own, mounts it read-only for that run.
+  or `run_code`. Any bound `Permissions` in `read-only` mode (the session's,
+  the agent's own, or a plugin's) mounts it read-only for that run.
 - **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, a
   `ToolGuardrail` or `ToolCallJudge` that may check or hide `read_file`, no
   `FileSystem`, more than one, a supplied agent that does not expose its
