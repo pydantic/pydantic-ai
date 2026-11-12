@@ -236,7 +236,7 @@ def test_alerts_ignore_a_manual_dispatch_that_skips_by_design():
 
 
 def test_alerts_ignore_a_pr_workflow_that_skips_by_design():
-    """`ui-security-review` only reviews UI-touching PRs; skipping the rest is correct.
+    """A PR workflow can skip an ineligible PR by design.
 
     The static guard covers the broken-job-graph case at review time, so alerting here
     would be weekly false noise.

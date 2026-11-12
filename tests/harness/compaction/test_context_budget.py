@@ -44,7 +44,7 @@ from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
     ClearToolResults,
     ContextUsage,
-    ContextUsageEvent,
+    ContextUsageMeasuredEvent,
     DeduplicateFileReads,
     ReportContextUsage,
     SlidingWindowCompaction,
@@ -1027,7 +1027,7 @@ class TestReportContextUsage:
         request_context = _request_context(_history(2))
         assert await monitor.before_model_request(ctx, request_context) is request_context
 
-        assert [type(event) for event in ctx.emitted] == [ContextUsageEvent]
+        assert [type(event) for event in ctx.emitted] == [ContextUsageMeasuredEvent]
         event = ctx.emitted[0]
         assert event.window_tokens == 1_000
         assert event.used_tokens > 0

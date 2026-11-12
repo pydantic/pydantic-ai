@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "575"
+      - "638"
       content-type:
       - application/json
       host:
@@ -19,6 +19,8 @@ interactions:
     body:
       type: json
       content:
+        model: gpt-5.6
+        stream: false
         include:
         - reasoning.encrypted_content
         input:
@@ -32,18 +34,16 @@ interactions:
           <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
           </pyai:context>
-          A later <pyai:context> element with the same id replaces this one.
-        model: gpt-5.6
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         reasoning:
           effort: none
           context: all_turns
         store: true
-        stream: false
   response:
     status: 200
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
       - CF-Ray
       - CF-Ray
       alt-svc:
@@ -53,7 +53,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1344"
+      - "848"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -63,18 +63,20 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0b8ddae656908244006abc26b969f087d1bb16c2fd00cf938a
+        id: resp_04ad3ce7a4857327006af39ac4452487d180f3454fd467bc6a
         object: response
-        created_at: 1790715577
+        created_at: 1794349764
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1790715578
+        completed_at: 1794349764
         error: null
         frequency_penalty: 0.0
+        image:
+          context_compression: disabled
         incomplete_details: null
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
@@ -82,13 +84,13 @@ interactions:
           <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
           </pyai:context>
-          A later <pyai:context> element with the same id replaces this one.
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol
         moderation: null
         output:
-        - id: msg_0b8ddae656908244006abc26ba7c9887d1b6d478075e97ce00
+        - id: msg_04ad3ce7a4857327006af39ac4d33487d19f01d7f73e4cd2f5
           type: message
           status: completed
           content:
@@ -135,17 +137,17 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 90
+          input_tokens: 108
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 0
           output_tokens: 5
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 95
+          total_tokens: 113
         user: null
         metadata: {}
-  recorded_at: 2026-09-29T20:59:38.812623+00:00
+  recorded_at: 2026-11-10T22:29:25.133193+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -157,7 +159,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "755"
+      - "936"
       content-type:
       - application/json
       host:
@@ -165,6 +167,8 @@ interactions:
     body:
       type: json
       content:
+        model: gpt-5.6
+        stream: false
         include:
         - reasoning.encrypted_content
         input:
@@ -181,19 +185,19 @@ interactions:
           <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
           </pyai:context>
-          A later <pyai:context> element with the same id replaces this one.
-        model: gpt-5.6
-        previous_response_id: resp_0b8ddae656908244006abc26b969f087d1bb16c2fd00cf938a
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        previous_response_id: resp_04ad3ce7a4857327006af39ac4452487d180f3454fd467bc6a
+        prompt_cache_options:
+          comparison_response_id: resp_04ad3ce7a4857327006af39ac4452487d180f3454fd467bc6a
         reasoning:
           effort: none
           context: all_turns
         store: true
-        stream: false
   response:
     status: 200
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
       - CF-Ray
       - CF-Ray
       alt-svc:
@@ -203,7 +207,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1027"
+      - "1371"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -213,18 +217,20 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0b8ddae656908244006abc26bae68887d1a0015a916cbd1002
+        id: resp_04ad3ce7a4857327006af39ac53ed887d1828856cdc19157b9
         object: response
-        created_at: 1790715579
+        created_at: 1794349765
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1790715579
+        completed_at: 1794349766
         error: null
         frequency_penalty: 0.0
+        image:
+          context_compression: disabled
         incomplete_details: null
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
@@ -232,13 +238,13 @@ interactions:
           <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
           </pyai:context>
-          A later <pyai:context> element with the same id replaces this one.
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol
         moderation: null
         output:
-        - id: msg_0b8ddae656908244006abc26bb9c6887d1bb2d36ac33da4ebf
+        - id: msg_04ad3ce7a4857327006af39ac6520887d1b063a918a6530d0b
           type: message
           status: completed
           content:
@@ -250,153 +256,14 @@ interactions:
           role: assistant
         parallel_tool_calls: true
         presence_penalty: 0.0
-        previous_response_id: resp_0b8ddae656908244006abc26b969f087d1bb16c2fd00cf938a
+        previous_response_id: resp_04ad3ce7a4857327006af39ac4452487d180f3454fd467bc6a
+        prompt_cache_diagnostics:
+          type: cache_hit
         prompt_cache_key: null
-        prompt_cache_retention: 24h
-        reasoning:
-          context: all_turns
-          effort: none
-          mode: standard
-          summary: null
-        safety_identifier: null
-        service_tier: default
-        store: true
-        temperature: 1.0
-        text:
-          format:
-            type: text
-          verbosity: medium
-        tool_choice: auto
-        tool_usage:
-          image_gen:
-            input_tokens: 0
-            input_tokens_details:
-              image_tokens: 0
-              text_tokens: 0
-            output_tokens: 0
-            output_tokens_details:
-              image_tokens: 0
-              text_tokens: 0
-            total_tokens: 0
-          web_search:
-            num_requests: 0
-        tools: []
-        top_logprobs: 0
-        top_p: 0.98
-        truncation: disabled
-        usage:
-          input_tokens: 139
-          input_tokens_details:
-            cache_write_tokens: 0
-            cached_tokens: 0
-          output_tokens: 5
-          output_tokens_details:
-            reasoning_tokens: 0
-          total_tokens: 144
-        user: null
-        metadata: {}
-  recorded_at: 2026-09-29T20:59:39.977520+00:00
-- request:
-    method: POST
-    uri: https://api.openai.com/v1/responses
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - "632"
-      content-type:
-      - application/json
-      host:
-      - api.openai.com
-    body:
-      type: json
-      content:
-        include:
-        - reasoning.encrypted_content
-        input:
-        - role: user
-          content: This one is a bicycle frame, oversized. Where does it go?
-        instructions: |-
-          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-
-          <pyai:context id="capability:memory:state">
-          Send parcels to warehouse A.
-          </pyai:context>
-          A later <pyai:context> element with the same id replaces this one.
-        model: gpt-5.6
-        previous_response_id: resp_0b8ddae656908244006abc26bae68887d1a0015a916cbd1002
-        reasoning:
-          effort: none
-          context: all_turns
-        store: true
-        stream: false
-  response:
-    status: 200
-    headers:
-      access-control-expose-headers:
-      - X-Request-ID
-      - CF-Ray
-      - CF-Ray
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-type:
-      - application/json
-      openai-processing-ms:
-      - "1128"
-      openai-version:
-      - 2020-10-01
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    body:
-      type: json
-      content:
-        id: resp_0b8ddae656908244006abc26bc0e5887d184ffccf1317e9541
-        object: response
-        created_at: 1790715580
-        status: completed
-        access_programs:
-          cyber: daybreak_blue
-        background: false
-        billing:
-          payer: developer
-        completed_at: 1790715581
-        error: null
-        frequency_penalty: 0.0
-        incomplete_details: null
-        instructions: |-
-          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
-
-          <pyai:context id="capability:memory:state">
-          Send parcels to warehouse A.
-          </pyai:context>
-          A later <pyai:context> element with the same id replaces this one.
-        max_output_tokens: null
-        max_tool_calls: null
-        model: gpt-5.6-sol
-        moderation: null
-        output:
-        - id: msg_0b8ddae656908244006abc26bcec2487d184fee400be674180
-          type: message
-          status: completed
-          content:
-          - type: output_text
-            annotations: []
-            logprobs: []
-            text: B
-          phase: final_answer
-          role: assistant
-        parallel_tool_calls: true
-        presence_penalty: 0.0
-        previous_response_id: resp_0b8ddae656908244006abc26bae68887d1a0015a916cbd1002
-        prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_04ad3ce7a4857327006af39ac4452487d180f3454fd467bc6a
+          mode: implicit
+          ttl: 30m
         prompt_cache_retention: 24h
         reasoning:
           context: all_turns
@@ -440,7 +307,7 @@ interactions:
           total_tokens: 169
         user: null
         metadata: {}
-  recorded_at: 2026-09-29T20:59:41.245160+00:00
+  recorded_at: 2026-11-10T22:29:26.637791+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -452,7 +319,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "731"
+      - "803"
       content-type:
       - application/json
       host:
@@ -460,6 +327,163 @@ interactions:
     body:
       type: json
       content:
+        model: gpt-5.6
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: This one is a bicycle frame, oversized. Where does it go?
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <pyai:context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        previous_response_id: resp_04ad3ce7a4857327006af39ac53ed887d1828856cdc19157b9
+        prompt_cache_options:
+          comparison_response_id: resp_04ad3ce7a4857327006af39ac53ed887d1828856cdc19157b9
+        reasoning:
+          effort: none
+          context: all_turns
+        store: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "862"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_04ad3ce7a4857327006af39ac6b5b087d181eb8616c2b2eccf
+        object: response
+        created_at: 1794349766
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1794349767
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        instructions: |-
+          You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+
+          <pyai:context id="capability:memory:state">
+          Send parcels to warehouse A.
+          </pyai:context>
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output:
+        - id: msg_04ad3ce7a4857327006af39ac74edc87d18e27877ba564bc28
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: B
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_04ad3ce7a4857327006af39ac53ed887d1828856cdc19157b9
+        prompt_cache_diagnostics:
+          type: cache_hit
+        prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_04ad3ce7a4857327006af39ac53ed887d1828856cdc19157b9
+          mode: implicit
+          ttl: 30m
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 189
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 5
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 194
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-10T22:29:27.575607+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "912"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.6
+        stream: false
         include:
         - reasoning.encrypted_content
         input:
@@ -476,19 +500,19 @@ interactions:
           <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
           </pyai:context>
-          A later <pyai:context> element with the same id replaces this one.
-        model: gpt-5.6
-        previous_response_id: resp_0b8ddae656908244006abc26bc0e5887d184ffccf1317e9541
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        previous_response_id: resp_04ad3ce7a4857327006af39ac6b5b087d181eb8616c2b2eccf
+        prompt_cache_options:
+          comparison_response_id: resp_04ad3ce7a4857327006af39ac6b5b087d181eb8616c2b2eccf
         reasoning:
           effort: none
           context: all_turns
         store: true
-        stream: false
   response:
     status: 200
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
       - CF-Ray
       - CF-Ray
       alt-svc:
@@ -498,7 +522,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1053"
+      - "910"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -508,18 +532,20 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0b8ddae656908244006abc26bd521087d191a5a09b06934765
+        id: resp_04ad3ce7a4857327006af39ac7a7c487d1aa1a8d284ae6fbf9
         object: response
-        created_at: 1790715581
+        created_at: 1794349767
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1790715582
+        completed_at: 1794349768
         error: null
         frequency_penalty: 0.0
+        image:
+          context_compression: disabled
         incomplete_details: null
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
@@ -527,13 +553,13 @@ interactions:
           <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
           </pyai:context>
-          A later <pyai:context> element with the same id replaces this one.
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol
         moderation: null
         output:
-        - id: msg_0b8ddae656908244006abc26be229087d1b2136d9540a5fa2f
+        - id: msg_04ad3ce7a4857327006af39ac84d4487d18d7b7e7977e09310
           type: message
           status: completed
           content:
@@ -545,8 +571,14 @@ interactions:
           role: assistant
         parallel_tool_calls: true
         presence_penalty: 0.0
-        previous_response_id: resp_0b8ddae656908244006abc26bc0e5887d184ffccf1317e9541
+        previous_response_id: resp_04ad3ce7a4857327006af39ac6b5b087d181eb8616c2b2eccf
+        prompt_cache_diagnostics:
+          type: cache_hit
         prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_04ad3ce7a4857327006af39ac6b5b087d181eb8616c2b2eccf
+          mode: implicit
+          ttl: 30m
         prompt_cache_retention: 24h
         reasoning:
           context: all_turns
@@ -580,17 +612,17 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 206
+          input_tokens: 238
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 0
           output_tokens: 5
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 211
+          total_tokens: 243
         user: null
         metadata: {}
-  recorded_at: 2026-09-29T20:59:42.435325+00:00
+  recorded_at: 2026-11-10T22:29:28.576169+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -602,7 +634,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "748"
+      - "929"
       content-type:
       - application/json
       host:
@@ -610,6 +642,8 @@ interactions:
     body:
       type: json
       content:
+        model: gpt-5.6
+        stream: false
         include:
         - reasoning.encrypted_content
         input:
@@ -626,19 +660,19 @@ interactions:
           <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
           </pyai:context>
-          A later <pyai:context> element with the same id replaces this one.
-        model: gpt-5.6
-        previous_response_id: resp_0b8ddae656908244006abc26bd521087d191a5a09b06934765
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        previous_response_id: resp_04ad3ce7a4857327006af39ac7a7c487d1aa1a8d284ae6fbf9
+        prompt_cache_options:
+          comparison_response_id: resp_04ad3ce7a4857327006af39ac7a7c487d1aa1a8d284ae6fbf9
         reasoning:
           effort: none
           context: all_turns
         store: true
-        stream: false
   response:
     status: 200
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
       - CF-Ray
       - CF-Ray
       alt-svc:
@@ -648,7 +682,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "833"
+      - "2238"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -658,18 +692,20 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0b8ddae656908244006abc26be867887d18ab067acc6582410
+        id: resp_04ad3ce7a4857327006af39ac8a78c87d1a662543ce4072f90
         object: response
-        created_at: 1790715582
+        created_at: 1794349768
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1790715583
+        completed_at: 1794349770
         error: null
         frequency_penalty: 0.0
+        image:
+          context_compression: disabled
         incomplete_details: null
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
@@ -677,13 +713,13 @@ interactions:
           <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
           </pyai:context>
-          A later <pyai:context> element with the same id replaces this one.
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol
         moderation: null
         output:
-        - id: msg_0b8ddae656908244006abc26bf1c0887d1b7bf6b26ece1e5aa
+        - id: msg_04ad3ce7a4857327006af39aca978887d1a1c4e52fd7c7eef2
           type: message
           status: completed
           content:
@@ -695,8 +731,14 @@ interactions:
           role: assistant
         parallel_tool_calls: true
         presence_penalty: 0.0
-        previous_response_id: resp_0b8ddae656908244006abc26bd521087d191a5a09b06934765
+        previous_response_id: resp_04ad3ce7a4857327006af39ac7a7c487d1aa1a8d284ae6fbf9
+        prompt_cache_diagnostics:
+          type: cache_hit
         prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_04ad3ce7a4857327006af39ac7a7c487d1aa1a8d284ae6fbf9
+          mode: implicit
+          ttl: 30m
         prompt_cache_retention: 24h
         reasoning:
           context: all_turns
@@ -730,17 +772,17 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 253
+          input_tokens: 292
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 0
           output_tokens: 7
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 260
+          total_tokens: 299
         user: null
         metadata: {}
-  recorded_at: 2026-09-29T20:59:43.417662+00:00
+  recorded_at: 2026-11-10T22:29:30.897496+00:00
 - request:
     method: POST
     uri: https://api.openai.com/v1/responses
@@ -752,7 +794,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "761"
+      - "942"
       content-type:
       - application/json
       host:
@@ -760,6 +802,8 @@ interactions:
     body:
       type: json
       content:
+        model: gpt-5.6
+        stream: false
         include:
         - reasoning.encrypted_content
         input:
@@ -776,19 +820,19 @@ interactions:
           <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
           </pyai:context>
-          A later <pyai:context> element with the same id replaces this one.
-        model: gpt-5.6
-        previous_response_id: resp_0b8ddae656908244006abc26be867887d18ab067acc6582410
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+        previous_response_id: resp_04ad3ce7a4857327006af39ac8a78c87d1a662543ce4072f90
+        prompt_cache_options:
+          comparison_response_id: resp_04ad3ce7a4857327006af39ac8a78c87d1a662543ce4072f90
         reasoning:
           effort: none
           context: all_turns
         store: true
-        stream: false
   response:
     status: 200
     headers:
       access-control-expose-headers:
-      - X-Request-ID
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
       - CF-Ray
       - CF-Ray
       alt-svc:
@@ -798,7 +842,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "961"
+      - "927"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -808,18 +852,20 @@ interactions:
     body:
       type: json
       content:
-        id: resp_0b8ddae656908244006abc26bf879c87d1b36090cf0279e689
+        id: resp_04ad3ce7a4857327006af39acaf74887d181c7debdaf23a711
         object: response
-        created_at: 1790715583
+        created_at: 1794349771
         status: completed
         access_programs:
           cyber: daybreak_blue
         background: false
         billing:
           payer: developer
-        completed_at: 1790715584
+        completed_at: 1794349771
         error: null
         frequency_penalty: 0.0
+        image:
+          context_compression: disabled
         incomplete_details: null
         instructions: |-
           You help route parcels. The destination warehouse is specified separately. Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
@@ -827,13 +873,13 @@ interactions:
           <pyai:context id="capability:memory:state">
           Send parcels to warehouse A.
           </pyai:context>
-          A later <pyai:context> element with the same id replaces this one.
+          A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
         max_output_tokens: null
         max_tool_calls: null
         model: gpt-5.6-sol
         moderation: null
         output:
-        - id: msg_0b8ddae656908244006abc26c02fbc87d1a50a453560f84697
+        - id: msg_04ad3ce7a4857327006af39acb93a887d1a660d047ad3590e7
           type: message
           status: completed
           content:
@@ -845,8 +891,14 @@ interactions:
           role: assistant
         parallel_tool_calls: true
         presence_penalty: 0.0
-        previous_response_id: resp_0b8ddae656908244006abc26be867887d18ab067acc6582410
+        previous_response_id: resp_04ad3ce7a4857327006af39ac8a78c87d1a662543ce4072f90
+        prompt_cache_diagnostics:
+          type: cache_hit
         prompt_cache_key: null
+        prompt_cache_options:
+          comparison_response_id: resp_04ad3ce7a4857327006af39ac8a78c87d1a662543ce4072f90
+          mode: implicit
+          ttl: 30m
         prompt_cache_retention: 24h
         reasoning:
           context: all_turns
@@ -880,14 +932,14 @@ interactions:
         top_p: 0.98
         truncation: disabled
         usage:
-          input_tokens: 302
+          input_tokens: 348
           input_tokens_details:
             cache_write_tokens: 0
             cached_tokens: 0
           output_tokens: 5
           output_tokens_details:
             reasoning_tokens: 0
-          total_tokens: 307
+          total_tokens: 353
         user: null
         metadata: {}
-  recorded_at: 2026-09-29T20:59:44.549105+00:00
+  recorded_at: 2026-11-10T22:29:31.907047+00:00

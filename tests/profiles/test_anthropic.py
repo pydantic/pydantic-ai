@@ -18,15 +18,17 @@ from __future__ import annotations as _annotations
 
 import warnings
 from enum import Enum, IntEnum
+from importlib.metadata import version
 from typing import Annotated, Any, Literal
 
 import pytest
+from packaging.version import Version
 from pydantic import BaseModel, Field
 
 from pydantic_ai import BoolCriteria, Choices, UseEnumMemberDocstrings
 from pydantic_ai.tools import GenerateToolJsonSchema
 
-from .._inline_snapshot import snapshot
+from .._inline_snapshot import Is, snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -165,12 +167,21 @@ class Weight(UseEnumMemberDocstrings, Enum):
     """Not weighed yet."""
 
 
-def test_strict_true_described_options():
-    """With strict=True, untyped `const` options become typed one-value `enum`s.
+def _enum_schema(type_: str, value: str | int | float, *, description: str | None = None) -> dict[str, Any]:
+    """Expected literal constraint: SDK 2.7.0 drops the redundant type beside an enum."""
+    schema: dict[str, Any] = {'type': type_} if Version(version('anthropic')) < Version('2.7.0') else {}
+    schema['enum'] = [value]
+    if description is not None:
+        schema['description'] = description
+    return schema
 
-    Described enums, `Choices` and `BoolCriteria` all render their options this way. Anthropic's
-    `transform_schema()` raises on an option without a `type`, and moves a `const` into the description,
-    which would leave the option unconstrained. A unit test: `walk()` runs the SDK's `transform_schema()`
+
+def test_strict_true_described_options():
+    """With strict=True, untyped `const` options become one-value `enum`s.
+
+    Described enums, `Choices` and `BoolCriteria` all render their options this way. Before SDK 2.7.0,
+    Anthropic's `transform_schema()` raises on an option without a `type`, and moves a `const` into the
+    description, which would leave the option unconstrained. A unit test: `walk()` runs `transform_schema()`
     on the generated schema, which is where the error was raised, so no request is needed.
     """
 
@@ -190,20 +201,20 @@ def test_strict_true_described_options():
             '$defs': {
                 'Area': {
                     'anyOf': [
-                        {'type': 'string', 'enum': ['billing'], 'description': 'Charges and invoices.'},
-                        {'type': 'string', 'enum': ['bug'], 'description': 'Something is broken.'},
+                        Is(_enum_schema('string', 'billing', description='Charges and invoices.')),
+                        Is(_enum_schema('string', 'bug', description='Something is broken.')),
                     ]
                 },
                 'Priority': {
                     'anyOf': [
-                        {'type': 'integer', 'enum': [1], 'description': 'Can wait a week.'},
-                        {'type': 'integer', 'enum': [2], 'description': 'Needs attention today.'},
+                        Is(_enum_schema('integer', 1, description='Can wait a week.')),
+                        Is(_enum_schema('integer', 2, description='Needs attention today.')),
                     ]
                 },
                 'Weight': {
                     'anyOf': [
-                        {'type': 'number', 'enum': [0.5], 'description': 'Half the usual weight.'},
-                        {'type': 'string', 'enum': ['unknown'], 'description': 'Not weighed yet.'},
+                        Is(_enum_schema('number', 0.5, description='Half the usual weight.')),
+                        Is(_enum_schema('string', 'unknown', description='Not weighed yet.')),
                     ]
                 },
             },
@@ -214,14 +225,14 @@ def test_strict_true_described_options():
                 'weight': {'$ref': '#/$defs/Weight'},
                 'team': {
                     'anyOf': [
-                        {'type': 'string', 'enum': ['finance'], 'description': 'Money matters.'},
-                        {'type': 'string', 'enum': ['eng'], 'description': 'Engineering.'},
+                        Is(_enum_schema('string', 'finance', description='Money matters.')),
+                        Is(_enum_schema('string', 'eng', description='Engineering.')),
                     ]
                 },
                 'urgent': {
                     'anyOf': [
-                        {'type': 'boolean', 'enum': [True], 'description': 'The customer is blocked.'},
-                        {'type': 'boolean', 'enum': [False], 'description': 'The customer can wait.'},
+                        Is(_enum_schema('boolean', True, description='The customer is blocked.')),
+                        Is(_enum_schema('boolean', False, description='The customer can wait.')),
                     ]
                 },
             },
@@ -232,11 +243,11 @@ def test_strict_true_described_options():
 
 
 def test_strict_true_typed_const():
-    """With strict=True, a typed `const` becomes a one-value `enum`, keeping its declared `type`.
+    """With strict=True, a typed `const` becomes a one-value `enum`.
 
     Pydantic emits a typed `const` for a single-value `Literal`, including a tagged union's discriminator.
-    Anthropic's `transform_schema()` moves a `const` into the description, which would leave the model free to
-    return any tag. A unit test: `walk()` runs the SDK's `transform_schema()`, which is where the constraint
+    Before SDK 2.7.0, Anthropic's `transform_schema()` moves a `const` into the description, which would leave
+    the model free to return any tag. A unit test: `walk()` runs `transform_schema()`, where the constraint
     was lost, and the request a recording would capture doesn't show whether the model was held to it.
     """
 
@@ -258,13 +269,13 @@ def test_strict_true_typed_const():
             '$defs': {
                 'Cat': {
                     'type': 'object',
-                    'properties': {'kind': {'type': 'string', 'enum': ['cat']}},
+                    'properties': {'kind': Is(_enum_schema('string', 'cat'))},
                     'additionalProperties': False,
                     'required': ['kind'],
                 },
                 'Dog': {
                     'type': 'object',
-                    'properties': {'kind': {'type': 'string', 'enum': ['dog']}},
+                    'properties': {'kind': Is(_enum_schema('string', 'dog'))},
                     'additionalProperties': False,
                     'required': ['kind'],
                 },
@@ -275,7 +286,7 @@ def test_strict_true_typed_const():
                     'anyOf': [{'$ref': '#/$defs/Cat'}, {'$ref': '#/$defs/Dog'}],
                     'description': "{discriminator: {'mapping': {'cat': '#/$defs/Cat', 'dog': '#/$defs/Dog'}, 'propertyName': 'kind'}}",
                 },
-                'legs': {'type': 'integer', 'enum': [4]},
+                'legs': Is(_enum_schema('integer', 4)),
             },
             'additionalProperties': False,
             'required': ['pet', 'legs'],
@@ -511,7 +522,9 @@ def test_model_profile_fable_5():
         ('claude-haiku-5-5', True, False),
         ('claude-fable-5', True, True),
         ('claude-fable-5-1', True, True),
+        ('claude-fable-5-2', True, True),
         ('claude-mythos-5-1', True, True),
+        ('claude-mythos-5-2', True, True),
         ('claude-mythos-preview', True, True),
     ],
 )
@@ -540,6 +553,8 @@ def test_model_profile_thinking_defaults(model_name: str, thinks_by_default: boo
     [
         ('claude-fable-5-1', False),
         ('claude-mythos-5-1', False),
+        ('claude-fable-5-2', False),
+        ('claude-mythos-5-2', False),
         ('claude-fable-5', True),
         ('claude-mythos-5', True),
         ('claude-mythos-preview', True),
@@ -551,11 +566,11 @@ def test_model_profile_thinking_defaults(model_name: str, thinks_by_default: boo
     ],
 )
 def test_model_profile_forced_tool_choice(model_name: str, supports_forcing: bool):
-    """The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` outright.
+    """The 5.1 and 5.2 generations, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` outright.
 
-    Anthropic's forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1, and the Opus 5.5
-    and Sonnet 5.5 migration guides list forced tool use among their breaking changes. Verified live:
-    `claude-fable-5-1`, `claude-opus-5-5`, and `claude-sonnet-5-5` return a 400 for `{'type': 'any'}`
+    Anthropic's forcing-tool-use table names Claude Fable 5.1 and 5.2 and Claude Mythos 5.1 and 5.2, and the
+    Opus 5.5 and Sonnet 5.5 migration guides list forced tool use among their breaking changes. Verified live:
+    `claude-fable-5-1`, `claude-fable-5-2`, `claude-opus-5-5`, and `claude-sonnet-5-5` return a 400 for `{'type': 'any'}`
     and `{'type': 'tool'}` while `claude-fable-5`, `claude-opus-5`, and `claude-sonnet-5` return 200
     for both.
     The Mythos ids are Project Glasswing-only and unreachable with our credentials, so they follow
@@ -644,6 +659,27 @@ def test_model_profile_fable_5_1():
     # Project Glasswing-only and not reachable with our credentials, so the rest is the mirror.
     assert profile is not None
     assert anthropic_model_profile('claude-mythos-5-1') == {**profile, 'anthropic_binds_thinking_blocks': False}
+
+
+def test_model_profile_fable_5_2():
+    """Claude Fable 5.2 carries Claude Fable 5.1's capability surface plus fast mode.
+
+    Verified live against the Anthropic API by probing `claude-fable-5-2` side by side with `claude-fable-5-1` and
+    `claude-fable-5`. All three reject sampling settings, budget-based thinking, and `thinking: {'type': 'disabled'}`
+    or `{'type': 'between_tools'}`, and accept `low`/`xhigh`/`max` effort, task budgets, json-schema output, strict
+    tools, tool search, code execution `20260120`, web search `20260209`, on-demand compaction, a mid-conversation
+    `system` entry, and `tool_addition` by reference. Like Fable 5.1 and unlike Fable 5, Fable 5.2 returns a 400 for
+    a forced `tool_choice` and binds thinking blocks to the conversation prefix. Unlike both, it accepts
+    `anthropic_speed='fast'`, and it returns the prefix-check 400 with `prefix_mismatch_behavior` unset on an account
+    created before 31 August 2026, where Fable 5.1 replays the block.
+    """
+    profile = anthropic_model_profile('claude-fable-5-2')
+    assert profile == {**(anthropic_model_profile('claude-fable-5-1') or {}), 'anthropic_supports_fast_speed': True}
+
+    # Anthropic documents Mythos 5.2 as having "the same capabilities" as Fable 5.2, including fast mode and the
+    # prefix check on every account. It is available only to verified organizations: our key gets a 404
+    # `not_found_error` for `claude-mythos-5-2`.
+    assert anthropic_model_profile('claude-mythos-5-2') == profile
 
 
 def test_model_profile_sonnet_5():

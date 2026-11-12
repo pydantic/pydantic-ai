@@ -72,7 +72,7 @@ def _instructions(query: str) -> str:
     )
 
 
-def build_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
+def make_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
     """The one-shot judge agent for `query`, named after the capability."""
     agent = Agent(
         model,
@@ -127,7 +127,7 @@ async def judge(
     Any failed judgment fails the whole search and cancels the rest: a partial scan reported as a complete
     one is worse than an error.
     """
-    agent = build_agent(model, query)
+    agent = make_agent(model, query)
     # Judgments start through the gate while others finish, so the nested run takes the claimed-request
     # limits rather than `claim_offset_limits`, whose preflight would see the other claims too.
     limits = claimed_request_limits(ctx.usage_limits)

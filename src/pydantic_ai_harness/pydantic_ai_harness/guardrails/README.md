@@ -334,7 +334,7 @@ Any exception raised by the guard propagates as-is -- use `InputBlocked` / `Outp
 import re
 from pathlib import Path
 
-import httpx
+import httpx2
 from pydantic_ai import Agent
 from pydantic_ai_harness import GuardrailResult, ToolGuardrail
 from pydantic_ai_harness.guardrails import ToolCallInfo, ToolResultInfo
@@ -377,7 +377,7 @@ def write_file(path: str, content: str) -> str:
 
 @agent.tool_plain
 def fetch_page(url: str) -> str:
-    return httpx.get(url).text
+    return httpx2.get(url).text
 ```
 
 The outcomes map onto Pydantic AI control flow:

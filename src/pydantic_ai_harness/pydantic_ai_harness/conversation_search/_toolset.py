@@ -477,10 +477,10 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         # index-aligned across the flattened sections; context windows stay within one section.
         flat_index_lines: list[str] = []
         locations: list[tuple[int, int]] = []
-        for section_idx, section in enumerate(sections):
-            for line_idx, line in enumerate(section.index_lines):
+        for section_index, section in enumerate(sections):
+            for line_index, line in enumerate(section.index_lines):
                 flat_index_lines.append(line)
-                locations.append((section_idx, line_idx))
+                locations.append((section_index, line_index))
 
         ranked = _bm25_rank(query, flat_index_lines, self._params)
         if not ranked:
@@ -489,19 +489,19 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         terms = frozenset(_tokenize(query))
         results: list[str] = []
         shown: set[tuple[int, int]] = set()
-        for doc_idx, score in ranked:
+        for doc_index, score in ranked:
             if len(results) == self._max_matches:
                 break
-            section_idx, line_idx = locations[doc_idx]
-            if (section_idx, line_idx) in shown:
+            section_index, line_index = locations[doc_index]
+            if (section_index, line_index) in shown:
                 continue
-            section = sections[section_idx]
-            start = max(0, line_idx - self._context_lines)
-            end = min(len(section.messages), line_idx + self._context_lines + 1)
+            section = sections[section_index]
+            start = max(0, line_index - self._context_lines)
+            end = min(len(section.messages), line_index + self._context_lines + 1)
             # Record the whole emitted window so a neighbouring match whose context
             # overlaps this one is skipped instead of repeating the same lines.
-            shown.update((section_idx, idx) for idx in range(start, end))
-            excerpt = '\n'.join(section.display_line(idx, terms) for idx in range(start, end))
+            shown.update((section_index, index) for index in range(start, end))
+            excerpt = '\n'.join(section.display_line(index, terms) for index in range(start, end))
             results.append(f'[score: {score:.1f} | {section.label}]\n{excerpt}')
 
         header = f"Found {len(results)} match(es) for '{query}' in {total_messages} persisted messages:\n\n"

@@ -465,15 +465,12 @@ answer with a word
     )
 
 
-async def test_an_operator_authored_system_prompt_is_escaped_as_it_is_wrapped():
-    """`<system>`-tagging a mid-conversation prompt neutralizes a closing tag inside it.
+async def test_an_operator_authored_system_prompt_goes_in_as_written_when_wrapped():
+    """`<system>`-tagging a mid-conversation prompt sends the operator's text as written, closing tags included.
 
-    The wrap is the harness speaking, and nothing wrapped in it may end it early. An operator writing
-    the tag — to forbid it, or to explain it — reaches the model with the `<` of their closing tag
-    escaped, and the rest of their prompt exactly as written. That is a change from when only retry
-    feedback was escaped: the same statement is being closed either way, and which text could reach it
-    is not the operator's to decide once a tool-availability announcement can name an MCP-chosen tool
-    in the same wrap.
+    The operator writes the application's own voice, so nothing in it is rewritten: a `</system>` they write to
+    forbid or explain the tag reaches the model as they wrote it. Text from users and tools that looks like a frame
+    gets a lookalike note instead, which is where the protection against forged framework voice lives.
     """
     model = FunctionModel(lambda _m, _i: ModelResponse(parts=[TextPart('ok')]))
     history: list[ModelMessage] = [

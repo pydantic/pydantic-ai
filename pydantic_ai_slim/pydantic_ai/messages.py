@@ -6668,6 +6668,16 @@ def sanitize_messages(
       The [UI adapters](../ui/overview.md) apply this rule automatically when a run combines
       server-side `message_history` with client-submitted messages.
 
+    It keeps, as sent, the references to state the model provider holds:
+    [`ModelResponse.provider_response_id`][pydantic_ai.messages.ModelResponse.provider_response_id], and the
+    `conversation_id` and `container_id` keys of
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], along with
+    [`ModelResponse.state`][pydantic_ai.messages.ModelResponse.state]. The UI adapters' protocols don't carry
+    these, so history an adapter loads has none. Several model settings, and resuming a suspended response, act
+    on them with your provider credentials;
+    [Loading untrusted history](../message-history.md#loading-untrusted-history) lists them and what to do when
+    the history comes from a client.
+
     Args:
         messages: Messages to sanitize.
         strip_system_prompts: Whether to strip
@@ -7834,6 +7844,12 @@ class PartStartEvent:
     This is useful for UI event streams to know whether to group parts of the same kind together when emitting events.
     """
 
+    canonical_system: str | None = None
+    """The response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system], if it applies to this part, i.e. the part's `provider_name` is the response's.
+
+    This lets UI event streams send it to the frontend alongside the part, so it survives a round trip through the client.
+    """
+
     event_kind: Literal['part_start'] = 'part_start'
     """Event type identifier, used as a discriminator."""
 
@@ -7882,6 +7898,12 @@ class PartEndEvent:
     """The kind of the next part, if any.
 
     This is useful for UI event streams to know whether to group parts of the same kind together when emitting events.
+    """
+
+    canonical_system: str | None = None
+    """The response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system], if it applies to the complete part, i.e. the part's `provider_name` is the response's.
+
+    A part's `provider_name` can arrive in a delta, so this can be set when the part's `PartStartEvent.canonical_system` wasn't.
     """
 
     event_kind: Literal['part_end'] = 'part_end'
