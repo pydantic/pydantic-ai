@@ -203,7 +203,7 @@ async def main():
 
 The screen is 1280x800; pass a size such as `desktop=(1440, 900)` for another. It starts on first use, with no window manager, so apps the agent starts from the shell open on it without title bars. Commands get `DISPLAY` set for it.
 
-Without an `image`, a new box runs `debian:bookworm-slim`, since BoxLite's default Alpine image has no `apt-get`. The first start installs Xvfb, `xdotool` and `scrot` with `apt-get`, which needs `allow_internet_access=True`, with any `allowed_hosts` including the Debian mirrors, and can take several minutes; for a box without network access, use an `image` that already has Xvfb, `xdotool`, `scrot` and `setsid`.
+Without an `image`, a new box runs `debian:bookworm-slim`, since BoxLite's default Alpine image has no `apt-get`. The first start installs Xvfb, `xdotool`, `xwininfo` and `scrot` with `apt-get`, which needs `allow_internet_access=True`, with any `allowed_hosts` including the Debian mirrors, and can take several minutes; for a box without network access, use an `image` that already has Xvfb, `xdotool`, `xwininfo` (Debian's `x11-utils`), `scrot` and `setsid`.
 
 The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
