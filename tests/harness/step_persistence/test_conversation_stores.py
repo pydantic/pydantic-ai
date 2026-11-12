@@ -17,7 +17,7 @@ import pytest
 
 from pydantic_ai import BinaryImage, Conversation, ModelRequest, UserPromptPart
 from pydantic_ai.conversation_store import ConversationConflict, ConversationEntry, ConversationRecord
-from pydantic_ai_harness.media import SqliteMediaStore
+from pydantic_ai_harness.media import PostgresConnection, SqliteMediaStore
 from pydantic_ai_harness.step_persistence import PostgresConversationStore, SqliteConversationStore
 from tests.harness._postgres_sqlite import SqlitePool
 from tests.harness.step_persistence._conversation_store_contract import Backend, ConversationStoreContract
@@ -140,6 +140,32 @@ class TestPostgresConversationStore(ConversationStoreContract):
 
         yield Backend(store, count_entries, count_messages, delete_entry, delete_messages, stored_message_bytes)
         pool.close()
+
+
+async def test_postgres_delete_conflicts_when_the_record_changes_after_it_is_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A delete whose record is saved again between its read and its delete raises instead of deleting the new one."""
+    pool = SqlitePool()
+    store = PostgresConversationStore(pool, table='app')
+    conversation = Conversation(messages=[ModelRequest(parts=[UserPromptPart('hi')])])
+    await store.save(conversation)
+    record = await store.read_record(conversation.conversation_id)
+    assert record is not None
+    lock_histories = store._lock_histories  # pyright: ignore[reportPrivateUsage]
+
+    async def save_in_between(connection: PostgresConnection, root_ids: set[str]) -> None:
+        await connection.execute(
+            'UPDATE app_conv_records SET revision = $1 WHERE conversation_id = $2',
+            'saved-since',
+            record.conversation_id,
+        )
+        await lock_histories(connection, root_ids)
+
+    monkeypatch.setattr(store, '_lock_histories', save_in_between)
+    with pytest.raises(ConversationConflict):
+        await store.delete_record(record.conversation_id, expected_revision=record.revision)
+    pool.close()
 
 
 async def test_without_a_media_store_large_parts_stay_in_the_message(tmp_path: Path) -> None:

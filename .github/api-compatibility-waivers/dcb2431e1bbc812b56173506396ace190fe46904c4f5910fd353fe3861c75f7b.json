@@ -1,5 +1,5 @@
 {
-  "against": "v2.62.0",
+  "against": "v2.67.0",
   "reason": "`pydantic_ai_harness.step_persistence.conversations.ConversationConflict` was renamed to `SessionConflict` (#10473), since core's `pydantic_ai.conversation_store` now uses the old name; the old name is still served, with a deprecation warning, by the module `__getattr__`, which Griffe cannot see.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10473"
 }
