@@ -29,7 +29,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import NativeToolCallPart, NativeToolReturnPart
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters, get_user_agent
 from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 from pydantic_ai.models.test import TestModel
@@ -160,6 +160,27 @@ async def test_anthropic_batch_rejects_per_request_headers() -> None:
         await model.batch_encode(_request('item1', {'extra_headers': {'X-Tenant': 'a'}}))
 
 
+@pytest.mark.parametrize('header_name', ['User-Agent', 'user-agent', 'USER-AGENT'])
+async def test_anthropic_batch_ignores_a_per_request_user_agent(allow_model_requests: None, header_name: str) -> None:
+    """A batch is created with our user-agent alone, so a caller's is ignored, in any spelling."""
+    api = _FakeBatchAPI()
+    user_agents: list[list[str]] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        user_agents.append([value.decode() for name, value in request.headers.raw if name.lower() == b'user-agent'])
+        return api.handle(request)
+
+    client = AsyncAnthropic(api_key='test-key', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle)))
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+
+    plain = await model.batch_encode(_request())
+    request = await model.batch_encode(_request(settings={'extra_headers': {header_name: 'support-bot/1.0'}}))
+    assert (request.body, request.group) == (plain.body, plain.group)
+
+    await model.batch_create([request])
+    assert user_agents == [[get_user_agent()]]
+
+
 @pytest.mark.parametrize('status', ['expired', 'canceled'])
 def test_anthropic_batch_request_that_never_ran_is_a_model_error(status: str) -> None:
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
@@ -260,7 +281,7 @@ async def test_anthropic_batch_preserves_supported_settings() -> None:
     assert body['service_tier'] == 'standard_only'
     assert body['diagnostics'] == {'previous_message_id': None}
     assert body['temperature'] == 0.5
-    assert body['system'][0]['text'] == 'Answer briefly'
+    assert body['system'][-1]['text'] == 'Answer briefly'
     assert body['tools'][0]['name'] == 'weather'
 
 
@@ -424,10 +445,10 @@ def test_anthropic_batch_errors_raise_the_category_of_the_same_error_outside_a_b
 
 
 def test_anthropic_batch_error_suggests_a_known_model_for_an_unknown_one() -> None:
-    model = AnthropicModel('claude-sonet-4-5', provider=AnthropicProvider(api_key='test-key'))
+    model = AnthropicModel('claude-sonet-5-5', provider=AnthropicProvider(api_key='test-key'))
     with pytest.raises(ModelHTTPError) as exc_info:
-        model.batch_decode(_errored('not_found_error', 'model: claude-sonet-4-5'), _request())
-    assert exc_info.value.suggested_model_id == 'anthropic:claude-sonnet-4-5'
+        model.batch_decode(_errored('not_found_error', 'model: claude-sonet-5-5'), _request())
+    assert exc_info.value.suggested_model_id == 'anthropic:claude-sonnet-5-5'
 
 
 async def test_anthropic_batch_results_read_every_result_type(allow_model_requests: None) -> None:
@@ -573,6 +594,30 @@ async def test_anthropic_batches_are_grouped_by_beta_flags(allow_model_requests:
     ] == [
         (('plain',), 'message-batches-2024-09-24'),
         (('beta',), 'interleaved-thinking-2025-05-14,message-batches-2024-09-24'),
+    ]
+
+
+@pytest.mark.parametrize('header_name', ['anthropic-beta', 'Anthropic-Beta'])
+async def test_anthropic_batch_is_created_with_the_client_default_betas(
+    allow_model_requests: None, header_name: str
+) -> None:
+    """The create request's `anthropic-beta` header replaces the client's, so it carries the client's betas too."""
+    api = _FakeBatchAPI(results=[{}, {}])
+    client = AsyncAnthropic(
+        api_key='test-key',
+        default_headers={header_name: 'b-client'},
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(api.handle)),
+    )
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+
+    await model.batch_create([await model.batch_encode(_request('plain'))])
+    await model.batch_create(
+        [await model.batch_encode(_request('beta', AnthropicModelSettings(anthropic_betas=['b-setting'])))]
+    )
+
+    assert [betas for _, betas in api.created] == [
+        'b-client,message-batches-2024-09-24',
+        'b-client,b-setting,message-batches-2024-09-24',
     ]
 
 

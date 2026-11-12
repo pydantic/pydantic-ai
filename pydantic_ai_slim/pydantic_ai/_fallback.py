@@ -26,7 +26,13 @@ from opentelemetry.trace import Span, Tracer
 
 from ._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
 from ._utils import PeekableAsyncStream, await_maybe, get_first_param_type, is_str_dict
-from .exceptions import ContentFilterError, FallbackExceptionGroup, UserError
+from .exceptions import (
+    ContentFilterError,
+    FallbackExceptionGroup,
+    IncompleteToolCall,
+    OutputTokenLimitExceeded,
+    UserError,
+)
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     ModelMessage,
@@ -136,6 +142,14 @@ class FallbackPredicates:
     which the provider says to discard. Streamed responses skip it without a warning, unlike response handlers: a
     stream's finish reason is only known once it has been streamed, so a streamed refusal is accepted.
     """
+    output_token_limit: bool = False
+    """Whether `fallback_on` names `OutputTokenLimitExceeded`, so a response the output token limit cut off is rejected.
+
+    Like `content_filter`, the exception type stands for any response with `finish_reason='length'`, as the agent only
+    raises the error once a response is accepted: one with no usable output, but also text that was cut off, which is
+    otherwise the run's output, and the rare response with complete output, such as tool calls that all parse, that
+    still reached the limit. Streamed responses skip it without a warning, like refusals.
+    """
 
     @classmethod
     def parse(cls, fallback_on: FallbackOn, *, owner: str, default: str) -> FallbackPredicates:
@@ -173,9 +187,14 @@ class FallbackPredicates:
 
     def _add_exception_type(self, exception_type: type[Exception]) -> None:
         self.exception_handlers.append(_exception_types_to_handler((exception_type,)))
-        # Only the class itself and its subclasses: `UnexpectedModelBehavior` or `Exception` doesn't name refusals.
+        # Only the class itself and its subclasses: `UnexpectedModelBehavior` or `Exception` doesn't name refusals or
+        # cut-off responses. `IncompleteToolCall` names only a cut-off tool call, not every cut-off response.
         if issubclass(exception_type, ContentFilterError):
             self.content_filter = True
+        elif issubclass(exception_type, OutputTokenLimitExceeded) and not issubclass(
+            exception_type, IncompleteToolCall
+        ):
+            self.output_token_limit = True
 
     def _add_handler(self, handler: Callable[..., Any]) -> None:
         """Add a handler, auto-detecting its type by inspecting type hints."""
@@ -188,7 +207,10 @@ class FallbackPredicates:
 
     async def should_fallback(self, value: Exception | ModelResponse) -> bool:
         """Check if any handler wants to trigger fallback."""
-        if self.content_filter and isinstance(value, ModelResponse) and value.finish_reason == 'content_filter':
+        if isinstance(value, ModelResponse) and (
+            (self.content_filter and value.finish_reason == 'content_filter')
+            or (self.output_token_limit and value.finish_reason == 'length')
+        ):
             return True
         handlers = self.exception_handlers if isinstance(value, Exception) else self.response_handlers
         for handler in handlers:
@@ -255,7 +277,7 @@ class AttemptLog:
             self.attempts.extend(failure.attempts)
         attempt = failed_attempt(model, failure, start=start, duration=start.elapsed())
         self.attempts.append(attempt)
-        if parent is not None and tracer is not None:
+        if parent is not None and tracer is not None and not start.replayed():
             record_attempt_span(
                 attempt,
                 failure,

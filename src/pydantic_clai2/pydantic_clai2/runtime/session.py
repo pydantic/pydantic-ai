@@ -4,6 +4,7 @@ import logging
 import os
 import sqlite3
 import sys
+import weakref
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
@@ -27,11 +28,13 @@ from pydantic_ai.capabilities import (
     CombinedCapability,
     DynamicCapability,
     LocalWorkspace,
+    ModelFallback,
     ResolveModelId,
     WrapperCapability,
 )
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
-from pydantic_ai.models import Model, ModelResolutionContext, infer_model
+from pydantic_ai.models import Model, ModelRequestContext, ModelResolutionContext, infer_model
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -244,6 +247,76 @@ class SessionModels(ResolveModelId[DepsT]):
 
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
+
+
+def _unwrapped(model: Model) -> Model:
+    while isinstance(model, WrapperModel):
+        model = model.wrapped
+    return model
+
+
+@dataclass(init=False)
+class SelectionFallback(ModelFallback[DepsT]):
+    """`ModelFallback` for the steps on the session's selection: one of `selection`, or a model one of them ran on.
+
+    A stock agent binds it, so a delegated task that inherits the session's model falls back too, through every
+    model of the selection it has not tried, while one on another model, such as a delegate's own option, does not
+    fall back onto the session's.
+    """
+
+    selection: frozenset[str]
+    _ran_as: list[tuple[weakref.ref[Model], str]] = field(repr=False)
+    """The models the selection's steps ran on, with the name each ran as, shared by every run of the agent."""
+    _judged_step: int | None = field(repr=False)
+    _on_selection: bool = field(repr=False)
+
+    def __init__(self, *models: str) -> None:
+        # Every model, the first included: an inherited model may be any of them, and core skips the ones tried.
+        super().__init__(*models)
+        self.selection = frozenset(models)
+        self._ran_as = []
+        self._judged_step = None
+        self._on_selection = False
+
+    def get_model(self) -> None:
+        """None: the session passes or binds its selection as the model itself."""
+        return None
+
+    def _ran_as_name(self, model: Model) -> str | None:
+        model = _unwrapped(model)
+        return next((name for ref, name in self._ran_as if ref() is model), None)
+
+    async def prepare_model_request(
+        self, ctx: RunContext[DepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        known = self._ran_as_name(request_context.model)
+        name = request_context.model_id or known
+        if self._judged_step != ctx.run_step:
+            self._judged_step = ctx.run_step
+            self._on_selection = name in self.selection
+        if not self._on_selection or name is None:
+            return request_context
+        if request_context.model_id is None:
+            # A model passed as an instance, as a delegated task inherits it: named so core skips it when moving on.
+            request_context = replace(request_context, model_id=name)
+        if known is None:
+            self._ran_as[:] = [(ref, ran_as) for ref, ran_as in self._ran_as if ref() is not None]
+            self._ran_as.append((weakref.ref(_unwrapped(request_context.model)), name))
+        return await super().prepare_model_request(ctx, request_context)
+
+    async def on_model_request_error(
+        self, ctx: RunContext[DepsT], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        if not self._on_selection:
+            raise error
+        return await super().on_model_request_error(ctx, request_context=request_context, error=error)
+
+    async def after_model_request(
+        self, ctx: RunContext[DepsT], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        if not self._on_selection:
+            return response
+        return await super().after_model_request(ctx, request_context=request_context, response=response)
 
 
 ModelNameResolver = Callable[[str], Model | str | Awaitable[Model | str]]
@@ -482,6 +555,8 @@ class Session(Generic[DepsT, OutputT]):
         """Told when `conversation_id` or `title` changes; the shell fires it to plugins."""
         self.claim: Callable[[str], AbstractContextManager[None]] = lambda conversation_id: nullcontext()
         """Reserves a conversation for `resume`, raising `ValueError` when another live session holds it."""
+        self.on_resumed: Callable[[], Awaitable[None]] | None = None
+        """Shows the restored history after a recorded `resume`; the shell's `Sessions` sets it."""
         self._published = (self.conversation_id, self.title)
         self.step_store: StepStore | None = step_store(conversations) if conversations else None
         self.repl_states: ReplStates | None = (
@@ -509,10 +584,13 @@ class Session(Generic[DepsT, OutputT]):
         self.project_instructions: Callable[[], ProjectInstructions[DepsT] | None] = lambda: None
         """The project file's `instructions` you have not approved, added to each run as marked user-channel data."""
         self.resolve_model: ModelNameResolver = lambda name: name
+        self.expand_model: Callable[[str], Sequence[str] | Awaitable[Sequence[str]]] = lambda name: [name]
+        """The models a selected name runs on, in order: a run falls back through the later ones with `ModelFallback`."""
         self.agent = agent
         self._base_agent = agent
         self._bound_plugins: tuple[AgentCapability[DepsT], ...] = ()
         self._bound_model: str | None = None
+        self._bound_selection: tuple[bool, tuple[str, ...]] = (False, ())
         self.deps = deps
         self.plugins: Sequence[AgentCapability[DepsT]] = tuple(plugins)
         self.usage_limits = usage_limits
@@ -572,7 +650,7 @@ class Session(Generic[DepsT, OutputT]):
             await self._ensure_unused(conversation_id)
             if self.repl_states is not None:
                 # A REPL left by a session deleted outside CLAI must not reach the new conversation.
-                self.repl_states.delete(conversation_id)
+                await to_thread.run_sync(self.repl_states.delete, conversation_id)
         cleared = len(self._messages)
         self.replace_messages(())
         telemetry.record('conversation cleared', messages=cleared)
@@ -603,15 +681,15 @@ class Session(Generic[DepsT, OutputT]):
             model=self.model,
         )
         self.summary = await self.conversations.save(summary=await self._with_checkout(copy), messages=self._messages)
-        self._copy_repl(source.id, self.summary.id)
+        await self._copy_repl(source.id, self.summary.id)
         telemetry.record('conversation forked', messages=len(self._messages))
         await self._publish()
         return f'Forked {source.title} ({source.id}) into {self.summary.id}.'
 
-    def _copy_repl(self, source: str, target: str) -> None:
+    async def _copy_repl(self, source: str, target: str) -> None:
         """Give the fork `target` its own copy of the `run_code` REPL `source` saved."""
         if self.repl_states is not None:
-            self.repl_states.copy(source=source, target=target)
+            await to_thread.run_sync(partial(self.repl_states.copy, source=source, target=target))
 
     async def _ensure_unused(self, conversation_id: str) -> None:
         if self.conversations is None:
@@ -664,8 +742,9 @@ class Session(Generic[DepsT, OutputT]):
         fork of it that no other process runs, else a new saved fork of its newest saved state, while the
         original keeps running.
 
-        `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, for a
-        startup restore that runs before the observability plugin subscribes. `unarchive=False` leaves an
+        `record=False` leaves the `conversation resumed` UI event to a later `record_resumed()`, and showing
+        the history to the caller, for a startup restore that runs before the observability plugin subscribes
+        and plugin renderers load. `unarchive=False` leaves an
         archived session archived, for a restore that continues in a fork of it. One another live session
         of this CLAI holds raises `ValueError`. `continuation` is what `continuation(conversation_id)` returned to a
         caller that claimed it already, so it is not looked up again.
@@ -680,6 +759,8 @@ class Session(Generic[DepsT, OutputT]):
                 busy=continuation.busy,
             )
         await self._publish()
+        if record and self.on_resumed is not None:
+            await self.on_resumed()
         return notice
 
     async def continuation(self, conversation_id: str) -> Continuation:
@@ -751,7 +832,7 @@ class Session(Generic[DepsT, OutputT]):
                 # Recording the source makes this copy the one resuming the source continues next time.
                 copy = replace(fork_summary(saved.summary), forked_from=saved.summary.id)
                 summary = await self.conversations.save(summary=copy, messages=messages)
-                self._copy_repl(saved.summary.id, summary.id)
+                await self._copy_repl(saved.summary.id, summary.id)
                 notice = (
                     f'{forking} Resumed a fork of it instead: {summary.title} ({summary.id}). '
                     'The original keeps running there and may still change files. No tools were replayed.'
@@ -810,43 +891,62 @@ class Session(Generic[DepsT, OutputT]):
         model = self.resolve_model(self.model)
         return await model if isinstance(model, Awaitable) else model
 
-    def _run_settings(self) -> AgentModelSettings[DepsT] | None:
-        """`model_settings` for requests on this session's model only."""
+    def _run_settings(self, models: Sequence[str]) -> AgentModelSettings[DepsT] | None:
+        """`model_settings` for requests on this session's model only: any of `models`, else the agent's own."""
         settings = self.model_settings
-        own = self.model if self.model is not None else self.agent.model
-        if settings is None or own is None:
+        own = self.agent.model
+        names = set(models) or ({own if isinstance(own, str) else own.model_name} if own is not None else set())
+        if settings is None or not names:
             return settings
-        name = own if isinstance(own, str) else own.model_name
 
         def for_own_model(ctx: RunContext[DepsT]) -> ModelSettings:
-            if _requested_model(ctx) != name:
+            if _requested_model(ctx) not in names:
                 return ModelSettings()
             return settings(ctx) if callable(settings) else settings
 
         return for_own_model
 
-    def _bind(self) -> tuple[str | None, list[AgentCapability[DepsT]]]:
-        """The model to pass to the next run and its run-level capabilities, rebinding a stock agent first."""
-        run_model = self.model
-        capabilities = list(self.plugins)
+    async def _models(self) -> Sequence[str]:
+        """What the selected model runs on, in order, as `expand_model` lists it; none for the agent's own."""
+        if self.model is None:
+            return ()
+        models = self.expand_model(self.model)
+        return await models if isinstance(models, Awaitable) else models
+
+    def _bind(self, models: Sequence[str]) -> tuple[str | None, list[AgentCapability[DepsT]]]:
+        """The model to pass to the next run and its run-level capabilities, rebinding a stock agent first.
+
+        The run starts on the first of `models`, from `_models`, and falls back through the rest with a
+        `SelectionFallback`. A stock agent binds it with `SessionModels`, so delegated tasks fall back too.
+        """
+        selected = models[0] if models else None
+        selection: list[AgentCapability[DepsT]] = []
+        if selected is not None:
+            selection.append(SessionModels[DepsT](self._resolve_model_id))
+        if len(models) > 1:
+            selection.append(SelectionFallback[DepsT](*models))
+        run_model = selected
+        capabilities = [*self.plugins, *selection]
         if isinstance(self._base_agent, StockAgent):
             # CLAI's default is the agent's own model, so a capability that selects one wins.
-            agent_model = None if self.model_chosen else self.model
+            agent_model = None if self.model_chosen else selected
             if agent_model is not None:
                 run_model = None
+            # What `selection` binds: `SessionModels` for any selection, and the chain behind its fallback.
+            bound_selection = (selected is not None, tuple(models) if len(models) > 1 else ())
             if (
                 agent_model != self._bound_model
+                or bound_selection != self._bound_selection
                 or len(self.plugins) != len(self._bound_plugins)
                 or any(new is not old for new, old in zip(self.plugins, self._bound_plugins))
             ):
                 instructions = Capability[DepsT](instructions=self._user_instructions)
-                self.agent = self._base_agent.with_plugins([*self.plugins, instructions], model=agent_model)
+                self.agent = self._base_agent.with_plugins([*self.plugins, *selection, instructions], model=agent_model)
                 self._bound_plugins = tuple(self.plugins)
                 self._bound_model = agent_model
+                self._bound_selection = bound_selection
             # Already bound to the stock agent, including delegation and guardrails.
             capabilities = []
-        if self.model is not None:
-            capabilities.append(SessionModels[DepsT](self._resolve_model_id))
         if self.model_defaults is not None:
             capabilities.append(ModelDefaults[DepsT](self.model_defaults))
         if (project_instructions := self.project_instructions()) is not None:
@@ -884,7 +984,7 @@ class Session(Generic[DepsT, OutputT]):
         self._running = True
         try:
             with session_context(self.summary.id):
-                _, capabilities = self._bind()
+                _, capabilities = self._bind(await self._models())
                 self._add_local_workspace(capabilities)
                 await self.agent.run(
                     "Run the user's Monty cell.",
@@ -913,7 +1013,7 @@ class Session(Generic[DepsT, OutputT]):
             raise RuntimeError('This session delegates no tasks.')
         script = TaskPrompt(agent_name=agent_name, task_id=task_id, text=text)
         with session_context(self.summary.id), self.delegations.bind():
-            run_model, capabilities = self._bind()
+            run_model, capabilities = self._bind(await self._models())
             capabilities.append(script)
             self._add_local_workspace(capabilities)
             await self.agent.run(
@@ -954,13 +1054,13 @@ class Session(Generic[DepsT, OutputT]):
         return content
 
     def _bind_prompt(
-        self, text: str | None, previous: Sequence[ModelMessage]
+        self, text: str | None, previous: Sequence[ModelMessage], models: Sequence[str]
     ) -> tuple[str | None, list[AgentCapability[DepsT]], Literal['new'] | None]:
         """`_bind` for a prompt, plus its task reports and CLAI's `LocalWorkspace`, and the run's `workspace`.
 
         The `workspace` is `'new'` when `previous` last worked in another local directory.
         """
-        run_model, capabilities = self._bind()
+        run_model, capabilities = self._bind(models)
         if self.delegations is not None:
             capabilities.append(
                 DelegationReports(
@@ -1004,12 +1104,13 @@ class Session(Generic[DepsT, OutputT]):
                         # The first save titles a new conversation. Inside the handlers below, so a
                         # failed or cancelled observer still finalizes the `running` head saved above.
                         await self._publish()
-                        run_model, capabilities, workspace = self._bind_prompt(text, previous)
+                        models = await self._models()
+                        run_model, capabilities, workspace = self._bind_prompt(text, previous, models)
                         result = await self.agent.run(
                             content,
                             deps=self.deps,
                             model=run_model,
-                            model_settings=self._run_settings(),
+                            model_settings=self._run_settings(models),
                             # Run-level, not a capability: composing one more would split a plugin group that
                             # supplies the workspace into its members. A rebuilt stock agent has them bound already.
                             instructions=self._user_instructions if self.agent is self._base_agent else None,

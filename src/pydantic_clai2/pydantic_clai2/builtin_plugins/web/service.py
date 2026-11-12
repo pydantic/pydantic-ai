@@ -122,7 +122,9 @@ class WebService:
         )
         """Asks the model's questions in the browsers watching the session asking."""
         self.dialogs = BrowserDialogs(publish=self.hub.publish)
-        """Where the settings menus opened in this page ask their questions."""
+        """Where the settings menus opened in this page, and commands entered while CLAI has no terminal, ask."""
+        if isinstance(self.live, LiveRuntimes):
+            self.live.dialogs = self.dialogs
         self.orchestrator = Orchestrator(service=self)
         """The orchestrator chat, a separate agent with its own conversation, beside the sessions."""
         self.workspace_locks: defaultdict[str, Lock] = defaultdict(Lock)
@@ -153,10 +155,13 @@ class WebService:
         self._unsubscribe = self.live.subscribe(self.live_changed)
 
     def close(self) -> None:
-        """Stop following the live sessions and stop counting browsers as their watchers."""
+        """Stop following the live sessions, counting browsers as their watchers, and asking for commands."""
         self._unsubscribe()
         for client in self.hub.connected():
             self.unwatch(client)
+        # A newer service's stay: a reload during a turn closes this one after building that.
+        if isinstance(self.live, LiveRuntimes) and self.live.dialogs is self.dialogs:
+            self.live.dialogs = None
 
     # Live sessions and their channels.
 
@@ -203,6 +208,7 @@ class WebService:
                 LiveEntry(
                     id=channel.id,
                     state=self._state(channel),
+                    busy=channel.session.busy,
                     title=channel.session.conversation.title,
                     workspace=str(channel.session.workspace),
                 )
@@ -310,7 +316,7 @@ class WebService:
         A CLAI that opens no other sessions starts it in the default session, as `open` does.
         """
         if workspace is not None:
-            directory = workspace_directory(workspace)
+            directory = await to_thread.run_sync(workspace_directory, workspace)
         else:
             directory = None if (shown := self._default()) is None else shown.session.workspace
         try:
@@ -332,7 +338,7 @@ class WebService:
 
         New session then starts a session there, and lists it among the repository's worktrees from then on.
         """
-        directory = workspace_directory(repo)
+        directory = await to_thread.run_sync(workspace_directory, repo)
         worktree = await to_thread.run_sync(lambda: new_worktree(repo=directory, branch=branch, base=base))
         return str(worktree.path)
 
@@ -627,10 +633,12 @@ class WebService:
                 return channel, catalog
         raise LookupError(f'No task {task_id!r} in an open session.')
 
-    def task_transcript(self, task_id: str) -> TaskTranscript:
+    async def task_transcript(self, task_id: str) -> TaskTranscript:
         _, catalog = self._task(task_id)
         [task] = [task for task in catalog.listing() if task.id == task_id]
-        return TaskTranscript(task=task_entry(task), items=history_items(catalog.history(task_id)))
+        # A settled task's history is read from its saved file.
+        history = await to_thread.run_sync(catalog.history, task_id)
+        return TaskTranscript(task=task_entry(task), items=history_items(history))
 
     async def task_action(self, task_id: str, action: TaskAction) -> None:
         """Stop, background, or resume a task, as `/tasks` does."""
@@ -763,7 +771,7 @@ class WebService:
     async def transcript(self, conversation_id: str) -> Transcript:
         """A saved session to show; one another CLAI runs is only shown, so opening it is the user's choice to fork it."""
         saved = await self.catalog.saved(conversation_id)
-        continuable = self._continuable(saved.summary.workspace)
+        continuable = await self._continuable(saved.summary.workspace)
         busy = continuable and await to_thread.run_sync(busy_elsewhere, saved.summary)
         return Transcript(
             id=saved.summary.id,
@@ -775,11 +783,11 @@ class WebService:
             owner_pid=saved.summary.owner_pid if busy else None,
         )
 
-    def _continuable(self, workspace: str) -> bool:
+    async def _continuable(self, workspace: str) -> bool:
         """Whether a session saved in `workspace` can be opened: here, or there while CLAI follows sessions."""
-        return continuable(
-            workspace, here=str(self.default().session.workspace), follows=self.catalog.follows_workspace
-        )
+        here, follows = str(self.default().session.workspace), self.catalog.follows_workspace
+        # Checking its folder stats it, so off the event loop.
+        return await to_thread.run_sync(lambda: continuable(workspace, here=here, follows=follows))
 
     async def rename(self, conversation_id: str, title: str) -> None:
         await self.catalog.rename(conversation_id, title)
@@ -789,7 +797,7 @@ class WebService:
         """Copy a session and open the copy."""
         copy = await self.catalog.fork(conversation_id)
         self.hub.publish(SessionsChanged())
-        if self._continuable(copy.workspace):
+        if await self._continuable(copy.workspace):
             await self.open(copy.id)
         return copy.id
 

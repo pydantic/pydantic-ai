@@ -436,6 +436,7 @@ async def test_streamed_continuation_events(allow_model_requests: None):
                     provider_details={'thought_signature': _b64(b'signature')},
                 ),
                 next_part_kind='text',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=1,

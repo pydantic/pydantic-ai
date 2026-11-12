@@ -709,19 +709,6 @@ def test_map_usage_matches_standard_google_typed_fields() -> None:
     assert empty == RequestUsage()
 
 
-def test_single_ws_user_agent_noop_without_duplicate() -> None:
-    # A client whose headers hold fewer than two `user-agent` entries needs no reconciliation: the
-    # context manager yields without touching them. A real `GoogleProvider` always adds a capitalized
-    # duplicate, so this defensive branch can't be reached through `connect` — hence a direct unit test.
-    from types import SimpleNamespace
-
-    headers = {'user-agent': 'solo'}
-    client = SimpleNamespace(_api_client=SimpleNamespace(_http_options=SimpleNamespace(headers=headers)))
-    with rt_google._single_ws_user_agent(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        assert headers == {'user-agent': 'solo'}
-    assert headers == {'user-agent': 'solo'}
-
-
 def test_ws_trace_context_injects_and_restores_headers() -> None:
     # `google-genai` forwards the client's HTTP headers as the Live handshake headers, so trace context
     # is injected into them for the connect only, then removed so the shared client's later HTTP
@@ -838,6 +825,37 @@ async def test_connect_serializes_shared_client_header_mutations(monkeypatch: py
     assert headers == original_headers
 
 
+async def test_connect_sends_one_user_agent_for_a_user_built_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    # google-genai adds its own label under a lowercase `user-agent`, so a client the user builds with
+    # `User-Agent` holds both keys, and `websockets` rejects the pair at the Live handshake.
+    client = Client(api_key='test-key', http_options=genai_types.HttpOptions(headers={'User-Agent': 'my-app'}))
+    headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
+    assert headers is not None
+    assert [key for key in headers if key.lower() == 'user-agent'] == ['User-Agent', 'user-agent']
+    original_headers = headers.copy()
+    handshake_headers: list[dict[str, str]] = []
+
+    class _CapturingConnect:
+        async def __aenter__(self) -> _RecordingSession:
+            handshake_headers.append(headers.copy())
+            return _RecordingSession()
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+    def connect(*, model: str, config: genai_types.LiveConnectConfig) -> _CapturingConnect:
+        return _CapturingConnect()
+
+    monkeypatch.setattr(client.aio.live, 'connect', connect)
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+    async with _connect(model, ''):
+        pass
+
+    [captured] = handshake_headers
+    assert [key for key in captured if key.lower() == 'user-agent'] == ['user-agent']
+    assert headers == original_headers
+
+
 class _StopDial(Exception):
     """Raised from the fake handshake to short-circuit `connect` once headers are captured."""
 
@@ -885,7 +903,7 @@ async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyP
         'wss://gateway.pydantic.dev/proxy/google-vertex/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent'
     )
     assert captured['headers'].get('Authorization') == 'Bearer gw-key'
-    # `_single_ws_user_agent` still runs, so the handshake carries exactly one user-agent header.
+    # The handshake carries exactly one user-agent header.
     assert sum(key.lower() == 'user-agent' for key in captured['headers']) == 1
     # The bearer lives permanently on the client's static http options (that's what carries it onto the
     # WebSocket), so REST requests carry it too. That's redundant with the gateway's httpx request hook
@@ -2449,34 +2467,34 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
             {
                 'parts': [
                     {'text': '[Tool call-1: weather returned: ["sunny","See file weather.png."]]'},
-                    {'text': '<tool_result tool_name="weather" tool_call_id="call-1" file_id="weather.png">'},
+                    {'text': '<pyai:tool_result tool_name="weather" tool_call_id="call-1" file_id="weather.png">'},
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                     {'text': '[Tool plain-call: plain returned: ok]'},
                     {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
                     {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
                     {
                         'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 answer in prose
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                     },
                     {
                         'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 answer in prose
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                     },
                     {
                         'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """
                     },
                     {'inline_data': {'data': b'url-image', 'mime_type': 'image/png'}},
@@ -4931,6 +4949,54 @@ async def test_parallel_tool_calls_are_one_response_answered_once() -> None:
         ['SpeechPart'],
     ]
     assert session.usage.requests == 2
+
+
+@pytest.mark.parametrize('separate_boundary', [False, True], ids=['one-boundary', 'separate-boundary'])
+async def test_a_turn_that_ends_silently_after_a_tool_result_completes(separate_boundary: bool) -> None:
+    """A model with nothing to say about a tool result ends its turn silently, which answers the result (#12765).
+
+    As reported live from `gemini-3.8-live` on Vertex AI: the result goes out, then `generation_complete`, then a
+    `turn_complete` with usage only. The session took that boundary for the tool-call response's own, which Gemini
+    never sends, so `wait_for_reply()` hung. Vertex's `gemini-live-2.5-flash` does send one, which, with the result
+    already out, the connection reports as usage only: the empty answer's boundary that follows is the same.
+    """
+    result_sent = asyncio.Event()
+    listening_again = asyncio.Event()
+
+    class _EndsTheTurnSilently(_RecordingSession):
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            await super().send_tool_response(function_responses=function_responses)
+            result_sent.set()
+
+        async def receive(self) -> AsyncIterator[Any]:
+            yield _tool_call_message()
+            await result_sent.wait()
+            if separate_boundary:
+                yield _turn_complete_message()
+            yield genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(generation_complete=True))
+            yield _turn_complete_message()
+            # Nothing follows: the session goes on listening.
+            listening_again.set()
+            await asyncio.Event().wait()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'saved'
+
+    connection = GoogleRealtimeConnection(
+        cast('AsyncSession', _EndsTheTurnSilently()),
+        profile=GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=separate_boundary),
+    )
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, model_name='gemini-live', system='google'),
+        tool_manager=make_tool_manager(runner),
+    )
+    async with session:
+        await session.send('Save it.')
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+            await listening_again.wait()
+        assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
 
 def _tool_call_message() -> genai_types.LiveServerMessage:

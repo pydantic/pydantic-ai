@@ -118,14 +118,14 @@ CodeMode(
     tools='all',
     max_retries=3,
     max_tool_calls=25,
-    resource_limits={'max_duration_secs': 10, 'max_memory': 128 * 1024 * 1024},
+    resource_limits={'max_duration_seconds': 10, 'max_memory': 128 * 1024 * 1024},
 )
 ```
 
-- `max_retries` (default 3): sandbox errors (including syntax/type errors) are sent back to the model to redraft, up to this many times.
+- `max_retries` (default 3): execution errors (including syntax/type errors) are sent back to the model to redraft, up to this many times. A nested tool's `ToolFailed` the snippet does not catch is the exception: `run_code` returns a failed result, as when the model calls that tool directly, and spends no retry. Pool creation, connection, and checkout errors propagate to the code calling the agent, not the model. Inside Temporal they follow the workflow failure policy below. Capacity refusals get one checkout retry after a short backoff before propagating.
 - `max_tool_calls` (default 100): nested calls per `run_code` call. A call past the budget fails at its call site; if uncaught, the model gets a retry listing the calls that already started.
 - The run's `UsageLimits(tool_calls_limit=...)` counts nested calls and the `run_code` call that makes them. A nested call that would exceed it ends the run with `UsageLimitExceeded`, even when the snippet catches the error. A call launched early by `speculate` counts from the moment it starts, including one the snippet never claims. A launch the limit refused runs cold if the snippet asks for it.
-- `resource_limits` (default: 30 s execution and 256 MiB heap per snippet): keys `max_duration_secs`, `max_memory`, `max_suspensions` (default 1,000 host interactions per REPL session, shared across snippets). Unknown keys raise `UserError`. Time awaiting tools does not count; sleeps get a separate allowance of `max_duration_secs`. A snippet that hits the time limit is stopped and its REPL session is reset. `'unlimited'` removes time and memory caps only when another boundary supplies them; `max_suspensions` can never be disabled.
+- `resource_limits` (default: 30 s execution and 256 MiB heap per snippet): keys `max_duration_seconds`, `max_memory`, `max_suspensions` (default 1,000 host interactions per REPL session, shared across snippets). Unknown keys raise `UserError`. Time awaiting tools does not count; sleeps get a separate allowance of `max_duration_seconds`. A snippet that hits the time limit is stopped and its REPL session is reset. `'unlimited'` removes time and memory caps only when another boundary supplies them; `max_suspensions` can never be disabled.
 
 ## REPL State
 
@@ -133,6 +133,17 @@ State persists between `run_code` calls during the same agent run. Imports, vari
 functions carry over until the run ends. The model passes `restart: true` in the `run_code` arguments to
 reset state. A timeout, worker crash, or interrupted eager statement also resets the session, and the
 retry message says so -- the next snippet must recreate its state.
+
+A pool's `request_timeout` and a remote `turn_timeout` ask the model to do less work per call.
+Remote session and idle timeouts explain that state is lost. Sandbox memory-limit errors and
+`MemoryError`s without a traceback reset the session and ask the model to use smaller batches.
+Other snippet or nested-tool `MemoryError`s keep state unless their diagnostic is indistinguishable
+from a sandbox memory limit: Monty does not guarantee heap integrity after a limit fires.
+Exceeding the 10 MiB printed-output cap also resets the session because it has the same diagnostic.
+Remote host-side error details are omitted
+from retries because they may contain pool URLs or credentials; the original exception remains
+the cause for application-side diagnostics. Retries list nested calls that already started so
+the model can avoid repeating their side effects.
 
 State does not carry over to the next agent run unless `repl_store` is set: an object with async
 `load(ctx) -> bytes | None` and `save(ctx, state: bytes | None)` methods
@@ -212,15 +223,23 @@ CodeMode(
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC; a function's pool limits code between tool calls with its `request_timeout` (10 s default) instead of `max_duration_secs`. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
+- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except inside Temporal. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
+- Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's instructions or tool arguments.
 
 ## Durable Execution
 
 `CodeMode` works next to `TemporalDurability()` (install `pydantic-ai-harness[codemode,temporal]`), but
 `run_code` executes in workflow code and is re-run on replay. Keep snippets deterministic: put external
 reads, writes, and clock access in wrapped tools (which become activities), not in `mount`/`os_access`.
-Inside a Temporal workflow `max_duration_secs` is disabled (memory and suspension caps still apply) and a
+Inside a Temporal workflow `max_duration_seconds` is disabled (memory and suspension caps still apply) and a
 workflow task that does not yield within 2 seconds fails, so move heavy computation into a tool.
+
+Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
+as a workflow failure. Uncaught `RuntimeError`, `MontyRefusedError`, and other unclassified factory
+errors fail the workflow task instead: Temporal retries the task while the workflow remains running,
+so the client keeps waiting if setup keeps failing. Inspect the task history or worker logs for the original error. To end the
+workflow, catch expected setup exceptions and raise
+`temporalio.exceptions.ApplicationError(..., non_retryable=True)` from the original exception.
 
 ## Agent Specs
 
