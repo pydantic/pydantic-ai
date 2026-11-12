@@ -146,6 +146,9 @@ async def test_settled_histories_stay_in_their_files(tmp_path: Path) -> None:
     async with DelegationTasks(directory=tmp_path).opened() as reread:
         assert reread.records[record.id].output == 'edited'
         assert reread.history(record.id) == first_history
+        # So does restoring one through an owner that hasn't loaded it.
+        assert await DelegationTasks(directory=tmp_path).restore(reread.records[record.id])
+        assert reread.history(record.id) == first_history
 
     restored = DelegationTasks(directory=tmp_path)
     with anyio.fail_after(WAIT):

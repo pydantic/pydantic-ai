@@ -447,6 +447,9 @@ class DelegationTasks:
             current = await _read(path) if await path.exists() else None
         if current is not None and current.run_id != record.run_id:
             return False
+        if current is not None and current.messages and not record.messages:
+            # Handed out without its history, as an owner's settled tasks are: keep the saved one.
+            record.messages = current.messages
         if self.directory is not None:
             await anyio.Path(self.directory).mkdir(parents=True, exist_ok=True)
         self.records[record.id] = record
