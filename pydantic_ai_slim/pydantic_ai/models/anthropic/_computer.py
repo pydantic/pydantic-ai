@@ -124,23 +124,32 @@ class NativeComputer:
         A call in `incomplete`, by ID, didn't arrive whole, such as one cut off at `max_tokens`: none of what it
         asked for runs. `split` names, by call ID, the other tools Claude called just before a call: run as one
         batch, the call would run before them, so the batch is refused and Claude asked again. A call whose input
-        isn't an object is incomplete too: nothing in it maps, and Anthropic takes only an object back.
+        isn't an object, or whose name isn't text, is incomplete too: the SDK doesn't validate responses, nothing in it
+        maps, and Anthropic takes only an object and a name back.
         """
         split = split or {}
-        incomplete = {*incomplete, *(block['id'] for block in blocks if not isinstance(block['input'], dict))}
-        blocks = [block if isinstance(block['input'], dict) else {**block, 'input': {}} for block in blocks]
+        malformed = [block['id'] for block in blocks if not _well_formed(block)]
+        incomplete = {*incomplete, *malformed}
+        checked = [
+            ComputerBlock(
+                id=block['id'],
+                name=block['name'] if _is_text(block['name']) else '',
+                input=block['input'] if _is_object(block['input']) else {},
+            )
+            for block in blocks
+        ]
         member_actions = [
             [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'incomplete_input': True}]
             if block['id'] in incomplete
             else [{'type': _COMPUTER_MEMBER_TYPES.get(name, name), 'after_tool_calls': list(split[block['id']])}]
             if block['id'] in split
             else map_computer_member(name, args)
-            for block in blocks
+            for block in checked
             for name, args in [computer_member(block, self.version)]
         ]
         actions = [action for member in member_actions for action in member]
         replay = ComputerReplay(
-            computer_blocks=[ComputerBlock(id=b['id'], name=b['name'], input=b['input']) for b in blocks],
+            computer_blocks=checked,
             computer_tool=self.version,
             computer_action_counts=[len(member) for member in member_actions],
         )
@@ -148,13 +157,25 @@ class NativeComputer:
             self.name,
             # A field Claude left out takes the `computer` tool's default.
             {'actions': [{key: value for key, value in action.items() if value is not None} for action in actions]},
-            tool_call_id=blocks[0]['id'],
+            tool_call_id=checked[0]['id'],
             provider_name=provider_name,
             provider_details=dict(replay),
         )
 
 
-def computer_member(block: dict[str, Any], version: AnthropicComputerToolVersion) -> tuple[str, dict[str, Any]]:
+def _well_formed(block: dict[str, Any]) -> bool:
+    return _is_text(block['name']) and _is_object(block['input'])
+
+
+def _is_text(value: Any) -> bool:
+    return isinstance(value, str)
+
+
+def _is_object(value: Any) -> bool:
+    return isinstance(value, dict)
+
+
+def computer_member(block: ComputerBlock, version: AnthropicComputerToolVersion) -> tuple[str, dict[str, Any]]:
     """A call's member and input: the earlier tools name the member in the input's `action`."""
     if version == 'computer_toolset_20260801':
         return block['name'], block['input']
