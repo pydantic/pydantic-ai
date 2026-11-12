@@ -456,8 +456,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
     _detached: bool = field(default=False, init=False)
     # Whether the stream ended on a pending response because of `return_pending`, so `get()` reports it as suspended.
     _ended_pending: bool = field(default=False, init=False)
-    # Set once a failed continuation has cancelled the suspended server-side job, so `get()` no longer
-    # reports it as a resumable detach and the graph doesn't cancel it a second time.
+    # Set once a failed continuation has cancelled the suspended server-side job, or left it for the durable run a
+    # suspending sleep ended to continue, so `get()` no longer reports it as a resumable detach and the graph doesn't
+    # cancel it (again).
     _job_cancelled: bool = field(default=False, init=False)
     # The inner segment stream owns each segment's `async with request_stream(...)`; keep it
     # separately because the outer cancel-guard's `async for` does not forward `aclose()`.
