@@ -9,6 +9,8 @@ description: "Let a Pydantic AI orchestrator agent coordinate subagents by writi
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![The orchestrator agent has one tool, run_workflow. Its model writes a Python script that runs in the Monty sandbox, where each sub-agent is an async function: the script runs reviewer twice in parallel with asyncio.gather, then passes both reports to summarizer. Each call is a separate sub-agent run with its own model loop. Only the script's final value, the summary, goes back to the orchestrator's next model request.](../img/harness/dynamic-workflow.svg)
+
 ## The idea
 
 The usual way to coordinate sub-agents is one tool call per step. The agent calls the reviewer and waits, reads the result, calls the reviewer again, waits again, and so on. Every intermediate result travels back into the agent's context, and every step that depends on the previous one is a separate model turn.
@@ -138,18 +140,17 @@ A hard, host-enforced ceiling on the number of sub-agent runs in one parent run.
 | `True` (default) | the parent's `usage` is shared across the tree | a tree-wide cap. Under concurrent fan-out it is best-effort: several sub-agents can pass the check before any of them adds to the count. |
 | `False` | each sub-agent run counts on its own | per-run limits. A per-run `total_tokens_limit` of `T` with `max_agent_calls` of `N` bounds the tree to roughly `N * T` tokens. |
 
-!!! warning "The parent `run()` usage limit is not forwarded"
-    The `usage_limits` you pass to the parent `run()` is not forwarded into sub-agents -- it is re-checked only at the parent's own request boundaries. To bound sub-agents, set `sub_agent_usage_limits`; for an exact ceiling on the number of runs, use `max_agent_calls`.
+Without `sub_agent_usage_limits`, sub-agents sharing the counter (`forward_usage=True`) run under the `usage_limits` you pass to the parent `run()`, so the parent's budget bounds the whole tree. With `forward_usage=False` they fall back to Pydantic AI's default `request_limit` of 50 per run. For an exact ceiling on the number of runs, use `max_agent_calls`.
 
 ### `resource_limits` -- guarding the script itself
 
 These limits guard the orchestration script's own memory, not the sub-agents it calls. The default backstop is 256 MB with no time limit. Printed output is collected separately with Monty's 10 MiB default cap.
 
 ```python
-DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
+DynamicWorkflow(agents=[...], resource_limits={'max_duration_seconds': 30})
 ```
 
-`max_duration_secs` measures the time your script spends running sandbox code, not wall-clock time. While the script waits on a sub-agent it is suspended and that time does not count, so the cap will not fire on a normal workflow no matter how long the sub-agents take. Its one job is catching a pure-CPU runaway -- a `while True:` loop that never awaits, which none of the sub-agent budgets can stop because it never calls a sub-agent. Pass `'unlimited'` to remove every sandbox resource limit; the separate 10 MiB print cap remains. A partial dict merges onto the backstop so you override only the caps you name.
+`max_duration_seconds` measures the time your script spends running sandbox code, not wall-clock time. While the script waits on a sub-agent it is suspended and that time does not count, so the cap will not fire on a normal workflow no matter how long the sub-agents take. Its one job is catching a pure-CPU runaway -- a `while True:` loop that never awaits, which none of the sub-agent budgets can stop because it never calls a sub-agent. Pass `'unlimited'` to remove every sandbox resource limit; the separate 10 MiB print cap remains. A partial dict merges onto the backstop so you override only the caps you name. `max_duration_secs` is the deprecated name of `max_duration_seconds` and still works, with a warning.
 
 ### Workflows do not nest
 
@@ -210,7 +211,7 @@ The script runs in Monty, a subset of Python. Knowing the edges matters:
 - No third-party libraries.
 - Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, and `random`. Import what you use. There is no filesystem or environment access.
 - No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
-  unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_secs` set,
+  unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_seconds` set,
   a script may sleep for at most that long in total.
 - `asyncio.gather(...)` runs sub-agents concurrently with positional awaitables but no keyword
   arguments, including `return_exceptions=True`. Other task creation and wait APIs are unavailable.
@@ -226,12 +227,12 @@ Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflo
 sub-agent whose model requests should run as activities, then register every agent with its own
 `AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](code-mode.md#temporal-durability),
 and is re-executed during replay against the recorded sub-agent results.
-Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that
+Unlike Code Mode, a `max_duration_seconds` you set still applies inside the workflow, so a script that
 runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
 
 ## Observability
 
-The [Logfire](https://pydantic.dev/logfire) trace is the best way to see what a workflow did. Each sub-agent run appears nested under the `run_workflow` span, and the span carries the exact `code` argument the model wrote, so you can read the script it actually ran. Until first-class progress streaming ships, set `event_stream_handler` on each sub-agent `Agent` to watch sub-agent runs inside the one tool call.
+The [Logfire](https://pydantic.dev/logfire) trace is the best way to see what a workflow did. Each sub-agent run appears nested under the `run_workflow` span, and the span carries the exact `code` argument the model wrote, so you can read the script it actually ran. To watch sub-agent runs inside the one tool call, set `event_stream_handler` on each sub-agent `Agent`.
 
 ## API
 
@@ -243,7 +244,7 @@ DynamicWorkflow(                  # all parameters are keyword-only
     max_retries=3,
     forward_usage=True,
     inherit_model=False,          # True -> sub-agents run with the parent run's resolved model
-    sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> pydantic-ai default
+    sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> parent run's limits when forwarding usage
     resource_limits=None,         # None -> backstop (256 MB, no time cap);
                                   # 'unlimited' -> sandbox limits off; a dict merges onto the backstop
     id=None,                      # required when defer_loading=True
@@ -268,5 +269,6 @@ Source: [`pydantic_ai_harness/dynamic_workflow/`](https://github.com/pydantic/py
 
 - [Code Mode](code-mode.md) -- the same sandbox, calling the agent's own tools instead of sub-agents.
 - [Subagents](subagents.md) -- one-delegation-per-tool-call sub-agents, without the scripted choreography.
+- [Dynamic Workflows: feature that enabled the Bun rewrite](https://pydantic.dev/articles/dynamic-workflows) (Pydantic) -- how `DynamicWorkflow` brings the pattern to any Pydantic AI agent.
 - [Rewriting Bun in Rust](https://bun.com/blog/bun-in-rust) (Bun) -- the same pattern at scale, via Claude Code's dynamic workflows.
 - [Capabilities](../capabilities/overview.md) and [on-demand capabilities](../capabilities/on-demand.md).

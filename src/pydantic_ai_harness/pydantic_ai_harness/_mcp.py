@@ -6,12 +6,16 @@ import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from os import environ
+from typing import TYPE_CHECKING
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, PreparedToolset
 from pydantic_ai_harness._combine import CapabilityT, one_per_id
 from pydantic_ai_harness._warn import MCPReadOnlyNoToolsWarning
+
+if TYPE_CHECKING:
+    from pydantic_ai.mcp import MCPToolsetClient
 
 
 def one_connection(capabilities: Sequence[CapabilityT]) -> CapabilityT:
@@ -54,6 +58,25 @@ def per_run_connection(
         return connect(token) if token else None
 
     return DynamicToolset(connect_for_run, per_run_step=False, id=id)
+
+
+def hosted_toolset(
+    client: MCPToolsetClient | None,
+    auth: str | Callable[[RunContext[AgentDepsT]], str | None | Awaitable[str | None]] | None,
+    connect: Callable[[str | None], AbstractToolset[AgentDepsT]],
+    *,
+    id: str | None,
+    include_instructions: bool,
+    expects: str = 'an API key or token',
+) -> AbstractToolset[AgentDepsT]:
+    """Connect through `client` when given, else `connect` with `auth`: per run when it is a function, else once."""
+    if client is not None:
+        from pydantic_ai.mcp import MCPToolset
+
+        return MCPToolset(client, id=id, include_instructions=include_instructions)
+    if callable(auth):
+        return per_run_connection(auth, connect, id=id, expects=expects)
+    return connect(auth)
 
 
 def prefixed_toolset(toolset: AbstractToolset[AgentDepsT], prefix: str | None) -> AbstractToolset[AgentDepsT]:

@@ -221,6 +221,7 @@ async def test_timeout_during_tool_call_keeps_resumable_state():
                 parts=[ToolCallPart(tool_name='slow_tool', args={}, tool_call_id='call_slow')],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:_call_slow_tool:',
+                model_id='function:function:_call_slow_tool:',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),

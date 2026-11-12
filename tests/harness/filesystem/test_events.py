@@ -13,6 +13,7 @@ import anyio
 import anyio.to_thread
 import pytest
 
+import pydantic_ai_harness.filesystem as filesystem
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import (
@@ -28,7 +29,7 @@ from pydantic_ai_harness.filesystem import (
     MAX_EVENT_DIFF_CHARS,
     DirectoryCreatedEvent,
     DirectoryListedEvent,
-    FileChangeRequestEvent,
+    FileChangeRequestedEvent,
     FileEditedEvent,
     FileOperation,
     FileReadEvent,
@@ -128,10 +129,10 @@ class Listener(AbstractCapability[None]):
 
     cancel: bool = False
     reason: str | None = None
-    requests: list[FileChangeRequestEvent] = field(default_factory=list[FileChangeRequestEvent])
+    requests: list[FileChangeRequestedEvent] = field(default_factory=list[FileChangeRequestedEvent])
 
-    @on_event(FileChangeRequestEvent)
-    async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
+    @on_event(FileChangeRequestedEvent)
+    async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
         self.requests.append(event)
         if self.cancel:
             event.cancel(self.reason)
@@ -143,8 +144,8 @@ class MeddlingListener(AbstractCapability[None]):
 
     act: Callable[[], object]
 
-    @on_event(FileChangeRequestEvent)
-    async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
+    @on_event(FileChangeRequestedEvent)
+    async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
         # Off the event loop: the listener is called from library code, which must not block.
         await anyio.to_thread.run_sync(self.act)
 
@@ -153,8 +154,8 @@ class MeddlingListener(AbstractCapability[None]):
 class RaisingListener(AbstractCapability[None]):
     """Raises out of the announcement, as a listener with an error in it does."""
 
-    @on_event(FileChangeRequestEvent)
-    async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
+    @on_event(FileChangeRequestedEvent)
+    async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
         raise RuntimeError('no writes today')
 
 
@@ -191,6 +192,62 @@ class TestFileSystemEvents:
                 tool_call_id='call_1',
                 tool_name='read_file',
             )
+        ]
+
+    async def test_prefixed_tools_emit_events(self, tmp_path: Path) -> None:
+        """Two `FileSystem`s, each under its own prefix, both emit their events (#9879)."""
+        (tmp_path / 'wiki').mkdir()
+        (tmp_path / 'wiki' / 'page.md').write_text('wiki\n')
+        (tmp_path / 'notes').mkdir()
+        events: list[AgentStreamEvent] = []
+
+        async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                events.append(event)
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if not _has_tool_result(messages):
+                yield {
+                    0: DeltaToolCall(name='wiki_read_file', json_args='{"path":"wiki/page.md"}', tool_call_id='call_1'),
+                    1: DeltaToolCall(
+                        name='notes_write_file',
+                        json_args='{"path":"notes/new.md","content":"hi"}',
+                        tool_call_id='call_2',
+                    ),
+                }
+            else:
+                yield 'done'
+
+        agent = Agent(
+            FunctionModel(stream_function=stream),
+            deps_type=type(None),
+            capabilities=[
+                FileSystem[None](id='wiki_files').prefix_tools('wiki'),
+                FileSystem[None](id='notes_files').prefix_tools('notes'),
+            ],
+        )
+        await agent.run('go', event_stream_handler=handler, workspace=LocalWorkspaceBackend(tmp_path))
+
+        assert (tmp_path / 'notes' / 'new.md').read_text() == 'hi'
+        # The two calls run concurrently, so their events can arrive in either order.
+        emitted = [event for event in events if isinstance(event, (FileReadEvent, FileWrittenEvent))]
+        assert sorted(emitted, key=lambda event: event.tool_call_id or '') == [
+            FileReadEvent(
+                path='wiki/page.md',
+                root_dir=_root(tmp_path),
+                content_hash=_hash('wiki\n'),
+                capability_id='wiki_files',
+                tool_call_id='call_1',
+                tool_name='read_file',
+            ),
+            FileWrittenEvent(
+                path='notes/new.md',
+                root_dir=_root(tmp_path),
+                content_hash=_hash('hi'),
+                capability_id='notes_files',
+                tool_call_id='call_2',
+                tool_name='write_file',
+            ),
         ]
 
     async def test_binary_read_emits_raw_content_hash(self, tmp_path: Path) -> None:
@@ -300,7 +357,7 @@ class TestFileSystemEvents:
 
         events = await _run_and_collect(tmp_path, 'create_directory', '{"path":"existing"}')
 
-        assert not any(isinstance(event, (DirectoryCreatedEvent, FileChangeRequestEvent)) for event in events)
+        assert not any(isinstance(event, (DirectoryCreatedEvent, FileChangeRequestedEvent)) for event in events)
 
     @pytest.mark.parametrize(
         ('tool_name', 'json_args', 'search'),
@@ -324,7 +381,7 @@ class TestFileSystemEvents:
                 path='sub',
                 root_dir=_root(tmp_path),
                 pattern='x' if search == 'grep' else '*.py',
-                search=search,
+                search_kind=search,
                 match_count=2,
                 truncated=False,
                 capability_id='file_system',
@@ -448,7 +505,7 @@ class TestFileChangeRequests:
 
         path = json.loads(json_args)['path']
         assert listener.requests == [
-            FileChangeRequestEvent(
+            FileChangeRequestedEvent(
                 path=path,
                 root_dir=_root(tmp_path),
                 operation=operation,
@@ -888,6 +945,22 @@ class TestFileChangeRequests:
         assert (tmp_path / 'target.txt').read_text() == 'new\n'
         assert any(isinstance(event, FileWrittenEvent) for event in events)
 
+    async def test_invalid_utf8_text_keeps_the_hash_handshake_on_edit(self, tmp_path: Path) -> None:
+        """An edit of valid text next to an invalid byte is guarded by the hash `read_file` reported."""
+        (tmp_path / 'target.txt').write_bytes(b'a\xffb\nold\n')
+        reported = hashlib.sha256(b'a\xffb\nold\n').hexdigest()[:12]
+
+        events = await _run_and_collect(
+            tmp_path,
+            'edit_file',
+            json.dumps({'path': 'target.txt', 'old_text': 'old', 'new_text': 'new', 'expected_hash': reported}),
+        )
+
+        assert (tmp_path / 'target.txt').read_bytes() == b'a\xffb\nnew\n'
+        (edited,) = [event for event in events if isinstance(event, FileEditedEvent)]
+        assert edited.content_hash == hashlib.sha256(b'a\xffb\nnew\n').hexdigest()[:12]
+        assert edited.diff == '--- a/target.txt\n+++ b/target.txt\n@@ -1,2 +1,2 @@\n a\ufffdb\n-old\n+new'
+
     @pytest.mark.parametrize('appeared', ['other\n', ''])
     async def test_file_that_appeared_while_announced_is_refused(self, tmp_path: Path, appeared: str) -> None:
         """A write announced as creating the file does not overwrite one that appeared in the meantime.
@@ -964,3 +1037,8 @@ class TestFileChangeRequests:
 
         assert (tmp_path / 'direct.txt').read_text() == 'bye\n'
         assert (tmp_path / 'made').is_dir()
+
+
+def test_unknown_attribute_raises() -> None:
+    with pytest.raises(AttributeError, match='has no attribute'):
+        _ = filesystem.DoesNotExist

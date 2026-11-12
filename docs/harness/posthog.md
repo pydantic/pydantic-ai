@@ -11,6 +11,8 @@ description: Connect a Pydantic AI agent to PostHog's hosted MCP server to query
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+![Inside your agent, the PostHog capability connects to PostHog's hosted MCP server at mcp.posthog.com/mcp with a personal API key as a bearer token. By default the server offers one command-driven tool, which the model sees as posthog_posthog. The features option is sent as a ?features= query that limits the server to those feature groups, and read_only=True sends the x-posthog-read-only header so the server drops every tool that makes changes.](../img/harness/posthog.svg)
+
 ## Before you start
 
 Create a personal API key with the MCP Server preset ([US](https://us.posthog.com/settings/user-api-keys?preset=mcp_server) or [EU](https://eu.posthog.com/settings/user-api-keys?preset=mcp_server) Cloud). US and EU Cloud accounts use the same server. See the [provider setup](https://posthog.com/docs/model-context-protocol).
@@ -120,13 +122,13 @@ Handle the approval requests with the [deferred tools workflow](../deferred-tool
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one pointing at a PostHog MCP server you run for a self-hosted instance, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` or `features` raises an error. With a client, `read_only=True` keeps only the tools the server marks as read-only, instead of asking the server for read-only mode. PostHog's default mode serves one `posthog` tool that is not marked read-only, so this filter leaves no PostHog tools and emits an `MCPReadOnlyNoToolsWarning`; have your client send the `x-posthog-read-only: true` header instead. `include_instructions=False` stops the server's own instructions from reaching the agent.
+Pass `client` when you need control of the connection itself: your own FastMCP client or transport, for example one pointing at a PostHog MCP server you run for a self-hosted instance, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` or `features` raises an error. With a client, `read_only=True` keeps only the tools the server marks as read-only, instead of asking the server for read-only mode. PostHog's default mode serves one `posthog` tool that is not marked read-only, so this filter leaves no PostHog tools and emits an `MCPReadOnlyNoToolsWarning`; have your client send the `x-posthog-read-only: true` header instead. `include_instructions=False` stops the server's own instructions from reaching the agent.
 
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately.
 
 ## Telemetry
 
-`PostHog` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) already records each PostHog tool call as a tool span, and connecting makes no decision worth a span of its own.
+`PostHog` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) already records each PostHog tool call as a tool span.
 
 ## Define the agent in YAML or JSON
 
@@ -151,8 +153,6 @@ from pydantic_ai_harness import PostHog
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[PostHog])
 ```
-
-Pass `custom_capability_types` so the loader can create `PostHog` from the file.
 
 ## API reference
 

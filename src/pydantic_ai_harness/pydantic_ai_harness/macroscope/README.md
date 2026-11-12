@@ -5,6 +5,8 @@ agent and hand the findings back for validation and fixing.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/macroscope/)
 
+![The model calls run_macroscope_review, which runs macroscope codereview --raw in the run's workspace. The CLI uploads the branch diff to Macroscope's service and streams findings back, and the tool returns them as a MacroscopeReview with a review id, a status and a list of MacroscopeIssue findings. The agent then checks each finding and fixes the real ones with its own file and shell tools. Setup problems, such as a missing or signed-out CLI, raise UserError and stop the run.](https://pydantic.dev/docs/ai/img/harness/macroscope.svg)
+
 ## The problem
 
 Macroscope reviews the current branch's diff and streams findings, but it ships as
@@ -130,8 +132,7 @@ for its shell and write tools.
 ## Telemetry
 
 `Macroscope` emits no spans of its own. Core's instrumentation records each
-`run_macroscope_review` call as a tool span, and the capability makes no decision
-worth a span of its own.
+`run_macroscope_review` call as a tool span.
 
 ## Two of them
 

@@ -1,7 +1,9 @@
 """The Changes panel's data: a session's changed files from its own file tools, and from Git."""
 
+import os
 import subprocess
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from itertools import count
 from pathlib import Path
 from typing import Literal
@@ -40,9 +42,11 @@ class History:
         *calls: Call,
         steering: bool = False,
         outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] = 'success',
+        at: datetime | None = None,
     ) -> None:
         metadata = {STEERING: True} if steering else None
-        self.messages.append(ModelRequest(parts=[UserPromptPart(prompt)], metadata=metadata))
+        prompt_part = UserPromptPart(prompt, timestamp=at or datetime.now(UTC))
+        self.messages.append(ModelRequest(parts=[prompt_part], metadata=metadata))
         for part, name, args in calls:
             call_id = f'call{next(self._ids)}'
             self.messages.append(ModelResponse(parts=[part(name, args, call_id)]))
@@ -260,13 +264,44 @@ async def test_deleted_large_binary_and_outside_files(tmp_path: Path, monkeypatc
     assert listed(turn) == [(str(tmp_path / 'outside.py'), 'M', 1, 1), ('gone.py', 'D', 0, 1)]
 
 
+async def test_files_changed_outside_the_file_tools_are_listed_in_their_scope(repo: Path) -> None:
+    """Files a shell command changed show, without a diff, in the turns since they changed; older ones stay out."""
+    now = datetime.now(UTC)
+    history = History()
+    shell: Call = ToolCallPart, 'shell', {'command': 'echo x > new.txt; echo y >> a.py'}
+    history.turn('one', shell, at=now - timedelta(hours=2))
+    history.turn('two', shell, write('c.py', C1), at=now - timedelta(minutes=30))
+    (repo / 'before.txt').write_text('untracked before the session\n')
+    (repo / 'early.txt').write_text('x\n')
+    for name, age in (('before.txt', timedelta(hours=3)), ('early.txt', timedelta(hours=1))):
+        stamp = (now - age).timestamp()
+        os.utime(repo / name, (stamp, stamp))
+    (repo / 'new.txt').write_text('x\n')
+    (repo / 'a.py').write_text('def a():\n    return 1\ny\n')
+    (repo / 'c.py').write_text(C1)
+    (repo / 'b.py').unlink()
+
+    turn = await session_changes(history.messages, repo, scope='turn')
+    assert listed(turn) == [('a.py', 'M', 0, 0), ('c.py', 'A', 2, 0), ('new.txt', 'A', 0, 0)]
+    note = 'Changed outside the file tools, as by a shell command, so it has no diff here; see Uncommitted.'
+    assert turn.files[0].note == turn.files[2].note == note
+    session = await session_changes(history.messages, repo, scope='session', diffs=False)
+    assert [change.path for change in session.files] == ['a.py', 'c.py', 'early.txt', 'new.txt']
+    assert (await session_changes([], repo, scope='session')).files == [], 'no turn, no scope to have changed in'
+
+    fresh = repo.parent / 'fresh'
+    fresh.mkdir()
+    git(fresh, 'init', '-q')
+    (fresh / 'new.txt').write_text('x\n')
+    assert listed(await session_changes(history.messages, fresh, scope='turn')) == [('new.txt', 'A', 0, 0)]
+
+
 async def test_uncommitted_matches_git_diff_head(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (repo / 'a.py').write_text('def a():\n    return 10\n')
     (repo / 'b.py').unlink()
     (repo / 'c.py').write_text('c = 1\n')
     (repo / 'logo.png').write_bytes(b'\0PNG')
     git(repo, 'add', 'c.py', 'logo.png')
-    (repo / 'untracked.py').write_text('ignored by git diff HEAD\n')
 
     found = await session_changes([], repo, scope='uncommitted')
     numstat = [line.split('\t') for line in git(repo, 'diff', 'HEAD', '--numstat').splitlines()]
@@ -285,6 +320,37 @@ async def test_uncommitted_matches_git_diff_head(repo: Path, monkeypatch: pytest
     monkeypatch.setattr(changes_module, 'MAX_FILES', 3)
     capped = await session_changes([], repo, scope='uncommitted')
     assert ([change.path for change in capped.files], capped.omitted) == (['a.py', 'b.py', 'c.py'], 1)
+
+
+async def test_uncommitted_lists_untracked_files_as_git_status_does(repo: Path) -> None:
+    """New files Git does not track yet are added, as the git chip counts them; ignored ones stay out."""
+    (repo / 'a.py').write_text('def a():\n    return 10\n')
+    (repo / 'src').mkdir()
+    (repo / 'src' / 'notes.txt').write_text('hello\n')
+    (repo / 'src' / 'logo.png').write_bytes(b'\0PNG')
+    (repo / '.gitignore').write_text('*.log\n')
+    git(repo, 'add', '.gitignore')
+    git(repo, 'commit', '-q', '-m', 'ignore logs')
+    (repo / 'debug.log').write_text('ignored\n')
+    index = (repo / '.git' / 'index').read_bytes()
+
+    # From a folder inside the repository, as a session's workspace can be.
+    found = await session_changes([], repo / 'src', scope='uncommitted')
+    assert listed(found) == [('a.py', 'M', 1, 1), ('src/logo.png', 'A', 0, 0), ('src/notes.txt', 'A', 1, 0)]
+    assert found.files[2].diff.diff == '--- /dev/null\n+++ b/src/notes.txt\n@@ -0,0 +1 @@\n+hello\n'
+    assert found.files[1].note == 'Binary file.'
+    status = git(repo, 'status', '--porcelain', '--untracked-files=all').splitlines()
+    assert len(found.files) == len(status)
+
+    counted = await session_changes([], repo, scope='uncommitted', diffs=False)
+    assert listed(counted) == listed(found)
+    assert git(repo, 'status', '--porcelain', '--untracked-files=all').splitlines() == status
+    assert (repo / '.git' / 'index').read_bytes() == index, 'the real index is left alone'
+
+    # With no index at all, every file on disk is compared with the last commit.
+    (repo / '.git' / 'index').unlink()
+    unindexed = await session_changes([], repo, scope='uncommitted', diffs=False)
+    assert listed(unindexed) == listed(found)
 
 
 async def test_branch_against_its_base(repo: Path) -> None:

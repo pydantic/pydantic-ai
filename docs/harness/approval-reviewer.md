@@ -14,6 +14,8 @@ Let a second model approve the low-risk tool calls that need approval, and leave
 !!! tip "Approval Reviewer or Tool Call Judge?"
     Both ask a second model one yes/no question about a tool call, but give it opposite powers. Use [Tool Call Judge](tool-call-judge.md) when you want a model to say no: its `yes` blocks a call, whether or not a person is watching. Use Approval Reviewer when you want a model to say yes on a person's behalf: it reviews only calls that already need approval, its `no` approves the call, and everything else still goes to the person. A judge cannot do the second job, because it runs when a call executes, after the person has already approved it.
 
+![ApprovalReviewer runs in the handle_deferred_tool_calls hook, on tool calls that need approval. A second model is asked one risk question about the call run_shell(command="find . -name '*.py' | wc -l"). A no approves the call and it runs in the same run step; a yes, unsure or a failed review leaves the call for a person, as it would be without the reviewer.](../img/harness/approval-reviewer.svg)
+
 ## The problem
 
 [Human approval](../deferred-tools.md#human-in-the-loop-tool-approval) is the dependable gate for a tool like `run_shell`, but most of the calls it stops are harmless: `ls`, `git status`, `rg TODO`. A person asked to approve every one of them stops reading the requests, and the request that mattered gets the same click as the rest. Allowlists cut the volume, but which calls are risky depends on the arguments, and a list only covers the shapes you anticipated.
@@ -94,7 +96,7 @@ Approval requests for tools the selector does not match go to the person unrevie
 
 There is no setting for the failure case, because leaving a call for the person is what happens without a reviewer: a reviewer that is down, overloaded, or out of budget makes the run ask, and never makes it approve.
 
-A call left for the person goes where it would have gone without the reviewer. If the agent has a [`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md) handler, the handler receives only the requests the reviewer left; the reviewer is ordered ahead of it whichever order you list them in. Otherwise the requests end the run as [`DeferredToolRequests`](../deferred-tools.md) output, so include `DeferredToolRequests` in the agent's output type, and resume with `DeferredToolResults` once the person decides. A call the person decides is not reviewed again.
+A call left for the person goes where it would have gone without the reviewer. If the agent has a [`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md) handler, the handler receives only the requests the reviewer left; the reviewer is ordered ahead of it whichever order you list them in. The same holds for [`RequestInput`](../capabilities/request-input.md), which asks the person inside the run. Otherwise the requests end the run as [`DeferredToolRequests`](../deferred-tools.md) output, so include `DeferredToolRequests` in the agent's output type, and resume with `DeferredToolResults` once the person decides. A call the person decides is not reviewed again.
 
 ```python {names="defined"}
 from pydantic_ai import Agent

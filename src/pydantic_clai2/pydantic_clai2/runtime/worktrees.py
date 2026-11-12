@@ -1,12 +1,19 @@
 """Git worktrees for isolated CLI workspaces."""
 
+import asyncio
 import os
 import re
+import sqlite3
 import subprocess
 import sys
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
+
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.menus.worktree_cleanup import ask_removal
+from pydantic_clai2.ui.stderr_relay import terminal_stderr
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -23,14 +30,19 @@ class Worktree:
     """Whether this launch also created `branch`, so exit deletes it with an unchanged checkout."""
     remove_if_unchanged: bool = False
     """Whether an interactive exit removes the checkout without asking when nothing changed."""
+    remove_if_pushed: bool = False
+    """Whether an interactive exit removes the checkout without asking when it is clean with no unpushed commits."""
 
     @property
     def notice(self) -> str:
         """The launch line naming the checkout and its branch."""
         opened = 'Worktree' if self.created else 'Reopened worktree'
-        on_exit = (
-            'Removed on exit if unchanged.' if self.remove_if_unchanged else 'Kept unless removal is confirmed on exit.'
-        )
+        if self.remove_if_unchanged:
+            on_exit = f'Removed on exit if unchanged{", or if clean and pushed" if self.remove_if_pushed else ""}.'
+        elif self.remove_if_pushed:
+            on_exit = 'Removed on exit if clean and pushed, otherwise kept unless removal is confirmed.'
+        else:
+            on_exit = 'Kept unless removal is confirmed on exit.'
         return f'{opened}: {self.path} (branch: {self.branch}). {on_exit}'
 
 
@@ -171,7 +183,7 @@ def commit_of(*, repo: Path, ref: str, remote: bool) -> str:
 def remove_worktree(*, path: Path) -> None:
     """Remove the linked worktree at `path` and its uncommitted changes, keeping its branch; `ValueError` if Git refuses."""
     try:
-        common = (path / _git('-C', str(path), 'rev-parse', '--git-common-dir')).resolve()
+        common = _common_directory(path=path)
         _git('-C', str(common), 'worktree', 'remove', '--force', '--', str(path))
     except subprocess.CalledProcessError as exc:
         raise ValueError(f'Cannot remove worktree {path}: {exc.stderr.strip()}') from exc
@@ -223,43 +235,155 @@ def current_worktree() -> Worktree | None:
     return Worktree(path=Path(root).resolve(), branch=branch, head=head, created=False)
 
 
-def offer_worktree_cleanup(*, worktree: Worktree | None) -> None:
-    """After interactive shutdown, remove an unchanged checkout marked `remove_if_unchanged`, or offer to remove a changed one.
+def offer_worktree_cleanup(
+    *,
+    worktree: Worktree | None,
+    read_remove_commands: Callable[[], Mapping[str, Sequence[str]]] | None = None,
+    store: SettingsStore | None = None,
+) -> None:
+    """After interactive shutdown, remove a checkout with nothing to lose, or offer to remove a changed one.
 
-    Uncommitted or untracked files, or a commit other than the one at launch, count as changes. Other
-    unchanged checkouts are kept without asking. A confirmed removal keeps the branch and dirty files.
+    Nothing to lose is an unchanged checkout marked `remove_if_unchanged`, or a clean one marked
+    `remove_if_pushed` whose commits are all on a remote-tracking branch and that a readable saved
+    choice does not keep. Uncommitted or untracked files, or a commit other than the one at launch,
+    count as changes. Other unchanged checkouts are kept without asking. By default, a confirmed
+    removal keeps the branch and dirty files. A registered command owns explicitly confirmed removal
+    for its repository only. `read_remove_commands` reads configuration only when a changed checkout
+    needs a prompt.
     """
     if worktree is None or not sys.stdin.isatty():
         return
     root = str(worktree.path)
     try:
-        changed = (
-            bool(_git('-C', root, 'status', '--porcelain')) or _git('-C', root, 'rev-parse', 'HEAD') != worktree.head
+        clean = not _git('-C', root, 'status', '--porcelain')
+        unchanged = clean and _git('-C', root, 'rev-parse', 'HEAD') == worktree.head
+        removable = (
+            clean
+            and worktree.remove_if_pushed
+            and not _git('-C', root, 'rev-list', '--max-count=1', 'HEAD', '--not', '--remotes')
         )
     except (OSError, subprocess.CalledProcessError):
         return
-    if not changed:
-        if worktree.remove_if_unchanged:
-            _remove(worktree, unchanged=True)
+    if unchanged and worktree.remove_if_unchanged:
+        _remove(worktree, keep_branch=False)
         return
+    if unchanged and not removable:
+        return
+    kept = kept_checkout(worktree.path, store=store)
+    if kept:
+        print(f'Worktree kept at {root}.')
+    elif removable and kept is False:
+        _remove(worktree, keep_branch=True)
+    elif not unchanged:
+        _offer_changed_worktree_cleanup(worktree=worktree, read_remove_commands=read_remove_commands, store=store)
+
+
+def _offer_changed_worktree_cleanup(
+    *,
+    worktree: Worktree,
+    read_remove_commands: Callable[[], Mapping[str, Sequence[str]]] | None,
+    store: SettingsStore | None,
+) -> None:
+    """Confirm changed-checkout removal, saving a choice to keep this checkout without asking again."""
+    root = str(worktree.path)
     try:
-        answer = input(f'Remove worktree {root}? The branch will be kept. [y/N] ')
+        remove_commands: Mapping[str, Sequence[str]] = (
+            read_remove_commands() if read_remove_commands is not None else {}
+        )
+    except (OSError, ValueError) as exc:
+        print(f'Cannot read removal commands for {root}; using Git cleanup: {exc}', file=sys.stderr)
+        remove_commands = {}
+    custom: tuple[Path, list[str]] | None = None
+    if remove_commands:
+        try:
+            common = _common_directory(path=worktree.path)
+            registered = remove_commands.get(str(common))
+            if registered is not None:
+                custom = _prepare_removal_command(path=worktree.path, common=common, command=registered)
+        except (OSError, subprocess.CalledProcessError, UnicodeDecodeError) as exc:
+            print(f'Worktree kept at {root}: cannot prepare removal command: {exc}', file=sys.stderr)
+            return
+    details = f'{root}\nThe branch will be kept. Git refuses to remove uncommitted files.'
+    if custom is not None:
+        details = f'{root}\nRegistered removal command: {custom[1]!r}\nIt may delete the branch and uncommitted files.'
+    try:
+        answer = asyncio.run(ask_removal(details))
     except (EOFError, KeyboardInterrupt):
-        answer = ''
+        answer = 'keep'
         print()
-    if answer.strip().lower() not in ('y', 'yes'):
+    if answer == 'never':
+        _keep_checkout(worktree.path, store=store)
+    if answer != 'remove':
         print(f'Worktree kept at {root}.')
         return
-    if _remove(worktree, unchanged=False):
-        print(f'Removed worktree {root}. Branch kept.')
+    if custom is not None:
+        _remove_with_command(path=worktree.path, repo=custom[0], command=custom[1])
+    else:
+        _remove(worktree, keep_branch=True)
 
 
-def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
-    """Remove the checkout without `--force`, and an unchanged branch this launch created; report a refusal."""
+def _checkout_identity(path: Path) -> str:
+    # Git recreates this file for a new checkout, even if it reuses the path and branch.
+    identity = (path / '.git').stat()
+    return f'{identity.st_dev}:{identity.st_ino}:{identity.st_mtime_ns}'
+
+
+def kept_checkout(path: Path, *, store: SettingsStore | None) -> bool | None:
+    """Whether a saved choice keeps the checkout, or `None` when it cannot be read.
+
+    An unreadable preference removes nothing without asking, and still lets the user choose whether to
+    remove a changed checkout.
+    """
+    if store is None:
+        return False
+    try:
+        return store.kept_worktree(path) == _checkout_identity(path)
+    except (OSError, sqlite3.Error) as exc:
+        print(f'Cannot read worktree cleanup preference for {path}: {exc}', file=sys.stderr)
+        return None
+
+
+def _keep_checkout(path: Path, *, store: SettingsStore | None) -> None:
+    """A failed save keeps the checkout for this exit and reports that it could not remember the choice."""
+    if store is None:
+        return
+    try:
+        store.keep_worktree(path, checkout=_checkout_identity(path))
+    except (OSError, sqlite3.Error) as exc:
+        print(f'Cannot save worktree cleanup preference for {path}: {exc}', file=sys.stderr)
+
+
+def _remove_with_command(*, path: Path, repo: Path, command: list[str]) -> None:
+    """Let a user-confirmed command own removal, with the restored terminal and no Git fallback."""
+    original = Path.cwd()
+    try:
+        os.chdir(repo)
+        subprocess.run(command, check=True, stderr=terminal_stderr())
+    except (OSError, subprocess.CalledProcessError, KeyboardInterrupt) as exc:
+        detail = 'interrupted' if isinstance(exc, KeyboardInterrupt) else str(exc)
+        print(f'Worktree removal command {command!r} failed for {path}: {detail}', file=sys.stderr)
+    else:
+        if path.exists():
+            print(
+                f'Worktree removal command {command!r} completed without removing the worktree at {path}.',
+                file=sys.stderr,
+            )
+        else:
+            print(f'Removed worktree {path}.')
+    finally:
+        if original.exists():
+            os.chdir(original)
+
+
+def _remove(worktree: Worktree, *, keep_branch: bool) -> None:
+    """Remove the checkout without `--force`, and report a refusal.
+
+    With `keep_branch`, report the removal too. Without it, also delete a branch this launch created.
+    """
     root = str(worktree.path)
     original = Path.cwd()
     try:
-        common = (worktree.path / _git('-C', root, 'rev-parse', '--git-common-dir')).resolve()
+        common = _common_directory(path=worktree.path)
         # Run outside the checkout so successful removal leaves a valid working directory.
         os.chdir(common.parent)
         _git('-C', str(common), 'worktree', 'remove', '--', root)
@@ -267,14 +391,33 @@ def _remove(worktree: Worktree, *, unchanged: bool) -> bool:
         os.chdir(original)
         detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) else str(exc)
         print(f'Worktree kept at {root}: {detail}', file=sys.stderr)
-        return False
-    if unchanged and worktree.new_branch:
+        return
+    if keep_branch:
+        print(f'Removed worktree {root}. Branch kept.')
+    elif worktree.new_branch:
         try:
             # `-d`, not `-D`: Git keeps a branch that is not merged into the main checkout's `HEAD`.
             _git('-C', str(common), 'branch', '-d', '--', worktree.branch)
         except (OSError, subprocess.CalledProcessError):
             pass  # A kept branch loses nothing; it is `git branch -d` away.
-    return True
+
+
+def _common_directory(*, path: Path) -> Path:
+    """Anchor Git's potentially relative common directory to the checkout that reported it."""
+    return (path / _git('-C', str(path), 'rev-parse', '--git-common-dir')).resolve()
+
+
+def _prepare_removal_command(*, path: Path, common: Path, command: Sequence[str]) -> tuple[Path, list[str]]:
+    """Derive the main Git location and substitute whole-token command arguments."""
+    # A NUL-delimited worktree listing would require Git 2.36 or newer.
+    bare = _git('-C', str(common), 'rev-parse', '--is-bare-repository') == 'true'
+    repo = common if bare or common.name != '.git' else common.parent
+    values = {
+        '{path}': str(path),
+        '{branch}': _git('-C', str(path), 'branch', '--show-current'),
+        '{repo}': str(repo),
+    }
+    return repo, [values.get(arg, arg) for arg in command]
 
 
 def _git(*args: str) -> str:

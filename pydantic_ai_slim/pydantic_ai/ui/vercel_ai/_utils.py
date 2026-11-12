@@ -1,6 +1,6 @@
 """Utilities for handling Pydantic AI and Vercel data streams."""
 
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import replace
 from datetime import datetime
 from typing import Any, cast
@@ -52,6 +52,9 @@ __all__ = []
 TOOL_AVAILABILITY_DELTA_DATA_TYPE = 'data-tool-availability-delta'
 """Data chunk type for tool availability changes."""
 
+CAPABILITY_LOAD_DELTA_DATA_TYPE = 'data-capability-load-delta'
+"""Data chunk type for capabilities loaded from code."""
+
 MODEL_SETTINGS_DELTA_DATA_TYPE = 'data-model-settings-delta'
 """Data chunk type for changes to the thinking effort in effect."""
 
@@ -63,6 +66,9 @@ ENQUEUED_MESSAGES_DATA_TYPE = 'data-enqueued-messages'
 
 MCP_APPS_DATA_TYPE = f'data-{MCP_APPS_UI_TYPE}'
 """Data chunk type for the MCP Apps data of a tool call, keyed by its tool call ID."""
+
+CONVERSATION_SAVED_DATA_TYPE = 'data-conversation-saved'
+"""Transient data chunk type for the entries a `conversation_store` save stored, sent after the run."""
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
 
@@ -201,13 +207,16 @@ def _offset_raw_citation(citation: object, offset: int) -> object:
     return citation
 
 
-def dump_text_metadata(parts: Sequence[TextPart]) -> dict[str, Any] | None:
+def dump_text_metadata(
+    parts: Sequence[TextPart], *, canonical_system_for: Callable[[str | None], str | None] | None = None
+) -> dict[str, Any] | None:
     """Dump provider metadata for a UI text part holding one or more consecutive text parts.
 
     The UI text part loads back as one text part, so it keeps the first part's fields, as merged text always has, with
     every part's citations: ours with their anchors moved onto the merged text, and the provider's, which replay
     sends back, joined under `provider_details['citations']`. The provider name comes from a part with citations
     when the first part has none, since replay only sends back citations from the provider that produced them.
+    `canonical_system_for` gives the `canonical_system` of the response the parts are in that applies to that provider.
     """
     first = parts[0]
     provider_name = first.provider_name or next((part.provider_name for part in parts if part.citations), None)
@@ -228,6 +237,7 @@ def dump_text_metadata(parts: Sequence[TextPart]) -> dict[str, Any] | None:
         id=first.id,
         provider_name=provider_name,
         provider_details=provider_details,
+        canonical_system=canonical_system_for(provider_name) if canonical_system_for is not None else None,
         citations=dump_citations(merged_text_citations(parts)),
     )
 

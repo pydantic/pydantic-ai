@@ -40,11 +40,11 @@ pip/uv-add "pydantic-ai-slim[bedrock]"
 
 To use [AWS Bedrock](https://aws.amazon.com/bedrock/), you'll need an AWS account with Bedrock enabled and appropriate credentials. You can use either AWS credentials directly or a pre-configured boto3 client.
 
-[`BedrockModelName`][pydantic_ai.models.bedrock.BedrockModelName] contains a list of available Bedrock models, including models from Anthropic, Amazon, Cohere, Meta, and Mistral.
+[`BedrockModelName`][pydantic_ai.models.bedrock.BedrockModelName] lists the latest Bedrock models for autocomplete, one id per model, including models from Anthropic, Amazon, Meta, Mistral and OpenAI. Any other model id Bedrock accepts works too.
 
 ### Data retention
 
-Claude Fable 5 and 5.1 require the account's data retention mode in the selected Region to be `aws_review` (or the legacy `provider_data_share`). Otherwise, every request fails with a 400 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] saying that the data retention mode is not available for the model. This is an account setting, not a request setting; configure it through the Bedrock control plane as described in the [AWS data retention documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html).
+Claude Fable 5, 5.1 and 5.2 require the account's data retention mode in the selected Region to be `aws_review` (or the legacy `provider_data_share`). Otherwise, every request fails with a 400 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] saying that the data retention mode is not available for the model. This is an account setting, not a request setting; configure it through the Bedrock control plane as described in the [AWS data retention documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html).
 
 ### Environment variables
 
@@ -108,9 +108,13 @@ agent = Agent(model=model, model_settings=bedrock_model_settings)
 
 When `trace` is set to `'enabled'` in the guardrail configuration (as in the example above), the guardrail assessment returned by Bedrock is stored verbatim under the `'trace'` key of [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details], e.g. `result.all_messages()[-1].provider_details['trace']`.
 
+### Video input
+
+The Converse API takes video only on Amazon Nova. On every other family, including models that read video on other platforms (Qwen3-VL, Kimi and Nemotron Nano VL reject it on Bedrock, as do Claude, Llama 4 and Pixtral), video in the prompt raises an error, and video a tool returns is replaced by a note saying the model can't read it. A model ID the provider doesn't recognize keeps the default and is sent video.
+
 ### Output token limit
 
-When you don't set [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], Pydantic AI sends Claude's maximum output, like 64,000 on Claude Sonnet 4.5 or 128,000 on Claude Opus 5.5, as it does on [Anthropic](anthropic.md), so responses are only cut off at the model's own limit. Bedrock's own default can be much lower (4,096 on Claude Opus 5.5), and thinking counts toward it. An inference profile or foundation model ARN counts as the model it names. Models older than Claude Sonnet 4.5, models other than Claude, and models named by an application inference profile ARN get Bedrock's default, so set `max_tokens` yourself for those, or pass the application inference profile ARN as [`bedrock_inference_profile`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_inference_profile] with the base model name.
+When you don't set [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], Pydantic AI sends Claude's maximum output, like 64,000 on Claude Sonnet 4.5 or 128,000 on Claude Opus 5.5, as it does on [Anthropic](anthropic.md), so responses are only cut off at the model's own limit. Bedrock's own default can be much lower (4,096 on Claude Opus 5.5), and thinking counts toward it. A `max_tokens` you set above Claude's known maximum is lowered to it, since Bedrock rejects it. An inference profile or foundation model ARN counts as the model it names. Models older than Claude Sonnet 4.5, models other than Claude, and models named by an application inference profile ARN get Bedrock's default, so set `max_tokens` yourself for those, or pass the application inference profile ARN as [`bedrock_inference_profile`][pydantic_ai.models.bedrock.BedrockModelSettings.bedrock_inference_profile] with the base model name.
 
 Such a request is streamed behind the scenes, since a response that long can take longer than the client's read timeout (`aws_read_timeout` on [`BedrockProvider`][pydantic_ai.providers.bedrock.BedrockProvider], 300 seconds by default), which then limits the wait between streamed chunks rather than the whole response. That wait includes the time the model spends thinking, which can arrive as a single chunk. Streaming needs the `bedrock:InvokeModelWithResponseStream` IAM permission, which streamed runs already needed, and tool call `args` in the response are the streamed JSON string rather than a dict, as on streamed runs; [`args_as_dict()`][pydantic_ai.messages.BaseToolCallPart.args_as_dict] gives the same value.
 

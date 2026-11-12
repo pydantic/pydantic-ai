@@ -34,15 +34,15 @@ from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.subagents._events import (
     AgentCreatedEvent,
-    ParentMessage,
-    TaskAnswerEvent,
+    ParentMessageEvent,
+    TaskAnsweredEvent,
     TaskBackgroundedEvent,
     TaskCancelledEvent,
     TaskCompletedEvent,
     TaskFailedEvent,
-    TaskForceCancelEvent,
+    TaskForceCancelRequestedEvent,
     TaskProgressEvent,
-    TaskQuestionEvent,
+    TaskQuestionAskedEvent,
     TaskRequestEvent,
     TaskSettledEvent,
     task_mailbox,
@@ -58,6 +58,9 @@ _logger = logging.getLogger(__name__)
 _NAME_RE = re.compile(r'[A-Za-z0-9_-]{1,64}')
 _TEARDOWN_SECONDS = 5.0
 """How long a remote task's teardown may take to stop its worker and release its mailbox."""
+
+ASK_PARENT_TOOL_NAME = 'ask_parent'
+"""The tool a delegated run uses to ask the delegating agent a question."""
 
 _TASK_INSTRUCTIONS = (
     'You are working on a task another agent delegated to you. '
@@ -111,12 +114,12 @@ class TaskTelemetry:
                     span.set_attribute(f'sub_agents.{key}', value)
         span.end()
 
-    def vetoed(self, event: ParentMessage | AgentCreatedEvent) -> None:
+    def vetoed(self, event: ParentMessageEvent | AgentCreatedEvent) -> None:
         """Record that a listener vetoed `event`."""
         reason = {'veto_reason': event.veto_reason} if event.veto_reason is not None else None
         if isinstance(event, AgentCreatedEvent):
             # The model chose this name, so it is content.
-            content = {'agent_name': event.name, **(reason or {})}
+            content = {'agent_name': event.agent_name, **(reason or {})}
             self.decision('vetoed', agent_name=None, attributes={'event': event.kind}, content=content)
         else:
             self.decision(
@@ -196,7 +199,7 @@ class TaskControl:
     Every run gets a `DelegationTasks` owner unless the application bound one, so `delegate_task` takes
     `background` and `resume`, and the model gets `list_tasks`, `message_task`, `answer_task` and
     `cancel_task`. A sub-agent gets an `ask_parent` tool (`SubAgent.can_ask_questions`). Each step of a
-    task is a `SubAgentMessage` event that listeners can rewrite or veto, and the reports of background
+    task is a `SubAgentMessageEvent` that listeners can rewrite or veto, and the reports of background
     tasks arrive as messages: a top-level run that would end while its own background tasks work waits
     for them.
     """
@@ -296,7 +299,7 @@ class TaskLink(AbstractCapability[Any], ABC):
         if not self.can_ask:
             return None
         toolset = FunctionToolset[Any]()
-        toolset.add_function(self.ask_parent, takes_ctx=False, name='ask_parent')
+        toolset.add_function(self.ask_parent, takes_ctx=False, name=ASK_PARENT_TOOL_NAME)
         return toolset
 
     def get_instructions(self) -> AgentInstructions[Any] | None:
@@ -354,7 +357,7 @@ class LocalTaskLink(TaskLink):
 
     async def ask(self, question_id: str, question: str) -> str:
         record = self.record
-        event = TaskQuestionEvent(
+        event = TaskQuestionAskedEvent(
             task_id=record.id, agent_name=record.agent_name, question_id=question_id, question=question
         )
         answer = await put_question(self.owner, record, event, self.telemetry)
@@ -362,14 +365,14 @@ class LocalTaskLink(TaskLink):
 
 
 async def put_question(
-    owner: DelegationTasks, record: DelegationTask, event: TaskQuestionEvent, telemetry: TaskTelemetry
-) -> TaskAnswerEvent:
+    owner: DelegationTasks, record: DelegationTask, event: TaskQuestionAskedEvent, telemetry: TaskTelemetry
+) -> TaskAnsweredEvent:
     """Get a task's question answered: by a listener of the delegating run, or else by its model."""
     event = await owner.publish(record, event)
     if event.answer is not None:
         answer = await owner.publish(
             record,
-            TaskAnswerEvent(
+            TaskAnsweredEvent(
                 task_id=record.id, agent_name=record.agent_name, question_id=event.question_id, answer=event.answer
             ),
         )
@@ -389,7 +392,9 @@ async def put_question(
         telemetry.backgrounded(backgrounded)
         owner.background(record.id)
     text = await owner.ask(record.id, question_id=event.question_id, question=event.question)
-    return TaskAnswerEvent(task_id=record.id, agent_name=record.agent_name, question_id=event.question_id, answer=text)
+    return TaskAnsweredEvent(
+        task_id=record.id, agent_name=record.agent_name, question_id=event.question_id, answer=text
+    )
 
 
 @asynccontextmanager
@@ -454,7 +459,7 @@ async def run_remote(
                 # This is teardown, not a decision listeners could veto.
                 telemetry.decision('remote task stopped', agent_name=record.agent_name, task_id=record.id)
                 try:
-                    await transport.send(TaskForceCancelEvent(task_id=record.id, agent_name=record.agent_name))
+                    await transport.send(TaskForceCancelRequestedEvent(task_id=record.id, agent_name=record.agent_name))
                 except Exception:
                     _logger.exception('Could not stop remote sub-agent task %s on its worker.', record.id)
             try:
@@ -484,7 +489,7 @@ async def _relay(
         return None
     async with task_group() as group:
         while not isinstance(message, TaskSettledEvent):
-            if isinstance(message, TaskQuestionEvent):
+            if isinstance(message, TaskQuestionAskedEvent):
                 group.start_soon(_answer_remote, owner, record, message, transport, telemetry)
             elif isinstance(message, TaskProgressEvent):
                 await owner.publish(record, message, observe=False)
@@ -499,7 +504,7 @@ async def _relay(
 async def _answer_remote(
     owner: DelegationTasks,
     record: DelegationTask,
-    question: TaskQuestionEvent,
+    question: TaskQuestionAskedEvent,
     transport: SubAgentTransport,
     telemetry: TaskTelemetry,
 ) -> None:

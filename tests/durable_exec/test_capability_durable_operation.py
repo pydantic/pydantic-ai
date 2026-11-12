@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
 from pydantic_ai.agent import AbstractAgent, AgentRunResult
@@ -34,6 +35,7 @@ from pydantic_ai.capabilities.abstract import AgentModel
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import (
+    CapabilityMethodDeclaration,
     CapabilityOperationParams,
     CapabilityOperationResult,
     ModelRequestContextProjection,
@@ -72,7 +74,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..batch_utils import FAST_BATCH_SETTINGS
-from ..conftest import try_import
+from ..conftest import try_import, without_admin_server
 from ..model_lifecycle_utils import LifecycleTrackingModel
 
 with try_import() as logfire_installed:
@@ -424,6 +426,64 @@ async def test_capability_operation_is_direct_outside_durable_context() -> None:
     assert events == []
     assert built_models == []
     assert not any('__capability__' in name for name, _ in durability.calls)
+
+
+async def test_capability_operation_maps_serialization_failure() -> None:
+    """The engine's backend receives the error that `serialization_failure` maps an unserializable result to."""
+
+    class TerminalFailure(Exception):
+        pass
+
+    backend_errors: list[Exception] = []
+
+    def serialization_failure(exc: Exception) -> TerminalFailure:
+        return TerminalFailure()
+
+    class SerializationBackend(_RecordingBackend):
+        async def execute(
+            self,
+            *,
+            operation_id: DurableOperationId,
+            name: str,
+            body: Callable[[], Awaitable[object]],
+            cache_key: tuple[object, ...],
+            config: object,
+        ) -> object:
+            try:
+                return await super().execute(
+                    operation_id=operation_id, name=name, body=body, cache_key=cache_key, config=config
+                )
+            except Exception as exc:
+                backend_errors.append(exc)
+                raise
+
+    class SerializationDurability(RecordingDurability):
+        engine_spec = replace(RecordingDurability.engine_spec, serialization_failure=serialization_failure)
+
+        def get_durable_operation_backend(self) -> SerializationBackend:
+            return SerializationBackend(self)
+
+    class NonSerializableCapability(AbstractCapability[None]):
+        id = 'non_serializable'
+
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            await self.read(ctx=ctx)
+
+        @durable_operation('read')
+        async def read(self, ctx: RunContext[None]) -> object:
+            return object()
+
+    agent = Agent(
+        TestModel(),
+        deps_type=type(None),
+        name='serialization_failure',
+        capabilities=[NonSerializableCapability(), SerializationDurability()],
+    )
+    with pytest.raises(TerminalFailure) as exc_info:
+        await agent.run('test')
+
+    assert backend_errors == [exc_info.value]
+    assert isinstance(exc_info.value.__cause__, PydanticSerializationError)
 
 
 async def test_capability_operation_model_id_swap_resolves_and_manages_model() -> None:
@@ -1616,6 +1676,20 @@ def test_decorated_capability_requires_explicit_stable_id() -> None:
         Agent(TestModel(), name='missing_id', capabilities=[MissingId(), RecordingDurability()])
 
 
+def test_capability_can_opt_its_id_less_instances_out_of_binding() -> None:
+    class OptionalId(AbstractCapability[Any]):
+        _durable_operations_need_id = False
+
+        @durable_operation('operation')
+        async def operation(self, ctx: RunContext[Any]) -> None:
+            pass  # pragma: no cover
+
+    agent = Agent(TestModel(), name='optional_id', capabilities=[OptionalId(), RecordingDurability()])
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert durability._bound_capability_operations == {}  # pyright: ignore[reportPrivateUsage]
+
+
 def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     class Duplicate(AbstractCapability[Any]):
         id = 'duplicate'
@@ -2015,6 +2089,67 @@ def test_before_model_request_context_parameter_can_have_any_name() -> None:
     assert not collect_capability_operations(Operations())['calculate'].model_request_hook
 
 
+def _define_prepare_capabilities() -> tuple[type[AbstractCapability[Any]], type[AbstractCapability[Any]]]:
+    """Define the classes afresh, as Temporal's sandbox does each time it re-imports a workflow module."""
+
+    class Prepare(AbstractCapability[Any]):
+        id = 'prepare'
+
+        @durable_operation('before_model_request')
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request_context.messages = [ModelRequest(parts=[UserPromptPart('prepared')])]
+            return request_context
+
+    class PrepareWithNote(AbstractCapability[Any]):
+        id = 'prepare_with_note'
+
+        @durable_operation('rewrite')
+        async def rewrite(self, ctx: RunContext[Any], request: ModelRequestContext, note: str) -> ModelRequestContext:
+            raise NotImplementedError
+
+    return Prepare, PrepareWithNote
+
+
+async def test_model_request_operation_schema_is_reused_when_the_capability_is_redefined() -> None:
+    """Building an agent with a durable `before_model_request` reuses the request projection's schema.
+
+    Generating that schema covers every message type, and a module-level agent in a Temporal workflow
+    module is rebuilt on every workflow run.
+    """
+
+    def build_agent() -> Agent[None, str]:
+        prepare, _ = _define_prepare_capabilities()
+        return Agent(TestModel(), name='prepare', capabilities=[prepare(), RecordingDurability()])
+
+    def declaration(agent: Agent[None, str]) -> CapabilityMethodDeclaration:
+        durability = RecordingDurability.from_agent(agent)
+        assert durability is not None
+        return durability._capability_declarations[('prepare', 'before_model_request')]  # pyright: ignore[reportPrivateUsage]
+
+    first_agent = build_agent()
+    second_agent = build_agent()
+    first, second = declaration(first_agent), declaration(second_agent)
+
+    assert first.function is not second.function
+    assert second.schema.validator is first.schema.validator
+    assert second.schema.function is not first.schema.function
+
+    await second_agent.run('test')
+    durability = RecordingDurability.from_agent(second_agent)
+    assert durability is not None
+    model_call = next(cache_key for name, cache_key in durability.calls if name == 'prepare__model.request')
+    sent_request = cast(list[ModelMessage], model_call[1])[-1]
+    assert isinstance(sent_request, ModelRequest)
+    assert isinstance(sent_request.parts[0], UserPromptPart)
+    assert sent_request.parts[0].content == 'prepared'
+
+    # An operation that also takes a user-typed argument rebuilds its schema every time.
+    rewrites = [collect_capability_operations(_define_prepare_capabilities()[1]())['rewrite'] for _ in range(2)]
+    assert rewrites[0].schema.validator is not rewrites[1].schema.validator
+
+
 def test_recording_config_has_no_per_tool_override() -> None:
     assert (
         _RecordingConfig().for_tool(
@@ -2305,9 +2440,8 @@ def dbos(tmp_path: Any) -> Generator[DBOS, None, None]:
     config: DBOSConfig = {
         'name': 'capability_durable_operations',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-        'run_admin_server': False,
     }
-    instance = DBOS(config=config)
+    instance = DBOS(config=without_admin_server(config))
     DBOS.launch()
     try:
         yield instance

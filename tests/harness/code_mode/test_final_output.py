@@ -225,8 +225,7 @@ The output was rejected:
     "loc": [
       "total"
     ],
-    "msg": "Input should be a valid integer, unable to parse string as an integer",
-    "input": "ord_8Kq2ZpVxL0mN3rT6yB1c"
+    "msg": "Input should be a valid integer, unable to parse string as an integer"
   }
 ]\
 """)

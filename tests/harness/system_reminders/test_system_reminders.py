@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
     TextContent,
@@ -207,6 +208,18 @@ def _request_scoped_texts(messages: list[ModelMessage]) -> list[str]:
         for part in msg.parts
         if isinstance(part, SystemPromptPart) and part.scope == 'request'
     ]
+
+
+def _is_kept_copy(part: ModelRequestPart) -> bool:
+    """Return whether *part* is a `keep_user_messages` copy, by the marker `SummarizingCompaction` puts on its text."""
+    return (
+        isinstance(part, UserPromptPart)
+        and not isinstance(part.content, str)
+        and any(
+            isinstance(item, TextContent) and item.metadata == 'pydantic-ai-harness.compaction.kept-user-message.v1'
+            for item in part.content
+        )
+    )
 
 
 # --- Reminder validation ---
@@ -682,6 +695,11 @@ def _capture_model(store: dict[str, str], output: str = 'generated') -> Function
     return FunctionModel(fn)
 
 
+def _reminder_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    # `caplog` holds every logger's records, such as asyncio reporting a task another test leaked.
+    return [record for record in caplog.records if record.name.startswith('pydantic_ai_harness.system_reminders')]
+
+
 class TestLLMReminder:
     @pytest.mark.usefixtures('instrument_all_agents')
     async def test_generation_run_is_named_after_the_capability(self, capfire: CaptureLogfire) -> None:
@@ -812,7 +830,7 @@ class TestLLMReminder:
 
         assert _GOAL_NOTE in _all_text(seen['messages'])
         assert operation in {name for name, _ in durability.calls}
-        [record] = caplog.records
+        [record] = _reminder_records(caplog)
         assert record.levelno == logging.WARNING
         assert record.name == 'pydantic_ai_harness.system_reminders._capability'
         assert record.getMessage() == 'LLMReminder generation operation failed; using GoalReanchor text instead'
@@ -848,7 +866,7 @@ class TestLLMReminder:
         assert operation in {name for name, _ in durability.calls}
         assert _GOAL_NOTE in _all_text(seen['messages'])
         # A misconfigured reminder model fails every turn; the operator sees why.
-        [record] = caplog.records
+        [record] = _reminder_records(caplog)
         assert record.levelno == logging.WARNING
         assert record.getMessage() == 'LLMReminder generation failed; using GoalReanchor text instead'
         assert record.exc_info is not None and str(record.exc_info[1]) == 'reminder unavailable'
@@ -887,7 +905,7 @@ class TestLLMReminder:
         assert operation in {name for name, _ in durability.calls}
         assert generated == {}
         assert _GOAL_NOTE in _all_text(seen['messages'])
-        assert caplog.records == []
+        assert _reminder_records(caplog) == []
 
     async def test_generates_from_transcript(self) -> None:
         store: dict[str, str] = {}
@@ -1207,7 +1225,7 @@ class TestLLMReminder:
             result = await reminder(_ctx(messages=messages))
         assert result is not None
         assert result == _GOAL_NOTE  # GoalReanchor fallback text
-        [record] = caplog.records
+        [record] = _reminder_records(caplog)
         assert record.levelno == logging.WARNING
         assert record.getMessage() == 'LLMReminder generation failed; using GoalReanchor text instead'
         assert record.exc_info is not None and str(record.exc_info[1]) == 'model down'
@@ -1232,7 +1250,7 @@ class TestLLMReminder:
             await reminder(second_run)
             await reminder(no_run_id)
             await reminder(no_run_id)
-        assert len(caplog.records) == 4  # run-1 once, run-2 once, and each failure without a run id
+        assert len(_reminder_records(caplog)) == 4  # run-1 once, run-2 once, and each failure without a run id
 
     async def test_remembers_a_bounded_number_of_runs(
         self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
@@ -1254,7 +1272,7 @@ class TestLLMReminder:
             oldest.run_id = 'run-0'
             await reminder(oldest)
         # 6 distinct runs, then the oldest again: it was evicted, so it warns a second time.
-        assert len(caplog.records) == 7
+        assert len(_reminder_records(caplog)) == 7
 
     def test_zero_max_context_messages_raises(self) -> None:
         with pytest.raises(ValueError, match='max_context_messages must be >= 1'):
@@ -1307,7 +1325,7 @@ class TestLLMReminder:
         assert result == _GOAL_NOTE  # GoalReanchor fallback, no nested request spent
         assert ctx.usage.requests == 1
         # Skipping generation on a spent budget is documented behavior, not a failure to warn about.
-        assert caplog.records == []
+        assert _reminder_records(caplog) == []
 
     async def test_other_usage_limit_failure_is_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         def over_limit(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -1323,7 +1341,7 @@ class TestLLMReminder:
 
         assert result is not None
         assert result == _GOAL_NOTE
-        [record] = caplog.records
+        [record] = _reminder_records(caplog)
         assert record.getMessage() == 'LLMReminder generation failed; using GoalReanchor text instead'
         assert record.exc_info is not None
         assert 'input_tokens_limit' in str(record.exc_info[1])
@@ -1648,9 +1666,8 @@ class TestEndToEnd:
             part
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
-            and message.metadata
-            and message.metadata.get('pydantic-ai-harness.compaction.kept-user-message.v1')
             for part in message.parts
+            if _is_kept_copy(part)
         ]
         kept_texts = [
             part.content
@@ -1705,9 +1722,8 @@ class TestEndToEnd:
             part
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
-            and message.metadata
-            and message.metadata.get('pydantic-ai-harness.compaction.kept-user-message.v1')
             for part in message.parts
+            if _is_kept_copy(part)
         ]
         assert kept == [
             UserPromptPart(

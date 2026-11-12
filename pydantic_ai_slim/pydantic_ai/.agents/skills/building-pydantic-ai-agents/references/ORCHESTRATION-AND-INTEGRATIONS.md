@@ -86,9 +86,13 @@ Temporal entry points:
 - `PydanticAIPlugin`
 - `AgentPlugin`
 
+For human-in-the-loop approval inside the run, see `RequestInput` in [Tools Advanced](./TOOLS-ADVANCED.md#require-tool-approval-human-in-the-loop): it waits in process by default and durably on AWS Lambda durable functions; on Temporal, DBOS and Prefect the engine refuses it with `UserError` (an unrecorded wait could diverge from the journal on replay), so end the run with `DeferredToolRequests` output there.
+
 For runs long enough to approach Temporal's history limit, pass `TemporalDurability(continue_as_new=...)`. Before each model request where Temporal suggests continuing as new, it calls your function with the `RunContext`. The function calls `workflow.continue_as_new()` with everything the workflow's run method needs to resume, typically `None` as the prompt plus `ctx.messages`, `ctx.usage`, and `ctx.usage_limits`, or returns to defer.
 
 To delegate to a nested durable agent under Temporal, run the delegating async function tool as a child workflow with `metadata={'temporal': {'child_workflow': ChildWorkflowConfig(...)}}` (or the same metadata through `SetToolMetadata`). The nested agent's model requests and tool calls then become activities in the child's own history instead of the parent's. List the nested agent in `__pydantic_ai_agents__` too, and register the worker through `PydanticAIPlugin` or `AgentPlugin`: `TemporalDurability.temporal_activities` raises when a tool uses a child workflow, because it would leave the child workflow definition unregistered. The metadata must be in place when the worker is configured; tools added with `@agent.tool` count. An exception in the tool body fails the child workflow, like a failed activity. Child workflows aren't supported for sync, dynamic, or MCP tools.
+
+Under DBOS, use `metadata={'dbos': {'child_workflow': ChildWorkflowConfig(...)}}` (from `pydantic_ai.durable_exec.dbos`, or through `SetToolMetadata`) on an async tool in a `FunctionToolset` with a unique `id`, set before the agent is constructed (not with a later `@agent.tool`). The child's inputs (tool arguments, serialized run context, `deps`) must be serializable.
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
@@ -109,8 +113,10 @@ OpenAI background mode.
 
 Under durable execution, put the capability on the agent. With Temporal, DBOS or Prefect, submitting and each check
 are durable steps and a recovered run continues with the same batch; the waits between checks are durable on
-Temporal and DBOS, and plain sleeps on Prefect. The Harness engines (AWS Lambda, Absurd, pgtask, Render Workflows)
-sleep in-process between checks, so the process must stay up for the whole batch. Restate and Airflow don't record
+Temporal and DBOS, and plain sleeps on Prefect. Under the Harness's Azure Durable Task engine, submitting and each
+check are activities and the waits between them are durable timers, so a recovered run continues with the same batch.
+The other Harness engines (AWS Lambda, Absurd, pgtask, Render Workflows) sleep in-process between checks, so the
+process must stay up for the whole batch. Restate and Airflow don't record
 batched requests, so recovery submits them again, in a new batch that's billed too. Where an engine can't wait out a long
 batch, use `PendingModelResponse` and schedule the next run from the stored history yourself. See
 https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution for each engine's details.
@@ -193,7 +199,7 @@ Common entry points:
 
 - `Case`
 - `Dataset`
-- evaluator classes from `pydantic_evals.evaluators`
+- evaluator classes from `pydantic_evals.evaluators`, or plain functions taking an `EvaluatorContext` for checks without parameters (saved to dataset files under the function's name, so pass them in `custom_evaluator_types` to load)
 
 ## Build Custom Toolsets, Models, or Agents
 

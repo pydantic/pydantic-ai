@@ -6,6 +6,7 @@ dispatching them asynchronously in the background after each run completes.
 
 from __future__ import annotations
 
+import functools
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
@@ -22,8 +23,9 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from . import _online as _online_internal, _task_run
+from .evaluators._run_evaluator import as_evaluator
 from .evaluators.context import EvaluatorContext
-from .evaluators.evaluator import Evaluator
+from .evaluators.evaluator import Evaluator, EvaluatorFunc
 from .online import (
     DEFAULT_CONFIG,
     OnlineEvalConfig,
@@ -70,6 +72,18 @@ class _RunEvaluation:
 _CURRENT_RUN_EVALUATION: ContextVar[_RunEvaluation | None] = ContextVar('_CURRENT_RUN_EVALUATION', default=None)
 
 
+@dataclass
+class _StartedRun:
+    """What an `OnlineEvaluation` read when a run started, for dispatching its evaluators once the run ends."""
+
+    inputs: Any
+    durable: bool
+    sampled: list[OnlineEvaluator]
+    metadata: dict[str, Any] | None
+    target: str
+    span_reference: SpanReference | None
+
+
 @dataclass(kw_only=True)
 class OnlineEvaluation(AbstractCapability[AgentDepsT]):
     """Capability that runs online evaluators on agent run results.
@@ -114,8 +128,11 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
     ```
     """
 
-    evaluators: Sequence[Evaluator | OnlineEvaluator]
-    """Evaluators to run after each agent run."""
+    evaluators: Sequence[Evaluator | EvaluatorFunc | OnlineEvaluator]
+    """Evaluators to run after each agent run.
+
+    Plain functions are wrapped in a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator].
+    """
 
     config: OnlineEvalConfig | None = None
     """Optional config override. Defaults to the global `DEFAULT_CONFIG`."""
@@ -125,7 +142,7 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         self._online_evaluators = [
-            e if isinstance(e, OnlineEvaluator) else OnlineEvaluator(evaluator=e) for e in self.evaluators
+            e if isinstance(e, OnlineEvaluator) else OnlineEvaluator(evaluator=as_evaluator(e)) for e in self.evaluators
         ]
         self._resolved_config = self.config if self.config is not None else DEFAULT_CONFIG
 
@@ -168,57 +185,7 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
             if not sampled:
                 return await handler()
 
-        # Merge config and run metadata
-        metadata: dict[str, Any] | None = None
-        if config.metadata is not None or ctx.metadata is not None:
-            metadata = {**(config.metadata or {}), **(ctx.metadata or {})}
-
-        # Use the agent's declared name when available so evaluation events can be
-        # filtered per-agent. Fall back to the generic 'agent' label when unset.
-        agent_name = ctx.agent.name if ctx.agent is not None else None
-        target = agent_name or 'agent'
-        span_reference = _parse_traceparent(logfire_api.get_context().get('traceparent'))
-
-        def dispatch(output: Any, *, failed: bool) -> _Dispatch:
-            """Bind this capability's own outcome of the run; the capturing capability supplies the measurements."""
-
-            async def dispatch_with(eval_context_kwargs: dict[str, Any]) -> None:
-                if durable:
-                    if failed and not any(ev.run_on_errors for ev in self._online_evaluators):
-                        return
-                    await self._dispatch_durably(
-                        ctx,
-                        _DurableDispatch(
-                            name=ctx.run_id,
-                            inputs=inputs,
-                            output=output,
-                            failed=failed,
-                            metadata=metadata,
-                            duration=eval_context_kwargs['duration'],
-                            span_tree=eval_context_kwargs['_span_tree'],
-                            attributes=eval_context_kwargs['attributes'],
-                            metrics=eval_context_kwargs['metrics'],
-                            span_reference=span_reference,
-                            target=target,
-                        ),
-                    )
-                    return
-                evaluators = [ev for ev in sampled if ev.run_on_errors] if failed else sampled
-                if not evaluators:
-                    return
-                context = EvaluatorContext(
-                    name=ctx.run_id,
-                    inputs=inputs,
-                    output=output,
-                    expected_output=None,
-                    metadata=metadata,
-                    **eval_context_kwargs,
-                )
-                _online_internal.dispatch_async(
-                    _online_internal.dispatch_evaluators(evaluators, context, span_reference, target, config)
-                )
-
-            return dispatch_with
+        run = self._start_run(ctx, inputs, durable, sampled)
 
         if joined is not None:
             # The capturing capability dispatches for every capability that joined it, each with the
@@ -226,9 +193,9 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
             try:
                 result = await handler()
             except Exception as e:
-                joined.dispatchers.append(dispatch(e, failed=True))
+                joined.dispatchers.append(self._dispatcher(ctx, run, e, failed=True))
                 raise
-            joined.dispatchers.append(dispatch(result.output, failed=False))
+            joined.dispatchers.append(self._dispatcher(ctx, run, result.output, failed=False))
             return result
 
         run_evaluation = _RunEvaluation(run_id=ctx.run_id)
@@ -243,16 +210,90 @@ class OnlineEvaluation(AbstractCapability[AgentDepsT]):
         except Exception as e:
             assert get_eval_context_kwargs is not None
             await _dispatch_all(
-                [dispatch(e, failed=True), *run_evaluation.dispatchers], get_eval_context_kwargs(), run_failed=True
+                [self._dispatcher(ctx, run, e, failed=True), *run_evaluation.dispatchers],
+                get_eval_context_kwargs(),
+                run_failed=True,
             )
             raise
         finally:
             _CURRENT_RUN_EVALUATION.reset(token)
 
         await _dispatch_all(
-            [dispatch(result.output, failed=False), *run_evaluation.dispatchers], get_eval_context_kwargs()
+            [self._dispatcher(ctx, run, result.output, failed=False), *run_evaluation.dispatchers],
+            get_eval_context_kwargs(),
         )
         return result
+
+    def _start_run(
+        self, ctx: RunContext[AgentDepsT], inputs: Any, durable: bool, sampled: list[OnlineEvaluator]
+    ) -> _StartedRun:
+        config = self._resolved_config
+
+        # Merge config and run metadata
+        metadata: dict[str, Any] | None = None
+        if config.metadata is not None or ctx.metadata is not None:
+            metadata = {**(config.metadata or {}), **(ctx.metadata or {})}
+
+        # Use the agent's declared name when available so evaluation events can be
+        # filtered per-agent. Fall back to the generic 'agent' label when unset.
+        agent_name = ctx.agent.name if ctx.agent is not None else None
+        return _StartedRun(
+            inputs=inputs,
+            durable=durable,
+            sampled=sampled,
+            metadata=metadata,
+            target=agent_name or 'agent',
+            span_reference=_parse_traceparent(logfire_api.get_context().get('traceparent')),
+        )
+
+    def _dispatcher(self, ctx: RunContext[AgentDepsT], run: _StartedRun, output: Any, *, failed: bool) -> _Dispatch:
+        """Bind this capability's own outcome of the run; the capturing capability supplies the measurements."""
+        return functools.partial(self._dispatch_outcome, ctx, run, output, failed)
+
+    async def _dispatch_outcome(
+        self,
+        ctx: RunContext[AgentDepsT],
+        run: _StartedRun,
+        output: Any,
+        failed: bool,
+        eval_context_kwargs: dict[str, Any],
+    ) -> None:
+        if run.durable:
+            if failed and not any(ev.run_on_errors for ev in self._online_evaluators):
+                return
+            await self._dispatch_durably(
+                ctx,
+                _DurableDispatch(
+                    name=ctx.run_id,
+                    inputs=run.inputs,
+                    output=output,
+                    failed=failed,
+                    metadata=run.metadata,
+                    duration=eval_context_kwargs['duration'],
+                    span_tree=eval_context_kwargs['_span_tree'],
+                    attributes=eval_context_kwargs['attributes'],
+                    metrics=eval_context_kwargs['metrics'],
+                    span_reference=run.span_reference,
+                    target=run.target,
+                ),
+            )
+            return
+        evaluators = [ev for ev in run.sampled if ev.run_on_errors] if failed else run.sampled
+        if not evaluators:
+            return
+        context = EvaluatorContext(
+            name=ctx.run_id,
+            inputs=run.inputs,
+            output=output,
+            expected_output=None,
+            metadata=run.metadata,
+            **eval_context_kwargs,
+        )
+        _online_internal.dispatch_async(
+            _online_internal.dispatch_evaluators(
+                evaluators, context, run.span_reference, run.target, self._resolved_config
+            )
+        )
 
     @durable_operation(name='dispatch')
     async def _dispatch_durably(self, ctx: RunContext[AgentDepsT], dispatch: _DurableDispatch) -> None:
