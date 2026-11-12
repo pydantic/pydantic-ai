@@ -840,6 +840,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         """A link to watch the desktop, and use it, in a browser, through the template's noVNC viewer.
 
         The link carries the viewer's password: anyone with it can see and use the desktop while the sandbox runs.
+        The password is after the `#`, which the browser keeps and doesn't send to E2B's servers.
         """
         if self._display is None:
             raise UserError('This E2B sandbox has no display: create it with `desktop=True`.')
@@ -852,7 +853,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
             )
         sandbox = await self.get_sandbox()
         host = sandbox.get_host(_VIEWER_PORT)
-        return f'https://{host}/vnc.html?autoconnect=true&resize=scale&password={result.stdout.strip()}'
+        return f'https://{host}/vnc.html?autoconnect=true&resize=scale#password={result.stdout.strip()}'
 
 
 async def kill_sandbox(sandbox_id: str) -> None:
