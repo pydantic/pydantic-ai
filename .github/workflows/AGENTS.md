@@ -551,6 +551,27 @@ fabricated agent result. The non-model provider-health monitor owns incident iss
 creation and recovery. Do not enable gh-aw's generic failure-as-issue reporting or its
 failed-job reporting (`report-failed-jobs`) for these workflows.
 
+Every decision, the gate's and the agent-start recheck's, also exports one
+`Z.AI provider health decision` span over OTLP/HTTP JSON:
+
+- The controller reads the OTLP endpoint, `Authorization` header, service name and resource
+  attributes that `shared/otel-logfire.md` compiles into each lock's workflow-level `env:`.
+  Add no Logfire secret to these jobs or steps.
+- Without the token, as on fork pull request events, it sends nothing. A failed export prints a
+  warning and never changes the decision or the exit code.
+- It sends with redirects disabled, as the Z.AI quota check does.
+- `github.job` is `provider_health` for the gate and `agent` for the recheck. The recheck joins
+  gh-aw's agent-job trace. The gate runs before gh-aw starts that trace, so its span starts its own;
+  join the two by the `github.run_id` resource attribute.
+- The span carries `provider_health.ready`, `.reason` and `.account`. Each checked account adds
+  `provider_health.<account>.ready`, `.reason` and `.quota.*`, the artifact's quota fields. A gate
+  that checked only the primary reports the decision as the primary's.
+- `PR Review Checks` gives the controller to the `telemetry` check as a joint path, so the
+  `general` check still reviews it.
+
+The runner's `Workflow finished` log adds `failure_kind` and `http_status` from the failure the
+record receives, and `zai_error_code` from a model HTTP error's body.
+
 The gate checks the primary account first. When the primary's own provider incident or its quota
 blocks it, and `ZAI_BACKUP_API_KEY` is set, the gate checks the backup account the same way. A
 workflow or task incident blocks both accounts, so the gate does not check the backup for it. The run

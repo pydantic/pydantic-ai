@@ -8,10 +8,13 @@ import json
 import ssl
 import sys
 import threading
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import replace
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import ANY
 
 import pytest
 
@@ -54,6 +57,12 @@ def _no_incident_reread_delay(monkeypatch: pytest.MonkeyPatch) -> None:
 def _no_backup_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """Check only the primary account unless a test configures the backup key."""
     monkeypatch.delenv('ZAI_BACKUP_API_KEY', raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_otlp_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Export no decision span unless a test serves its own endpoint."""
+    monkeypatch.delenv('OTEL_EXPORTER_OTLP_ENDPOINT', raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -3940,6 +3949,232 @@ def test_gate_without_a_backup_key_blocks_as_before(
     assert probes == [_PRIMARY_KEY]
     assert decision == replace(decision, ready=False, reason='Z.ai quota is exhausted', account=None, accounts=())
     assert outputs == 'ready=false\nreason=Z.ai quota is exhausted\naccount=\n'
+
+
+@contextmanager
+def _http_server(handler: type[BaseHTTPRequestHandler]) -> Generator[str]:
+    """Serve `handler` on a local port, yielding its base URL."""
+    server = ThreadingHTTPServer(('127.0.0.1', 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f'http://127.0.0.1:{server.server_address[1]}'
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+class _Collector(BaseHTTPRequestHandler):
+    """An OTLP/HTTP endpoint recording each POST's path, `Authorization` header and body."""
+
+    received: list[tuple[str, str | None, bytes]] = []
+    status = 200
+
+    def do_POST(self) -> None:
+        self.received.append(
+            (self.path, self.headers.get('Authorization'), self.rfile.read(int(self.headers['Content-Length'])))
+        )
+        self.send_response(self.status)
+        self.send_header('Location', '/elsewhere')
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+def _otlp(values: Mapping[str, Mapping[str, object]]) -> list[dict[str, object]]:
+    return [{'key': key, 'value': value} for key, value in values.items()]
+
+
+@pytest.mark.parametrize('job', ['agent', 'provider_health'])
+def test_each_decision_exports_one_span_with_both_accounts_quota(
+    job: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backup-account decision reaches the OTLP endpoint as one span with both accounts' quota windows.
+
+    The agent-start recheck joins gh-aw's agent-job trace. The gate runs before that trace exists and starts its own.
+    """
+    _stub_account_quotas(
+        monkeypatch, _parse_zai_quota(_quota_response(interval_percentage=100)), _parse_zai_quota(_quota_response())
+    )
+    received: list[tuple[str, str | None, bytes]] = []
+    monkeypatch.setattr(_Collector, 'received', received)
+    monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS', 'Authorization=logfire%20fixture-token')
+    monkeypatch.setenv('OTEL_SERVICE_NAME', 'gh-aw.pydantic-ai-pr-review')
+    monkeypatch.setenv(
+        'OTEL_RESOURCE_ATTRIBUTES', 'service.name=other,gh-aw.workflow.name=CI%20Review,github.run_id=43'
+    )
+    monkeypatch.setenv('GITHUB_JOB', job)
+    # A default-branch dispatch with a recovery issue, which the span also records.
+    monkeypatch.setenv('PYDANTIC_AI_RECOVERY_ISSUE', '7')
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'workflow_dispatch')
+    monkeypatch.setenv('GITHUB_REF', 'refs/heads/main')
+    if job == 'agent':
+        monkeypatch.setenv('GITHUB_AW_OTEL_TRACE_ID', 'a' * 32)
+        monkeypatch.setenv('GITHUB_AW_OTEL_PARENT_SPAN_ID', 'b' * 16)
+    else:
+        monkeypatch.delenv('GITHUB_AW_OTEL_TRACE_ID', raising=False)
+        monkeypatch.delenv('GITHUB_AW_OTEL_PARENT_SPAN_ID', raising=False)
+
+    with _http_server(_Collector) as endpoint:
+        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', endpoint + '/')
+        decision, _, _ = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
+
+    assert decision.account == 'backup'
+    [(path, authorization, body)] = received
+    assert (path, authorization) == ('/v1/traces', 'logfire fixture-token')
+    windows = {
+        'weekly_remaining_percent': {'doubleValue': 84.0},
+        'interval_reset_at': {'stringValue': '2026-10-03T07:35:26Z'},
+        'weekly_reset_at': {'stringValue': '2026-10-08T14:54:29Z'},
+    }
+    attributes = {
+        'github.job': {'stringValue': job},
+        'provider_health.ready': {'boolValue': True},
+        'provider_health.reason': {'stringValue': decision.reason},
+        'provider_health.workflow': {'stringValue': 'CI Review'},
+        'provider_health.task_key': {'stringValue': 'task-1'},
+        'provider_health.trigger_event': {'stringValue': 'workflow_run'},
+        'provider_health.run_attempt': {'intValue': '1'},
+        'provider_health.account': {'stringValue': 'backup'},
+        'provider_health.recovery_issue': {'intValue': '7'},
+        'provider_health.primary.ready': {'boolValue': False},
+        'provider_health.primary.reason': {'stringValue': 'Z.ai quota is exhausted'},
+        'provider_health.primary.quota.status': {'stringValue': 'exhausted'},
+        'provider_health.primary.quota.reset_at': {'stringValue': '2026-10-03T07:35:26Z'},
+        'provider_health.primary.quota.interval_remaining_percent': {'doubleValue': 0.0},
+        **{f'provider_health.primary.quota.{name}': value for name, value in windows.items()},
+        'provider_health.backup.ready': {'boolValue': True},
+        'provider_health.backup.reason': {'stringValue': 'Provider health check passed'},
+        'provider_health.backup.quota.status': {'stringValue': 'healthy'},
+        'provider_health.backup.quota.interval_remaining_percent': {'doubleValue': 99.0},
+        **{f'provider_health.backup.quota.{name}': value for name, value in windows.items()},
+    }
+    resource = {
+        'service.name': {'stringValue': 'gh-aw.pydantic-ai-pr-review'},
+        'gh-aw.workflow.name': {'stringValue': 'CI Review'},
+        'github.run_id': {'stringValue': '43'},
+    }
+    exported = json.loads(body)
+    trace_id = exported['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['traceId']
+    if job == 'agent':
+        trace = {'traceId': 'a' * 32, 'parentSpanId': 'b' * 16}
+    else:
+        assert len(trace_id) == 32 and set(trace_id) <= set('0123456789abcdef')
+        trace = {'traceId': trace_id}
+    span = {
+        **trace,
+        'spanId': ANY,
+        'name': 'Z.AI provider health decision',
+        'kind': 1,
+        'startTimeUnixNano': ANY,
+        'endTimeUnixNano': ANY,
+        'attributes': _otlp(attributes),
+    }
+    scope = {'scope': {'name': 'agent_provider_health'}, 'spans': [span]}
+    assert exported == {'resourceSpans': [{'resource': {'attributes': _otlp(resource)}, 'scopeSpans': [scope]}]}
+
+
+@pytest.mark.parametrize(
+    ('headers', 'status', 'endpoint', 'sent', 'warning'),
+    [
+        ('Authorization=', 200, None, False, None),
+        ('Authorization=token', 302, None, True, 'HTTP 302'),
+        # `http.client` rejects the header with a `ValueError` whose message repeats the header value.
+        ('Authorization=token%0Asecret-fixture', 200, None, False, 'ValueError'),
+        ('Authorization=token', 200, 'localhost:4318', False, 'the OTLP endpoint has no http(s) scheme'),
+        ('Authorization=token', 200, 'https://[::1', False, 'ValueError'),
+    ],
+)
+def test_decision_span_export_never_changes_the_decision(
+    headers: str,
+    status: int,
+    endpoint: str | None,
+    sent: bool,
+    warning: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A run without the token sends nothing; a refused or invalid export only warns, without the token."""
+    _stub_account_quotas(monkeypatch, health.Quota('healthy'), None)
+    received: list[tuple[str, str | None, bytes]] = []
+    monkeypatch.setattr(_Collector, 'received', received)
+    monkeypatch.setattr(_Collector, 'status', status)
+    monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS', headers)
+
+    with _http_server(_Collector) as url:
+        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', endpoint or url)
+        decision, outputs, _ = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
+
+    assert decision.ready
+    assert outputs == 'ready=true\nreason=Provider health check passed\naccount=primary\n'
+    assert [path for path, _, _ in received] == (['/v1/traces'] if sent else [])
+    out = capsys.readouterr().out
+    assert 'secret-fixture' not in out
+    warnings = [line for line in out.splitlines() if line.startswith('::warning::')]
+    assert warnings == ([] if warning is None else [f'::warning::Could not export the provider health span: {warning}'])
+
+
+class _BrokenEndpoint(BaseHTTPRequestHandler):
+    """An OTLP endpoint that drops the connection, or answers with a line that is not an HTTP status line."""
+
+    reply = b''
+
+    def do_POST(self) -> None:
+        self.rfile.read(int(self.headers['Content-Length']))
+        self.wfile.write(self.reply)
+        self.close_connection = True
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
+@pytest.mark.parametrize(('reply', 'error'), [(b'', 'RemoteDisconnected'), (b'not http\r\n', 'BadStatusLine')])
+def test_a_broken_export_connection_only_warns(
+    reply: bytes, error: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A dropped connection (`OSError`) or a reply that is not HTTP (`HTTPException`) warns, and the decision stands."""
+    _stub_account_quotas(monkeypatch, health.Quota('healthy'), None)
+    monkeypatch.setattr(_BrokenEndpoint, 'reply', reply)
+    monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS', 'Authorization=token')
+
+    with _http_server(_BrokenEndpoint) as url:
+        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', url)
+        decision, outputs, _ = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
+
+    assert decision.ready
+    assert outputs == 'ready=true\nreason=Provider health check passed\naccount=primary\n'
+    warnings = [line for line in capsys.readouterr().out.splitlines() if line.startswith('::warning::')]
+    assert warnings == [f'::warning::Could not export the provider health span: {error}']
+
+
+def test_a_blocked_decision_exports_its_unknown_quota_without_an_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A gate blocked by an unreadable primary quota, with no backup key, exports the diagnostic and no account."""
+    _stub_account_quotas(monkeypatch, health.Quota('unknown', diagnostic='http_error', http_status=503), None)
+    received: list[tuple[str, str | None, bytes]] = []
+    monkeypatch.setattr(_Collector, 'received', received)
+    monkeypatch.setenv('OTEL_EXPORTER_OTLP_HEADERS', 'Authorization=token')
+
+    with _http_server(_Collector) as url:
+        monkeypatch.setenv('OTEL_EXPORTER_OTLP_ENDPOINT', url)
+        decision, _, _ = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
+
+    assert (decision.ready, decision.account) == (False, None)
+    [(_, _, body)] = received
+    [span] = json.loads(body)['resourceSpans'][0]['scopeSpans'][0]['spans']
+    attributes = {item['key']: item['value'] for item in span['attributes']}
+    assert 'provider_health.account' not in attributes
+    assert {key: value for key, value in attributes.items() if key.startswith('provider_health.primary.')} == {
+        'provider_health.primary.ready': {'boolValue': False},
+        'provider_health.primary.reason': {'stringValue': decision.reason},
+        'provider_health.primary.quota.status': {'stringValue': 'unknown'},
+        'provider_health.primary.quota.diagnostic': {'stringValue': 'http_error'},
+        'provider_health.primary.quota.http_status': {'intValue': '503'},
+    }
 
 
 def _monitor_blocked_gate(decision: health.Health, client: FakeGitHub, tmp_path: Path) -> None:
