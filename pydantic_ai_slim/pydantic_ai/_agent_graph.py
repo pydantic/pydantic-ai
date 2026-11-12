@@ -1117,10 +1117,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 messages = ctx_messages.messages
                 ctx_messages.used = True
 
-        # Read from the history as stored: cleaning merges the requests after the response, losing their run and state.
-        answered_at_pause = self._answered_at_resumed_pause(ctx.state.message_history)
         # Replace the `capture_run_messages` list with the message history
-        messages[:] = _clean_message_history(ctx.state.message_history)
+        messages[:], answered_at_pause = self._history_to_run(ctx.state.message_history)
         # Use the `capture_run_messages` list as the message history so that new messages are added to it
         ctx.state.message_history = messages
         ctx.deps.new_message_index = len(messages)
@@ -1140,7 +1138,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 # The history ends on what a run that paused for deferred tool calls wrote after its response.
                 # Run the response's unanswered calls again, as a history ending on the response would, so
                 # deferred ones pause the run again.
-                response, _ = await self._adopt_resumed_response(ctx, messages, len(messages) - 2)
+                index = _last_response_index(messages)
+                assert index is not None  # `_answered_at_pause` found it.
+                response, _ = await self._adopt_resumed_response(ctx, messages, index)
                 return CallToolsNode[DepsT, NodeRunEndT](response, _answered_tool_call_ids=answered_at_pause)
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
@@ -1217,11 +1217,20 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
         )
 
-    def _answered_at_resumed_pause(self, history: list[_messages.ModelMessage]) -> tuple[str, ...] | None:
-        """The calls answered at a deferred pause this run resumes with neither a new prompt nor results, if any."""
-        if self.user_prompt is not None or self.deferred_tool_results is not None:
-            return None
-        return _answered_at_pause(history)
+    def _history_to_run(
+        self, stored: list[_messages.ModelMessage]
+    ) -> tuple[list[_messages.ModelMessage], tuple[str, ...] | None]:
+        """The history to run on, and the calls answered at the deferred pause it resumes, if it resumes one.
+
+        A run given neither a new prompt nor results resumes a pause its history ends on. That history is kept as
+        stored: cleaning would merge the requests the pause wrote, losing the run ID that marks them as part of it.
+        The model request that eventually follows cleans the copy it sends. Any other history is cleaned.
+        """
+        if self.user_prompt is None and self.deferred_tool_results is None:
+            answered = _answered_at_pause(stored)
+            if answered is not None:
+                return list(stored), answered
+        return _clean_message_history(stored), None
 
     async def _adopt_resumed_response(
         self,
@@ -1379,7 +1388,7 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[str, 
     a UI adapter's, which isn't a pause, or with an interrupted request, which `_repair_interrupted_tail`
     closes out. Must be given the history as stored, before cleaning merges these requests.
     """
-    index = next((i for i in range(len(history) - 1, -1, -1) if isinstance(history[i], _messages.ModelResponse)), None)
+    index = _last_response_index(history)
     if index is None or index == len(history) - 1:
         return None
     response = history[index]
@@ -1390,7 +1399,7 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[str, 
         part.tool_call_id
         for request in requests
         for part in request.parts
-        if isinstance(part, _messages.ToolReturnPart) and part.tool_call_id in call_ids
+        if _is_tool_result_part(part) and part.tool_call_id in call_ids
     ]
     if (
         response.state != 'complete'
@@ -1407,7 +1416,11 @@ def _written_at_pause(request: _messages.ModelRequest, response: _messages.Model
         return False
     if response.run_id is not None and request.run_id == response.run_id:
         return True
-    return any(isinstance(part, _messages.ToolReturnPart) and part.tool_call_id in call_ids for part in request.parts)
+    return any(_is_tool_result_part(part) and part.tool_call_id in call_ids for part in request.parts)
+
+
+def _last_response_index(history: Sequence[_messages.ModelMessage]) -> int | None:
+    return next((i for i in range(len(history) - 1, -1, -1) if isinstance(history[i], _messages.ModelResponse)), None)
 
 
 def _resumed_request(request: _messages.ModelRequest) -> _messages.ModelRequest:
