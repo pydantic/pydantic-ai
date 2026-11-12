@@ -5605,8 +5605,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         if (
                             computer_is_native
                             and item.provider_name == self.system
-                            and item.provider_details
-                            and (computer_call := item.provider_details.get('computer_call'))
+                            and (computer_call := _stored_computer_call(item))
                         ):
                             # Sent back as it came, so the API can pair its output and safety checks.
                             computer_call_ids.add(call_id)
@@ -8467,7 +8466,8 @@ def _map_computer_action(raw: Any) -> list[tuple[dict[str, Any], str | None]]:
                 ('scroll_y', action.scroll_y, 'down' if action.scroll_y > 0 else 'up'),
             ):
                 if pixels:
-                    clicks = max(1, round(abs(pixels) / _SCROLL_PIXELS_PER_CLICK))
+                    # Rounded half up in whole numbers: any JSON integer is valid, and a float can't hold them all.
+                    clicks = max(1, (abs(pixels) + _SCROLL_PIXELS_PER_CLICK // 2) // _SCROLL_PIXELS_PER_CLICK)
                     scroll = {
                         'type': 'scroll',
                         'x': action.x,
@@ -8498,6 +8498,20 @@ _SCROLL_NOTES = 'computer_scroll_notes'
 """The `provider_details` key of a note per `computer` tool action, on how a pixel scroll ran in wheel clicks."""
 
 _SCROLL_NOTES_TA = TypeAdapter(list[str | None])
+
+_STORED_ITEM_TA = TypeAdapter(dict[str, Any])
+
+
+def _stored_computer_call(part: ToolCallPart) -> dict[str, Any] | None:
+    """The `computer_call` item a call came as, to send back as it was, or `None` to send the call back plain.
+
+    A history can come back from storage or a UI, so the item is checked to be an object; what's inside it is the
+    API's to judge.
+    """
+    try:
+        return _STORED_ITEM_TA.validate_python((part.provider_details or {}).get('computer_call')) or None
+    except ValidationError:
+        return None
 
 
 def _map_computer_call(
