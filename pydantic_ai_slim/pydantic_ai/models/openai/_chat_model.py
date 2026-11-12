@@ -314,12 +314,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return super()._no_batch_api_message()
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Leave the `'12h'` cache retention out of `supported_cache_retentions`, before the user's `profile=` applies.
+        """Turn off what Chat Completions doesn't serve, before the user's `profile=` applies.
 
-        Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on every GPT-5.6, GPT-6
-        and GPT-6.1 model), while the Responses API on the same models accepts it, and the providers declare their
-        tiers per model rather than per API.
+        `supports_compaction_on_demand` is off: `OpenAIProvider` sets it for the Responses API's compaction endpoint,
+        Chat Completions has none, and `OpenAIChatModel` doesn't implement `compact_messages`. The `'12h'` cache
+        retention is left out of `supported_cache_retentions`: Chat Completions rejects `prompt_cache_options.ttl='12h'`
+        with a 400 (verified live on every GPT-5.6, GPT-6 and GPT-6.1 model), while the Responses API on the same
+        models accepts it, and the providers declare their tiers per model rather than per API.
         """
+        profile = merge_profile(profile, ModelProfile(supports_compaction_on_demand=False))
         retentions = profile.get('supported_cache_retentions', ())
         if '12h' not in retentions:
             return profile

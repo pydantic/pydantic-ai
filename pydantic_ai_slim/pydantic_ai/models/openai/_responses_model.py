@@ -714,7 +714,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return cast(OpenAIModelProfile, profile)
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Turn off Batch API and Responses WebSocket defaults for Azure clients and the gateway.
+        """Turn off Batch API, compaction and Responses WebSocket defaults for Azure clients and the gateway.
 
         Every model resolves this, so it reads only the client's type and the provider's identity, never client state
         such as URLs, which a mocked or partly built client may not have yet.
@@ -722,6 +722,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
+        if is_gateway_provider(self._provider):
+            # The gateway doesn't serve the `/responses/compact` endpoint (probed live).
+            profile = merge_profile(profile, OpenAIModelProfile(supports_compaction_on_demand=False))
         # An Azure-named custom provider may advertise socket support with an ordinary OpenAI client.
         if isinstance(self._provider.client, AsyncAzureOpenAI) or is_gateway_provider(self._provider):
             # Responses WebSockets aren't verified on the Azure client, and the gateway's handshake fails with a 503

@@ -135,6 +135,23 @@ class AgentRetries(TypedDict, total=False):
     output: int
 
 
+class CompactionOptions(TypedDict, total=False):
+    """How a run compacts its message history before its first model request, with `compact=` on a run method.
+
+    `compact=True` is shorthand for `{'reason': 'manual'}`. The request is served like
+    [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction], by the capabilities'
+    [`compact_history`](../capabilities/compaction.md#the-compaction-hook) hooks.
+
+    Keys:
+        reason: Why the history is compacted, reported on the compaction events and the run's
+            [`compactions`][pydantic_ai.agent.AgentRunResult.compactions]. Default: `'manual'`.
+        focus: What the compaction should keep, like the argument to a `/compact` command.
+    """
+
+    reason: _messages.CompactionReason
+    focus: str
+
+
 _RunStreamEventsRunner: TypeAlias = Callable[[EventStreamHandler[Any]], Awaitable[AgentRunResult[OutputDataT]]]
 """Starts the background agent run with the internal event-forwarding handler and returns its result."""
 
@@ -212,6 +229,17 @@ class AgentRunEvents(
         all; iterating afterwards raises `RunCancelled` with empty `messages`.
         """
         self._binding.cancellation.cancel()
+
+    def request_compaction(self, *, reason: _messages.CompactionReason = 'manual', focus: str | None = None) -> None:
+        """Ask for the message history to be compacted before the run's next model request attempt.
+
+        See [`AgentRun.request_compaction`][pydantic_ai.run.AgentRun.request_compaction]. To compact before the
+        run's first request, pass `compact=` to `run_stream_events()` instead.
+
+        Raises:
+            UserError: If called before the first iteration has started the run, or after it has ended.
+        """
+        self._agent_run().request_compaction(reason=reason, focus=focus)
 
     def all_messages(self) -> list[_messages.ModelMessage]:
         """Return all messages from the run, including messages supplied as history.
@@ -506,6 +534,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -535,6 +564,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -563,6 +593,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -617,6 +648,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -650,6 +682,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 toolsets=toolsets,
                 capabilities=capabilities,
                 workspace=workspace,
+                compact=compact,
                 spec=spec,
             ) as agent_run:
                 # Drive via next() so capability hooks fire for each node. `next()` already streams a
@@ -728,6 +761,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -757,6 +791,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -785,6 +820,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -843,6 +879,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run. Under a durability capability, this per-run handler runs workflow-side; model events are replayed after each model request completes. For handler I/O inside the durable boundary, pass `event_stream_handler=` to the durability capability.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -877,6 +914,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
                 workspace=workspace,
+                compact=compact,
                 spec=spec,
             )
         )
@@ -907,6 +945,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
@@ -936,6 +975,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
@@ -965,6 +1005,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async streaming mode.
@@ -1028,6 +1069,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1065,6 +1107,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets=toolsets,
             capabilities=capabilities,
             workspace=workspace,
+            compact=compact,
             spec=spec,
         ) as agent_run:
             # Handle wrap_run short-circuit: result is already available
@@ -1266,6 +1309,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, OutputDataT]: ...
 
@@ -1294,6 +1338,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, RunOutputDataT]: ...
 
@@ -1321,6 +1366,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> result.StreamedRunResultSync[AgentDepsT, Any]:
         """Run the agent with a user prompt in sync streaming mode.
@@ -1396,6 +1442,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 Note that it does _not_ receive any events after the final result is found.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1429,6 +1476,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
                 workspace=workspace,
+                compact=compact,
                 spec=spec,
             )
         )
@@ -1458,6 +1506,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[OutputDataT]]: ...
 
@@ -1486,6 +1535,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[RunOutputDataT]]: ...
 
@@ -1513,6 +1563,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
@@ -1592,6 +1643,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:
@@ -1625,6 +1677,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 event_stream_handler=event_stream_handler,
                 capabilities=capabilities,
                 workspace=workspace,
+                compact=compact,
                 spec=spec,
             )
 
@@ -1655,6 +1708,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1683,6 +1737,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1712,6 +1767,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1815,6 +1871,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run. At run time, spec values are additive.
 
         Returns:

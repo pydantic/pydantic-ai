@@ -52,6 +52,7 @@ from .instrumentation import Instrumentation
 from .local_workspace import LocalWorkspace
 from .mcp import MCP, MCPAuthorizationTokenFunc
 from .model_fallback import ModelFallback
+from .native_compaction import NativeCompaction
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
@@ -94,6 +95,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         LocalWorkspace,
         MCP,
         ModelFallback,
+        NativeCompaction,
         PrefixTools,
         PrepareTools,
         ProcessHistory,
@@ -179,6 +181,7 @@ __all__ = [
     'CompactionModelRequest',
     'CompactionRequest',
     'CompactionResult',
+    'NativeCompaction',
     'DynamicCapability',
     'durable_operation',
     'RequestInput',
