@@ -895,9 +895,8 @@ The response's usage, and so its cost, stays the sum of the passes either way.
 
 ## Computer use
 
-Computer use is provided by the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability, which
-adds a [`ComputerTool`](../native-tools.md#computer-tool). Its `computer` tool is sent as the computer use tool each
-Claude model was trained on:
+Computer use comes from the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability, which adds a
+[`ComputerTool`](../native-tools.md#computer-tool). Each Claude model gets the computer use tool it was trained on:
 
 | Models | Claude API and Google Cloud | Bedrock and Foundry |
 |---|---|---|
@@ -905,11 +904,8 @@ Claude model was trained on:
 | Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` | `computer_20251124` |
 | Claude Sonnet 4.5, Haiku 4.5, Opus 4.1, Opus 4, Sonnet 4 | `computer_20250124` | `computer_20250124` |
 
-Other models get a function tool, and so does every model with `ComputerUse(native=False)`.
-
-Claude Opus 4.7, Opus 4.8 and the Claude 5 models take screenshots up to 2576 pixels on the longer side, and earlier
-models up to 1568 pixels and about 1.15 megapixels; on a larger screen, `ComputerUse` sends them a scaled-down
-screenshot (see [Screen size](../harness/computer-use.md#screen-size)).
+Other models, and any model with `ComputerUse(native=False)`, get a function tool. Each model's largest screenshot is
+listed under [Screen size](../harness/computer-use.md#screen-size).
 
 ## Web Tool Callers
 

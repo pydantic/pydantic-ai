@@ -52,12 +52,11 @@ class DisplayDriver(Protocol):
 class LazyDisplay:
     """The display a backend hands out for its lifetime: started on first use, and again after a failure.
 
-    Like the backend, it does nothing when built. `driver` drives the display once it runs. `start` brings the
-    display up, doing nothing to one that's running. `scope` wraps every call, start included, such as to map a
-    provider's errors.
+    Building it does nothing. `start` brings the display up and leaves a running one alone; `driver` then drives it.
+    `scope` wraps every call, start included, such as to map a provider's errors.
 
-    A call that only looks, such as a screenshot, is retried once after a failure, which starts a display that was
-    lost; an action isn't, so nothing is done twice.
+    A call that only looks, such as a screenshot, is retried once after a failure, which restarts a lost display. An
+    action isn't retried, so nothing is done twice.
 
     It implements [`Display`][pydantic_ai_harness.computer_use.Display] and every optional ability.
     """
@@ -81,9 +80,9 @@ class LazyDisplay:
         self._running = False
 
     async def start(self) -> None:
-        """Start the display now unless it's running, such as before handing out a link to watch it.
+        """Start the display now unless it runs, such as before handing out a link to watch it.
 
-        Unlike a call's own start, it checks a display already known to run: the environment may have restarted.
+        It checks even a display known to run, since the environment may have restarted.
         """
         async with self._scope():
             await self._start_unless_running(even_if_running=True)

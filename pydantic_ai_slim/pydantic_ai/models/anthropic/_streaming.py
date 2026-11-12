@@ -99,9 +99,8 @@ class AnthropicStreamedResponse(StreamedResponse):
         with map_api_errors(self._model_name, self._model_id_namespace):
             current_block: BetaContentBlock | None = None
             ignored_server_tool_use_indices: set[int] = set()
-            # A response's computer toolset calls are one batch: they become one `computer` call where the first of
-            # them was, kept up to date as each completes and started once, when the response ends, since the batch
-            # runs only then.
+            # A response's computer toolset calls are one batch: one `computer` call at the first one's place, updated
+            # as each completes and started once when the response ends, since the batch runs only then.
             native_computer = self._native_computer
             computer_blocks: list[dict[str, Any]] = []
             computer_input: list[str] = []

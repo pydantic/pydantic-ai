@@ -528,9 +528,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_supports_computer_tool: bool
     """Whether the Responses API accepts the native `computer` tool for this model. Default: False.
 
-    When enabled, `OpenAIResponsesModel` supports [`ComputerTool`][pydantic_ai.native_tools.ComputerTool], sending it
-    as OpenAI's native computer tool in place of the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND]
-    tool; otherwise that tool is sent as a function tool.
+    When enabled, `OpenAIResponsesModel` sends a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] as OpenAI's
+    native computer tool in place of the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool.
+    Otherwise that tool is a function tool.
     """
 
     openai_responses_tool_choice_accepts_additional_tools: bool
@@ -697,10 +697,8 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     if reasoning.efforts is not None:
         profile['openai_reasoning_efforts'] = reasoning.efforts
     if _is_computer_use_model(model_name):
-        # Measured live with the native `computer` tool and `detail: 'original'`, which OpenAI doesn't resize at these
-        # sizes: gpt-5.4 and gpt-5.6 click exactly up to 2560x1440 and miss by hundreds of pixels at 3840x2160.
-        # gpt-5.5 clicks exactly up to 1920x1200 (18 of 18), but often misses from 2048x1280 up (6 of 9 there, 4 of 9 at
-        # 2560x1440). A larger screen is sent scaled down to fit.
+        # gpt-5.4 and gpt-5.6 click exactly up to 2560x1440 and miss by hundreds of pixels at 3840x2160. gpt-5.5 clicks
+        # exactly up to 1920x1200 but often misses from 2048x1280 up.
         max_side, max_height = (1920, 1200) if model_name.startswith('gpt-5.5') else (2560, 1440)
         profile['computer_use_screenshot_max_side'] = max_side
         profile['computer_use_screenshot_max_pixels'] = max_side * max_height
@@ -710,10 +708,8 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 def _is_computer_use_model(model_name: str) -> bool:
     """Whether OpenAI serves its native `computer` tool to the model.
 
-    Checked against the live Responses API: GPT-5.4 (also mini and pro), GPT-5.5 (also pro), GPT-5.6 and GPT-6 accept
-    the tool and call it, while GPT-5.4 nano, GPT-5.3 Codex and GPT-5.2 reject it with a 400 ("Tool 'computer' is not
-    supported"). This differs from tool search above, which GPT-5.3 Codex and GPT-5.2 take. Known families only, so a
-    new family gets the `computer` function tool until it is added.
+    GPT-5.4 (also mini and pro), GPT-5.5 (also pro), GPT-5.6 and GPT-6 take it. GPT-5.4 nano, GPT-5.3 Codex and GPT-5.2
+    reject it, unlike tool search. A new family gets the `computer` function tool until it is added here.
     """
     return model_name.startswith(
         ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
