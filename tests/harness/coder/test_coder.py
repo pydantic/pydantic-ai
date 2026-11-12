@@ -249,3 +249,7 @@ async def test_coder_strict_reaches_the_delegates_ask_parent(tmp_path: Path, str
 
     assert 'ask_parent' in delegate_tools
     assert set(delegate_tools.values()) == {strict}
+
+
+def test_coder_loads_from_agent_spec() -> None:
+    Agent.from_spec({'model': 'test', 'capabilities': ['Coder']}, custom_capability_types=[Coder])
