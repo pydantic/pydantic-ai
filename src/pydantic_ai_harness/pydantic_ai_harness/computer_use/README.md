@@ -46,7 +46,7 @@ On a [read-only](https://pydantic.dev/docs/ai/core-concepts/workspace/#read-only
 
 The model must accept images.
 
-- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's on the Responses API; see
+- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's own computer tool on the Responses API; see
   [OpenAI](https://pydantic.dev/docs/ai/models/openai/#native-tools).
 - Every other model gets `computer` as a regular function tool.
 

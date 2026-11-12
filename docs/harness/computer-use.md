@@ -43,7 +43,7 @@ On a [read-only](../workspace.md#read-only-access) workspace the agent can take 
 
 The model must accept images.
 
-- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's on the Responses API; see
+- GPT-5.4 and later, except GPT-5.4 nano, get OpenAI's own computer tool on the Responses API; see
   [OpenAI](../models/openai.md#native-tools).
 - Every other model gets `computer` as a regular function tool.
 
