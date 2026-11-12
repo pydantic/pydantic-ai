@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable
 from typing import Any
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -16,12 +16,14 @@ SCRIPT = "import asyncio\nawait asyncio.gather(summarize(task='alpha'), summariz
 EXPECTED = "done: ['summary of alpha', 'summary of beta']"
 
 
-def summarize_model(calls: list[str], on_call: Callable[[str], None] | None = None) -> FunctionModel:
+def summarize_model(
+    calls: list[str], on_call: Callable[[str], None] | None = None, *, alpha_waits_for_beta: bool = True
+) -> FunctionModel:
     """A sub-agent model that records its requests in `calls` as `'<task> <message count>'`, then calls `on_call`.
 
-    Alpha's first request waits until beta has finished, so the two must run concurrently, and
-    alpha, dispatched first, finishes last. A dispatch that runs them one at a time fails on the
-    timeout rather than hanging.
+    With `alpha_waits_for_beta`, alpha's first request waits until beta has finished, so the two must
+    run concurrently, and alpha, dispatched first, finishes last. A dispatch that runs them one at a
+    time fails on the timeout rather than hanging.
     """
     beta_done = asyncio.Event()
 
@@ -34,14 +36,14 @@ def summarize_model(calls: list[str], on_call: Callable[[str], None] | None = No
             if task == 'beta':
                 beta_done.set()
             return ModelResponse(parts=[TextPart(f'summary of {task}')])
-        if task == 'alpha':
+        if alpha_waits_for_beta and task == 'alpha':
             await asyncio.wait_for(beta_done.wait(), timeout=5)
         return ModelResponse(parts=[ToolCallPart('noop')])
 
     return FunctionModel(summarize)
 
 
-def _orchestrator_model(script: str) -> FunctionModel:
+def orchestrator_model(script: str) -> FunctionModel:
     def orchestrate(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         returns = [part for part in messages[-1].parts if isinstance(part, ToolReturnPart)]
         if not returns:
@@ -62,17 +64,18 @@ def build_orchestrator(
     durable_orchestrator: bool = True,
     durable_sub_agents: bool = True,
     script: str = SCRIPT,
+    tool: Callable[[], str] = noop,
 ) -> Agent[None, str]:
     """An orchestrator that runs `script`, by default gathering two `summarize` sub-agents, which carry `durability()`."""
     summarize_agent = Agent(
         summarize,
         name='summarize',
         description='Summarize a text.',
-        tools=[noop],
+        tools=[Tool(tool, name='noop')],
         capabilities=[durability()] if durable_sub_agents else [],
     )
     return Agent(
-        _orchestrator_model(script),
+        orchestrator_model(script),
         name='orchestrator',
         capabilities=[DynamicWorkflow(agents=[summarize_agent]), *([durability()] if durable_orchestrator else [])],
     )
