@@ -205,22 +205,22 @@ class TestReadFileLineFormat:
     @pytest.mark.parametrize(
         ('text', 'offset', 'limit', 'expected'),
         [
-            pytest.param('a\nb\nc\n', 0, None, '     1\ta\n     2\tb\n     3\tc\n', id='numbered-from-one'),
-            pytest.param('no newline', 0, None, '     1\tno newline\n', id='no-trailing-newline'),
-            pytest.param('a\nb\nc\n', 0, 3, '     1\ta\n     2\tb\n     3\tc\n', id='exact-fit'),
-            pytest.param('a\nb\nc\n', 1, 2, '     2\tb\n     3\tc\n', id='exact-fit-from-offset'),
+            pytest.param('a\nb\nc\n', 1, None, '     1\ta\n     2\tb\n     3\tc\n', id='numbered-from-one'),
+            pytest.param('no newline', 1, None, '     1\tno newline\n', id='no-trailing-newline'),
+            pytest.param('a\nb\nc\n', 1, 3, '     1\ta\n     2\tb\n     3\tc\n', id='exact-fit'),
+            pytest.param('a\nb\nc\n', 2, 2, '     2\tb\n     3\tc\n', id='exact-fit-from-offset'),
             pytest.param(
                 'a\nb\nc\n',
-                0,
+                1,
                 2,
-                '     1\ta\n     2\tb\n... (1 more lines. Use offset=2 to continue reading.)\n',
+                '     1\ta\n     2\tb\n... (1 more lines. Use offset=3 to continue reading.)\n',
                 id='one-line-remaining',
             ),
             pytest.param(
                 'a\nb\nc\nd\ne\n',
+                3,
                 2,
-                2,
-                '     3\tc\n     4\td\n... (1 more lines. Use offset=4 to continue reading.)\n',
+                '     3\tc\n     4\td\n... (1 more lines. Use offset=5 to continue reading.)\n',
                 id='window-from-offset',
             ),
         ],
@@ -239,15 +239,35 @@ class TestReadFileLineFormat:
         (tmp_path / 'f.txt').write_text('\n'.join(f'line{i}' for i in range(10)))
         result = await _unhashed_toolset().read_file('f.txt', limit=3, workspace=LocalWorkspaceBackend(tmp_path))
         assert isinstance(result, str)
-        assert result.endswith('     3\tline2\n... (7 more lines. Use offset=3 to continue reading.)\n')
+        assert result.endswith('     3\tline2\n... (7 more lines. Use offset=4 to continue reading.)\n')
+
+    async def test_paging_by_the_hint_reads_every_line_once(self, tmp_path: Path) -> None:
+        (tmp_path / 'f.txt').write_text(''.join(f'line{i}\n' for i in range(1, 11)))
+        toolset, ws = _unhashed_toolset(), LocalWorkspaceBackend(tmp_path)
+        numbers: list[int] = []
+        offset = 1
+        while True:
+            result = await toolset.read_file('f.txt', offset=offset, limit=3, workspace=ws)
+            assert isinstance(result, str)
+            body = result.splitlines()[1:]
+            numbers += [int(line.split('\t')[0]) for line in body if '\t' in line]
+            if not body[-1].startswith('...'):
+                break
+            offset = int(body[-1].split('offset=')[1].split(' ')[0])
+        assert numbers == list(range(1, 11))
+
+    async def test_offset_names_the_line_it_shows_first(self, tmp_path: Path) -> None:
+        (tmp_path / 'f.txt').write_text('a\nb\nc\n')
+        result = await _unhashed_toolset().read_file('f.txt', offset=3, workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == '[f.txt | 3 lines]\n     3\tc\n'
 
     async def test_empty_file(self, tmp_path: Path) -> None:
         (tmp_path / 'empty.txt').write_text('')
         result = await _unhashed_toolset().read_file('empty.txt', workspace=LocalWorkspaceBackend(tmp_path))
         assert result == '[empty.txt | 0 lines]\n(empty file)\n'
 
-    @pytest.mark.parametrize('offset', [2, 5])
-    async def test_offset_at_or_past_the_end_is_a_retry(self, tmp_path: Path, offset: int) -> None:
+    @pytest.mark.parametrize('offset', [3, 6])
+    async def test_offset_past_the_end_is_a_retry(self, tmp_path: Path, offset: int) -> None:
         (tmp_path / 'f.txt').write_text('a\nb\n')
         with pytest.raises(ModelRetry, match=rf'^Offset {offset} exceeds file length \(2 lines\)\.$'):
             await _unhashed_toolset().read_file('f.txt', offset=offset, workspace=LocalWorkspaceBackend(tmp_path))
@@ -707,16 +727,22 @@ class TestReadFile:
         assert '1 lines' in result
 
     async def test_read_with_offset(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
-        result = await toolset.read_file('multi.txt', offset=2, workspace=ws)
-        assert 'line3' in result
-        assert 'line1' not in result
+        result = await toolset.read_file('multi.txt', offset=3, workspace=ws)
+        assert '     3\tline3' in result
+        assert 'line2' not in result
 
-    @pytest.mark.parametrize(('offset', 'limit'), [(-1, None), (0, 0), (0, -1)])
+    @pytest.mark.parametrize(('offset', 'limit'), [(-1, None), (1, 0), (1, -1)])
     async def test_read_rejects_invalid_window(
         self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend, offset: int, limit: int | None
     ) -> None:
         with pytest.raises(ModelRetry, match=r'offset|limit'):
             await toolset.read_file('multi.txt', offset=offset, limit=limit, workspace=ws)
+
+    async def test_read_rejects_zero_offset_with_the_new_counting(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend
+    ) -> None:
+        with pytest.raises(ModelRetry, match=r'^offset counts lines from 1; use offset=1 for the first line\.$'):
+            await toolset.read_file('multi.txt', offset=0, workspace=ws)
 
     async def test_read_with_limit(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = await toolset.read_file('multi.txt', limit=2, workspace=ws)
@@ -819,7 +845,7 @@ class TestReadFile:
         )
         result = await toolset.read_file('big.txt', limit=1000, workspace=LocalWorkspaceBackend(tmp_path))
         assert isinstance(result, str)
-        assert result.splitlines()[-2:] == ['    10\tline 9', '... (40 more lines. Use offset=10 to continue reading.)']
+        assert result.splitlines()[-2:] == ['    10\tline 9', '... (40 more lines. Use offset=11 to continue reading.)']
 
     async def test_lines_are_split_on_line_feeds_only(self, tmp_path: Path) -> None:
         # `rg` and `grep` number lines by line feeds alone, so `read_file` must too, or a model
@@ -827,7 +853,7 @@ class TestReadFile:
         (tmp_path / 'feed.c').write_text('a = 1;\n\x0c b = 2;\x1c\u2028c\nneedle = 3;\n', encoding='utf-8')
         toolset = _unhashed_toolset()
         ws = LocalWorkspaceBackend(tmp_path)
-        assert await toolset.read_file('feed.c', offset=2, workspace=ws) == '[feed.c | 3 lines]\n     3\tneedle = 3;\n'
+        assert await toolset.read_file('feed.c', offset=3, workspace=ws) == '[feed.c | 3 lines]\n     3\tneedle = 3;\n'
         walked = await toolset.search_files('needle', workspace=ReadOnlyWorkspace(Workspace(ws)))
         assert walked == 'feed.c:3:needle = 3;'
         assert 'lines: 3' in await toolset.file_info('feed.c', workspace=ws)

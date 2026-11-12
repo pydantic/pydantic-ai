@@ -149,7 +149,7 @@ class DisplayArgs(BaseModel):
 
     path: str | None = None
     command: str | None = None
-    offset: int = 0
+    offset: int = 1
     limit: int | None = None
     glob: str | None = None
     recursive: bool = True
