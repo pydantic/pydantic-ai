@@ -696,6 +696,12 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     )
     if reasoning.efforts is not None:
         profile['openai_reasoning_efforts'] = reasoning.efforts
+    if model_name.startswith('gpt-oss'):
+        # Hosts that serve gpt-oss without a mid-conversation system role, such as OpenRouter and Bedrock Converse,
+        # render `<system>` blocks, and gpt-oss keeps to its system prompt more reliably once told what they mean, so
+        # it gets the announcement from the first request (see the field's docstring). Here rather than in
+        # `harmony_model_profile`, which builds on this one, because not every host of gpt-oss uses that.
+        profile['default_framing_announcement'] = 'always'
     return profile
 
 

@@ -35,8 +35,8 @@ restoration into the integration.
 
 Set the public `engine_spec` once using `DurabilityEngineSpec`. Declare the engine name, durable
 unit noun, durable container noun, codec, unsupported runtime toolset kinds, wrapped toolset kinds,
-toolset lifecycles, tool-call result upgrade policy, discovery policy, sequential tool policy, and
-tool config key deliberately. Use `IDENTITY_CODEC` when the engine SDK serializes Python values
+toolset lifecycles, tool-call result upgrade policy, discovery policy, sequential tool policy,
+tool config key, and cancellation-token policy deliberately. Use `IDENTITY_CODEC` when the engine SDK serializes Python values
 itself. Use `JSON_CODEC` when the integration must reduce values to JSON-compatible payloads before
 journaling them.
 

@@ -139,14 +139,7 @@ def map_usage(
     if isinstance(response_usage, responses.ResponseUsage):
         api_flavor = 'responses'
         input_tokens_details = usage_data.get('input_tokens_details')
-
-        if getattr(response_usage, 'output_tokens_details', None) is not None:
-            details['reasoning_tokens'] = getattr(response_usage.output_tokens_details, 'reasoning_tokens', 0)
-        else:
-            details['reasoning_tokens'] = 0
-
-        if web_search_requests:
-            details['web_search_requests'] = web_search_requests
+        details.update(responses_usage_details(response_usage, web_search_requests))
     else:
         api_flavor = 'chat'
         input_tokens_details = usage_data.get('prompt_tokens_details')
@@ -176,3 +169,16 @@ def map_usage(
         if isinstance(cache_write_tokens, int):
             request_usage.cache_write_tokens = cache_write_tokens
     return request_usage
+
+
+def responses_usage_details(response_usage: responses.ResponseUsage, web_search_requests: int) -> dict[str, int]:
+    """The usage details only the Responses API reports: reasoning tokens, and the web searches billed."""
+    details: dict[str, int] = {}
+    if getattr(response_usage, 'output_tokens_details', None) is not None:
+        details['reasoning_tokens'] = getattr(response_usage.output_tokens_details, 'reasoning_tokens', 0)
+    else:
+        details['reasoning_tokens'] = 0
+
+    if web_search_requests:
+        details['web_search_requests'] = web_search_requests
+    return details
