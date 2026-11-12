@@ -41,7 +41,8 @@ def wait_until_ready(ready: str, pid: str, what: str, log: str) -> str:
     """A shell fragment that waits until the command `ready` succeeds, for a program just started in the background.
 
     It gives up as soon as the process `pid` exits, or after 10 seconds, saying `what` didn't start, with the end of
-    `log` as the reason.
+    `log` as the reason. `ready` must answer for the new process only: a log it reads is emptied before the program
+    starts, since the program's own redirect runs in the background, after the check may have read the last run's.
     """
     return (
         f'i=0; until {ready}; do '
@@ -49,6 +50,18 @@ def wait_until_ready(ready: str, pid: str, what: str, log: str) -> str:
         f"echo '{what} did not start:' >&2; tail -n 5 {log} >&2; exit 1; fi; "
         'sleep 0.1; i=$((i+1)); done; '
     )
+
+
+_MAX_REPEAT = 2**31 - 1
+"""The most times xdotool repeats a click or key: it reads `--repeat` into a C `int` with `atoi` (`cmd_click.c`,
+`cmd_key.c`)."""
+
+
+def _repeat(count: int) -> str:
+    """`count` as xdotool's `--repeat`, refused when xdotool can't take it."""
+    if count > _MAX_REPEAT:
+        raise UnsupportedActionError(f'The display can repeat a scroll or key at most {_MAX_REPEAT} times.')
+    return str(count)
 
 
 _BUTTONS: dict[str, str] = {'left': '1', 'middle': '2', 'right': '3', 'back': '8', 'forward': '9'}
@@ -457,7 +470,7 @@ class X11Computer:
             case Scroll(x=x, y=y, direction=direction, amount=amount, modifiers=modifiers):
                 wheel = _WHEEL_BUTTONS[direction]
                 await self._xdotool(
-                    [*_move(x, y), 'click', '--repeat', str(amount), '--delay', _SCROLL_TICK_DELAY_MS, wheel],
+                    [*_move(x, y), 'click', '--repeat', _repeat(amount), '--delay', _SCROLL_TICK_DELAY_MS, wheel],
                     hold=modifiers,
                     pauses=amount * _SCROLL_TICK_SECONDS,
                 )
@@ -471,7 +484,7 @@ class X11Computer:
                 keysyms = [_keysym(key) for key in keys]
                 # A cancel can land between pressing and releasing, so let go of the keys then too.
                 release = ['keyup', *reversed(keysyms)]
-                command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--repeat', str(repeat), '--', '+'.join(keysyms)]
+                command = ['xdotool', *_RELEASE_MODIFIERS, 'key', '--repeat', _repeat(repeat), '--', '+'.join(keysyms)]
                 await self._input([command], [release], repeat * _KEY_SECONDS)
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys, pauses=seconds)

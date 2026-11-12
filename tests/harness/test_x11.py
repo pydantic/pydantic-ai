@@ -230,6 +230,18 @@ async def test_x11_computer_refuses_characters_outside_ascii(action: DisplayActi
 
 
 @pytest.mark.parametrize(
+    'action',
+    [Scroll(direction='down', amount=2**31), PressKeys(keys=('a',), repeat=10**400)],
+    ids=['scroll', 'keypress'],
+)
+async def test_x11_computer_refuses_a_count_xdotool_cannot_take(action: DisplayAction) -> None:
+    commands = ScriptedCommands()
+    with pytest.raises(UnsupportedActionError, match='at most 2147483647 times'):
+        await X11Computer(commands).act(action)
+    assert commands.calls == []
+
+
+@pytest.mark.parametrize(
     'key',
     [
         # xdotool matches command names in any case.
