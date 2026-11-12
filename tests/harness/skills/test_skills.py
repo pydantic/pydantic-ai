@@ -380,7 +380,7 @@ def _calling(*calls: ToolCallPart) -> tuple[FunctionModel, list[ModelRequest], l
     return FunctionModel(respond), requests, tools
 
 
-def _tool_results(requests: list[ModelRequest]) -> list[Any]:
+def _tool_results(requests: list[ModelRequest]) -> list[object]:
     return [part.content for request in requests for part in request.parts if isinstance(part, ToolReturnPart)]
 
 
