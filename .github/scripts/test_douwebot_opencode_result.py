@@ -29,6 +29,19 @@ def test_completed_review_result(tmp_path: Path) -> None:
     assert review_result(stream).verdict == 'APPROVE'
 
 
+def test_line_separator_in_model_text_stays_in_its_event(tmp_path: Path) -> None:
+    """OpenCode's `JSON.stringify` leaves U+2028 raw, and only LF ends an event."""
+    stream = tmp_path / 'review.ndjson'
+    discussion = 'First point.\u2028Second point.'
+    result = json.dumps({'verdict': 'APPROVE', 'comments': [], 'discussion': discussion}, ensure_ascii=False)
+    events = [
+        {'type': 'text', 'part': {'messageID': 'msg_final', 'text': result}},
+        {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop'}},
+    ]
+    stream.write_text('\n'.join(json.dumps(event, ensure_ascii=False) for event in events) + '\n', encoding='utf-8')
+    assert review_result(stream).discussion == discussion
+
+
 @pytest.mark.parametrize(
     'events',
     [

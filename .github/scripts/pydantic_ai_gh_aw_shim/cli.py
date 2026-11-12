@@ -53,6 +53,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Annotated, Any, ClassVar, TypeAlias, cast
+from urllib.parse import urlparse
 
 import httpx2
 import logfire
@@ -147,7 +148,7 @@ def _anthropic_native_capabilities() -> list[NativeTool]:
     empty/unset means the Anthropic SDK default (real Anthropic).
     """
     base_url = os.environ.get('ANTHROPIC_BASE_URL', '')
-    if not base_url or 'api.anthropic.com' in base_url:
+    if not base_url or urlparse(base_url).hostname == 'api.anthropic.com':
         return [NativeTool(WebFetchTool())]
     return []
 

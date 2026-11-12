@@ -83,6 +83,7 @@ from pydantic_ai.capabilities import (
     NativeTool,
     PrepareTools,
     ProcessEventStream,
+    RequestInput,
     ResolveModelId,
     SelectModel,
     SetToolMetadata,
@@ -2047,6 +2048,60 @@ async def test_durability_wrap_run_disables_threads(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == 'Echo: test'
+
+
+# --- Durability wrap_run refuses external-event waits ---
+
+
+def _approval_needed_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('delete', {'path': 'a.txt'}, tool_call_id='call-1')])
+
+
+def _ask_in_process(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
+_request_input_agent = Agent(
+    FunctionModel(_approval_needed_fn),
+    name='request_input_test',
+    deps_type=type(None),
+    capabilities=[
+        TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
+        RequestInput[None](_ask_in_process),
+    ],
+)
+
+
+@_request_input_agent.tool_plain(name='delete', requires_approval=True)
+def _delete_needs_approval(path: str) -> str:
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
+@workflow.defn
+class RequestInputDurableWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _request_input_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_durability_wrap_run_refuses_external_event_waits(client: Client):
+    """A workflow can't record a wait for an external event yet, so the engine fails the workflow clearly instead of waiting in process."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RequestInputDurableWorkflow],
+        plugins=[AgentPlugin(_request_input_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                RequestInputDurableWorkflow.run,
+                args=['clean up'],
+                id=RequestInputDurableWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+    assert 'does not support waiting for external events yet' in str(exc_info.value.cause)
 
 
 # --- Durability validation ---
@@ -4272,22 +4327,22 @@ async def test_durability_complex_agent_logfire_span_tree(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "event_kind": "part_start"}'
+                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 1, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -4389,7 +4444,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{\\"", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
@@ -4410,7 +4465,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "\\"}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -4470,7 +4525,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"tool_name": "final_result", "tool_call_id": null, "event_kind": "final_result"}'
@@ -4596,7 +4651,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "]}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -7966,9 +8021,10 @@ class WorkspaceProbePolicy(WrapperWorkspace):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        cwd: str | None = None,
     ) -> CommandResult:
         assert activity.in_activity()
-        result = await self.wrapped.run(command, shell=shell, env=env, timeout=timeout)
+        result = await self.wrapped.run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
         assert self.ref is not None
         return replace(result, stdout=f'policy:{self.deps.prefix}:{self.ref.id}:{result.stdout}')
 

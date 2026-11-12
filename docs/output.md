@@ -975,11 +975,11 @@ if result.response.finish_reason == 'length':
 
 Structured output is validated, so output that was cut off is usually caught:
 
-- With [`NativeOutput`](#native-output) or [`PromptedOutput`](#prompted-output), text that was cut off into JSON that doesn't parse raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] with a message naming the token limit, in [`run()`][pydantic_ai.agent.AbstractAgent.run] and [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] alike. The model isn't asked to try again, as it would run into the same limit. Text that was cut off but still parses is validated as usual, so it's the output when it's valid, and is retried when the schema or an [output validator](#output-validator-functions) rejects it.
+- With [`NativeOutput`](#native-output) or [`PromptedOutput`](#prompted-output), text that was cut off into JSON that doesn't parse raises [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] with a message naming the token limit, in [`run()`][pydantic_ai.agent.AbstractAgent.run] and [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] alike. The model isn't asked to try again, as it would run into the same limit. Text that was cut off but still parses is validated as usual, so it's the output when it's valid, and is retried when the schema or an [output validator](#output-validator-functions) rejects it.
 - With [tool output](#tool-output), an output tool call whose arguments were cut off is sent back to the model like any other invalid arguments, and raises [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] once the [output retries](retries.md#output-retries) are used up.
-- A response that was cut off before it produced any output, say while the model was [thinking](capabilities/thinking.md), raises `UnexpectedModelBehavior`.
+- A response that was cut off before it produced any output, say while the model was [thinking](capabilities/thinking.md), raises `OutputTokenLimitExceeded`.
 
-To get the whole answer, raise `max_tokens` or ask for a shorter one.
+To get the whole answer, raise `max_tokens`, ask for a shorter one, or have [another model take over](capabilities/model-fallback.md#token-limit).
 
 ## Streamed Results
 

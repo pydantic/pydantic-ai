@@ -508,7 +508,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             self._event_step_reservations[key] = {}
         try:
             with agent.parallel_tool_call_execution_mode(mode), using_durable_sleep():
-                return await handler()
+                return await super().wrap_run(ctx, handler=handler)
         finally:
             if reserve_events:
                 self._event_step_reservations.pop(key)
