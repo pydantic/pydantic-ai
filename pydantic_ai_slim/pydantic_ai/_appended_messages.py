@@ -26,6 +26,9 @@ class AppendedMessages:
     new_message_index: int = 0
     """Where the messages the run added start in `messages`."""
 
+    full: bool = False
+    """Whether `messages` is the full history kept once the run ended, rather than the record kept while it runs."""
+
     def start(self, history: list[ModelMessage]) -> list[ModelMessage]:
         """Record `history` as the history the run was given, unless the run already appended to it."""
         if self.messages is None:

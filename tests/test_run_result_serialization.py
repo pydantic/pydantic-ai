@@ -28,9 +28,14 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
 )
+from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.conversation_store import InMemoryConversationStore
+from pydantic_ai.messages import TextPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import StreamedRunResult
+
+from .function_model_prefix import COMPACTION_REWRITES_HISTORY
 
 
 class StringResultEnvelope(BaseModel):
@@ -613,3 +618,75 @@ def test_each_output_type_keeps_its_own_validation_schema() -> None:
 
     assert text['properties']['output'] == {'title': 'Output', 'type': 'string'}
     assert city['properties']['output'] == {'$ref': '#/$defs/City'}
+
+
+TYPE_ADAPTER: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
+
+
+def _trimming_agent() -> Agent[None, str]:
+    """An agent that calls a tool three times while a capability shows the model only the last two messages."""
+    calls: list[int] = []
+
+    def look_up_three_times(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(calls) == 3:
+            return ModelResponse(parts=[TextPart('done')])
+        calls.append(len(calls))
+        return ModelResponse(parts=[ToolCallPart('lookup', {'n': len(calls)}, tool_call_id=f'call-{len(calls)}')])
+
+    agent = Agent(FunctionModel(look_up_three_times), capabilities=[ProcessHistory(lambda messages: messages[-2:])])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    return agent
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_trimmed_run_result_keeps_its_whole_conversation_across_serialization() -> None:
+    store = InMemoryConversationStore()
+    stored = (await Agent(TestModel()).run('hello')).conversation
+    await store.save(stored)
+    loaded = await store.load(stored.conversation_id)
+    assert loaded is not None
+    result = await _trimming_agent().run('look it up', conversation=loaded)
+    assert len(result.all_messages()) < len(result.conversation.messages)
+
+    dumped = TYPE_ADAPTER.dump_python(result)
+    # The messages the trimmed history still holds are referred to by their index in it.
+    assert [item for item in dumped['conversation_messages'] if isinstance(item, int)] == list(
+        range(len(result.all_messages()))
+    )
+    restored = TYPE_ADAPTER.validate_json(TYPE_ADAPTER.dump_json(result))
+
+    assert restored.all_messages() == result.all_messages()
+    assert restored.conversation.messages == result.conversation.messages
+    assert restored.conversation.new_message_index == result.conversation.new_message_index == len(stored.messages)
+    await store.save(restored)
+    reloaded = await store.load(stored.conversation_id)
+    assert reloaded is not None
+    assert reloaded.messages == result.conversation.messages
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_trimmed_run_result_dumped_without_its_messages_leaves_out_its_whole_conversation_too() -> None:
+    result = await _trimming_agent().run('look it up')
+    assert 'conversation_messages' in TYPE_ADAPTER.dump_python(result)
+
+    for exclude in ({'messages'}, {'messages': {0}}):
+        dumped = TYPE_ADAPTER.dump_python(result, exclude=exclude)
+        assert 'conversation_messages' not in dumped
+        assert 'conversation_run_start' not in dumped
+        TYPE_ADAPTER.validate_json(TYPE_ADAPTER.dump_json(result, exclude=exclude))
+
+
+def test_a_run_result_whose_whole_conversation_refers_past_its_messages_fails_validation() -> None:
+    with pytest.raises(ValidationError, match='`conversation_messages` refers to message 1, but `messages` holds 1'):
+        TYPE_ADAPTER.validate_python(
+            {
+                'output': 'done',
+                'messages': [{'kind': 'request', 'parts': []}],
+                'conversation_messages': [0, 1],
+                'conversation_run_start': 1,
+            }
+        )

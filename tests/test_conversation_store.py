@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import copy
 import dataclasses
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, AgentRunResult, Conversation, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
@@ -17,13 +17,14 @@ from pydantic_ai.conversation_store import (
     ConversationRecord,
     InMemoryConversationStore,
 )
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UserError
 from pydantic_ai.messages import ModelMessage, ModelSettingsDeltaPart, SystemPromptPart, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_ai.usage import RunUsage
+from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
 from .conftest import conversation_view
@@ -847,29 +848,6 @@ async def test_a_run_that_keeps_its_whole_history_carries_it_as_is() -> None:
     assert 'conversation_messages' not in TypeAdapter(AgentRunResult[str]).dump_python(result)
 
 
-@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
-async def test_a_trimmed_run_result_keeps_its_whole_conversation_across_serialization() -> None:
-    store = InMemoryConversationStore()
-    stored = await _stored_conversation(store, turns=2)
-    loaded = await store.load(stored.conversation_id)
-    assert loaded is not None
-    result = await _trimming_agent(_LookUp(calls=3)).run('look it up', conversation=loaded)
-
-    adapter: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
-    dumped = adapter.dump_python(result)
-    # The messages the trimmed history still holds are referred to by their index in it.
-    assert [item for item in dumped['conversation_messages'] if isinstance(item, int)] == [0, 1, 2, 3, 4, 5]
-    restored = adapter.validate_json(adapter.dump_json(result))
-
-    assert restored.all_messages() == result.all_messages()
-    assert restored.conversation.messages == result.conversation.messages
-    assert restored.conversation.new_message_index == result.conversation.new_message_index == len(stored.messages)
-    await store.save(restored)
-    reloaded = await store.load(stored.conversation_id)
-    assert reloaded is not None
-    assert reloaded.messages == result.conversation.messages
-
-
 @dataclasses.dataclass
 class _NoteAtStep(AbstractCapability[Any]):
     """Adds a note to the history and the request at a step, as a capability can."""
@@ -1104,9 +1082,84 @@ async def test_a_tool_result_a_capability_clears_in_place_is_kept_as_it_was_retu
     )
 
 
-async def test_the_last_messages_dropped_from_a_run_s_history_after_it_are_kept() -> None:
-    result = await Agent(TestModel()).run('hello')
-    result.all_messages().pop()
+async def test_an_edit_to_a_run_s_history_after_it_reaches_its_conversation() -> None:
+    """Without a capability rewriting it during the run, the conversation is the history, as edited after the run."""
+    dropped = await Agent(TestModel()).run('hello')
+    dropped.all_messages().pop()
+    assert conversation_view(dropped.conversation.messages) == ['user-prompt: hello']
+
+    summarized = await Agent(TestModel()).run('hello')
+    summarized.all_messages()[1:] = [ModelRequest(parts=[UserPromptPart('summary')])]
+    assert conversation_view(summarized.conversation.messages) == ['user-prompt: hello', 'user-prompt: summary']
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_an_edit_to_a_trimmed_run_s_history_after_it_doesn_t_reach_its_conversation() -> None:
+    """The conversation of a run a capability trimmed is the full history as it was when the run ended."""
+    result = await _trimming_agent(_LookUp(calls=3)).run('look it up')
+    whole = conversation_view(result.conversation.messages)
+
+    result.all_messages()[-1:] = [ModelRequest(parts=[UserPromptPart('later')])]
+
+    assert len(whole) > len(conversation_view(result.all_messages()))
+    assert conversation_view(result.conversation.messages) == whole
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_streamed_run_whose_capability_trims_its_history_and_that_pauses_keeps_every_message_it_added() -> None:
+    """A streamed run that a tool pauses ends with the run's own result, which holds the full history."""
+    calls: list[int] = []
+
+    async def stream_look_up(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        calls.append(len(calls) + 1)
+        yield {0: DeltaToolCall(name='lookup', json_args=f'{{"n": {len(calls)}}}', tool_call_id=f'call-{len(calls)}')}
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_look_up),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[ProcessHistory(_keep_first_and_last_four)],
+    )
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        if n == 4:
+            raise ApprovalRequired()
+        return f'fact {n}'
+
+    async with agent.run_stream('look it up') as stream:
+        assert isinstance(await stream.get_output(), DeferredToolRequests)
+    result = stream.result
+
+    assert len(result.all_messages()) < len(result.conversation.messages)
+    assert conversation_view(result.conversation.messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'call call-3',
+            'return call-3: fact 3',
+            'call call-4',
+        ]
+    )
+
+
+@dataclasses.dataclass
+class _RewriteAtEnd(AbstractCapability[Any]):
+    """Rewrites the history once the run's last node ran, after the run's last append."""
+
+    rewrite: Callable[[list[ModelMessage]], list[ModelMessage]]
+
+    async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+        ended = isinstance(result, End)
+        if ended:
+            ctx.messages[:] = self.rewrite(ctx.messages)
+        return result
+
+
+async def test_the_last_messages_a_capability_drops_as_the_run_ends_are_kept() -> None:
+    result = await Agent(TestModel(), capabilities=[_RewriteAtEnd(lambda messages: messages[:-1])]).run('hello')
 
     assert conversation_view(result.all_messages()) == ['user-prompt: hello']
     assert conversation_view(result.conversation.messages) == snapshot(
@@ -1114,39 +1167,14 @@ async def test_the_last_messages_dropped_from_a_run_s_history_after_it_are_kept(
     )
 
 
-async def test_a_summary_put_in_place_of_a_run_s_last_messages_after_it_is_kept_after_them() -> None:
-    result = await Agent(TestModel()).run('hello')
-    result.all_messages()[1:] = [ModelRequest(parts=[UserPromptPart('summary')])]
+async def test_a_summary_a_capability_puts_in_place_of_the_last_messages_as_the_run_ends_is_kept_after_them() -> None:
+    summary = ModelRequest(parts=[UserPromptPart('summary')])
+    agent = Agent(TestModel(), capabilities=[_RewriteAtEnd(lambda messages: [messages[0], summary])])
+    result = await agent.run('hello')
 
     assert conversation_view(result.conversation.messages) == snapshot(
         ['user-prompt: hello', 'text: success (no tool calls)', 'user-prompt: summary']
     )
-
-
-@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
-async def test_a_trimmed_run_result_dumped_without_its_messages_leaves_out_its_whole_conversation_too() -> None:
-    result = await _trimming_agent(_LookUp(calls=3)).run('look it up')
-    adapter: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
-    assert 'conversation_messages' in adapter.dump_python(result)
-
-    for exclude in ({'messages'}, {'messages': {0}}):
-        dumped = adapter.dump_python(result, exclude=exclude)
-        assert 'conversation_messages' not in dumped
-        assert 'conversation_run_start' not in dumped
-        adapter.validate_json(adapter.dump_json(result, exclude=exclude))
-
-
-def test_a_run_result_whose_whole_conversation_refers_past_its_messages_fails_validation() -> None:
-    adapter: TypeAdapter[AgentRunResult[str]] = TypeAdapter(AgentRunResult[str])
-    with pytest.raises(ValidationError, match='`conversation_messages` refers to message 1, but `messages` holds 1'):
-        adapter.validate_python(
-            {
-                'output': 'done',
-                'messages': [{'kind': 'request', 'parts': []}],
-                'conversation_messages': [0, 1],
-                'conversation_run_start': 1,
-            }
-        )
 
 
 @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)

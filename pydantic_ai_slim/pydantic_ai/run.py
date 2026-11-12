@@ -150,6 +150,30 @@ def _keeps_in_order(parts: Sequence[object], kept: Sequence[object]) -> bool:
 
 
 def _full_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.ModelMessage], int] | None:
+    """The full history `_keep_full_history` kept when the run ended, and where the messages the run added start in it."""
+    appended = state.appended_messages
+    if not appended.full or appended.messages is None:
+        return None
+    return appended.messages, appended.new_message_index
+
+
+def _keep_full_history(state: _agent_graph.GraphAgentState) -> None:
+    """Keep the full history of a run that just ended, if its history lost any of it, and nothing otherwise.
+
+    Called once the run's last node and its hooks ran, so the result's `conversation` neither looks at the history
+    again nor holds on to the record: an edit to the history after the run then reaches the conversation, as it
+    would without a capability, unless one dropped or rewrote messages during the run.
+    """
+    appended = state.appended_messages
+    full = _merged_history(state)
+    if full is None:
+        appended.messages = None
+    else:
+        appended.messages, appended.new_message_index = full
+        appended.full = True
+
+
+def _merged_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.ModelMessage], int] | None:
     """The history the run was given and every message it added, and where those start, if its history lost any of them.
 
     A capability can drop messages from the history or replace them with rewritten copies, say to keep what the
@@ -170,7 +194,7 @@ def _full_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.M
 
 @dataclasses.dataclass
 class _HistoryMerge:
-    """Merges a run's message history into the messages it was given and added, for `_full_history`."""
+    """Merges a run's message history into the messages it was given and added, for `_merged_history`."""
 
     recorded: list[_messages.ModelMessage]
     given: int
@@ -694,6 +718,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             self._sync_graph_state(result)
 
         _utils.raise_if_cancelling()
+        if isinstance(result, End):
+            _keep_full_history(self.ctx.state)
         return result
 
     async def _run_node_with_hooks(
@@ -754,6 +780,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             result = drain_pending_messages_at_end(run_context, result)
             if not self._graph_reflects(result):
                 self._sync_graph_state(result)
+            if isinstance(result, End):
+                _keep_full_history(self.ctx.state)
             return result
         finally:
             # See _node_error: cached tracebacks must not retain this run or bound callbacks.
@@ -1057,7 +1085,7 @@ def _appended_messages_data(data: dict[str, Any]) -> dict[str, Any]:
                 f'`conversation_messages` refers to message {item}, but `messages` holds {len(history)} messages.'
             )
         messages_data.append(history[item] if isinstance(item, int) else item)
-    return {'messages': messages_data, 'new_message_index': data.get('conversation_run_start', 0)}
+    return {'messages': messages_data, 'new_message_index': data.get('conversation_run_start', 0), 'full': True}
 
 
 def _from_legacy_shape(data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -1341,8 +1369,9 @@ class AgentRunResult(Generic[OutputDataT]):
         are the history as the run was given it followed by every message the run added, with any
         message the capability put in the history, like a summary, right after the ones it dropped.
         Storing or carrying the conversation keeps them all, and the capability trims or compacts the
-        full history again on the next run. Otherwise the messages are the same as `all_messages()`,
-        including any message a capability added.
+        full history again on the next run. That full history is fixed when the run ends, so an edit
+        to `all_messages()` after the run doesn't reach it. Otherwise the messages are the same as
+        `all_messages()`, including any message a capability added, and edits to it after the run.
         """
         output = self.output
         full = _full_history(self._state)
