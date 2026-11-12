@@ -90,10 +90,10 @@ the instructions passed to `realtime()`, and dynamic system prompts registered w
 
 A session can't rewrite the instructions it opened with, so every change is appended, as an
 [appending instruction](../agent.md#appending-instruction-changes) change is in a standard run, whatever the
-block's `on_change`: the session sends the block's new text as a `<context>` element naming it, on the channel a
+block's `on_change`: the session sends the block's new text as a `<pyai:context>` element naming it, on the channel a
 [system prompt sent with `respond=False`](turns.md#system-prompts) uses. For a change to name its block, every
 instruction that can change and has an id of its own (a named instruction function, or one contributed by a
-capability or toolset with an `id`) is sent inside a `<context>` element from the start. An unnamed instruction
+capability or toolset with an `id`) is sent inside a `<pyai:context>` element from the start. An unnamed instruction
 function can't be named by a change, so if one changes, the session warns once and the model keeps the text the
 session opened with: give it a `name`.
 

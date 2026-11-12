@@ -63,7 +63,7 @@ from pydantic_ai import (
     VideoUrl,
     WebCitationSource,
 )
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool
 from pydantic_ai.exceptions import (
@@ -5324,18 +5324,18 @@ This is a simple addition problem where we combine ten and eleven to get twenty-
             snapshot(
                 (
                     RunUsage(
-                        cache_write_tokens=8257,
-                        output_tokens=5,
-                        cache_write_5m_tokens=8257,
-                        input_tokens=8259,
-                        cost=Decimal('0.02276615'),
+                        cache_write_tokens=8442,
+                        output_tokens=4,
+                        cache_write_5m_tokens=8442,
+                        input_tokens=8444,
+                        cost=Decimal('0.0232639'),
                         requests=1,
                     ),
                     RunUsage(
                         output_tokens=5,
-                        input_tokens=8259,
-                        cache_read_tokens=8257,
-                        cost=Decimal('0.00187594'),
+                        input_tokens=8444,
+                        cache_read_tokens=8442,
+                        cost=Decimal('0.00191664'),
                         requests=1,
                     ),
                 )
@@ -5349,18 +5349,18 @@ This is a simple addition problem where we combine ten and eleven to get twenty-
             snapshot(
                 (
                     RunUsage(
-                        cache_write_tokens=8260,
-                        cache_write_1h_tokens=8260,
+                        cache_write_tokens=8445,
+                        cache_write_1h_tokens=8445,
                         output_tokens=5,
-                        input_tokens=8262,
-                        cost=Decimal('0.0364034'),
+                        input_tokens=8447,
+                        cost=Decimal('0.0372174'),
                         requests=1,
                     ),
                     RunUsage(
                         output_tokens=5,
-                        input_tokens=8262,
-                        cache_read_tokens=8260,
-                        cost=Decimal('0.0018766'),
+                        input_tokens=8447,
+                        cache_read_tokens=8445,
+                        cost=Decimal('0.0019173'),
                         requests=1,
                     ),
                 )
@@ -5374,18 +5374,18 @@ This is a simple addition problem where we combine ten and eleven to get twenty-
             snapshot(
                 (
                     RunUsage(
-                        cache_write_1h_tokens=8281,
-                        input_tokens=8285,
-                        cache_write_tokens=8281,
+                        cache_write_1h_tokens=8502,
+                        input_tokens=8506,
+                        cache_write_tokens=8502,
                         output_tokens=5,
-                        cost=Decimal('0.00182501'),
+                        cost=Decimal('0.00187363'),
                         requests=1,
                     ),
                     RunUsage(
-                        cache_read_tokens=8281,
-                        input_tokens=8285,
+                        cache_read_tokens=8502,
+                        input_tokens=8506,
                         output_tokens=5,
-                        cost=Decimal('0.000094281'),
+                        cost=Decimal('0.000096712'),
                         requests=1,
                     ),
                 )
@@ -5485,13 +5485,13 @@ async def test_unified_cache_reads_history_after_wide_turn_real_api(
     ] == [(True, True)] * 2
     assert (first.usage, second.usage) == snapshot(
         (
-            RequestUsage(input_tokens=7749, cache_write_tokens=7746, cache_write_5m_tokens=7746, output_tokens=163),
+            RequestUsage(input_tokens=7895, cache_write_tokens=7892, cache_write_5m_tokens=7892, output_tokens=274),
             RequestUsage(
-                input_tokens=8337,
-                cache_read_tokens=7746,
+                input_tokens=8483,
+                cache_read_tokens=7892,
                 cache_write_tokens=584,
                 cache_write_5m_tokens=584,
-                output_tokens=69,
+                output_tokens=133,
             ),
         )
     )
@@ -6456,7 +6456,12 @@ async def test_unified_cache_places_stable_boundary_points(
         ModelRequest(parts=[SystemPromptPart(content='System instructions.'), UserPromptPart(content='Hi!')])
     ]
     system_prompt, _ = await model._map_messages(messages, params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
-    assert system_prompt == snapshot([{'text': 'System instructions.'}, {'cachePoint': {'type': 'default'}}])
+    assert system_prompt == snapshot(
+        [
+            {'text': 'System instructions.'},
+            {'cachePoint': {'type': 'default'}},
+        ]
+    )
 
     tool_config = model._map_tool_config(params, bedrock_settings, [])  # pyright: ignore[reportPrivateUsage]
     assert tool_config and tool_config['tools'][-1] == snapshot({'cachePoint': {'type': 'default'}})
@@ -6499,7 +6504,7 @@ async def test_unified_cache_tool_points_skipped_for_nova(
         ModelRequest(parts=[SystemPromptPart(content='System instructions.'), UserPromptPart(content='Hi!')])
     ]
     system_prompt, _ = await model._map_messages(messages, params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
-    assert system_prompt[-1] == {'cachePoint': {'type': 'default'}}
+    assert system_prompt[-2:] == [{'text': 'System instructions.'}, {'cachePoint': {'type': 'default'}}]
 
     tool_config = model._map_tool_config(params, bedrock_settings, [])  # pyright: ignore[reportPrivateUsage]
     assert tool_config and all('cachePoint' not in tool for tool in tool_config['tools'])
@@ -6664,13 +6669,26 @@ async def test_bedrock_cache_instructions_add_a_point_after_appending_blocks(
     )
 
 
+@pytest.mark.parametrize('inline_system_prompts', [False, True])
 async def test_bedrock_cache_instructions_all_dynamic_no_system_prompt(
-    allow_model_requests: None, bedrock_provider: BedrockProvider
+    allow_model_requests: None, bedrock_provider: BedrockProvider, inline_system_prompts: bool
 ):
-    """Test that no cache point is inserted when all instructions are dynamic and there's no system prompt."""
+    """With all instructions dynamic and no system prompt, the only static block is the announcement, if any.
+
+    With `framing_announcement='always'`, a model without mid-conversation system messages opens its instructions with
+    the announcement, which never changes, so the cache point goes after it. One with them gets no announcement there,
+    so there's nothing static to cache and no cache point.
+    """
     from pydantic_ai.messages import InstructionPart
 
-    model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel(
+        'us.anthropic.claude-3-5-sonnet-20240620-v1:0',
+        provider=bedrock_provider,
+        settings={'framing_announcement': 'always'},
+        profile=BedrockModelProfile(supports_inline_system_prompts=True, bedrock_supports_prompt_caching=True)
+        if inline_system_prompts
+        else None,
+    )
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[UserPromptPart(content='Hi!')],
@@ -6686,12 +6704,14 @@ async def test_bedrock_cache_instructions_all_dynamic_no_system_prompt(
         model_request_parameters,
         BedrockModelSettings(bedrock_cache_instructions=True),
     )
-    # No cache point should be inserted — nothing static to cache
-    assert system_prompt == snapshot(
-        [
+    if inline_system_prompts:
+        assert system_prompt == [{'text': 'Dynamic only.'}]
+    else:
+        assert system_prompt == [
+            {'text': lookalike_note_announcement(system_role=False)},
+            {'cachePoint': {'type': 'default'}},
             {'text': 'Dynamic only.'},
         ]
-    )
 
 
 async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -8101,7 +8121,10 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
         prepared, ModelRequestParameters(), BedrockModelSettings()
     )
 
-    assert system_prompt == [{'text': SYSTEM_VOICE_ANNOUNCEMENT}, {'text': 'You are helpful.'}]
+    assert system_prompt == [
+        {'text': lookalike_note_announcement(system_role=False)},
+        {'text': 'You are helpful.'},
+    ]
     text_blocks = [
         block['text']
         for msg in cast(list[Any], bedrock_messages)
@@ -8507,9 +8530,9 @@ async def test_bedrock_mistral_tool_return_image_deferred_to_separate_turn(bedro
             {
                 'role': 'user',
                 'content': [
-                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
+                    {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]
@@ -8564,12 +8587,12 @@ async def test_bedrock_mistral_two_tool_returns_images_grouped_then_deferred(bed
             {
                 'role': 'user',
                 'content': [
-                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
+                    {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
-                    {'text': '</tool_result>'},
-                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto2" file_id="d003ad">'},
+                    {'text': '</pyai:tool_result>'},
+                    {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="getphoto2" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]
@@ -8614,7 +8637,7 @@ async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: 
                             'status': 'success',
                         }
                     },
-                    {'text': '<tool_result tool_name="get_report" tool_call_id="t1" file_id="49d492">'},
+                    {'text': '<pyai:tool_result tool_name="get_report" tool_call_id="t1" file_id="49d492">'},
                     {
                         'document': {
                             'name': 'Document 1',
@@ -8622,7 +8645,7 @@ async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: 
                             'source': {'s3Location': {'uri': 's3://bucket/report.csv'}},
                         }
                     },
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]
