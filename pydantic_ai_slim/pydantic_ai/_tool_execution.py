@@ -750,12 +750,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             return
         if submission.exhausted is not None and self.submission_exhausted is None:
             self.submission_exhausted = submission.exhausted
-        if (
-            self.final_result is None
-            and submission.status == 'accepted'
-            and isinstance(part, _messages.ToolReturnPart)
-            and part.outcome == 'success'
-        ):
+        if submission.status != 'accepted':
+            return
+        if not (isinstance(part, _messages.ToolReturnPart) and part.outcome == 'success'):
+            # The call didn't return successfully, so its submission is void. Dropped, so a call in a later batch of
+            # a `'graceful'` response that reuses its `tool_call_id` can't take it.
+            del self.ctx.deps.output_submissions[call.tool_call_id]
+        elif self.final_result is None:
             self.final_result = result.FinalResult(submission.output, call.tool_name, call.tool_call_id)
             # Tracked like an output tool's status part, so retry-wins can replace it.
             self.winning_output_part = part

@@ -51,7 +51,7 @@ from pydantic_ai.capabilities import (
     WrapToolExecuteHandler,
 )
 from pydantic_ai.durable_exec import durable_unit_scope
-from pydantic_ai.exceptions import SkipToolExecution, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import SkipToolExecution, ToolFailed, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -1305,7 +1305,8 @@ async def test_submission_from_a_response_a_later_hook_rejects_is_discarded(mode
     agent = Agent(
         FunctionModel(model, stream_function=stream_model),
         output_type=Invoice,
-        capabilities=[SubmitFromResponse(), RejectFirstResponse()],
+        # `after_model_request` hooks run in reverse order, so the submitting one runs first.
+        capabilities=[RejectFirstResponse(), SubmitFromResponse()],
         deps_type=type(None),
     )
 
@@ -1403,3 +1404,33 @@ async def test_submission_before_a_request_a_later_hook_retries_is_discarded(mod
     output, _ = await _run_in_mode(agent, mode)
 
     assert output == Invoice(order_id='from_model', total=2)
+
+
+async def test_failed_call_submission_is_not_taken_by_a_later_call_with_its_id():
+    """A `'graceful'` response runs the calls after an output call as their own batch, where an id can repeat."""
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('submit_then_fail', {}, tool_call_id='call-x'),
+                    ToolCallPart('final_result', {'order_id': 'invalid'}, tool_call_id='call-output'),
+                    ToolCallPart('harmless', {}, tool_call_id='call-x'),
+                ]
+            )
+        return ModelResponse(parts=[ToolCallPart('final_result', {'order_id': 'from_model', 'total': 2})])
+
+    agent = Agent(FunctionModel(model), output_type=Invoice, end_strategy='graceful')
+
+    @agent.tool
+    async def submit_then_fail(ctx: RunContext) -> str:
+        await ctx.submit_output('final_result', {'order_id': 'withheld', 'total': 1})
+        raise ToolFailed('Could not finish.')
+
+    @agent.tool_plain
+    def harmless() -> str:
+        return 'fine'
+
+    result = await agent.run('go')
+
+    assert result.output == Invoice(order_id='from_model', total=2)
