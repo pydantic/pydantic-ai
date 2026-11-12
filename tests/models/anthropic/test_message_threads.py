@@ -350,6 +350,27 @@ async def test_refusal_starts_a_new_thread(allow_model_requests: None):
     assert api.bodies[1]['thread'] == {'type': 'create'}
 
 
+async def test_paused_turn_is_resumed_in_a_full_history_create(allow_model_requests: None):
+    """A resume after `pause_turn` sends the paused turn back with the full history, in a new thread."""
+    paused = {
+        'id': 'msg_paused',
+        'type': 'message',
+        'role': 'assistant',
+        'model': 'claude-sonnet-4-5',
+        'content': [{'type': 'text', 'text': 'Paused'}],
+        'stop_reason': 'pause_turn',
+        'usage': {'input_tokens': 5, 'output_tokens': 1},
+    }
+    api = _Api(replies=[httpx2.Response(200, json=paused), {'type': 'text', 'text': 'Done'}])
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=_SETTINGS)
+        result = await agent.run('Hi')
+
+    assert [body['thread'] for body in api.bodies] == [{'type': 'create'}, {'type': 'create'}]
+    assert _user_texts(api.bodies[1]) == ['Hi', 'Paused']
+    assert result.output == 'PausedDone'
+
+
 async def test_changed_skills_start_a_new_thread(allow_model_requests: None):
     """`container.skills` is fixed for a thread, so changing it creates a new thread."""
     api = _Api()
