@@ -46,8 +46,6 @@ from ._protocol import (
 if TYPE_CHECKING:
     from ._capability import RenderWorkflows
 
-TOOL_CONFIG_KEY = 'render_workflows'
-
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT')
 ResultT = TypeVar('ResultT')
@@ -268,7 +266,9 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
             return
         for tool_name, tool in toolset.tools.items():
             # A tool with `{'durable': False}` runs in the calling task run, so no task options apply to it.
-            if durable_metadata_opts_out(tool.metadata, tool_name, engine_key=TOOL_CONFIG_KEY):
+            if durable_metadata_opts_out(
+                tool.metadata, tool_name, engine_key=self._runtime.engine_spec.tool_config_key
+            ):
                 continue
             resolved = self.config_for_tool(operation, tool=tool, tool_name=tool_name)
             if resolved is not False and resolved != config:
