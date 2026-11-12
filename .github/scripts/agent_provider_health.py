@@ -861,10 +861,13 @@ def check_health(
     if primary.ready or backup_quota is None:
         return primary
     backup = _health_decision(replace(base, quota=backup_quota()), issues, 'backup')
+    # The combined reason names each account's quota diagnostic next to that account's own reason.
+    primary_reason = primary.reason + _quota_diagnostic_suffix(primary.quota)
     if backup.ready:
-        reason = f'Provider health check passed on the backup Z.ai account; primary account: {primary.reason}'
+        reason = f'Provider health check passed on the backup Z.ai account; primary account: {primary_reason}'
     else:
-        reason = f'Primary Z.ai account: {primary.reason}; backup Z.ai account: {backup.reason}'
+        backup_reason = backup.reason + _quota_diagnostic_suffix(backup.quota)
+        reason = f'Primary Z.ai account: {primary_reason}; backup Z.ai account: {backup_reason}'
     return replace(
         primary,
         ready=backup.ready,
@@ -1390,7 +1393,7 @@ def _check_command(args: argparse.Namespace) -> int:
         with open(output, 'a', encoding='utf-8') as handle:
             handle.write(f'ready={str(health.ready).lower()}\nreason={health.reason}\naccount={health.account or ""}\n')
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
-    displayed_reason = health.reason + _quota_diagnostic_suffix(health.quota)
+    displayed_reason = health.reason if health.accounts else health.reason + _quota_diagnostic_suffix(health.quota)
     if summary:
         quota_detail = ''
         account_quotas = [(item.account, item.quota) for item in health.accounts] or [('primary', health.quota)]

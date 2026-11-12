@@ -297,7 +297,7 @@ def test_coding_plan_failure_names_its_error_type(
         _review(tmp_path)
     assert len(launches.read_text().splitlines()) == 2
     assert capsys.readouterr().out.splitlines()[-1] == (
-        'OpenCode run on zai-coding-plan/glm-5.3-flash failed with error type unknown.'
+        'OpenCode run on zai-coding-plan/glm-5.3-flash on the primary Coding Plan failed with error type unknown.'
     )
 
 

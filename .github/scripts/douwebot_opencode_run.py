@@ -201,7 +201,7 @@ def run_with_fallback(
         described = f'error type {kind}' if kind else 'no error type'
         if isinstance(status, int):
             described += f', status {status}'
-        print(f'OpenCode run on {provider.model} failed with {described}.')
+        print(f'OpenCode run on {provider.model} on {provider.plan} failed with {described}.')
         return kind, any(event.get('type') == 'step_finish' for event in events)
 
     if not os.environ[OPENCODE_GO.secret_variable]:

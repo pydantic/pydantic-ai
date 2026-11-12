@@ -346,7 +346,7 @@ invalid answer. Without `ZAI_BACKUP_API_KEY`, a run the primary Coding Plan refu
 only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only, so each Z.AI run
 sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
 `compaction` and `summary` agents to its model. Its environment holds only that account's key. The job log names the
-model and the plan that served the run. When a run's process fails, the job log names that run's model and the
+model and the plan that served the run. When a run's process fails, the job log names that run's model, its plan, and the
 `type` and `status` of its stream's last `error` event. It prints a type only when the type is shaped like
 OpenCode's own, such as `provider.auth`. It never prints the error message or response body, which can repeat the
 provider's response. When `PR Review Checks` or threat detection rejects a run's stream or answer, the job log names

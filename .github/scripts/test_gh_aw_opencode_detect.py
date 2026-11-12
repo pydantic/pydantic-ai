@@ -238,7 +238,7 @@ def test_coding_plan_failure_names_its_error_type(
         gh_aw_opencode_detect.main()
 
     assert capsys.readouterr().out.splitlines()[-3:] == [
-        'OpenCode run on zai-coding-plan/glm-5.3-flash failed with error type provider.auth, status 401.',
+        'OpenCode run on zai-coding-plan/glm-5.3-flash on the primary Coding Plan failed with error type provider.auth, status 401.',
         'OpenCode threat detection attempt 1 failed: CalledProcessError',
         'THREAT_DETECTION_STATUS: reason=engine_error exit=2',
     ]

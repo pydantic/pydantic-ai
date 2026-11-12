@@ -196,13 +196,13 @@ def test_launcher_sends_shared_review_and_restricts_environment(
     assert capsys.readouterr().out == 'OpenCode run served by opencode-go/deepseek-v4.1-flash on OpenCode Go.\n'
 
 
-GO_LIMIT_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash failed with error type provider.go-limit, status 429.'
-NO_TYPE_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash failed with no error type.'
+GO_LIMIT_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type provider.go-limit, status 429.'
+NO_TYPE_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with no error type.'
 TO_ZAI_LOG = (
     'opencode-go/deepseek-v4.1-flash refused the run before its first step; '
     'retrying on zai-coding-plan/glm-5.3-flash on the primary Coding Plan.'
 )
-ZAI_LOG = 'OpenCode run on zai-coding-plan/glm-5.3-flash'
+ZAI_LOG = 'OpenCode run on zai-coding-plan/glm-5.3-flash on the primary Coding Plan'
 # What OpenCode 2.2.5 writes when the Coding Plan's quota refuses the first request: Z.AI code 1308 or 1310.
 PLAN_REFUSED: list[dict[str, object]] = [
     REFUSED[0],
@@ -226,7 +226,7 @@ def test_go_refusal_reruns_the_review_on_the_coding_plan(
     assert_runs_on(invoked[1], ZAI)
     assert review_env.read_text(encoding='utf-8') == 'engine=opencode-zai\n'
     assert capsys.readouterr().out == (
-        f'OpenCode run on opencode-go/deepseek-v4.1-flash failed with error type {kind}, status 429.\n'
+        f'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type {kind}, status 429.\n'
         f'{TO_ZAI_LOG}\n'
         'OpenCode run served by zai-coding-plan/glm-5.3-flash on the primary Coding Plan.\n'
     )
@@ -321,14 +321,14 @@ def test_coding_plan_failure_stays_on_the_primary_account(
             'zai-key',
             [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.auth', 'message': 'Invalid', 'status': 401}}],
             subprocess.CalledProcessError(1, 'opencode'),
-            'OpenCode run on opencode-go/deepseek-v4.1-flash failed with error type provider.auth, status 401.',
+            'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type provider.auth, status 401.',
             id='rejected-key',
         ),
         pytest.param(
             'zai-key',
             [REFUSED[0], {'type': 'error', 'error': {'type': ['provider.go-limit'], 'status': 429}}],
             subprocess.CalledProcessError(1, 'opencode'),
-            'OpenCode run on opencode-go/deepseek-v4.1-flash failed with no error type, status 429.',
+            'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with no error type, status 429.',
             id='error-type-not-a-string',
         ),
         pytest.param(

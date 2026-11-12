@@ -3986,6 +3986,23 @@ def test_a_run_both_accounts_block_opens_each_accounts_quota_incident(
     assert '- Z.ai account: backup\n' in str((_mapping(client.posts[1]) or {}).get('body'))
 
 
+def test_gate_log_names_each_accounts_quota_diagnostic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rejected backup key shows its own diagnostic in the step output, next to the backup account."""
+    rejected = health.Quota('unknown', diagnostic='http_error', http_status=401)
+    _stub_account_quotas(monkeypatch, health.Quota('unknown', diagnostic='timeout'), rejected)
+
+    decision, outputs, summary = _run_account_gate(FakeGitHub(), tmp_path, monkeypatch)
+
+    reason = (
+        'Primary Z.ai account: Z.ai quota health is unknown (quota diagnostic: timeout); '
+        'backup Z.ai account: Z.ai quota health is unknown (quota diagnostic: http_error; HTTP status 401)'
+    )
+    assert decision.reason == reason
+    assert outputs == f'ready=false\nreason={reason}\naccount=\n'
+    assert f'{reason}.' in summary
+    assert summary.count('quota diagnostic: timeout') == 1
+
+
 def test_a_run_blocked_by_its_own_incident_opens_no_quota_incident(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
