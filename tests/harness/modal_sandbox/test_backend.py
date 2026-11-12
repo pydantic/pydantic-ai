@@ -525,6 +525,18 @@ class TestRun:
         # A 137 that did not use up the command's deadline is its real exit, not a timeout.
         assert (await backend.run(['kill-self'], timeout=30)).exit_code == 137
 
+    async def test_a_desktop_checks_again_for_a_setsid_its_start_may_install(self, fake_modal: FakeModal) -> None:
+        installed = False
+        fake_modal.responder = lambda argv, timeout: (
+            ('', '', 0 if installed else 127) if 'command -v setsid' in ' '.join(argv) else ('ok', '', 0)
+        )
+        backend = await started(image='custom:minimal', desktop=True)
+        await backend.run(['true'])
+        assert not fake_modal.sandboxes[0].start_scripts
+        installed = True
+        await backend.run(['true'])
+        assert len(fake_modal.sandboxes[0].start_scripts) == 1
+
     async def test_missing_setsid_uses_direct_exec_and_caches_probe(self, fake_modal: FakeModal) -> None:
         fake_modal.responder = lambda argv, timeout: (
             ('', '', 127) if 'command -v setsid' in ' '.join(argv) else ('ok', '', 0)
