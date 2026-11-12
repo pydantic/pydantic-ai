@@ -20,7 +20,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 import run_pr_review_check
-from douwebot_opencode_run import DEEPINFRA, OPENCODE_GO, Provider, run_with_fallback
+from douwebot_opencode_run import OPENCODE_GO, ZAI, Provider, run_with_fallback
 from pr_review_checks import CHECKS, GENERAL, ReviewCheck
 from run_pr_review_check import (
     Usage,
@@ -48,9 +48,11 @@ def _stream(tmp_path: Path, text: str, *, finish: str = 'stop') -> Path:
     return stream
 
 
-def _result(*paths: str, outcome: str = 'COMPLETE') -> str:
+def _result(*paths: str, outcome: str = 'COMPLETE', indent: int | None = None) -> str:
     findings = [{'path': path, 'line': 3, 'side': 'RIGHT', 'severity': 'high', 'body': 'finding'} for path in paths]
-    return json.dumps({'outcome': outcome, 'findings': findings, 'coverage': 'Reviewed a.py.', 'private_report': ''})
+    return json.dumps(
+        {'outcome': outcome, 'findings': findings, 'coverage': 'Reviewed a.py.', 'private_report': ''}, indent=indent
+    )
 
 
 def test_head_checkout_loses_its_instruction_layer(tmp_path: Path) -> None:
@@ -229,9 +231,12 @@ def test_time_budget_stops_the_review(tmp_path: Path, expire_budget: list[float]
 
 
 def _fake_opencode(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, go: str, deepinfra: str = f'printf "%s\\n" {shlex.quote(_step(10))}'
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    go: str,
+    zai: str = f'printf "%s\\n" {shlex.quote(_step(10))}',
 ) -> Path:
-    """Put an `opencode` on `PATH` that runs `go` for OpenCode Go and `deepinfra`, by default one step, on DeepInfra.
+    """Put an `opencode` on `PATH` that runs `go` for OpenCode Go and `zai`, by default one step, on the Coding Plan.
 
     Each launch appends its model and the keys it received to the returned file.
     """
@@ -240,8 +245,8 @@ def _fake_opencode(
     script.parent.mkdir()
     script.write_text(
         '#!/bin/sh\n'
-        f'echo "$4 ${{OPENCODE_API_KEY:-}} ${{DEEPINFRA_API_KEY:-}}" >> {shlex.quote(str(launches))}\n'
-        f'case "$4" in opencode-go/*) {go} ;; *) {deepinfra} ;; esac\n'
+        f'echo "$4 ${{OPENCODE_API_KEY:-}} ${{ZHIPU_API_KEY:-}}" >> {shlex.quote(str(launches))}\n'
+        f'case "$4" in opencode-go/*) {go} ;; *) {zai} ;; esac\n'
     )
     script.chmod(0o755)
     runner_temp = tmp_path / 'runner-temp'
@@ -249,12 +254,13 @@ def _fake_opencode(
     monkeypatch.setenv('PATH', f'{script.parent}:{os.environ["PATH"]}')
     monkeypatch.setenv('RUNNER_TEMP', str(runner_temp))
     monkeypatch.setenv('OPENCODE_API_KEY', 'go-key')
-    monkeypatch.setenv('DEEPINFRA_API_KEY', 'deepinfra-key')
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.delenv('ZAI_BACKUP_API_KEY', raising=False)
     return launches
 
 
 def _review(tmp_path: Path) -> tuple[Usage, Provider]:
-    """Review the way `main` does: on Go, then on DeepInfra."""
+    """Review the way `main` does: on Go, then on the Coding Plan."""
     return run_with_fallback(
         lambda command, env, log: run_opencode(command, '', cwd=tmp_path, env=env, log=log, seconds=300),
         agent='reviewer',
@@ -263,22 +269,22 @@ def _review(tmp_path: Path) -> tuple[Usage, Provider]:
     )
 
 
-def test_go_refusal_reruns_the_review_on_deepinfra(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A review Go refused before its first step did no work, so DeepInfra reviews with only its own key."""
+def test_go_refusal_reruns_the_review_on_the_coding_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A review Go refused before its first step did no work, so the Coding Plan reviews with only its own key."""
     error = json.dumps({'type': 'error', 'error': {'type': 'provider.go-limit', 'status': 429}})
     launches = _fake_opencode(tmp_path, monkeypatch, f'printf "%s\\n" {shlex.quote(error)}; exit 1')
     usage, provider = _review(tmp_path)
-    assert (provider, usage.steps, usage.tokens, usage.stopped) == (DEEPINFRA, 1, 21, False)
+    assert (provider, usage.steps, usage.tokens, usage.stopped) == (ZAI, 1, 21, False)
     assert launches.read_text().splitlines() == [
         'opencode-go/deepseek-v4.1-flash go-key ',
-        'deepinfra/deepseek-ai/DeepSeek-V4.1-Flash  deepinfra-key',
+        'zai-coding-plan/glm-5.3-flash  zai-key',
     ]
 
 
-def test_deepinfra_failure_names_its_error_type(
+def test_coding_plan_failure_names_its_error_type(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A review DeepInfra fails names its error type in the job log, and fails the job."""
+    """A review the Coding Plan fails names its error type in the job log, and fails the job."""
     refused = json.dumps({'type': 'error', 'error': {'type': 'provider.go-limit', 'status': 429}})
     failed = json.dumps({'type': 'error', 'error': {'type': 'unknown', 'message': 'Model not found'}})
     launches = _fake_opencode(
@@ -291,7 +297,7 @@ def test_deepinfra_failure_names_its_error_type(
         _review(tmp_path)
     assert len(launches.read_text().splitlines()) == 2
     assert capsys.readouterr().out.splitlines()[-1] == (
-        'OpenCode run on deepinfra/deepseek-ai/DeepSeek-V4.1-Flash failed with error type unknown.'
+        'OpenCode run on zai-coding-plan/glm-5.3-flash on the primary Coding Plan failed with error type unknown.'
     )
 
 
@@ -306,10 +312,10 @@ def test_go_failure_after_a_step_is_not_retried(tmp_path: Path, monkeypatch: pyt
 def test_time_budget_stop_is_not_retried(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expire_budget: list[float]
 ) -> None:
-    """A review the time budget stopped is incomplete on Go; it never starts again on DeepInfra."""
+    """A review the time budget stopped is incomplete on Go; it never starts again on the Coding Plan."""
     # `exec`, so the kill reaches the process that holds the stream open.
     _fake_opencode(tmp_path, monkeypatch, 'exec sleep 30')
-    # The timer kills Go before its script can record the launch; one budget and Go's usage show DeepInfra never ran.
+    # The timer kills Go before its script can record the launch; one budget and Go's usage show Z.AI never ran.
     usage, provider = _review(tmp_path)
     assert (provider, usage.stopped, expire_budget) == (OPENCODE_GO, True, [300])
 
@@ -343,13 +349,22 @@ def test_unparseable_answer_at_the_step_budget_is_incomplete(tmp_path: Path) -> 
         pytest.param('{"outcome": "COMPLETE"}', 'stop', 'validation failed: missing', id='not-the-schema'),
         pytest.param(_result('a.py'), 'tool-calls', 'OpenCode review did not stop normally', id='not-stopped'),
         pytest.param(
-            f"I've read the files.\n```json\n{_result('a.py')}\n```",
+            f'```json\n{_result("a.py")}\n```\nDone.',
             'stop',
             'validation failed: json_invalid',
-            id='text-before-the-fence',
+            id='text-after-the-fence',
         ),
         pytest.param(
-            f'```json\n{_result("a.py")}\n```\nDone.', 'stop', 'validation failed: json_invalid', id='text-after-the-fence'
+            f"I've read the files.\n\n```json\n{_result('a.py')}",
+            'stop',
+            'validation failed: json_invalid',
+            id='unterminated-fence',
+        ),
+        pytest.param(
+            f"I've read the files.\n\n{_result('a.py')}",
+            'stop',
+            'validation failed: json_invalid',
+            id='text-before-bare-json',
         ),
     ],
 )
@@ -365,15 +380,42 @@ def test_rejected_answer_under_the_budget_fails_with_its_reason(
 @pytest.mark.parametrize(
     'text',
     [
-        f'```json\n{_result("a.py")}\n```',
-        f'```\n{_result("a.py")}\n```',
-        f'\n  ```json\n{json.dumps(json.loads(_result("a.py")), indent=2)}\n```\n',
+        pytest.param(_result('a.py'), id='bare-json'),
+        pytest.param(f'```json\n{_result("a.py")}\n```', id='fence-around-the-answer'),
+        pytest.param(f'```\n{_result("a.py")}\n```', id='fence-without-a-language'),
+        pytest.param(f'\n  ```json\n{_result("a.py", indent=2)}\n```\n', id='indented-fence'),
+        pytest.param(
+            f'**Summary**\n\n- Read `a.py`.\n- Traced its callers.\n\n```json\n{_result("a.py", indent=2)}\n```',
+            id='bulleted-prose-before-the-fence',
+        ),
+        pytest.param(
+            f'**Checks**\n\n1. Read `a.py`.\n\n2. Read its tests.\n\n```json\n{_result("a.py")}\n```',
+            id='numbered-prose-before-the-fence',
+        ),
+        pytest.param(
+            f'I read `a.py` and its callers.\n\n```json\n{_result("a.py", indent=2)}\n```',
+            id='paragraph-before-the-fence',
+        ),
+        pytest.param(
+            f'The caller:\n\n```python\nf()\n```\n\n```json\n{_result("a.py", indent=2)}\n```',
+            id='code-block-before-the-fence',
+        ),
     ],
 )
-def test_answer_in_one_code_fence_is_unwrapped(tmp_path: Path, text: str) -> None:
-    """A model that wraps its whole answer in one Markdown code fence still completes the review."""
+def test_accepted_answer_completes_the_review(tmp_path: Path, text: str) -> None:
+    """An answer that is the JSON object, or that ends with it in a Markdown code fence, completes the review."""
     result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=2), changed=CHANGED)
     assert (result.outcome, [finding.path for finding in result.findings]) == ('COMPLETE', ['a.py'])
+
+
+@pytest.mark.parametrize('fenced', [pytest.param(False, id='bare-json'), pytest.param(True, id='fenced-json')])
+def test_code_fence_inside_a_json_string_stays_in_the_answer(tmp_path: Path, fenced: bool) -> None:
+    """Only a fence on its own lines delimits the answer, so a fence quoted in a JSON string stays in it."""
+    coverage = 'Reviewed a.py.\n```json\n{}\n```'
+    answer = json.dumps({'outcome': 'COMPLETE', 'findings': [], 'coverage': coverage, 'private_report': ''}, indent=2)
+    text = f'```json\n{answer}\n```' if fenced else answer
+    result, _ = check_result(CHECK, ['a.py'], _stream(tmp_path, text), Usage(steps=2), changed=CHANGED)
+    assert (result.outcome, result.coverage) == ('COMPLETE', coverage)
 
 
 def test_undecodable_stream_names_only_its_error_type(tmp_path: Path) -> None:

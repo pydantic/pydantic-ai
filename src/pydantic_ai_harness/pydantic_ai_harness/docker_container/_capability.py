@@ -16,28 +16,28 @@ from pydantic_ai_harness._workspace_provider import (
     check_working_dir,
     reject_defer_loading,
 )
-from pydantic_ai_harness.docker_sandbox._backend import (
+from pydantic_ai_harness.docker_container._backend import (
     PROVIDER,
-    DockerSandboxBackend,
+    DockerContainerBackend,
     remove_container,
     resolve_executable,
 )
 
 
 @dataclass(kw_only=True)
-class DockerSandbox(AbstractCapability[AgentDepsT]):
+class DockerContainer(AbstractCapability[AgentDepsT]):
     """Supply a local [Docker](https://www.docker.com/) container as the run's workspace, created on first use.
 
     ```python {test="skip"}
     from pydantic_ai import Agent
-    from pydantic_ai_harness import Coder, DockerSandbox
+    from pydantic_ai_harness import Coder, DockerContainer
 
-    agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerSandbox(image='python:3.13-slim'), Coder()])
+    agent = Agent('anthropic:claude-opus-5-5', capabilities=[DockerContainer(image='python:3.13-slim'), Coder()])
     ```
 
     A run with no reference creates a fresh container. Pass a `WorkspaceRef` supplied by the
     application to attach to a container created earlier. The container outlives the run: remove it
-    with [`destroy`][pydantic_ai_harness.docker_sandbox.DockerSandbox.destroy].
+    with [`destroy`][pydantic_ai_harness.docker_container.DockerContainer.destroy].
 
     This capability supplies execution only. Compose it with tools or capabilities that use the
     workspace, such as `Coder`, `Shell`, or `FileSystem`.
@@ -69,27 +69,26 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     """The container CLI to run; `'podman'` works too. It is looked up on `PATH` once, when the capability is created."""
 
     authority: Authority = 'operator'
-    """The [authority][pydantic_ai.messages.Authority] of the sandbox's files: `'none'` for files nobody on the
+    """The [authority][pydantic_ai.messages.Authority] of the container's files: `'none'` for files nobody on the
     application's side wrote, such as a cloned third-party repository, and `'user'` for the user's own files.
-    Anything below `'operator'` wraps the workspace in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace],
-    so capabilities that send its files to the model send them with no more authority than that."""
+    Anything below `'operator'` wraps the workspace in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
 
     path_authority: Mapping[str, Authority] | None = None
     """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
-    path wins. Paths are sandbox paths: relative ones resolve against the working directory, and `~` isn't expanded.
+    path wins. Paths are container paths: relative ones resolve against the working directory, and `~` isn't expanded.
     See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
 
     _executable_path: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        reject_defer_loading('DockerSandbox', self.defer_loading)
+        reject_defer_loading('DockerContainer', self.defer_loading)
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
         self._executable_path = resolve_executable(self.executable)
 
-    def backend(self, ref: WorkspaceRef) -> DockerSandboxBackend:
+    def backend(self, ref: WorkspaceRef) -> DockerContainerBackend:
         """Attach lazily to an existing container by ref, starting it on first use if it is stopped."""
-        return DockerSandboxBackend(
+        return DockerContainerBackend(
             ref=ref, working_dir=self.working_dir, env=self.env, executable=self._executable_path
         )
 
@@ -109,7 +108,7 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
             return self.backend(ref) if ref.provider == PROVIDER else None
         if self.image is None:
             return None
-        return DockerSandboxBackend(
+        return DockerContainerBackend(
             image=self.image,
             working_dir=self.working_dir,
             env=self.env,

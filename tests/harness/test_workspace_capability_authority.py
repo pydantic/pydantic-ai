@@ -16,7 +16,7 @@ CAPABILITIES = [
     'BoxdSandbox',
     'BoxLiteSandbox',
     'DaytonaSandbox',
-    'DockerSandbox',
+    'DockerContainer',
     'E2BSandbox',
     'ModalSandbox',
     'OpenSandbox',
