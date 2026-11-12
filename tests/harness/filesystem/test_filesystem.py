@@ -209,6 +209,7 @@ class TestReadFileLineFormat:
             pytest.param('no newline', 1, None, '     1\tno newline\n', id='no-trailing-newline'),
             pytest.param('a\nb\nc\n', 1, 3, '     1\ta\n     2\tb\n     3\tc\n', id='exact-fit'),
             pytest.param('a\nb\nc\n', 2, 2, '     2\tb\n     3\tc\n', id='exact-fit-from-offset'),
+            pytest.param('a\nb\nc\n', 3, None, '     3\tc\n', id='offset-is-the-last-line'),
             pytest.param(
                 'a\nb\nc\n',
                 1,
@@ -246,7 +247,7 @@ class TestReadFileLineFormat:
         toolset, ws = _unhashed_toolset(), LocalWorkspaceBackend(tmp_path)
         numbers: list[int] = []
         offset = 1
-        while True:
+        for _ in range(10):
             result = await toolset.read_file('f.txt', offset=offset, limit=3, workspace=ws)
             assert isinstance(result, str)
             body = result.splitlines()[1:]
@@ -255,11 +256,6 @@ class TestReadFileLineFormat:
                 break
             offset = int(body[-1].split('offset=')[1].split(' ')[0])
         assert numbers == list(range(1, 11))
-
-    async def test_offset_names_the_line_it_shows_first(self, tmp_path: Path) -> None:
-        (tmp_path / 'f.txt').write_text('a\nb\nc\n')
-        result = await _unhashed_toolset().read_file('f.txt', offset=3, workspace=LocalWorkspaceBackend(tmp_path))
-        assert result == '[f.txt | 3 lines]\n     3\tc\n'
 
     async def test_empty_file(self, tmp_path: Path) -> None:
         (tmp_path / 'empty.txt').write_text('')
