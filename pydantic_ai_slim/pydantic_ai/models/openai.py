@@ -8381,9 +8381,8 @@ def _unsupported_computer_fields(action: dict[str, Any]) -> list[str] | None:
 
     A field that is missing, has the wrong type or isn't one the tool takes doesn't map.
     """
-    kind = action.get('type', '')
-    fields = _COMPUTER_ACTION_FIELDS.get(kind)
-    if fields is None:
+    kind = action.get('type')
+    if not isinstance(kind, str) or (fields := _COMPUTER_ACTION_FIELDS.get(kind)) is None:
         return sorted(action.keys() - {'type'})
     unsupported = (action.keys() - fields) | (_REQUIRED_COMPUTER_FIELDS.get(kind, frozenset()) - action.keys())
     for name, value in action.items():
@@ -8453,6 +8452,12 @@ def _map_computer_action(action: dict[str, Any]) -> list[dict[str, Any]]:
             return [{'type': 'screenshot'}]
 
 
+_ACTION_COUNTS = 'computer_action_counts'
+"""The `provider_details` key of how many `computer` tool actions each of a `computer_call`'s actions became."""
+
+_ACTION_COUNTS_TA = TypeAdapter(list[int])
+
+
 def _map_computer_call(
     item: responses.ResponseComputerToolCall, tool_name: str, tool_call_id: str, provider_name: str
 ) -> ComputerCallPart:
@@ -8464,20 +8469,19 @@ def _map_computer_call(
         provider_details[_SAFETY_CHECKS] = [
             check.model_dump(mode='json', exclude_none=True) for check in item.pending_safety_checks
         ]
-    # Cut off mid-generation: like a truncated function call, its arguments don't parse, so none of it runs.
-    args: dict[str, Any] | str = (
-        '{"actions": ['
-        if item.status == 'incomplete'
-        else {
-            'actions': [
-                mapped
-                for action in actions
-                for mapped in _map_computer_action(action.model_dump(mode='json', exclude_none=True))
-            ]
-            # A call with no actions only asks to look.
+    args: dict[str, Any] | str
+    if item.status == 'incomplete':
+        # Cut off mid-generation: like a truncated function call, its arguments don't parse, so none of it runs.
+        args = '{"actions": ['
+    else:
+        mapped = [_map_computer_action(action.model_dump(mode='json', exclude_none=True)) for action in actions]
+        # How many tool actions each became, so its result is described without mapping the call again.
+        provider_details[_ACTION_COUNTS] = [len(tool_actions) for tool_actions in mapped]
+        # A call with no actions only asks to look.
+        args = {
+            'actions': [tool_action for tool_actions in mapped for tool_action in tool_actions]
             or [{'type': 'screenshot'}]
         }
-    )
     return ComputerCallPart(
         tool_name,
         args,
@@ -8507,27 +8511,35 @@ def _scroll_conversions(call: ToolCallPart | None, result: ComputerResult | None
     """How each pixel scroll in the call that ran became wheel clicks, when that differs from what the model asked for.
 
     Only the `performed` actions ran; a call changed before it ran ran other actions, which its summary describes, and
-    a result without its outcome doesn't say what ran. A call with a result had every action map, so each one does.
+    a result without its outcome doesn't say what ran. The clicks are read from the tool actions the call became, by
+    the counts kept when it was made: a history can come back from storage or a UI, so they are checked, and without
+    them nothing is said.
     """
-    if result is None or result.get('changed'):
+    if call is None or result is None or result.get('changed'):
         return []
-    item: dict[str, Any] = (call.provider_details or {}).get('computer_call', {}) if call else {}
+    details = call.provider_details or {}
+    item: dict[str, Any] = details.get('computer_call', {})
     actions: list[dict[str, Any]] = item.get('actions') or ([item['action']] if item.get('action') else [])
+    tool_actions: list[dict[str, Any]] = call.args_as_dict().get('actions') or []
+    try:
+        counts = _ACTION_COUNTS_TA.validate_python(details.get(_ACTION_COUNTS))
+    except ValidationError:
+        return []
+    if len(counts) != len(actions) or sum(counts) != len(tool_actions):
+        return []
     notes: list[str] = []
-    ran = 0  # the tool actions the ones before this mapped to
-    for action in actions:
-        mapped = _map_computer_action(action)
-        if action['type'] == 'scroll':
-            # Each axis that scrolls is one tool action, in `_map_computer_action`'s order.
-            axes = [axis for axis in ('scroll_x', 'scroll_y') if action[axis]]
-            for index, axis in enumerate(axes, ran):
+    index = 0  # of the tool action
+    for action, count in zip(actions, counts):
+        for tool_action in tool_actions[index : index + count]:
+            if index < result['performed'] and tool_action.get('type') == 'scroll':
+                axis = 'scroll_x' if tool_action['direction'] in ('left', 'right') else 'scroll_y'
                 pixels: int = action[axis]
-                clicks = min(50, max(1, round(abs(pixels) / _SCROLL_PIXELS_PER_CLICK)))
-                if index < result['performed'] and clicks * _SCROLL_PIXELS_PER_CLICK != abs(pixels):
+                clicks: int = tool_action['amount']
+                if clicks * _SCROLL_PIXELS_PER_CLICK != abs(pixels):
                     notes.append(
                         f'{axis}={pixels} ran as {clicks} wheel clicks of about {_SCROLL_PIXELS_PER_CLICK} pixels each.'
                     )
-        ran += len(mapped)
+            index += 1
     return notes
 
 
