@@ -1943,8 +1943,19 @@ def _agent_start_steps(
         stop['continue-on-error'] = True
     return [
         {'name': AGENT_START_HEALTH_STEPS[0], 'id': recheck_id, 'env': env, 'run': run},
-        {'name': AGENT_START_HEALTH_STEPS[1], 'uses': 'actions/upload-artifact', 'continue-on-error': True},
+        {
+            'name': AGENT_START_HEALTH_STEPS[1],
+            'id': 'agent_start_health_artifact',
+            'uses': 'actions/upload-artifact',
+            'continue-on-error': True,
+        },
         stop,
+        {
+            'name': AGENT_START_HEALTH_STEPS[3],
+            'if': f"steps.agent_start_health_artifact.outcome == 'failure' && steps.{recheck_id}.outputs.account "
+            '!= needs.provider_health.outputs.account',
+            'run': 'echo "::error::hidden account"\nexit 1\n',
+        },
     ]
 
 
@@ -1955,7 +1966,10 @@ def _write_agent_start_workflow(
         workflows / 'pydantic-ai-mini.md', '---\nname: Z.AI\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n'
     )
     jobs: dict[str, object] = {
-        'provider_health': {'steps': [{'id': 'health', 'env': gate_env, 'run': 'python3 controller check'}]},
+        'provider_health': {
+            'outputs': {'account': '${{ steps.health.outputs.account }}'},
+            'steps': [{'id': 'health', 'env': gate_env, 'run': 'python3 controller check'}],
+        },
         'agent': {'needs': ['activation', 'provider_health'], 'steps': agent_steps},
     }
     return _write(source.with_suffix('.lock.yml'), yaml.safe_dump({'jobs': jobs}, sort_keys=False))
@@ -2028,6 +2042,11 @@ def test_provider_health_agent_start_catches_the_queued_ci_review_defect(tmp_pat
             [*_agent_start_steps(recheck_id='provider_recheck'), *_SHIPPED_AGENT_STEPS],
             id='recheck-id-the-engine-key-does-not-read',
         ),
+        pytest.param([*_agent_start_steps()[:3], *_SHIPPED_AGENT_STEPS], id='hidden-account-runs'),
+        pytest.param(
+            [*_agent_start_steps()[:3], {**_agent_start_steps()[3], 'continue-on-error': True}, *_SHIPPED_AGENT_STEPS],
+            id='hidden-account-stop-continues',
+        ),
     ],
 )
 def test_provider_health_agent_start_rejects_a_recheck_that_cannot_stop_inference(
@@ -2047,6 +2066,19 @@ def test_provider_health_agent_start_requires_both_keys_in_the_gate(tmp_path: Pa
     workflows = tmp_path / '.github' / 'workflows'
     env = {name: value for name, value in _GATE_ENV.items() if name != key}
     _write_agent_start_workflow(workflows, [*_agent_start_steps(env=env), *_SHIPPED_AGENT_STEPS], gate_env=env)
+
+    assert [violation.check for violation in check_provider_health_agent_start(workflows)] == [
+        'provider-health-agent-start'
+    ]
+
+
+def test_provider_health_agent_start_requires_the_gate_account_output(tmp_path: Path):
+    """Without the gate's account, the job cannot tell that a failed replacement hides the recheck's account."""
+    workflows = tmp_path / '.github' / 'workflows'
+    lock = _write_agent_start_workflow(workflows, [*_agent_start_steps(), *_SHIPPED_AGENT_STEPS])
+    workflow = yaml.safe_load(lock.read_text(encoding='utf-8'))
+    del workflow['jobs']['provider_health']['outputs']
+    _write(lock, yaml.safe_dump(workflow, sort_keys=False))
 
     assert [violation.check for violation in check_provider_health_agent_start(workflows)] == [
         'provider-health-agent-start'

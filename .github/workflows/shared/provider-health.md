@@ -13,6 +13,7 @@ jobs:
     outputs:
       ready: ${{ steps.health.outputs.ready }}
       reason: ${{ steps.health.outputs.reason }}
+      account: ${{ steps.health.outputs.account }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -136,6 +137,7 @@ pre-agent-steps:
       python3 "$RUNNER_TEMP/provider-health/agent_provider_health.py" check \
         --output "$RUNNER_TEMP/provider-health/provider-health.json"
   - name: Replace health decision for the incident monitor
+    id: agent_start_health_artifact
     if: (!cancelled()) && steps.agent_start_health.outputs.ready != ''
     continue-on-error: true
     uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -150,6 +152,15 @@ pre-agent-steps:
       REASON: ${{ steps.agent_start_health.outputs.reason }}
     run: |
       echo "::error::Provider health blocked inference at agent start: ${REASON}"
+      exit 1
+  # The record and the monitor read the uploaded decision. When the replacement failed, it still holds the gate's
+  # decision, so a recheck that chose another account would have them attribute the run to the gate's account.
+  - name: Stop before inference when the health decision hides the run's account
+    if: steps.agent_start_health_artifact.outcome == 'failure' && steps.agent_start_health.outputs.account != needs.provider_health.outputs.account
+    env:
+      ACCOUNT: ${{ steps.agent_start_health.outputs.account }}
+    run: |
+      echo "::error::The agent-start decision for the ${ACCOUNT} Z.AI account could not replace the gate's decision"
       exit 1
 ---
 

@@ -27,12 +27,13 @@ MARKER_PREFIX = '<!-- pydantic-ai-provider-health:v1 '
 MARKER_RE = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
 REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
-# The recheck, artifact-replacement and stop steps `shared/provider-health.md` adds to each agent job.
+# The recheck, artifact-replacement and two stop steps `shared/provider-health.md` adds to each agent job.
 # `agentic_workflow_guard.py` requires these names in every compiled lock.
 AGENT_START_HEALTH_STEPS = (
     'Recheck Z.AI provider health at agent start',
     'Replace health decision for the incident monitor',
     'Stop before inference on a blocked provider-health decision',
+    "Stop before inference when the health decision hides the run's account",
 )
 # Minimum age before a healthy scheduled check closes a quota or rate-limit incident with no recorded reset time.
 _NULL_RESET_COOL_DOWN = dt.timedelta(hours=1)

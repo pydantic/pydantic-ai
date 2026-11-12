@@ -1235,7 +1235,7 @@ def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> li
         )
         stop_condition = f"steps.{steps[recheck].get('id')}.outputs.ready != 'true'" if recheck is not None else None
         after_recheck = steps[recheck + 1 : execution] if recheck is not None else []
-        recheck_name, replace_name, stop_name = AGENT_START_HEALTH_STEPS
+        recheck_name, replace_name, stop_name, account_stop_name = AGENT_START_HEALTH_STEPS
         # The monitor recognizes these steps by name, so a renamed step reads as a setup failure.
         named = (
             recheck is not None
@@ -1254,6 +1254,24 @@ def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> li
             and steps[recheck].get('id') == AGENT_START_HEALTH_STEP_ID
             and all(_as_mapping(gate_env).get(key) == value for key, value in ZAI_KEYS.items())
         )
+        # A failed replacement leaves the gate's account in the artifact; the run must not go on under another one.
+        replace_id = next((step.get('id') for step in after_recheck if step.get('name') == replace_name), None)
+        account_condition = (
+            f"steps.{replace_id}.outcome == 'failure' && steps.{AGENT_START_HEALTH_STEP_ID}.outputs.account "
+            '!= needs.provider_health.outputs.account'
+        )
+        guards_account = (
+            replace_id is not None
+            and _as_mapping(_as_mapping(jobs.get('provider_health')).get('outputs')).get('account')
+            == '${{ steps.health.outputs.account }}'
+            and any(
+                step.get('name') == account_stop_name
+                and _normalized_condition(str(step.get('if', ''))) == _normalized_condition(account_condition)
+                and str(step.get('run', '')).rstrip().endswith('exit 1')
+                and not step.get('continue-on-error')
+                for step in after_recheck
+            )
+        )
         if (
             recheck is None
             or gate_env is None
@@ -1261,6 +1279,7 @@ def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> li
             or not named
             or not stops
             or not keyed
+            or not guards_account
         ):
             violations.append(
                 Violation(
@@ -1269,7 +1288,8 @@ def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> li
                     'The agent job must rerun the default-branch provider-health check with the gate environment '
                     'before engine execution, then fail before inference unless it reports ready. The steps must '
                     'keep the names in `agent_provider_health.AGENT_START_HEALTH_STEPS`, the recheck its id '
-                    f'`{AGENT_START_HEALTH_STEP_ID}`, and the gate both Z.AI keys.',
+                    f'`{AGENT_START_HEALTH_STEP_ID}`, and the gate both Z.AI keys and an `account` output. A failed '
+                    "replacement must stop the job when the recheck's account differs from the gate's.",
                 )
             )
     return violations
