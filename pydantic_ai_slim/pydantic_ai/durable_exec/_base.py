@@ -891,10 +891,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 contributes_executing_toolset(capability)
                 or any(collect_capability_operations(leaf) for leaf in leaf_capabilities(capability))
                 or capability.has_resolve_model_id
-                or any(
-                    leaf._can_supply_model or type(leaf).get_wrapper_model is not AbstractCapability.get_wrapper_model
-                    for leaf in leaf_capabilities(capability)
-                )
+                or capability._can_supply_model
+                or capability._can_wrap_model
             )
 
         unsafe_capabilities = [

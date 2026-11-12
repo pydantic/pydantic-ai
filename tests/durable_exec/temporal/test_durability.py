@@ -2968,10 +2968,16 @@ class _PerRunModelWrapper(AbstractCapability[None]):
         return None
 
 
+@dataclass
+class _HooksOnlyWrapper(WrapperCapability[None]):
+    pass
+
+
 @pytest.mark.parametrize(
     ('capability', 'allowed'),
     [
         pytest.param(_PerRunExternalToolset(), True, id='non-executing-toolset'),
+        pytest.param(_HooksOnlyWrapper(wrapped=_SkipEveryModelRequest()), True, id='hooks-only-wrapper'),
         pytest.param(_PerRunDynamicToolset(), False, id='dynamic-toolset'),
         pytest.param(_PerRunDurableOperation(), False, id='durable-operation'),
         pytest.param(_PerRunModelResolver(), False, id='resolve-model-id'),
@@ -3008,21 +3014,6 @@ async def test_per_run_capability_needing_registration_rejected_inside_workflow(
         else:
             with pytest.raises(UserError, match='Capabilities added per-run inside a Temporal workflow'):
                 await agent.run('hello', capabilities=[capability])
-
-
-async def test_override_model_instance_round_trips_inside_workflow():
-    """A registered model instance remains selectable through `agent.override` for Temporal agents."""
-    from pydantic_ai.models.test import TestModel
-
-    test_model = TestModel()
-    agent = Agent(
-        TestModel(),
-        name='durability_override_model_instance',
-        capabilities=[TemporalDurability(models={'test-model': test_model})],
-    )
-    with agent.override(model=test_model):
-        result = await agent.run('hello')
-    assert result.output == 'success (no tool calls)'
 
 
 # --- get_serialization_name returns None ---

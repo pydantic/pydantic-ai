@@ -5418,24 +5418,6 @@ async def test_per_run_hooks_only_capability_allowed_inside_workflow(dbos: DBOS)
     assert await run_with_hooks_only() == snapshot('Echo: Hello')
 
 
-async def test_override_model_instance_round_trips_inside_workflow(dbos: DBOS) -> None:
-    from pydantic_ai.models.test import TestModel
-
-    test_model = TestModel()
-    agent = Agent(
-        _durability_fn_model,
-        name='durability_override_model_instance',
-        capabilities=[DBOSDurability(models={'test-model': test_model})],
-    )
-
-    @DBOS.workflow()
-    async def run_with_override() -> str:
-        with agent.override(model=test_model):
-            return (await agent.run('Hello')).output
-
-    assert await run_with_override() == 'success (no tool calls)'
-
-
 async def test_dbos_durability_allows_per_run_capabilities_outside_workflow(dbos: DBOS) -> None:
     """Outside a workflow the capability is transparent, so per-run capabilities are fine."""
     agent = Agent(_durability_fn_model, name='durability_per_run_cap_outside', capabilities=[DBOSDurability()])

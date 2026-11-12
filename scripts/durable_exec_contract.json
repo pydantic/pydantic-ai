@@ -2411,6 +2411,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.needs_registration"
       ]
     },
+    "AbstractCapability._can_wrap_model": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.needs_registration"
+      ]
+    },
     "AbstractCapability._cancellation_error_types": {
       "engines": [
         "durable_exec"
@@ -2694,17 +2705,6 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.contributes_executing_toolset"
-      ]
-    },
-    "AbstractCapability.get_wrapper_model": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "attribute_read"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.needs_registration"
       ]
     },
     "AbstractCapability.get_wrapper_toolset": {

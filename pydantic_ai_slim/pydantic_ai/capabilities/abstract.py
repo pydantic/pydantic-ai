@@ -431,6 +431,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return type(self).get_model is not AbstractCapability.get_model
 
     @property
+    def _can_wrap_model(self) -> bool:
+        """Whether this capability can wrap the agent's model: whether it overrides `get_wrapper_model`."""
+        return type(self).get_wrapper_model is not AbstractCapability.get_wrapper_model
+
+    @property
     def _has_prepare_model_request(self) -> bool:
         return type(self).prepare_model_request is not AbstractCapability.prepare_model_request
 
