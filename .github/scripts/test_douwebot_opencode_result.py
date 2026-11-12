@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from douwebot_opencode_result import review_result
+from douwebot_opencode_result import main, review_result
 
 _RESULT = '{"verdict":"APPROVE","comments":[],"discussion":""}'
 _STOP: dict[str, object] = {'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop'}}
@@ -65,15 +65,40 @@ def test_code_fence_that_ends_the_answer_is_unwrapped(tmp_path: Path, text: str)
     'text',
     [
         f'```json\n{_RESULT}\n```\nLet me know if you need more.',
+        f'{_RESULT}\nLet me know if you need more.',
         f'```json\n```json\n{_RESULT}\n```\n```',
-        f'```json\n{_RESULT}',
         f'```json {_RESULT} ```',
     ],
 )
 def test_fence_with_other_text_still_fails(tmp_path: Path, text: str) -> None:
-    """Text after the fence, nested or unterminated fences stay invalid."""
+    """Text after the fence or the object, and nested fences, stay invalid."""
     with pytest.raises(ValidationError):
         review_result(_stream(tmp_path, text))
+
+
+# glm-5.3-flash answers with prose, then a bare JSON object in `json.dumps`'s default separators.
+_PROSE = "I've completed a thorough review of the changed files."
+_FINDINGS = json.dumps(
+    {
+        'verdict': 'REQUEST_CHANGES',
+        'comments': [{'path': 'a.py', 'line': 1, 'side': 'RIGHT', 'body': 'Handle the empty case.'}],
+        'discussion': '',
+    }
+)
+
+
+@pytest.mark.parametrize(
+    'text',
+    [
+        pytest.param(f'{_PROSE}\n\n{_FINDINGS}', id='paragraph-before'),
+        pytest.param(f'{_PROSE} {_FINDINGS}', id='same-line'),
+        pytest.param(f'```json\n{_FINDINGS}', id='unterminated-fence'),
+    ],
+)
+def test_prose_before_bare_json_is_dropped(tmp_path: Path, text: str) -> None:
+    """Accept a bare JSON object that ends the answer after prose."""
+    result = review_result(_stream(tmp_path, text))
+    assert result.verdict == 'REQUEST_CHANGES'
 
 
 def test_fence_heavy_answer_is_rejected_in_linear_time(tmp_path: Path) -> None:
@@ -98,3 +123,15 @@ def test_incomplete_or_invalid_review_fails(tmp_path: Path, events: list[dict[st
     """Never pass a partial stream, error, or invalid review to the publisher."""
     with pytest.raises((ValueError, ValidationError)):
         review_result(_write_events(tmp_path, events))
+
+
+def test_rejected_review_exits_with_its_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The job log says why the answer was rejected without repeating it, and no result reaches the publisher."""
+    output = tmp_path / 'github-output'
+    output.touch()
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    monkeypatch.setattr(sys, 'argv', ['douwebot_opencode_result.py', str(_stream(tmp_path, 'Private finding.'))])
+    with pytest.raises(SystemExit) as raised:
+        main()
+    assert raised.value.code == 'OpenCode returned an invalid review: validation failed: json_invalid'
+    assert output.read_text(encoding='utf-8') == ''
