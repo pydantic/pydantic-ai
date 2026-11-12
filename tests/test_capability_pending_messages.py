@@ -27,6 +27,7 @@ from pydantic_ai.capabilities import (
     ProcessHistory,
     ToolSearch,
     WrapModelRequestHandler,
+    on_event,
 )
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
@@ -2397,6 +2398,60 @@ async def test_content_recorded_at_a_deferred_pause_keeps_the_pause_on_a_plain_r
     assert isinstance(resumed.output, DeferredToolRequests)
     assert [call.tool_call_id for call in resumed.output.approvals] == ['call-gated']
     assert call_count == 1
+
+
+@pytest.mark.parametrize('driver', ['run', 'run_with_handler', 'run_stream_events', 'run_stream'])
+async def test_content_recorded_at_a_deferred_pause_is_reported_once_to_listeners_and_streams(driver: str):
+    """Recording content at a pause happens after the step's event stream closed, and its event still gets out.
+
+    A capability that tracks what it queued, such as `SubAgents`, learns it was delivered from the event.
+    """
+
+    @dataclass
+    class Listener(AbstractCapability[object]):
+        seen: list[str]
+
+        @on_event(EnqueuedMessagesEvent)
+        async def delivered(self, ctx: RunContext[object], event: EnqueuedMessagesEvent) -> None:
+            self.seen.append(event.enqueue_id)
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='gated', tool_call_id='call-gated')])
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='gated', json_args='{}', tool_call_id='call-gated')}
+
+    listener = Listener(seen=[])
+    agent = Agent(
+        FunctionModel(model_fn, stream_function=stream_fn),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[listener],
+    )
+    enqueue_ids: list[str | None] = []
+
+    @agent.tool
+    def gated(ctx: RunContext[object]) -> str:
+        enqueue_ids.append(ctx.enqueue('noted at the pause'))
+        raise ApprovalRequired
+
+    streamed: list[str] = []
+
+    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        streamed.extend([event.enqueue_id async for event in events if isinstance(event, EnqueuedMessagesEvent)])
+
+    if driver == 'run':
+        await agent.run('Hello')
+    elif driver == 'run_with_handler':
+        await agent.run('Hello', event_stream_handler=handler)
+    elif driver == 'run_stream_events':
+        async with agent.run_stream_events('Hello') as events:
+            streamed.extend([event.enqueue_id async for event in events if isinstance(event, EnqueuedMessagesEvent)])
+    else:
+        async with agent.run_stream('Hello', event_stream_handler=handler) as result:
+            assert isinstance(await result.get_output(), DeferredToolRequests)
+
+    assert listener.seen == enqueue_ids
+    assert streamed == ([] if driver == 'run' else enqueue_ids)
 
 
 async def test_interrupted_request_queued_at_a_deferred_pause_stays_queued():

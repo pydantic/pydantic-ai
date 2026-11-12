@@ -295,6 +295,26 @@ async def _with_event_stream_buffer(
         await aclose_if_supported(stream)
 
 
+async def _buffered_events(
+    event_stream_buffer: list[_messages.AgentStreamEvent],
+) -> AsyncIterator[_messages.AgentStreamEvent]:
+    while event_stream_buffer:
+        yield event_stream_buffer.pop(0)
+
+
+def leftover_event_stream(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+) -> AsyncIterator[_messages.AgentStreamEvent]:
+    """The events buffered after the run's last node stream closed, wrapped in the capability chain as a node's are.
+
+    Hooks that run once a node has finished, and the pending-message drain at the end of a run, can emit events no
+    node stream remains to deliver.
+    """
+    run_context = build_run_context(ctx)
+    inner = dispatch_event_stream(run_context, _buffered_events(ctx.state.event_stream_buffer))
+    return aiter(ctx.deps.root_capability.wrap_run_event_stream(run_context, stream=inner))
+
+
 def _context_changes(before: Context, after: Context) -> list[tuple[ContextVar[Any], Any]]:
     """Return values newly set or replaced between two task-context snapshots."""
     return [(var, after[var]) for var in after if var not in before or before[var] is not after[var]]

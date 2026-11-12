@@ -691,7 +691,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     if agent_run.result is not None:
                         break
                     if _stream_step is not None:
-                        node = await agent_run._run_node_with_hooks(node, _stream_step)  # pyright: ignore[reportPrivateUsage]
+                        node = await agent_run._run_node_with_hooks(node, _stream_step, event_stream_handler)  # pyright: ignore[reportPrivateUsage]
                     else:
                         node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
 
@@ -1203,6 +1203,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     run_ctx,
                     node,
                     agent_run._advance_graph,  # pyright: ignore[reportPrivateUsage]
+                    event_stream_handler,
                 )
                 if isinstance(next_node, End) and agent_run.result is not None:
                     # A final output could have been produced by the CallToolsNode rather than the ModelRequestNode,
