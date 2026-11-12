@@ -388,6 +388,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         When reduced, the result goes ahead of the files. Returns `(new_items, handle, data_bytes)`, with
         `new_items` None when nothing was reduced.
         """
+        files = [item for item in items if is_multi_modal_content(item)]
         data = [item for item in items if not is_multi_modal_content(item)]
         if not data:
             return None, None, 0
@@ -396,7 +397,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         reduced, handle = await self._reduce(ctx, call, bands, unit)
         if reduced is None:
             return None, None, 0
-        return [reduced, *(item for item in items if is_multi_modal_content(item))], handle, len(unit.data)
+        return [reduced, *files], handle, len(unit.data)
 
     def _assemble(
         self,
