@@ -253,21 +253,21 @@ _X_SOCKET = f'/tmp/.X11-unix/X{DISPLAY[1:]}'
 def start_x_server(log: str, *, then: str = '') -> str:
     """A shell fragment that starts Xvfb on `DISPLAY`, at the size `$1` names such as `1280x800`, unless one answers.
 
-    It gives up as soon as the X server exits, or after 10 seconds, with the end of `log` as the reason. `then` runs
-    once a new X server answers, such as to start a panel.
+    It fails once the X server exits, or after 10 seconds, printing the end of `log`. `then` runs once a new X server
+    answers, such as to start a panel.
 
-    It takes `START_LOCK`, so a second start of the display waits and finds the first one's X server. The script it
-    begins holds the lock until it exits, so what follows it, such as starting a desktop, is under the lock too; what
-    `then` or the rest of the script starts in the background must close it with `9>&-`.
+    It takes `START_LOCK`, so a second start waits and finds the first one's X server. The lock is held until the
+    script exits, so the rest of the script runs under it too; anything started in the background must close it with
+    `9>&-`.
     """
     return (
         f'{START_LOCK}if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
-        # A lock left by an X server that's gone, such as after `docker stop`, stops Xvfb starting when its PID now
-        # belongs to another process. A running X server's lock stays, whichever server it is, such as `Xvnc`.
+        # A stale lock, such as one left by `docker stop`, stops Xvfb starting once its PID belongs to another process.
+        # A running X server's lock stays, whichever server it is, such as `Xvnc`.
         f'case "$(cat /proc/$(tr -d " " 2>/dev/null <{_X_LOCK})/comm 2>/dev/null)" in X*) ;; '
         f'*) rm -f {_X_LOCK} {_X_SOCKET} ;; esac; '
-        # Without `-noreset` an X server resets when its last client exits, such as each `xdotool` command while no
-        # window manager runs: the pointer goes back to the middle and held buttons are let go (seen on a plain Xvfb).
+        # Without `-noreset`, X resets when its last client exits, such as an `xdotool` command with no window manager
+        # running: the pointer goes back to the middle and held buttons are let go.
         f'setsid Xvfb {DISPLAY} -screen 0 "$1"x24 -nolisten tcp -noreset >/dev/null 2>{log} 9>&- & '
         + wait_until_ready('xdotool getdisplaygeometry >/dev/null 2>&1', '$!', 'the X server', log)
         + f'{then} fi; '
