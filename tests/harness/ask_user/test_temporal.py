@@ -83,12 +83,6 @@ class AskUserWorkflow:
 
 
 @pytest.fixture(scope='module')
-def anyio_backend() -> str:
-    """Temporal's Python SDK runs on asyncio."""
-    return 'asyncio'
-
-
-@pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_time_skipping(
         plugins=[PydanticAIPlugin()], download_dest_dir=temporal_dev_server_cache_dir()
