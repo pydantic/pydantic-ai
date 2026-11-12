@@ -238,13 +238,18 @@ a native notice describes the stored result, not the shorter preview. A positive
 `Spill.preview_chars` value controls the preview's content budget; its header and omission
 marker add to that length.
 
-## Both `return_value` and `content` are reduced
+## Return-value and content handling
 
 A `ToolReturn` carries a `return_value` and an optional `content` that core renders as a
 separate, model-visible part which also persists in history. This capability measures and
-reduces both with the same band logic (they spill to distinct handles). Text `content` is
-reduced in place; non-text `content` (multimodal parts) that overflows is left unreduced with
-a `warnings.warn`, since it cannot be safely truncated.
+reduces both with the same bands, and they spill to distinct handles.
+
+A return value that holds files, such as the `[header, BinaryContent]` that `read_file` returns
+for an image or PDF, reaches the model with its files as they are. A lone data item beside them is
+measured as itself, and several as one JSON list. When a band
+applies, the reduced text replaces that data, ahead of the files. Text `content` is reduced the
+same way whatever the return value holds. Non-text `content` that overflows is left unreduced
+with a `warnings.warn`.
 
 ### `ToolReturn.metadata` is preserved
 
@@ -420,8 +425,10 @@ replay.
 
 ## Edge cases
 
-- Binary returns spill verbatim and are never stringify-truncated; `Truncate` / `Summarize`
+- Raw `bytes` returns spill verbatim and are never stringify-truncated; `Truncate` / `Summarize`
   on binary fall through to `then`.
+- A return value holding files (`BinaryContent`, a file URL, or an `UploadedFile`, alone or in a list) keeps every
+  file as it is; only the items beside them are measured and reduced.
 - Structured / nested returns spill (or summarize) by preference -- truncating JSON produces
   invalid JSON. `Spill` includes a one-line shape sketch of the top level.
 - `ModelRetry` and tool errors never reach this hook (they are raised, not returned), so the
