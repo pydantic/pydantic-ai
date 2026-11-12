@@ -11,6 +11,7 @@ from pydantic_core import to_json
 from ...exceptions import RunCancelled, RunTimedOut
 from ...messages import (
     ERROR_OUTCOMES,
+    CapabilityLoadDeltaEvent,
     CompactionPart,
     CustomEvent,
     EnqueuedMessagesEvent,
@@ -18,6 +19,7 @@ from ...messages import (
     FinishReason as PydanticFinishReason,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -36,11 +38,20 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from .._adapter import compaction_payload, enqueued_messages_for_client
+from .._adapter import (
+    capability_load_delta_payload,
+    compaction_payload,
+    enqueued_messages_for_client,
+    model_settings_delta_payload,
+    tool_availability_delta_payload,
+)
+from .._utils import client_error_text
 from ._utils import (
+    CAPABILITY_LOAD_DELTA_DATA_TYPE,
     COMPACTION_DATA_TYPE,
     DATA_CHUNK_TYPES,
     ENQUEUED_MESSAGES_DATA_TYPE,
+    MODEL_SETTINGS_DELTA_DATA_TYPE,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     dump_message_metadata,
     dump_provider_metadata,
@@ -214,7 +225,10 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseChunk]:
         provider_metadata = dump_provider_metadata(
-            id=part.id, provider_name=part.provider_name, provider_details=part.provider_details
+            id=part.id,
+            provider_name=part.provider_name,
+            provider_details=part.provider_details,
+            canonical_system=self._canonical_system_for(part.provider_name),
         )
         if follows_text:
             message_id = self.message_id
@@ -237,7 +251,10 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # Consecutive text parts stream into one UI text part, whose metadata is sent on its `text-end` chunk.
         self._text_parts.append(part)
         if not followed_by_text:
-            yield TextEndChunk(id=self.message_id, provider_metadata=dump_text_metadata(self._text_parts))
+            yield TextEndChunk(
+                id=self.message_id,
+                provider_metadata=dump_text_metadata(self._text_parts, canonical_system_for=self._canonical_system_for),
+            )
             for chunk in iter_citation_source_chunks(merged_text_citations(self._text_parts), self._source_urls):
                 yield chunk
 
@@ -250,6 +267,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             signature=part.signature,
             provider_name=part.provider_name,
             provider_details=part.provider_details,
+            canonical_system=self._canonical_system_for(part.provider_name),
         )
         yield ReasoningStartChunk(id=message_id, provider_metadata=provider_metadata)
         if part.content:
@@ -274,6 +292,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             signature=part.signature,
             provider_name=part.provider_name,
             provider_details=part.provider_details,
+            canonical_system=self._canonical_system_for(part.provider_name),
         )
         yield ReasoningEndChunk(id=self.message_id, provider_metadata=provider_metadata)
 
@@ -299,6 +318,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                 tool_kind=part.tool_kind,
                 provider_name=part.provider_name,
                 provider_details=part.provider_details,
+                canonical_system=self._canonical_system_for(part.provider_name),
             ),
         )
         if part.args:
@@ -345,6 +365,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                 id=part.id,
                 provider_name=part.provider_name,
                 provider_details=part.provider_details,
+                canonical_system=self._canonical_system_for(part.provider_name),
                 tool_kind=part.tool_kind,
             ),
         )
@@ -393,6 +414,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                 id=part.id,
                 provider_name=part.provider_name,
                 provider_details=part.provider_details,
+                canonical_system=self._canonical_system_for(part.provider_name),
                 tool_kind=part.tool_kind,
             ),
         )
@@ -401,9 +423,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if self.sdk_version >= 6 and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=part.tool_call_id)
         elif part.outcome in ERROR_OUTCOMES:
-            yield ToolOutputErrorChunk(
-                tool_call_id=part.tool_call_id, error_text=part.model_response_str(wrap_if_error=False)
-            )
+            yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=client_error_text(part))
         else:
             # `'success'` and `'interrupted'` both render as neutral tool output. Only the error
             # outcomes are errors; `'interrupted'` (a call cut off before it produced a result)
@@ -421,18 +441,24 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[BaseChunk]:
         yield DataChunk(
             type=COMPACTION_DATA_TYPE,
-            data=compaction_payload(part),
+            data=compaction_payload(part, canonical_system=self._canonical_system_for(part.provider_name)),
         )
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):
             yield chunk
 
+    async def handle_capability_load_delta(self, event: CapabilityLoadDeltaEvent) -> AsyncIterator[BaseChunk]:
+        yield DataChunk(type=CAPABILITY_LOAD_DELTA_DATA_TYPE, data=capability_load_delta_payload(event.part))
+
+    async def handle_model_settings_delta(self, event: ModelSettingsDeltaEvent) -> AsyncIterator[BaseChunk]:
+        yield DataChunk(type=MODEL_SETTINGS_DELTA_DATA_TYPE, data=model_settings_delta_payload(event.part))
+
     async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseChunk]:
         part = event.part
         yield DataChunk(
             type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
-            data={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+            data=tool_availability_delta_payload(part),
         )
 
     async def handle_enqueued_messages(self, event: EnqueuedMessagesEvent) -> AsyncIterator[BaseChunk]:
@@ -516,17 +542,16 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                     id=invalidated_part.id,
                     provider_name=invalidated_part.provider_name,
                     provider_details=invalidated_part.provider_details,
+                    canonical_system=self._canonical_system_for(invalidated_part.provider_name),
                     tool_kind=invalidated_part.tool_kind,
                 ),
-                error_text=part.model_response_str(wrap_if_error=False),
+                error_text=client_error_text(part),
             )
         elif part.outcome in ERROR_OUTCOMES:
             # A retry takes the error channel like a failure does, and its `error_text` is the
             # feedback itself — unwrapped, and with none of the instruction framing the retry part
             # it replaces rendered (https://github.com/pydantic/pydantic-ai/pull/4869).
-            yield ToolOutputErrorChunk(
-                tool_call_id=tool_call_id, error_text=part.model_response_str(wrap_if_error=False)
-            )
+            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=client_error_text(part))
         else:
             # `'success'` and `'interrupted'` both render as neutral tool output. Only the error
             # outcomes are errors; a synthesized `'interrupted'` return (from message-history repair)

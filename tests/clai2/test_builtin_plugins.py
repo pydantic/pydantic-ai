@@ -27,9 +27,11 @@ CURATED = {
     'ask_user',
     'repo_context',
     'compaction',
+    'refinement',
     'persistence',
     'observability',
     'notifications',
+    'hooks',
     'herdr',
     'aoe',
     'mcp',
@@ -48,7 +50,6 @@ CURATED = {
     'workspaces',
 }
 OPT_IN = {
-    'herdr',
     'aoe',
     'day_ai',
     'github',

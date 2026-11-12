@@ -29,7 +29,7 @@ it maps to the closest available value (e.g. `'xhigh'` and `'max'` -> `'high'` o
 that don't support them, `'minimal'` -> `'low'` on providers without a minimal level).
 """
 
-CacheRetention: TypeAlias = Literal['5m', '30m', '1h']
+CacheRetention: TypeAlias = Literal['5m', '30m', '1h', '12h']
 """The retention tiers for prompt-cache configuration.
 
 Not all providers support all tiers. A requested retention snaps down to the
@@ -90,6 +90,9 @@ class ToolOrOutput:
 ToolChoice = ToolChoiceScalar | list[str] | ToolOrOutput | None
 """Type alias for all valid tool_choice values."""
 
+FramingAnnouncement: TypeAlias = Literal['always', 'when_needed', 'never']
+"""When to tell a model what the `<system>` tag means; see [`ModelSettings.framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announcement]."""
+
 ServiceTier: TypeAlias = Literal['auto', 'default', 'flex', 'priority']
 """Cross-provider value set for [`ModelSettings.service_tier`][pydantic_ai.settings.ModelSettings.service_tier].
 
@@ -119,8 +122,8 @@ On Google Cloud the unified field maps only to safe PT-with-spillover variants s
 Provisioned Throughput keep using their reserved capacity first; to bypass PT entirely use
 [`google_cloud_service_tier`][pydantic_ai.models.google.GoogleModelSettings.google_cloud_service_tier]
 with `'flex_only'` or `'priority_only'`. Likewise, provider-specific values not in the unified set
-(Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Google Cloud's PT routing tiers) are reachable
-only through the per-provider field.
+(OpenAI's `'scale'`, `'fast'` and `'ultrafast'`, Bedrock's `'reserved'`, Anthropic's `'standard_only'`, Google Cloud's PT
+routing tiers) are reachable only through the per-provider field.
 
 Per-provider settings (`openai_service_tier`, `anthropic_service_tier`, `bedrock_service_tier`,
 `google_cloud_service_tier`) always take precedence over this unified field when set.
@@ -293,6 +296,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * OpenAI Decisions
+    * Google Decisions
     """
 
     request_timeout: float
@@ -313,6 +317,60 @@ class ModelSettings(TypedDict, total=False):
     It is not sent to the provider. See [Timeouts](../timeouts.md#model-request-deadlines).
     """
 
+    first_event_timeout: float
+    """A deadline for a streamed request to produce its first output, in seconds, enforced by Pydantic AI for every model.
+
+    It runs from when the request is made until the stream's first event: a part starting or a delta of one, thinking
+    included. A provider event that carries no output, like OpenAI's `response.created`, doesn't count. Like
+    [`request_timeout`][pydantic_ai.settings.ModelSettings.request_timeout], it covers every attempt the provider SDK
+    and HTTP transport make, and the continuations of a response the provider paused or runs in the background,
+    until one of them produces output. Once the first event has arrived it no longer applies, so a long response,
+    or a long pause in the middle of one, isn't cut off.
+
+    When it runs out, the request is cancelled and
+    [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] is raised, with `setting` set to
+    `'first_event_timeout'`. Nothing has been streamed yet, so a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or the
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] capability falls back to the next model by default,
+    and gives it a fresh deadline. With `request_timeout` also set, whichever deadline passes first applies.
+
+    It only applies to streamed requests: on a non-streamed one, `request_timeout` covers the same wait. It is not
+    sent to the provider. See [Timeouts](../timeouts.md#waiting-for-the-first-event).
+    """
+
+    framing_announcement: FramingAnnouncement
+    """When to tell the model what the application's `<system>` blocks and lookalike notes mean.
+
+    A model whose API has no system role inside the conversation gets each mid-conversation system prompt as a
+    `<system>` block in a user turn, and follows it far more reliably once its system prompt has said what the tag
+    means. Text from a user, a tool or a file that looks like one of the application's frames goes out as written,
+    with a short note from the application next to it, and the announcement also says what those notes mean. On such
+    a model Pydantic AI adds the announcement, a fixed text of about 120 words (about 185 where the blocks are
+    `<system verified>`), to a request that has a system prompt or instructions:
+
+    - `'when_needed'` (the default on most models): at the start of the system prompt, ahead of the leading system
+      prompts and the instructions, so the application's own text comes last, from the first request whose history
+      has a mid-conversation system prompt, a lookalike note or another frame on the user channel, such as retry
+      feedback or a compaction summary, and on every request after it. A
+      mid-conversation system prompt includes an instruction change appended by a dynamic instruction with
+      `on_change='append'`, but not one that rewrites the instructions (the default `'rewrite'`). A conversation
+      with none of these keeps its system prompt as written; one that has them changes its cached prompt prefix
+      once, at that request, and keeps it stable from then on, as long as the stored history keeps what needed it.
+      A UI adapter's frontend doesn't send a mid-conversation system prompt back (AG-UI, Vercel AI), so there the
+      announcement drops out of the next turn and the prefix changes every turn: use `'always'`.
+    - `'always'`: at the start of the system prompt, on every request from the first, so the prefix never changes, at
+      the cost of the announcement in conversations that never need it. The default on Claude Sonnet 4.6 and
+      gpt-oss, which follow the system prompt less reliably without it (see
+      [`default_framing_announcement`][pydantic_ai.profiles.ModelProfile.default_framing_announcement]).
+    - `'never'`: not at all, for an application that explains the tag in its own system prompt or doesn't want the
+      text added. Models then follow a `<system>`-tagged change less reliably. The lookalike notes are still added.
+
+    A model with a native mid-conversation system role gets a shorter announcement as a system message in the
+    first request with a frame or a note, with `'when_needed'` and `'always'` alike, and none with `'never'`. The
+    setting is applied by Pydantic AI for every model and is not sent to the provider. See
+    [When the announcement is sent](../message-history.md#when-the-announcement-is-sent).
+    """
+
     max_retries: int
     """Override how many times the provider SDK's client retries a failed request, for one request.
 
@@ -328,7 +386,8 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI (Responses WebSockets retry only explicit 408, 409, 429 or 5xx rejection frames received before the
+      first response event; disconnects and errors after response events start propagate to the caller)
     * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
@@ -347,6 +406,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock Mantle
     * TypeSafe (the request's other `RetryPolicy` options are the SDK defaults)
     * OpenAI Decisions
+    * Google Decisions
     """
 
     parallel_tool_calls: bool
@@ -546,6 +606,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * OpenAI Decisions
+    * Google Decisions
     """
 
     thinking: ThinkingLevel
@@ -598,13 +659,15 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (documents, including those returned by tools, and Web Fetch)
+    * Anthropic (documents, including those returned by tools, Web Fetch, and Web Search on models with the
+      `20260209` or `20260318` web tools, which on the Anthropic API the setting has the model call directly unless the request
+      needs code execution; see [Web Tool Callers](../models/anthropic.md#web-tool-callers))
     * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
     * xAI (inline citations)
 
     Only used when the output is text. On Anthropic models, a `tool_choice` that forces a tool call raises a
-    `UserError` when the request has something to cite. Providers that always cite ignore this setting. See
-    [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
+    `UserError` when the request has a document or Web Fetch tool to cite. Providers that always cite ignore this
+    setting. See [Citations, tools and structured output](../citations.md#citations-tools-and-structured-output).
     """
 
     cache: CacheSetting
@@ -612,8 +675,9 @@ class ModelSettings(TypedDict, total=False):
 
     Prompt caching lets the provider serve a long or multi-turn prompt's stable prefix from its cache
     instead of re-processing it. Cache writes cost more than uncached input (1.25x for Anthropic's
-    5-minute and OpenAI's GPT-5.6 caches, 2x for Anthropic's 1-hour cache) while cache reads cost about
-    0.1x, so a 1.25x write breaks even after one read and a 2x write after two.
+    5-minute and OpenAI's GPT-5.6 30-minute caches, 2x for Anthropic's 1-hour cache, 2.5x for OpenAI's
+    12-hour cache) while cache reads cost about 0.1x, so a 1.25x write breaks even after one read and a
+    2x or 2.5x write after two.
 
     - `True`: Cache the stable prompt prefix (tool definitions and static instructions)
       and the growing conversation, with the provider's default retention. The library places cache
@@ -622,7 +686,7 @@ class ModelSettings(TypedDict, total=False):
       overriding a `cache` value in the model's default settings. Explicit
       [`CachePoint`][pydantic_ai.messages.CachePoint] markers and provider-specific cache settings
       still apply, and providers that cache implicitly (e.g. OpenAI, Gemini) still do.
-    - `'5m'`/`'30m'`/`'1h'`: Cache with a specific retention, snapped to the nearest tier the
+    - `'5m'`/`'30m'`/`'1h'`/`'12h'`: Cache with a specific retention, snapped to the nearest tier the
       provider supports (down where a shorter tier exists).
     - A [`CacheConfig`][pydantic_ai.settings.CacheConfig]: Cache with an optional `retention`, and with
       `messages=False` cache only the stable prefix (tool definitions and static instructions), not the
@@ -647,7 +711,7 @@ class ModelSettings(TypedDict, total=False):
       `bedrock_cache_tool_definitions` and `bedrock_cache_messages`)
     * OpenRouter (Anthropic and Gemini models only; as `openrouter_cache_instructions`,
       `openrouter_cache_tool_definitions` and `openrouter_cache_messages`)
-    * OpenAI (GPT-5.6 and later on the OpenAI API only; as `openai_prompt_cache_options` and
+    * OpenAI (GPT-5.6 and later on the OpenAI API and the Azure OpenAI v1 API; as `openai_prompt_cache_options` and
       `openai_cache_instructions`)
     """
 
@@ -702,6 +766,7 @@ class ModelSettings(TypedDict, total=False):
     * TypeSafe
     * System One
     * OpenAI Decisions
+    * Google Decisions
 
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
     Z.AI), the model's own derived keys overwrite yours when the keys collide.
@@ -715,6 +780,8 @@ ModelSettingName: TypeAlias = Literal[
     'top_k',
     'timeout',
     'request_timeout',
+    'first_event_timeout',
+    'framing_announcement',
     'max_retries',
     'parallel_tool_calls',
     'tool_choice',
@@ -732,6 +799,19 @@ ModelSettingName: TypeAlias = Literal[
 ]
 """The name of a [`ModelSettings`][pydantic_ai.settings.ModelSettings] field, as listed in a model class's
 [`unsupported_settings`][pydantic_ai.models.Model.unsupported_settings]."""
+
+
+class RecordedModelSettings(TypedDict, total=False):
+    """The model settings a [`ModelSettingsDeltaPart`][pydantic_ai.messages.ModelSettingsDeltaPart] records, by their unified [`ModelSettings`][pydantic_ai.settings.ModelSettings] keys.
+
+    Only settings that shape what the model produces belong here, never transport or client settings such as
+    `extra_headers`, `timeout` or `extra_body`. Each value is JSON-native, so a recorded change round-trips
+    through storage and UI protocols unchanged. The framework records `thinking` today; a model adapter decides
+    which recorded keys it can send mid-conversation and sends the rest as request-level settings.
+    """
+
+    thinking: ThinkingEffort | None
+    """The effort level in effect, or `None` when the unified `thinking` setting names no level (`True`, `False` or unset)."""
 
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:

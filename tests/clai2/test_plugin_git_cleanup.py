@@ -9,8 +9,8 @@ from types import TracebackType
 
 import pytest
 
-from pydantic_clai2.plugins import _git
-from pydantic_clai2.plugins._git import remove_checkout
+from pydantic_clai2.plugins import git
+from pydantic_clai2.plugins.git import remove_checkout
 
 from .test_plugin_loader import Harness
 
@@ -56,8 +56,8 @@ async def test_invalid_clone_rolls_back_readonly_git_objects(tmp_path: Path, mon
     def remove_windows(destination: Path) -> None:
         remove_checkout(destination, windows=True)
 
-    monkeypatch.setattr(_git, 'clone_repository', clone)
-    monkeypatch.setattr(_git, 'remove_checkout', remove_windows)
+    monkeypatch.setattr(git, 'clone_repository', clone)
+    monkeypatch.setattr(git, 'remove_checkout', remove_windows)
     harness = Harness(tmp_path)
     with pytest.raises(ValueError, match=r'regular __init__\.py or plugin\.py'):
         await harness.loader.command(['add', 'https://example.invalid/plugin.git'])
@@ -77,8 +77,8 @@ async def test_cleanup_failure_preserves_original_error(
     def remove(destination: Path) -> None:
         raise PermissionError('checkout still locked')
 
-    monkeypatch.setattr(_git, 'clone_repository', clone)
-    monkeypatch.setattr(_git, 'remove_checkout', remove)
+    monkeypatch.setattr(git, 'clone_repository', clone)
+    monkeypatch.setattr(git, 'remove_checkout', remove)
     harness = Harness(tmp_path)
     expected = asyncio.CancelledError if cancel else ValueError
     with pytest.raises(expected, match=None if cancel else 'original clone failure'):
@@ -105,7 +105,7 @@ def test_readonly_retry_preserves_other_errors_and_symlink_targets(tmp_path: Pat
     error = OSError('original') if case == 'other-error' else PermissionError('original')
     operation = os.stat if case == 'other-operation' else os.unlink
     with pytest.raises(OSError) as captured:
-        _git.retry_readonly(operation, str(path), error)
+        git.retry_readonly(operation, str(path), error)
     assert captured.value is error
     assert target.stat().st_mode == mode
 
@@ -117,7 +117,7 @@ def test_legacy_readonly_callback(tmp_path: Path) -> None:
         raise PermissionError('read-only file')
     except PermissionError as error:
         assert error.__traceback__ is not None
-        _git.retry_readonly_legacy(os.unlink, str(pack), (type(error), error, error.__traceback__))
+        git.retry_readonly_legacy(os.unlink, str(pack), (type(error), error, error.__traceback__))
     assert not pack.exists()
 
 
@@ -131,11 +131,11 @@ def test_legacy_rmtree_uses_error_adapter(tmp_path: Path, monkeypatch: pytest.Mo
             [Callable[[str], object], str, tuple[type[BaseException], BaseException, TracebackType]], None
         ],
     ) -> None:
-        assert onerror is _git.retry_readonly_legacy
+        assert onerror is git.retry_readonly_legacy
         calls.append(path)
 
     with monkeypatch.context() as patch:
-        patch.setattr(_git.sys, 'version_info', (3, 11))
-        patch.setattr(_git.shutil, 'rmtree', remove)
+        patch.setattr(git.sys, 'version_info', (3, 11))
+        patch.setattr(git.shutil, 'rmtree', remove)
         remove_checkout(tmp_path, windows=True)
     assert calls == [tmp_path]

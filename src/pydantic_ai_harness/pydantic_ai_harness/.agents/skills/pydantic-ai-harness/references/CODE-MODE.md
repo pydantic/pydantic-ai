@@ -105,7 +105,9 @@ approval-gated and integration tools stay regular tool calls.
 
 If the user expects a raw dict or list back, avoid unnecessary `print()` statements. Printed output is
 capped at 10 MiB. Tool results reach the sandbox as JSON: `Decimal`, `UUID` and `datetime` arrive as
-strings and mapping keys are stringified (`bytes` cross unchanged).
+strings and mapping keys are stringified (`bytes` cross unchanged). A nested tool's `ToolReturn`
+gives the sandbox its `return_value`; its `content` (e.g. a screenshot) skips the sandbox and reaches
+the model with the `run_code` result, as for a direct call.
 
 ## Limits and Retries
 
@@ -116,14 +118,14 @@ CodeMode(
     tools='all',
     max_retries=3,
     max_tool_calls=25,
-    resource_limits={'max_duration_secs': 10, 'max_memory': 128 * 1024 * 1024},
+    resource_limits={'max_duration_seconds': 10, 'max_memory': 128 * 1024 * 1024},
 )
 ```
 
-- `max_retries` (default 3): sandbox errors (including syntax/type errors) are sent back to the model to redraft, up to this many times.
+- `max_retries` (default 3): execution errors (including syntax/type errors) are sent back to the model to redraft, up to this many times. A nested tool's `ToolFailed` the snippet does not catch is the exception: `run_code` returns a failed result, as when the model calls that tool directly, and spends no retry. Pool creation, connection, and checkout errors propagate to the code calling the agent, not the model. Inside Temporal they follow the workflow failure policy below. Capacity refusals get one checkout retry after a short backoff before propagating.
 - `max_tool_calls` (default 100): nested calls per `run_code` call. A call past the budget fails at its call site; if uncaught, the model gets a retry listing the calls that already started.
 - The run's `UsageLimits(tool_calls_limit=...)` counts nested calls and the `run_code` call that makes them. A nested call that would exceed it ends the run with `UsageLimitExceeded`, even when the snippet catches the error. A call launched early by `speculate` counts from the moment it starts, including one the snippet never claims. A launch the limit refused runs cold if the snippet asks for it.
-- `resource_limits` (default: 30 s execution and 256 MiB heap per snippet): keys `max_duration_secs`, `max_memory`, `max_suspensions` (default 1,000 host interactions per REPL session, shared across snippets). Unknown keys raise `UserError`. Time awaiting tools does not count; sleeps get a separate allowance of `max_duration_secs`. A snippet that hits the time limit is stopped and its REPL session is reset. `'unlimited'` removes time and memory caps only when another boundary supplies them; `max_suspensions` can never be disabled.
+- `resource_limits` (default: 30 s execution and 256 MiB heap per snippet): keys `max_duration_seconds`, `max_memory`, `max_suspensions` (default 1,000 host interactions per REPL session, shared across snippets). Unknown keys raise `UserError`. Time awaiting tools does not count; sleeps get a separate allowance of `max_duration_seconds`. A snippet that hits the time limit is stopped and its REPL session is reset. `'unlimited'` removes time and memory caps only when another boundary supplies them; `max_suspensions` can never be disabled.
 
 ## REPL State
 
@@ -132,6 +134,17 @@ functions carry over until the run ends. The model passes `restart: true` in the
 reset state. A timeout, worker crash, or interrupted eager statement also resets the session, and the
 retry message says so -- the next snippet must recreate its state.
 
+A pool's `request_timeout` and a remote `turn_timeout` ask the model to do less work per call.
+Remote session and idle timeouts explain that state is lost. Sandbox memory-limit errors and
+`MemoryError`s without a traceback reset the session and ask the model to use smaller batches.
+Other snippet or nested-tool `MemoryError`s keep state unless their diagnostic is indistinguishable
+from a sandbox memory limit: Monty does not guarantee heap integrity after a limit fires.
+Exceeding the 10 MiB printed-output cap also resets the session because it has the same diagnostic.
+Remote host-side error details are omitted
+from retries because they may contain pool URLs or credentials; the original exception remains
+the cause for application-side diagnostics. Retries list nested calls that already started so
+the model can avoid repeating their side effects.
+
 State does not carry over to the next agent run unless `repl_store` is set: an object with async
 `load(ctx) -> bytes | None` and `save(ctx, state: bytes | None)` methods
 (`pydantic_ai_harness.code_mode.CodeModeReplStore`), usually
@@ -139,7 +152,8 @@ keyed by `ctx.conversation_id`. A run that calls `run_code` restores the saved s
 snippet and saves the REPL when it ends; `restart: true` replaces it (`save(ctx, None)` when nothing
 replaces it), and a state saved under other `resource_limits` or that Monty cannot load is dropped so
 the run starts fresh. Return only states the application saved: Monty does not authenticate them. Restored state skips
-the first-snippet type check. Store errors are logged, not raised. The store is not used under durable
+the first-snippet type check. Store errors are logged, not raised; a run whose `load` failed
+saves nothing unless it restarts, so the unread state survives. The store is not used under durable
 execution.
 
 ## Sandbox Restrictions
@@ -150,10 +164,11 @@ Key restrictions:
 
 - No third-party imports
 - No `import *`
-- Only a small stdlib subset is allowed, and each must be imported before use: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`
+- Only a small stdlib subset is allowed, and each must be imported before use: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`, `hashlib`, `os.path`, `tomllib`, `annotationlib`
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation and wait APIs are unavailable
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` require an `os_access` handler; `time.sleep` and `asyncio.sleep` really wait, within the sleep allowance
 - Filesystem I/O requires an `os_access` handler or a `mount`; `os.getenv` and `os.environ` require an `os_access` handler
+- A sandboxed tool named after a Python builtin (`list`, `open`, `print`, ...) raises `UserError`; rename it or use `toolset.prefixed(...)`
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
 
 The sandbox constrains the model-generated Python, not the implementation of the tools it calls.
@@ -197,26 +212,34 @@ CodeMode(
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,
     eager: bool = False,                   # run complete streamed statements before the call finishes
     speculate: Sequence[str] | Literal['declared'] | None = None,  # start read-only calls while streaming
-    monty_sandbox_url: str | None = None,  # ws:// or wss:// remote Monty worker
+    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = None,  # an http(s):// server root URL, or a function returning the pool
     repl_store: CodeModeReplStore | None = None,  # keep the REPL across agent runs
-    dynamic_catalog: bool = False,         # move the tool catalog into dynamic instructions
+    dynamic_catalog: bool = True,          # keep the tool catalog in an appending instruction block
 )
 ```
 
-- `dynamic_catalog=True`: moves sandboxed-tool signatures out of `run_code`'s description into an instruction block (`toolset:code_mode:catalog`, `on_change='append'`), keeps deferred tools that `run_code` will take over off the wire until they're found, and appends the updated catalog when one is found (plus a short announcement when Tool Search found it), so discoveries don't rewrite the cached prompt. Discovery then goes through the local `search_tools` or `load_capability`; with the `'bm25'`/`'regex'` strategies, or a selector that keeps another deferred tool native, such tools are still declared for the native search. The catalog takes the toolset id `code_mode`, so another instruction-contributing toolset with that id raises a duplicate-id `UserError`; rename it. A callable selector must give the same answer for a tool before and after it's revealed, or the cache moves. Worth it only with `ToolSearch` or deferred capabilities; with a fixed toolset the default is better.
+- `dynamic_catalog=True` (default): moves sandboxed-tool signatures out of `run_code`'s description into an instruction block (`toolset:code_mode:catalog`, `on_change='append'`), keeps deferred tools that `run_code` will take over off the wire until they're found, and appends the updated catalog when one is found (plus a short announcement when Tool Search found it), so discoveries don't rewrite the cached prompt. Discovery then goes through the local `search_tools` or `load_capability`, which also searches deferred tools a selector keeps native (the native tool search isn't sent then); with the `'bm25'`/`'regex'` strategies, such tools are still declared for the native search. The catalog takes the toolset id `code_mode`, so another instruction-contributing toolset with that id raises a duplicate-id `UserError`; rename it. A callable selector must give the same answer for a tool before and after it's revealed, or the cache moves. `dynamic_catalog=False` keeps the catalog in `run_code`'s description instead (the default in earlier releases), so a reveal rewrites the description and the cached prompt.
 - `eager=True`: side effects from early statements cannot be rolled back, and hooks/approval on `run_code` run only after the call finishes streaming. Only applies when `run_code` is the first tool call in the response.
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_sandbox_url`: only execution moves; tools, mounts, `os_access`, and prints stay host-side. Use `wss://` unless the network is trusted.
+- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except inside Temporal. Only execution moves; tools, mounts, `os_access`, and prints stay host-side. Run the worker on `pydantic-monty>=1.5.0`. `monty_sandbox_url` is the deprecated form.
+- Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's instructions or tool arguments.
 
 ## Durable Execution
 
 `CodeMode` works next to `TemporalDurability()` (install `pydantic-ai-harness[codemode,temporal]`), but
 `run_code` executes in workflow code and is re-run on replay. Keep snippets deterministic: put external
 reads, writes, and clock access in wrapped tools (which become activities), not in `mount`/`os_access`.
-Inside a Temporal workflow `max_duration_secs` is disabled (memory and suspension caps still apply) and a
+Inside a Temporal workflow `max_duration_seconds` is disabled (memory and suspension caps still apply) and a
 workflow task that does not yield within 2 seconds fails, so move heavy computation into a tool.
+
+Setup errors reach workflow code with their original types. `PydanticAIPlugin` treats `UserError`
+as a workflow failure. Uncaught `RuntimeError`, `MontyRefusedError`, and other unclassified factory
+errors fail the workflow task instead: Temporal retries the task while the workflow remains running,
+so the client keeps waiting if setup keeps failing. Inspect the task history or worker logs for the original error. To end the
+workflow, catch expected setup exceptions and raise
+`temporalio.exceptions.ApplicationError(..., non_retryable=True)` from the original exception.
 
 ## Agent Specs
 
@@ -269,8 +292,37 @@ async def wrap_tool_execute(self, ctx, *, call, tool_def, args, handler):
 `run_code` parts recorded before the kind existed load as plain `ToolCallPart`s;
 `ToolCallPart.narrow_type(part, tool_kind='code_mode.run_code')` promotes one.
 
+## IPython Code Mode (local agents only)
+
+`IPythonCodeMode` gives the model the same `run_code` tool backed by a persistent IPython kernel: full
+CPython, any installed package, and state kept for the whole run. It is not a sandbox: model-written code
+runs with the agent process's permissions. Never use it in a webserver or on untrusted input unless the
+whole agent runs in a container or VM; use `CodeMode` there.
+
+```bash
+uv add "pydantic-ai-harness[ipython]"
+```
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import IPythonCodeMode
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[IPythonCodeMode()])
+```
+
+- Tools become synchronous, keyword-only functions in the kernel; calls run one at a time and a failed
+  call raises `ToolCallError`. `tools=` and `max_tool_calls=` work as in `CodeMode`.
+- `timeout=` (default 60 s, tool time excluded) interrupts long cells and keeps the kernel's state; a cell
+  that ignores the interrupt or a kernel that exits gets a fresh kernel on the next call.
+- Each run starts a kernel on first use and stops it at the end. To keep state across runs, pass
+  `kernel=IPythonKernel()` (from `pydantic_ai_harness.ipython_code_mode`) and shut it down yourself,
+  e.g. with `async with IPythonKernel() as kernel:`.
+- Not supported: `eager`, `speculate`, `dynamic_catalog`, durable execution, `mount`/`os_access`.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/code-mode/
+- https://pydantic.dev/docs/ai/harness/ipython-code-mode/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/

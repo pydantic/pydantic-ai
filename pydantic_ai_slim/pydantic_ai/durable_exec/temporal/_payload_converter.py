@@ -13,6 +13,7 @@ from temporalio.contrib.pydantic import (
 from temporalio.converter import CompositePayloadConverter, DefaultPayloadConverter, JSONPlainPayloadConverter
 
 from pydantic_ai._event_registry import event_registry_version
+from pydantic_ai.messages import _JOURNAL_CONTEXT  # pyright: ignore[reportPrivateUsage]
 
 
 @cache
@@ -57,7 +58,7 @@ class PydanticAIJSONPlainPayloadConverter(PydanticJSONPlainPayloadConverter):
             adapter = TypeAdapter(hint)
         else:
             adapter = type_adapter(hint)
-        return adapter.validate_json(payload.data)
+        return adapter.validate_json(payload.data, context=_JOURNAL_CONTEXT)
 
 
 class PydanticAIPayloadConverter(PydanticPayloadConverter):

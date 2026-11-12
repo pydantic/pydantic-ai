@@ -77,7 +77,7 @@ from pydantic_ai.native_tools import (
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, PrefixedToolset
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
@@ -383,6 +383,7 @@ class TestXSearchCapability:
                     ],
                     usage=RequestUsage(input_tokens=55, output_tokens=6),
                     model_name='function:outer_model_fn:',
+                    model_id='function:function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -404,6 +405,7 @@ class TestXSearchCapability:
                     parts=[TextPart(content='done')],
                     usage=RequestUsage(input_tokens=59, output_tokens=7),
                     model_name='function:outer_model_fn:',
+                    model_id='function:function:outer_model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1025,6 +1027,115 @@ class TestMCPCapability:
         # The outer toolset should be a FilteredToolset wrapping the prepared toolset
         assert isinstance(toolset, FilteredToolset)
 
+    async def test_mcp_tool_prefix_applied_after_allowed_tools(self):
+        """`tool_prefix` renames the tools the model calls, while `allowed_tools` matches the server's own names."""
+        # `FastMCP` needs server deps; the `mcp` extra only pulls `fastmcp-slim[client]`.
+        pytest.importorskip('fastmcp.server')
+        from fastmcp import FastMCP
+
+        server = FastMCP('docs-server')
+
+        @server.tool
+        def search(query: str) -> str:
+            return f'results for {query}'
+
+        @server.tool
+        def delete(path: str) -> str:
+            return 'deleted'  # pragma: no cover
+
+        agent = Agent(TestModel(), capabilities=[MCP(local=server, allowed_tools=['search'], tool_prefix='docs')])
+        result = await agent.run('hi')
+        returns = iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        assert [(part.tool_name, part.content) for part in returns] == [('docs_search', 'results for a')]
+
+    @pytest.mark.parametrize('include_instructions', [True, False])
+    async def test_mcp_include_instructions(self, include_instructions: bool):
+        """`include_instructions` decides whether the server's instructions reach the model."""
+        # `FastMCP` needs server deps; the `mcp` extra only pulls `fastmcp-slim[client]`.
+        pytest.importorskip('fastmcp.server')
+        from fastmcp import FastMCP
+
+        server = FastMCP('docs-server', instructions='Always search the docs first.')
+        instructions: list[str | None] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            instructions='Be brief.',
+            capabilities=[MCP(local=server, id='docs', include_instructions=include_instructions)],
+        )
+        await agent.run('hi')
+        if include_instructions:
+            assert instructions == snapshot(
+                [
+                    """\
+Be brief.
+
+<pyai:context id="toolset:docs">
+Always search the docs first.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+"""
+                ]
+            )
+        else:
+            assert instructions == snapshot(['Be brief.'])
+
+    @pytest.mark.parametrize('include_instructions', [True, False])
+    def test_mcp_include_instructions_url(self, include_instructions: bool):
+        """`include_instructions` reaches the local toolset built from `url=` and from a `local=` URL override."""
+        from pydantic_ai.mcp import MCPToolset
+
+        for cap in [
+            MCP[object](url='https://mcp.example.com/api', include_instructions=include_instructions),
+            MCP[object](
+                url='https://mcp.example.com/api',
+                native=True,
+                local='https://relay.example.com/api',
+                include_instructions=include_instructions,
+            ),
+        ]:
+            local = cast('MCPToolset[object]', cap.local)
+            assert isinstance(local, MCPToolset)
+            assert local.include_instructions is include_instructions
+
+    def test_mcp_tool_prefix_true_uses_explicit_id(self):
+        """`tool_prefix=True` prefixes with the explicit `id`, and the local toolset keeps that `id`."""
+        from pydantic_ai.mcp import MCPToolset
+
+        cap = MCP[object](url='https://mcp.example.com/api', id='docs', tool_prefix=True)
+        toolset = cap.get_toolset()
+        assert isinstance(toolset, PrefixedToolset)
+        assert toolset.prefix == 'docs'
+        local = toolset.wrapped
+        assert local is cap.local
+        assert isinstance(local, MCPToolset)
+        assert local.id == 'docs'
+
+    @pytest.mark.parametrize(
+        'kwargs',
+        [
+            pytest.param({}, id='url-derived-id'),
+            pytest.param({'defer_loading': True}, id='deferred'),
+            pytest.param(
+                {'native': MCPServerTool(id='docs', url='https://mcp.example.com/api'), 'local': True},
+                id='native-tool-id',
+            ),
+        ],
+    )
+    def test_mcp_tool_prefix_true_requires_explicit_id(self, kwargs: dict[str, Any]):
+        """`tool_prefix=True` never prefixes with an `id` the capability didn't get as `id=`."""
+        with pytest.raises(UserError, match=r'MCP\(tool_prefix=True\) uses the explicit `id` as the prefix'):
+            MCP(url='https://mcp.example.com/api', tool_prefix=True, **kwargs)
+
+    def test_mcp_empty_tool_prefix_raises(self):
+        """An empty prefix is a mistake, not a way to say "no prefix", which `None` already says."""
+        with pytest.raises(UserError, match=r"MCP\(tool_prefix=''\) would prefix nothing"):
+            MCP(url='https://mcp.example.com/api', tool_prefix='')
+
     def test_mcp_no_url_no_local_raises(self):
         """MCP() with neither `url=` nor `local=` raises — no way to construct a usable capability."""
         with pytest.raises(UserError, match='requires an explicit local tool'):
@@ -1209,6 +1320,7 @@ class TestPrepareToolsCapability:
                     parts=[ToolCallPart(tool_name='secret_tool', args={}, tool_call_id=IsStr())],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1232,6 +1344,7 @@ class TestPrepareToolsCapability:
                     parts=[TextPart(content='done')],
                     usage=RequestUsage(input_tokens=61, output_tokens=3),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1342,6 +1455,7 @@ class TestOverrideWithSpec:
                     parts=[TextPart(content='instructions: from spec')],
                     usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1378,6 +1492,7 @@ class TestOverrideWithSpec:
                     parts=[TextPart(content='instructions: explicit')],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1414,6 +1529,7 @@ class TestOverrideWithSpec:
                         parts=[TextPart(content='instructions: from-spec-instructions')],
                         usage=RequestUsage(input_tokens=51, output_tokens=2),
                         model_name='function:model_fn:',
+                        model_id='function:function:model_fn:',
                         timestamp=IsDatetime(),
                         run_id=IsStr(),
                         conversation_id=IsStr(),
@@ -1475,6 +1591,7 @@ also from spec\
                     ],
                     usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1500,6 +1617,7 @@ also from spec\
                     parts=[TextPart(content='success (no tool calls)')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
+                    model_id='test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
@@ -1537,6 +1655,7 @@ also from spec\
                     parts=[TextPart(content='max_tokens=100 temperature=0.5')],
                     usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1570,6 +1689,7 @@ also from spec\
                     parts=[TextPart(content='instructions: be helpful')],
                     usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1640,6 +1760,7 @@ from-spec\
                     ],
                     usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1676,6 +1797,7 @@ from-spec\
                     parts=[TextPart(content='ok')],
                     usage=RequestUsage(input_tokens=51, output_tokens=1),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -1752,6 +1874,7 @@ class TestGetModelHook:
                     parts=[TextPart(content='success (no tool calls)')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
+                    model_id='test',
                     timestamp=IsDatetime(),
                     provider_name='test',
                     run_id=IsStr(),
@@ -2848,6 +2971,7 @@ class TestGetWrapperToolsetHook:
                     parts=[TextPart(content="tools: ['cap_my_tool']")],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -2946,6 +3070,7 @@ class TestGetWrapperToolsetHook:
                     parts=[TextPart(content="tools: ['my_tool']")],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -2992,6 +3117,7 @@ class TestGetWrapperToolsetHook:
                     parts=[TextPart(content="tools: ['a_b_tool']")],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3038,6 +3164,7 @@ class TestGetWrapperToolsetHook:
                     parts=[TextPart(content="tools: ['runtime_my_tool']")],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
@@ -3086,6 +3213,7 @@ class TestGetWrapperToolsetHook:
                     parts=[TextPart(content="tools: ['cap_my_tool'], descs: ['[prepared] Original.']")],
                     usage=RequestUsage(input_tokens=51, output_tokens=6),
                     model_name='function:model_fn:',
+                    model_id='function:function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),

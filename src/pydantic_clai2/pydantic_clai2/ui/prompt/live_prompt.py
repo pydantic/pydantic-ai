@@ -37,8 +37,12 @@ IDLE_REPAINT = 1.0
 """Seconds between timed repaints of an idle editor, and how long it keeps repainting fast after animating.
 
 Timed repaints pick up status that no key, output, or resize announces, such as a plugin's status
-segment. They run ten times a second while a turn runs or the panel shows forks or tasks.
+segment. They run every `ANIMATED_REPAINT` seconds while a turn runs or the panel shows forks or tasks;
+an idle editor sleeps between them.
 """
+
+ANIMATED_REPAINT = 0.1
+"""Seconds between timed repaints while the editor animates, unless the spinner is faster."""
 
 
 class PromptWakeup(Exception):
@@ -112,6 +116,8 @@ class LivePrompt:
         self._recall_target: QueuedPrompt | None = None
         self._search_target: QueuedPrompt | None = None
         self._submitted = asyncio.Event()
+        self._animate = asyncio.Event()
+        """Set to cut short the timed repaint's idle sleep, as work starts."""
         self._wake_pending = False
         self._suspended = False
         self._completions: list[Completion] = []
@@ -182,6 +188,9 @@ class LivePrompt:
         """Consume queued submissions in order, first showing the status the shell set up for this read."""
         self.paint()
         await self._submitted.wait()
+        # What a read returns starts work, whose spinner animates from its first frame, not the next idle one.
+        self._animated_at = self.clock()
+        self._animate.set()
         if not self._submissions:
             self._wake_pending = False
             self._submitted.clear()
@@ -206,7 +215,7 @@ class LivePrompt:
                 self.buffer.insert(self.images.attach(read_images(paths) if text is not None else clipboard_images()))
                 self.images.notice = ATTACHED
         except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
-            self.images.notice = f'Image paste failed: {exc}. Linux requires wl-paste (Wayland) or xclip (X11).'
+            self.images.paste_failed(exc, clock=self.clock)
 
     def feed(self, key: str, data: str = '') -> None:
         """Route editing, completion and interrupts without rendering a widget tree."""
@@ -225,36 +234,37 @@ class LivePrompt:
 
     def _route(self, key: str, data: str) -> None:
         cycles = key in ('up', 'down') and self._arrows_cycle_completions()
-        if key == 'ctrl-c':
-            self.interrupt()
-        elif key == 'escape':
-            self.escape()
-        elif key == 'ctrl-d':
-            if self.buffer.text:
-                self.buffer.edit('delete')
-            else:
-                self.submit(EOFError())
-        elif key == 'ctrl-l':
-            # As in Claude Code: a clean screen; the conversation, draft, and queue stay.
-            self.output.clear(keep_current=self.interrupts.active)
-        elif key in ('paste', 'ctrl-v', 'alt-v'):
-            self.paste(data if key == 'paste' else None)
-        elif key == 'ctrl-r' or self.buffer.search is not None:
-            self.search(key)
-        elif key in ('tab', 'backtab'):
-            self.complete(backwards=key == 'backtab')
-        elif key == 'enter':
-            self.accept()
-        elif key == 'alt-enter':
-            self.steer_draft() if self.buffer.text.strip() else self.steer_queued()
-        elif key in ('shift-enter', 'ctrl-j'):
-            self.buffer.insert('\n')
-        elif cycles:
-            self.complete(backwards=key == 'up', accept_single=False)
-        elif key in ('up', 'down'):
-            self.recall(backwards=key == 'up')
-        else:
-            self.buffer.edit(key)
+        match key:
+            case 'ctrl-c':
+                self.interrupt()
+            case 'escape':
+                self.escape()
+            case 'ctrl-d':
+                if self.buffer.text:
+                    self.buffer.edit('delete')
+                else:
+                    self.submit(EOFError())
+            case 'ctrl-l':
+                # As in Claude Code: a clean screen; the conversation, draft, and queue stay.
+                self.output.clear(keep_current=self.interrupts.active)
+            case 'paste' | 'ctrl-v' | 'alt-v':
+                self.paste(data if key == 'paste' else None)
+            case _ if key == 'ctrl-r' or self.buffer.search is not None:
+                self.search(key)
+            case 'tab' | 'backtab':
+                self.complete(backwards=key == 'backtab')
+            case 'enter':
+                self.accept()
+            case 'alt-enter':
+                self.steer_draft() if self.buffer.text.strip() else self.steer_queued()
+            case 'shift-enter' | 'ctrl-j':
+                self.buffer.insert('\n')
+            case 'up' | 'down' if cycles:
+                self.complete(backwards=key == 'up', accept_single=False)
+            case 'up' | 'down':
+                self.recall(backwards=key == 'up')
+            case _:
+                self.buffer.edit(key)
         if key not in ('tab', 'backtab', 'escape') and not cycles:
             self.refresh_completions()
 
@@ -356,18 +366,22 @@ class LivePrompt:
         self.output.view.follow()
         self.history.append_string(text)
         self.buffer.history.append(text)
+        route = self._deliver(command, recorded=text, target=target)
+        telemetry.record('prompt submitted', route=route, recalled=recalled, **_submission(command, self.commands))
+
+    def _deliver(self, command: str, *, recorded: str, target: QueuedPrompt | None) -> str:
+        """Run, rewrite, or queue an accepted draft, returning the route telemetry records."""
         if self.run_now is not None and self.run_now(command):
-            route = 'run now'
             if target is not None:
                 self._discard(target)
-        elif target is not None:
-            route = 'edited queued'
-            target.text, target.recorded = command, text
+            return 'run now'
+        if target is not None:
+            target.text, target.recorded = command, recorded
             self.queue_changed()
-        else:
-            route = 'queued' if self.interrupts.active else 'submitted'
-            self._enqueue(QueuedPrompt(command, recorded=text))
-        telemetry.record('prompt submitted', route=route, recalled=recalled, **_submission(command, self.commands))
+            return 'edited queued'
+        route = 'queued' if self.interrupts.active else 'submitted'
+        self._enqueue(QueuedPrompt(command, recorded=recorded))
+        return route
 
     def recall(self, *, backwards: bool) -> None:
         """Walk queued prompts, newest first, before command history.
@@ -580,22 +594,25 @@ class LivePrompt:
         rows.append(muted + '─' * width + reset)
         if pinned:
             rows.append(truncate(pinned, width) + reset)
-        if self.buffer.search is not None:
-            footer = f'reverse-i-search: {self.buffer.search}'
-        else:
-            notice = self.notice or self.images.notice or self._completion_error
-            footer = (
-                ' '.join(terminal_text(notice).split())
-                if notice
-                else ''.join(
-                    (theme.sgr(style) if style else muted) + ' '.join(terminal_text(text).splitlines())
-                    for style, text in self.toolbar()
-                )
-            )
-            if self.queued_messages:
-                footer += f' | queued: {len(self.queued_messages)}'
-        rows.append(muted + truncate(footer, width) + reset)
+        rows.append(muted + truncate(self._footer(muted=muted), width) + reset)
         return tuple(rows)
+
+    def _footer(self, *, muted: str) -> str:
+        """The bottom row: the history search, or else a notice or the toolbar, with the queue's length."""
+        if self.buffer.search is not None:
+            return f'reverse-i-search: {self.buffer.search}'
+        notice = self.notice or self.images.notice or self._completion_error
+        footer = (
+            ' '.join(terminal_text(notice).split())
+            if notice
+            else ''.join(
+                (theme.sgr(style) if style else muted) + ' '.join(terminal_text(text).splitlines())
+                for style, text in self.toolbar()
+            )
+        )
+        if self.queued_messages:
+            footer += f' | queued: {len(self.queued_messages)}'
+        return footer
 
     def paint(self) -> None:
         """Draw only when the editor owns the terminal."""
@@ -607,15 +624,19 @@ class LivePrompt:
     def tick(self) -> float:
         """Repaint for status changes when due, returning the seconds until the next tick.
 
-        Ten times a second while a turn runs, the panel shows forks or tasks, or for `IDLE_REPAINT`
-        after either; every `IDLE_REPAINT` seconds otherwise. A spinner faster than that gets a
-        repaint per frame, but only while it shows.
+        Every `ANIMATED_REPAINT` seconds while a turn runs, the panel shows forks or tasks, or for
+        `IDLE_REPAINT` after either; `IDLE_REPAINT` seconds after the last frame otherwise. A spinner
+        faster than that gets a repaint per frame, but only while it shows.
+        The paste-error deadline also caps the wait; expiry repaints an unsuspended editor through this
+        existing loop, without adding periodic polling.
         """
         now = self.clock()
         if self.interrupts.active or self._panel_shown:
             self._animated_at = now
+        expired = self.images.expire_notice()
         if not self._suspended and (
-            now - self._animated_at < IDLE_REPAINT
+            expired
+            or now - self._animated_at < IDLE_REPAINT
             or now - self._painted_at >= IDLE_REPAINT
             # Hosts without SIGWINCH find a resize only here.
             or self.console.size != self._painted_size
@@ -624,7 +645,14 @@ class LivePrompt:
         else:
             # Output written too soon after the last frame waits for this, idle or not.
             self.output.refresh()
-        return min(0.1, self.spinner().interval) if self.interrupts.active else 0.1
+        if self.interrupts.active:
+            return min(ANIMATED_REPAINT, self.spinner().interval, self.images.notice_remaining())
+        # The frame just painted may have found the panel's first fork or task.
+        if self._panel_shown or now - self._animated_at < IDLE_REPAINT:
+            return min(ANIMATED_REPAINT, self.images.notice_remaining())
+        due = self._painted_at + IDLE_REPAINT - now
+        # A menu owning the screen leaves the last frame behind; nothing is due until it closes.
+        return min(due if due > 0 else IDLE_REPAINT, self.images.notice_remaining())
 
     @asynccontextmanager
     async def suspended(self) -> AsyncGenerator[None]:
@@ -655,7 +683,9 @@ class LivePrompt:
 
         async def refresh() -> None:
             while True:
-                await anyio.sleep(self.tick())
+                with anyio.move_on_after(self.tick()):
+                    await self._animate.wait()
+                self._animate.clear()
 
         loop = asyncio.get_running_loop()
 

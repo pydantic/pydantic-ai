@@ -528,6 +528,7 @@ class TestOpenAIChatThinkingTranslation:
             pytest.param('gpt-5.3-chat-latest', False, 'medium', id='chat-latest-false'),
             # A model that can turn reasoning off still gets `'none'`.
             pytest.param('gpt-5.6-sol', False, 'none', id='can-disable-false'),
+            pytest.param('gpt-6.1-terra', False, 'none', id='gpt-6.1-terra-false'),
             # Other levels resolve to the lowest accepted effort at or above them, else the highest.
             pytest.param('o3', 'minimal', 'low', id='o-series-minimal'),
             pytest.param('o3', 'xhigh', 'high', id='o-series-xhigh'),
@@ -535,9 +536,11 @@ class TestOpenAIChatThinkingTranslation:
             pytest.param('gpt-5.5-pro', 'low', 'medium', id='gpt-5.5-pro-low'),
             pytest.param('gpt-5.5-pro', 'xhigh', 'xhigh', id='gpt-5.5-pro-xhigh'),
             pytest.param('gpt-6-astra', 'minimal', 'low', id='gpt-6-astra-minimal'),
+            pytest.param('gpt-6.1-terra', 'minimal', 'low', id='gpt-6.1-terra-minimal'),
             # `'max'` resolves like `'xhigh'` where the API doesn't take `max` (OpenAI's Chat Completions never does).
             pytest.param('o3', 'max', 'high', id='o-series-max'),
             pytest.param('gpt-6-astra', 'max', 'xhigh', id='gpt-6-astra-max'),
+            pytest.param('gpt-6.1-terra', 'max', 'xhigh', id='gpt-6.1-terra-max'),
         ],
     )
     def test_thinking_resolves_to_accepted_effort(self, model_name: str, thinking: ThinkingLevel, expected: str):
@@ -1276,6 +1279,42 @@ class TestBedrockThinkingTranslation:
         result = model._build_additional_model_request_fields(settings, params, [])
         assert result is None
 
+    @pytest.mark.parametrize(
+        'model_name,thinking,expected',
+        [
+            # GLM-5 and DeepSeek V3.2 have no effort levels: `'high'` turns reasoning on and `'none'` turns it off.
+            ('zai.glm-5', True, {'reasoning_effort': 'high'}),
+            ('zai.glm-5', 'low', {'reasoning_effort': 'high'}),
+            ('zai.glm-5', False, {'reasoning_effort': 'none'}),
+            ('deepseek.v3.2', 'low', {'reasoning_effort': 'high'}),
+            ('deepseek.v3.2', False, {'reasoning_effort': 'none'}),
+            # GLM-5.3 takes every effort level except `'minimal'`, and `True` sends `'max'`, its default. Its `'medium'`
+            # and `'xhigh'` rows pass through, where Z.AI's own API would fold them.
+            ('us.zai.glm-5.3', True, {'reasoning_effort': 'max'}),
+            ('us.zai.glm-5.3', 'minimal', {'reasoning_effort': 'low'}),
+            ('us.zai.glm-5.3', 'medium', {'reasoning_effort': 'medium'}),
+            ('us.zai.glm-5.3', 'xhigh', {'reasoning_effort': 'xhigh'}),
+            # GLM-5.3 can't turn thinking off, so `False` reasons as little as it can.
+            ('us.zai.glm-5.3', False, {'reasoning_effort': 'low'}),
+            # R1 always reasons and Converse rejects any additional field, so the V3.2 mapping doesn't reach it.
+            ('us.deepseek.r1-v1:0', True, None),
+        ],
+    )
+    def test_reasoning_effort_variants(self, model_name: str, thinking: ThinkingLevel, expected: dict[str, str] | None):
+        """Unified `thinking` maps to Bedrock's `reasoning_effort` for Z.AI GLM and DeepSeek V3.2.
+
+        Not a VCR test: the field is decided before the request is built, and a recording only matches on
+        method and URI, so it would not notice a dropped field.
+        """
+        profile = BedrockProvider.model_profile(model_name)
+        assert profile is not None
+        model = _bedrock_model(profile)
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=thinking)
+        result = model._build_additional_model_request_fields(settings, params, [])
+        assert result == expected
+
     def test_xai_variant_user_reasoning_wins(self):
         """A user-supplied `reasoning` in `bedrock_additional_model_requests_fields` is left untouched.
 
@@ -1494,7 +1533,6 @@ class TestOpenRouterThinkingTranslation:
             pytest.param('moonshotai/kimi-k2.6', False, id='kimi-k2-hybrid'),
             pytest.param('qwen/qwen3-235b-a22b', False, id='qwen3-hybrid'),
             pytest.param('z-ai/glm-4.6', False, id='glm-hybrid'),
-            pytest.param('openai/gpt-oss-120b', False, id='gpt-oss-hybrid'),
             pytest.param('anthropic/claude-sonnet-4.5', False, id='claude-hybrid'),
             # Grok 3 Mini takes Grok 4.3's efforts, `'none'` included (verified live on xAI).
             pytest.param('x-ai/grok-3-mini', False, id='grok-3-mini-hybrid'),
@@ -1504,6 +1542,8 @@ class TestOpenRouterThinkingTranslation:
             pytest.param('openai/gpt-5', True, id='gpt-5-always-on'),
             pytest.param('mistralai/magistral-medium-2509', True, id='magistral-always-on'),
             pytest.param('deepseek/deepseek-r1', True, id='deepseek-r1-always-on'),
+            # OpenRouter makes reasoning mandatory on gpt-oss, though it takes `effort='none'` elsewhere.
+            pytest.param('openai/gpt-oss-120b', True, id='gpt-oss-mandatory-on-openrouter'),
         ],
     )
     def test_provider_profile_propagates_thinking_capability(self, model_name: str, expected_always_enabled: bool):
@@ -2831,6 +2871,24 @@ _CROSS_SCOPE_CASES = [
         _bedrock_probe('us.xai.grok-4.7'),
         lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning': {'effort': 'high'}}),
         'low',
+        _bedrock_sent,
+        overrides=True,
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    _CrossScopeCase(
+        'bedrock-zai-reasoning-effort',
+        _bedrock_probe('zai.glm-5'),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning_effort': 'low'}),
+        'high',
+        _bedrock_sent,
+        overrides=True,
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    _CrossScopeCase(
+        'bedrock-deepseek-reasoning-effort',
+        _bedrock_probe('deepseek.v3.2'),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning_effort': 'low'}),
+        'high',
         _bedrock_sent,
         overrides=True,
         marks=_SKIP_WITHOUT_BEDROCK,

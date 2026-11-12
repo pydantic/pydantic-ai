@@ -30,6 +30,30 @@ ANTHROPIC_CACHEABLE_PARAM_TYPES = frozenset(
 )
 
 
+def is_effort_entry(message: BetaMessageParam) -> bool:
+    """Whether `message` is an effort-only `system` entry, which has no content block to carry `cache_control`."""
+    return 'output_config' in message
+
+
+def lasting_messages(anthropic_messages: list[BetaMessageParam]) -> tuple[list[BetaMessageParam], list[int]]:
+    """The messages that can carry the previous request's breakpoint, each with the count of the blocks it covers.
+
+    A request-scoped entry can't carry a breakpoint, so the previous request put its own before it: it's left out of
+    the candidates, its blocks counted with the message ahead of it.
+    """
+    lasting: list[BetaMessageParam] = []
+    block_counts: list[int] = []
+    for message in anthropic_messages:
+        content = message['content']
+        count = 1 if isinstance(content, str) else len(cast(list[BetaContentBlockParam], content))
+        if (message.get('clear_at') == 'next_user_message' or is_effort_entry(message)) and lasting:
+            block_counts[-1] += count
+        else:
+            lasting.append(message)
+            block_counts.append(count)
+    return lasting, block_counts
+
+
 def add_cache_control_param(params: list[BetaContentBlockParam], cache_control: BetaCacheControlEphemeralParam) -> None:
     """Attach an already-built `cache_control` to the last content block param.
 
@@ -58,7 +82,14 @@ def last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Bet
     empty and let the caller raise the error that explains the situation.
     """
     # A request-scoped entry can't carry `cache_control`, and is never part of a cached prefix anyway.
-    message = next((m for m in reversed(anthropic_messages) if m.get('clear_at') != 'next_user_message'), None)
+    message = next(
+        (
+            m
+            for m in reversed(anthropic_messages)
+            if m.get('clear_at') != 'next_user_message' and not is_effort_entry(m)
+        ),
+        None,
+    )
     if message is None:
         return []
     content = message['content']
@@ -117,7 +148,14 @@ def last_cacheable_block_has_cache_control(anthropic_messages: list[BetaMessageP
     https://platform.claude.com/docs/en/build-with-claude/prompt-caching
     """
     # Automatic caching skips a request-scoped entry, which can't carry a breakpoint.
-    message = next((m for m in reversed(anthropic_messages) if m.get('clear_at') != 'next_user_message'), None)
+    message = next(
+        (
+            m
+            for m in reversed(anthropic_messages)
+            if m.get('clear_at') != 'next_user_message' and not is_effort_entry(m)
+        ),
+        None,
+    )
     content = message['content'] if message is not None else ''
     blocks = [] if isinstance(content, str) else cast(list[dict[str, Any]], content)
     last = next(

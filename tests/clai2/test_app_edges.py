@@ -10,6 +10,7 @@ from typing import Generic, TypeVar
 
 import pytest
 from prompt_toolkit.styles import BaseStyle
+from prompt_toolkit.utils import Event
 from rich.color import Color
 from rich.console import Console
 from rich.text import Text
@@ -23,7 +24,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.app import create_stock_agent
 from pydantic_clai2.auth import CodexAuth
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command
@@ -47,6 +48,8 @@ PromptT = TypeVar('PromptT')
 def inputs(monkeypatch: pytest.MonkeyPatch, values: list[str | BaseException]) -> None:
     class Prompt(Generic[PromptT]):
         def __init__(self, **kwargs: object) -> None:
+            self.app = self
+            self.on_reset: Event[Prompt[PromptT]] = Event(self)
             style = kwargs['style']
             assert isinstance(style, BaseStyle)
             for selector in ('class:bottom-toolbar', 'class:bottom-toolbar.text'):

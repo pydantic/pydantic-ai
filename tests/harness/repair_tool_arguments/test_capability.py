@@ -1,20 +1,27 @@
+import importlib
+import sys
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import json_repair
 import pytest
+from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
+from tests.conftest import IsStr
 
 
 def model_for(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse]) -> FunctionModel:
@@ -170,3 +177,123 @@ class TestRepairToolArguments:
         spans = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'repair_tool_arguments']
         assert len(spans) == int(isinstance(arguments, str) and arguments.endswith(',}'))
         assert 'secret' not in str(spans)
+
+    @pytest.mark.parametrize(
+        ('stream', 'item_id'),
+        [(False, 'fc_1'), (False, None), (True, None)],
+        ids=['run', 'run-no-item-id', 'run_stream'],
+    )
+    async def test_repaired_arguments_are_written_back_to_history(self, stream: bool, item_id: str | None) -> None:
+        """The repaired arguments replace the malformed ones in history, so later requests replay what ran."""
+        malformed = '{"value": "secret",}'
+        replayed: list[ToolCallPart] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart('echo', malformed, tool_call_id='call-1', id=item_id, provider_name='openai')]
+                )
+            replayed.extend(part for message in messages for part in message.parts if isinstance(part, ToolCallPart))
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(model_for(respond), capabilities=[RepairToolArguments()])
+
+        @agent.tool_plain
+        def echo(value: str) -> str:
+            return value
+
+        if stream:
+            async with agent.run_stream('Echo') as result:
+                await result.get_output()
+            history = result.all_messages()
+        else:
+            history = (await agent.run('Echo')).all_messages()
+
+        calls = [part for message in history for part in message.parts if isinstance(part, ToolCallPart)]
+        assert calls == replayed
+        if stream:
+            # `FunctionModel` streams carry no provider identity, so there's nowhere to keep the original.
+            assert calls == [ToolCallPart('echo', '{"value": "secret"}', tool_call_id=IsStr())]
+        else:
+            assert calls == [
+                ToolCallPart(
+                    'echo',
+                    '{"value": "secret"}',
+                    tool_call_id='call-1',
+                    provider_name='openai',
+                    provider_details={'original_args': malformed}
+                    | ({'original_id': item_id} if item_id is not None else {}),
+                )
+            ]
+
+    @pytest.mark.parametrize('arguments', ['{"value": "secret"}', {'value': 'secret'}])
+    async def test_valid_arguments_are_left_as_they_are(self, arguments: str | dict[str, str]) -> None:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart('echo', arguments, tool_call_id='call-1', id='fc_1', provider_name='openai')]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(model_for(respond), capabilities=[RepairToolArguments()])
+
+        @agent.tool_plain
+        def echo(value: str) -> str:
+            return value
+
+        result = await agent.run('Echo')
+        calls = [part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)]
+        assert calls == [ToolCallPart('echo', arguments, tool_call_id='call-1', id='fc_1', provider_name='openai')]
+
+    async def test_written_back_call_replays_to_openai_responses_without_its_item_id(self) -> None:
+        """OpenAI Responses replays its stored copy of a call sent with its item ID, so the repaired one is sent without.
+
+        The live probe on #12029 found this shape accepted: no `id`, the same `call_id`, after its reasoning item.
+        """
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[
+                        ThinkingPart('', id='rs_1', signature='encrypted', provider_name='openai'),
+                        ToolCallPart(
+                            'echo', '{"value": "secret",}', tool_call_id='call-1', id='fc_1', provider_name='openai'
+                        ),
+                    ],
+                    provider_name='openai',
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(model_for(respond), capabilities=[RepairToolArguments()])
+
+        @agent.tool_plain
+        def echo(value: str) -> str:
+            return value
+
+        history = (await agent.run('Echo')).all_messages()
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='not-used'))
+        _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+            history, OpenAIResponsesModelSettings(), ModelRequestParameters()
+        )
+        replayed = [item for item in items if item.get('type') in ('reasoning', 'function_call')]
+        assert replayed == snapshot(
+            [
+                {'id': 'rs_1', 'summary': [], 'encrypted_content': 'encrypted', 'type': 'reasoning'},
+                {'name': 'echo', 'arguments': '{"value":"secret"}', 'call_id': 'call-1', 'type': 'function_call'},
+            ]
+        )
+
+
+@pytest.mark.parametrize('module', ['pydantic_ai_harness.repair_tool_arguments', 'pydantic_ai_harness.coder'])
+def test_missing_json_repair_fails_at_import_with_install_hint(monkeypatch: pytest.MonkeyPatch, module: str) -> None:
+    """Importing either capability without `json-repair` names the extras that install it."""
+    monkeypatch.setitem(sys.modules, 'json_repair', None)
+    for name in [
+        name for name in sys.modules if name.startswith((module, 'pydantic_ai_harness.repair_tool_arguments'))
+    ]:
+        monkeypatch.delitem(sys.modules, name)
+    with pytest.raises(
+        ImportError,
+        match=r'Install `pydantic-ai-harness\[coder\]` to use `Coder`, or `pydantic-ai-harness\[repair-tool-arguments\]`',
+    ):
+        importlib.import_module(module)

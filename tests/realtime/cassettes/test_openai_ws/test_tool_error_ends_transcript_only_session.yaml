@@ -2,13 +2,14 @@ version: 1
 interactions:
 - kind: message
   direction: received
+  at: 0.0
   data:
     type: session.created
-    event_id: event_EKSoZb9Ayz9q6FkgFoDM2
+    event_id: event_EbvwPS25zTpurIKs877wK
     session:
       type: realtime
       object: realtime.session
-      id: sess_EKSoZknpJMslTo5jTaz0M
+      id: sess_EbvwP60rC8f6Z81DHhXEz
       model: gpt-realtime
       output_modalities:
       - audio
@@ -25,7 +26,7 @@ interactions:
       tracing: null
       truncation: auto
       prompt: null
-      expires_at: 1788549631
+      expires_at: 1792713169
       audio:
         input:
           format:
@@ -50,6 +51,7 @@ interactions:
       include: null
 - kind: message
   direction: sent
+  at: 0.0
   data:
     type: session.update
     session:
@@ -67,7 +69,7 @@ interactions:
             create_response: true
             interrupt_response: true
           transcription:
-            model: gpt-realtime-whisper
+            model: gpt-live-transcribe
         output:
           format:
             type: audio/pcm
@@ -86,13 +88,14 @@ interactions:
         description: Look up the weather for a city.
 - kind: message
   direction: received
+  at: 0.091
   data:
     type: session.updated
-    event_id: event_EKSoZfqQCBdAlbrFbQL8a
+    event_id: event_EbvwPVJZrvAH3WmpUEht9
     session:
       type: realtime
       object: realtime.session
-      id: sess_EKSoZknpJMslTo5jTaz0M
+      id: sess_EbvwP60rC8f6Z81DHhXEz
       model: gpt-realtime
       output_modalities:
       - text
@@ -114,15 +117,16 @@ interactions:
       tracing: null
       truncation: auto
       prompt: null
-      expires_at: 1788549631
+      expires_at: 1792713169
       audio:
         input:
           format:
             type: audio/pcm
             rate: 24000
           transcription:
-            model: gpt-realtime-whisper
+            model: gpt-live-transcribe
             language: null
+            languages: null
             prompt: null
           noise_reduction: null
           turn_detection:
@@ -142,9 +146,12 @@ interactions:
       include: null
 - kind: message
   direction: sent
+  at: 0.091
   data:
     type: conversation.item.create
+    event_id: pydantic_ai.content.0
     item:
+      id: pydantic_ai_item_0
       type: message
       role: user
       content:
@@ -152,16 +159,22 @@ interactions:
         text: What is the weather in London?
 - kind: message
   direction: sent
+  at: 0.092
   data:
     type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
 - kind: message
   direction: received
+  at: 0.149
   data:
     type: conversation.item.added
-    event_id: event_EKSoZ8E5zPaGmp2Zi1mXA
+    event_id: event_EbvwP4yNVZWeQI33t2QkO
     previous_item_id: null
     item:
-      id: item_EKSoZpKuB9tbp17DM5Aqm
+      id: pydantic_ai_item_0
       type: message
       status: completed
       role: user
@@ -170,12 +183,13 @@ interactions:
         text: What is the weather in London?
 - kind: message
   direction: received
+  at: 0.15
   data:
     type: conversation.item.done
-    event_id: event_EKSoZWrk231GHk70a8oDO
+    event_id: event_EbvwPMeqxejQGrYhoYzVD
     previous_item_id: null
     item:
-      id: item_EKSoZpKuB9tbp17DM5Aqm
+      id: pydantic_ai_item_0
       type: message
       status: completed
       role: user
@@ -184,16 +198,17 @@ interactions:
         text: What is the weather in London?
 - kind: message
   direction: received
+  at: 0.16
   data:
     type: response.created
-    event_id: event_EKSoZ2brLbYHQpMXkKz91
+    event_id: event_EbvwPXkN7KexWC47UPsXO
     response:
       object: realtime.response
-      id: resp_EKSoZDrBYT3y3OzgBEMya
+      id: resp_EbvwPGkU9z92dqA0voJCF
       status: in_progress
       status_details: null
       output: []
-      conversation_id: conv_EKSoZ2vT01PJ3kIaIac4w
+      conversation_id: conv_EbvwPLDoBC8IkJ9S3PAuj
       output_modalities:
       - text
       max_output_tokens: inf
@@ -204,174 +219,199 @@ interactions:
             rate: 24000
           voice: alloy
       usage: null
-      metadata: null
+      metadata:
+        pydantic_ai_inputs: '0'
 - kind: message
   direction: received
+  at: 0.385
   data:
     type: response.output_item.added
-    event_id: event_EKSoZhU7kypvD9qKLcLdY
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
+    event_id: event_EbvwQj6chBM4VSTrEaI5h
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
     output_index: 0
     item:
-      id: item_EKSoZp4c3v7ZoTwP8ZsXn
+      id: item_EbvwPHH3qqrqWYRW2812m
       type: function_call
       status: in_progress
       name: get_weather
-      call_id: call_di8urt8prwdAPcqX
+      call_id: call_BSv1euCBWWPx0G2p
       arguments: ''
 - kind: message
   direction: received
+  at: 0.386
   data:
     type: conversation.item.added
-    event_id: event_EKSoZkwHnu7NwH4t5XezU
-    previous_item_id: item_EKSoZpKuB9tbp17DM5Aqm
+    event_id: event_EbvwQeYWTNjHEUqISCNjX
+    previous_item_id: pydantic_ai_item_0
     item:
-      id: item_EKSoZp4c3v7ZoTwP8ZsXn
+      id: item_EbvwPHH3qqrqWYRW2812m
       type: function_call
       status: in_progress
       name: get_weather
-      call_id: call_di8urt8prwdAPcqX
+      call_id: call_BSv1euCBWWPx0G2p
       arguments: ''
 - kind: message
   direction: received
+  at: 0.388
   data:
     type: response.function_call_arguments.delta
-    event_id: event_EKSoZQwWnzComNOO306fm
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
-    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    event_id: event_EbvwQNuI8IeNRgXchqWdG
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
+    item_id: item_EbvwPHH3qqrqWYRW2812m
     output_index: 0
-    call_id: call_di8urt8prwdAPcqX
+    call_id: call_BSv1euCBWWPx0G2p
     delta: '{'
-    obfuscation: MD2gX005shC3bah
+    obfuscation: pSn328l5VP0R6YK
 - kind: message
   direction: received
+  at: 0.391
   data:
     type: response.function_call_arguments.delta
-    event_id: event_EKSoZt30AVTWzyFgtrvYG
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
-    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    event_id: event_EbvwQuEwbH9ogkrgbq0hG
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
+    item_id: item_EbvwPHH3qqrqWYRW2812m
     output_index: 0
-    call_id: call_di8urt8prwdAPcqX
+    call_id: call_BSv1euCBWWPx0G2p
     delta: "  \n"
-    obfuscation: CxEcZtDUetb58
+    obfuscation: tEou0ZsaRVltd
 - kind: message
   direction: received
+  at: 0.397
   data:
     type: response.function_call_arguments.delta
-    event_id: event_EKSoZTaEOPjgu66EEhinY
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
-    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    event_id: event_EbvwQVGLskxW5kNzTVNL2
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
+    item_id: item_EbvwPHH3qqrqWYRW2812m
     output_index: 0
-    call_id: call_di8urt8prwdAPcqX
+    call_id: call_BSv1euCBWWPx0G2p
     delta: ' '
-    obfuscation: uBVNX8XYaB05Naj
+    obfuscation: Cn2IAmrhGLHMPAV
 - kind: message
   direction: received
+  at: 0.399
   data:
     type: response.function_call_arguments.delta
-    event_id: event_EKSoZ11AdkvoCyjZacquJ
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
-    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    event_id: event_EbvwQmc8pfhmaphpQSJIi
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
+    item_id: item_EbvwPHH3qqrqWYRW2812m
     output_index: 0
-    call_id: call_di8urt8prwdAPcqX
+    call_id: call_BSv1euCBWWPx0G2p
     delta: ' "'
-    obfuscation: u8DeQ46QIN3GVd
+    obfuscation: mmgCTdUEMBfeii
 - kind: message
   direction: received
+  at: 0.404
   data:
     type: response.function_call_arguments.delta
-    event_id: event_EKSoZQ7MFH4t3FPQ4R0Wu
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
-    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    event_id: event_EbvwQiZ9b6vi6QeM4sjKY
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
+    item_id: item_EbvwPHH3qqrqWYRW2812m
     output_index: 0
-    call_id: call_di8urt8prwdAPcqX
+    call_id: call_BSv1euCBWWPx0G2p
     delta: city
-    obfuscation: HdaRSmXyxWcV
+    obfuscation: PZgd0NdO9I0s
 - kind: message
   direction: received
+  at: 0.406
   data:
     type: response.function_call_arguments.delta
-    event_id: event_EKSoZYtvVpEAvZSuN27Cc
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
-    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    event_id: event_EbvwQ6Yis47TirwkOxACh
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
+    item_id: item_EbvwPHH3qqrqWYRW2812m
     output_index: 0
-    call_id: call_di8urt8prwdAPcqX
+    call_id: call_BSv1euCBWWPx0G2p
     delta: '":'
-    obfuscation: oYAygLjTZNSeAk
+    obfuscation: PTgZC3atihh7jt
 - kind: message
   direction: received
+  at: 0.411
   data:
     type: response.function_call_arguments.delta
-    event_id: event_EKSoZOxd1px5hlUdIXwJD
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
-    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    event_id: event_EbvwQ5gcrwWUYeOn7z5OQ
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
+    item_id: item_EbvwPHH3qqrqWYRW2812m
     output_index: 0
-    call_id: call_di8urt8prwdAPcqX
+    call_id: call_BSv1euCBWWPx0G2p
     delta: ' "'
-    obfuscation: Z8kg9mYnmm4ZjS
+    obfuscation: z6SGwaBI3cVm5z
 - kind: message
   direction: received
+  at: 0.417
   data:
     type: response.function_call_arguments.delta
-    event_id: event_EKSoZUAMXg50h4Ju0KgcS
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
-    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    event_id: event_EbvwQRrGlW2ScanF0gQrm
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
+    item_id: item_EbvwPHH3qqrqWYRW2812m
     output_index: 0
-    call_id: call_di8urt8prwdAPcqX
+    call_id: call_BSv1euCBWWPx0G2p
     delta: London
-    obfuscation: rqx7oJMtXP
+    obfuscation: uefYVTzTVF
 - kind: message
   direction: received
+  at: 0.435
   data:
     type: response.function_call_arguments.delta
-    event_id: event_EKSoZ2MpJhbsDDKUhWmod
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
-    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    event_id: event_EbvwQeUtKSw2cn925Zhdj
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
+    item_id: item_EbvwPHH3qqrqWYRW2812m
     output_index: 0
-    call_id: call_di8urt8prwdAPcqX
+    call_id: call_BSv1euCBWWPx0G2p
     delta: '"'
-    obfuscation: ozZ7O5RLJUomgpX
+    obfuscation: 0NjHci7aki241Wv
 - kind: message
   direction: received
+  at: 0.436
   data:
     type: response.function_call_arguments.delta
-    event_id: event_EKSoZMVd1vqbGPTsvrDtR
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
-    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    event_id: event_EbvwQho1TKf3bqrRPCdmI
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
+    item_id: item_EbvwPHH3qqrqWYRW2812m
     output_index: 0
-    call_id: call_di8urt8prwdAPcqX
+    call_id: call_BSv1euCBWWPx0G2p
     delta: " \n"
-    obfuscation: YhLSESjA5SnzXL
+    obfuscation: lZgFJfAKUpfqnq
 - kind: message
   direction: received
+  at: 0.445
   data:
     type: response.function_call_arguments.delta
-    event_id: event_EKSoZKrraVZcetsu3Ky2E
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
-    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    event_id: event_EbvwQ8eRkgrVeN23hm2On
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
+    item_id: item_EbvwPHH3qqrqWYRW2812m
     output_index: 0
-    call_id: call_di8urt8prwdAPcqX
+    call_id: call_BSv1euCBWWPx0G2p
     delta: '}'
-    obfuscation: 22OhVuwvRBHhvBK
+    obfuscation: KH0cG9MW1WjJKdQ
 - kind: message
   direction: received
+  at: 0.449
   data:
     type: response.function_call_arguments.delta
-    event_id: event_EKSoZlTVogzaWoOufWCEJ
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
-    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    event_id: event_EbvwQDgLfb1KYb6T88TTx
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
+    item_id: item_EbvwPHH3qqrqWYRW2812m
     output_index: 0
-    call_id: call_di8urt8prwdAPcqX
-    delta: "  \n"
-    obfuscation: fpyJGjbyT4x2B
+    call_id: call_BSv1euCBWWPx0G2p
+    delta: " \n"
+    obfuscation: QsQcJHDulD7UY9
 - kind: message
   direction: received
+  at: 0.467
   data:
     type: response.function_call_arguments.done
-    event_id: event_EKSoZfqtQTjfiX8MtwZKx
-    response_id: resp_EKSoZDrBYT3y3OzgBEMya
-    item_id: item_EKSoZp4c3v7ZoTwP8ZsXn
+    event_id: event_EbvwQaKemoAAKl36TQuBy
+    response_id: resp_EbvwPGkU9z92dqA0voJCF
+    item_id: item_EbvwPHH3qqrqWYRW2812m
     output_index: 0
-    call_id: call_di8urt8prwdAPcqX
+    call_id: call_BSv1euCBWWPx0G2p
     name: get_weather
-    arguments: "{  \n  \"city\": \"London\" \n}  \n"
+    arguments: "{  \n  \"city\": \"London\" \n} \n"
+- kind: message
+  direction: sent
+  at: 0.467
+  data:
+    type: conversation.item.create
+    item:
+      type: function_call_output
+      call_id: call_BSv1euCBWWPx0G2p
+      output: '{"error":"The tool raised an unhandled error."}'

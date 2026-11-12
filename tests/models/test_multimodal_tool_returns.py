@@ -203,6 +203,8 @@ NOTED_IN_TOOL_RESULTS: frozenset[tuple[ProviderName, FileType]] = frozenset(
         ('anthropic', 'video'),
         ('bedrock_nova', 'audio'),
         ('bedrock_claude', 'audio'),
+        ('bedrock_claude', 'video'),
+        ('openai_chat', 'audio'),
         ('openai_chat', 'video'),
         ('openai_responses', 'audio'),
         ('openai_responses', 'video'),
@@ -288,7 +290,7 @@ def get_error_info(
 
 
 MODEL_CONFIGS: dict[ProviderName, tuple[str, Any]] = {
-    'anthropic': ('claude-sonnet-4-5', anthropic_available),
+    'anthropic': ('claude-sonnet-5-5', anthropic_available),
     'bedrock_nova': ('us.amazon.nova-2-lite-v1:0', bedrock_available),
     'bedrock_claude': ('us.anthropic.claude-sonnet-4-5-20250929-v1:0', bedrock_available),
     'google_2_5': ('gemini-2.5-flash', google_available),
@@ -385,8 +387,8 @@ PROVIDER_TO_UPLOADED_FILE_NAME: dict[ProviderName, UploadedFileProviderName] = {
 UPLOADED_FILE_IDS: dict[tuple[UploadedFileProviderName, FileType], str] = {
     ('openai', 'image'): 'file-BVTjj4CLd1Z7cgppk5sL45',
     ('openai', 'document'): 'file-7qh8AjzrjyRGiQ7kaFybfG',
-    ('anthropic', 'image'): 'file_011Ccn6h7bTbXrEWQKoQZqF9',
-    ('anthropic', 'document'): 'file_011Ccn6h59825RrtpAAPmrBv',
+    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
+    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
     ('xai', 'image'): 'file_20ac2a79-38a3-40ae-83d0-0a604d8fd316',
     ('xai', 'document'): 'file_dafc7e7e-f3ea-42d2-bb50-83f735a0bd9d',
     ('google-gla', 'image'): 'https://generativelanguage.googleapis.com/v1beta/files/3qswqtk02p7x',
@@ -451,8 +453,8 @@ XAI_CASSETTE_PATTERNS: dict[tuple[FileType, ContentSource], str | tuple[str, ...
 }
 
 UPLOADED_FILE_CASSETTE_PATTERNS: dict[tuple[ProviderName, FileType], str | tuple[str, ...]] = {
-    ('anthropic', 'image'): 'file_011Ccn6h7bTbXrEWQKoQZqF9',
-    ('anthropic', 'document'): 'file_011Ccn6h59825RrtpAAPmrBv',
+    ('anthropic', 'image'): 'file_011CYiV4nBS5Jak8e78n4mYu',
+    ('anthropic', 'document'): 'file_011CYiV4psfMwLCihcy8Ba6m',
     ('bedrock_nova', 'image'): 's3://pydantic-ai-test-files/test-files/kiwi.jpg',
     ('bedrock_nova', 'document'): 's3://pydantic-ai-test-files/test-files/dummy.pdf',
     ('bedrock_nova', 'video'): 's3://pydantic-ai-test-files/test-files/small_video.mp4',
@@ -868,7 +870,7 @@ async def test_text_plain_document_anthropic(
     if not anthropic_available():
         pytest.skip('anthropic dependencies not installed')
 
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     text_content = assets_path.joinpath('dummy.txt').read_bytes()
     document = BinaryContent(data=text_content, media_type='text/plain')
 
@@ -922,7 +924,7 @@ async def test_non_pdf_document_url_mistral() -> None:
             AssistantMessage(content=[TextChunk(text='OK')]),
             UserMessage(
                 content=[
-                    TextChunk(text='<tool_result tool_name="get_file" tool_call_id="call1" file_id="fb8964">'),
+                    TextChunk(text='<pyai:tool_result tool_name="get_file" tool_call_id="call1" file_id="fb8964">'),
                     TextChunk(
                         text="""\
 -----BEGIN FILE id="fb8964" type="text/plain"-----
@@ -930,7 +932,7 @@ Dummy TXT file
 -----END FILE id="fb8964"-----\
 """
                     ),
-                    TextChunk(text='</tool_result>'),
+                    TextChunk(text='</pyai:tool_result>'),
                 ]
             ),
         ]
@@ -1210,17 +1212,17 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                     'role': 'user',
                     'content': [
                         {
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
                             'type': 'text',
                         },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
-                        {'text': '</tool_result>', 'type': 'text'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
                         {
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
                             'type': 'text',
                         },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
-                        {'text': '</tool_result>', 'type': 'text'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
                     ],
                 },
             ]
@@ -1247,17 +1249,17 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                     'role': 'user',
                     'content': [
                         {
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
                             'type': 'text',
                         },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
-                        {'text': '</tool_result>', 'type': 'text'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
                         {
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
                             'type': 'text',
                         },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
-                        {'text': '</tool_result>', 'type': 'text'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
                     ],
                 },
             ]
@@ -1296,17 +1298,17 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                 {
                     'content': [
                         {
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
                             'type': 'text',
                         },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
-                        {'text': '</tool_result>', 'type': 'text'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
                         {
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
                             'type': 'text',
                         },
                         {'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'type': 'image_url'},
-                        {'text': '</tool_result>', 'type': 'text'},
+                        {'text': '</pyai:tool_result>', 'type': 'text'},
                     ],
                     'role': 'user',
                 },
@@ -1344,17 +1346,17 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                         {
                             'type': 'text',
                             'image_url': None,
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">',
                         },
                         {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'text': None},
-                        {'type': 'text', 'image_url': None, 'text': '</tool_result>'},
+                        {'type': 'text', 'image_url': None, 'text': '</pyai:tool_result>'},
                         {
                             'type': 'text',
                             'image_url': None,
-                            'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
+                            'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">',
                         },
                         {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,cG5nLWJ5dGVz'}, 'text': None},
-                        {'type': 'text', 'image_url': None, 'text': '</tool_result>'},
+                        {'type': 'text', 'image_url': None, 'text': '</pyai:tool_result>'},
                     ],
                 },
             ]
@@ -1398,12 +1400,12 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                 },
                 {
                     'content': [
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">'},
+                        {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">'},
                         {'image_url': {'image_url': 'data:image/png;base64,cG5nLWJ5dGVz', 'detail': 'DETAIL_AUTO'}},
-                        {'text': '</tool_result>'},
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">'},
+                        {'text': '</pyai:tool_result>'},
+                        {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">'},
                         {'image_url': {'image_url': 'data:image/png;base64,cG5nLWJ5dGVz', 'detail': 'DETAIL_AUTO'}},
-                        {'text': '</tool_result>'},
+                        {'text': '</pyai:tool_result>'},
                     ],
                     'role': 'ROLE_USER',
                 },
@@ -1450,12 +1452,12 @@ TOOL_MEDIA_WIRE_CASES: list[ToolMediaWireCase] = [
                 {
                     'role': 'user',
                     'parts': [
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">'},
+                        {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo1" file_id="photo">'},
                         {'inline_data': {'data': b'png-bytes', 'mime_type': 'image/png'}},
-                        {'text': '</tool_result>'},
-                        {'text': '<tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">'},
+                        {'text': '</pyai:tool_result>'},
+                        {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="photo2" file_id="photo">'},
                         {'inline_data': {'data': b'png-bytes', 'mime_type': 'image/png'}},
-                        {'text': '</tool_result>'},
+                        {'text': '</pyai:tool_result>'},
                     ],
                 },
             ]
@@ -1562,9 +1564,11 @@ async def test_tool_media_is_framed_with_its_originating_call(case: ToolMediaWir
     # the property in a form it cannot rewrite.
     rendered = str(wire)
     for tool_call_id in ('photo1', 'photo2'):
-        open_tag = f'<tool_result tool_name="get_photo" tool_call_id="{tool_call_id}" file_id="{_PHOTO.identifier}">'
+        open_tag = (
+            f'<pyai:tool_result tool_name="get_photo" tool_call_id="{tool_call_id}" file_id="{_PHOTO.identifier}">'
+        )
         assert (open_tag in rendered) is case.framed
-    assert ('</tool_result>' in rendered) is case.framed
+    assert ('</pyai:tool_result>' in rendered) is case.framed
 
 
 @pytest.mark.skipif(not google_available(), reason='google not installed')
@@ -1615,9 +1619,9 @@ async def test_google_framed_media_precedes_tool_return_content() -> None:
             {
                 'role': 'user',
                 'parts': [
-                    {'text': '<tool_result tool_name="get_clip" tool_call_id="c1" file_id="clip">'},
+                    {'text': '<pyai:tool_result tool_name="get_clip" tool_call_id="c1" file_id="clip">'},
                     {'inline_data': {'data': b'aud', 'mime_type': 'audio/mpeg'}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                     {'text': 'and here is my note'},
                 ],
             },
@@ -1669,5 +1673,6 @@ async def test_tool_media_framing_reaches_the_provider(
         usage_limits=UsageLimits(output_tokens_limit=100000),
     )
     assert 'kiwi' in result.output.lower(), f'Model should identify kiwi fruit, got: {result.output}'
-    # Cassette bodies are JSON, so the framing's own quotes are backslash-escaped on the wire.
-    cassette_ctx.verify_contains(r'<tool_result tool_name=\"get_photo\" tool_call_id=\"', '</tool_result>')
+    # Cassette bodies are JSON, so the framing's own quotes are backslash-escaped on the wire. A frame carries no
+    # marker attribute, so the check starts at its first one.
+    cassette_ctx.verify_contains(r'tool_name=\"get_photo\" tool_call_id=\"', '</pyai:tool_result>')

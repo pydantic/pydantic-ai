@@ -15,8 +15,9 @@ from typing import TypeGuard
 
 import anyio
 import httpx
+import httpx2
 import pytest
-from httpx import AsyncClient, MockTransport, Request, Response
+from httpx2 import AsyncClient, MockTransport, Request, Response
 
 from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
@@ -24,11 +25,13 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    StructuredContent,
     TextContent,
     TextPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.media import (
     DiskMediaStore,
     MediaContext,
@@ -949,6 +952,44 @@ class TestExternalizeRestoreWalker:
         # rebuilds from the JSON timestamp, which has nothing to do with the walker.
         assert ModelMessagesTypeAdapter.validate_python(restored) == ModelMessagesTypeAdapter.validate_python(dumped)
 
+    async def test_structured_content_text_round_trips_through_real_messages(self, tmp_path: Path) -> None:
+        """A large `StructuredContent` externalizes its rendered text and restores it byte for byte.
+
+        It serializes `kind: 'structured-content'`, so matching only `'text-content'` would leave its
+        text inline. Its `value` isn't a string payload, so it stays inline.
+        """
+        store = DiskMediaStore(tmp_path)
+        item = StructuredContent({'rows': ['q' * 10] * 7_000}, tag='report')
+        messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item])])]
+        dumped = _json.loads(ModelMessagesTypeAdapter.dump_json(messages))
+        externalized = await externalize_media(dumped, media_store=store, threshold_bytes=64 * 1024)
+        # The JSON path to the item: messages[0].parts[0].content[0].
+        assert _is_object_list(externalized)
+        message = externalized[0]
+        assert _is_marker_dict(message)
+        parts = message['parts']
+        assert _is_object_list(parts)
+        part = parts[0]
+        assert _is_marker_dict(part)
+        content = part['content']
+        assert _is_object_list(content)
+        [node] = content
+        assert _is_marker_dict(node)
+        assert 'content' not in node
+        assert node['value'] == item.value
+
+        restored = await restore_media(externalized, media_store=store)
+        assert restored == dumped
+
+    @pytest.mark.parametrize('kind', [[], {}, ['text-content']], ids=['empty-list', 'dict', 'list'])
+    async def test_unhashable_kind_with_string_content_is_left_alone(self, tmp_path: Path, kind: object) -> None:
+        """Tool-return data can be any mapping, so a list or dict `kind` is not a text item, and doesn't raise."""
+        store = DiskMediaStore(tmp_path)
+        node = {'kind': kind, 'content': 'x' * 70_000}
+        externalized = await externalize_media(node, media_store=store, threshold_bytes=64 * 1024)
+        assert externalized == node
+        assert list(tmp_path.glob('*.bin')) == []
+
     async def test_unknown_kind_with_string_content_is_left_alone(self, tmp_path: Path) -> None:
         """A `kind` that is not a discriminator we know does not make a dict a text part."""
         store = DiskMediaStore(tmp_path)
@@ -1328,6 +1369,30 @@ class TestS3MediaStoreWithMockTransport:
         assert '%28' in expected_path and '%40' in expected_path  # ( and @ encoded
         assert captured[0].url.raw_path.decode('ascii') == expected_path
 
+    async def test_legacy_httpx_client_is_deprecated_but_keeps_signed_path(self) -> None:
+        """Mock transport only: no provider cassette can hold a legacy `httpx` client or its signed raw path."""
+        captured: list[httpx.Request] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            return httpx.Response(200)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.warns(HarnessDeprecationWarning, match='use `httpx2.AsyncClient` instead'):
+                store = S3MediaStore(
+                    bucket='my-bucket',
+                    endpoint='https://acct.r2.cloudflarestorage.com',
+                    region='auto',
+                    access_key_id='k',
+                    secret_access_key='s',
+                    key_prefix='runs(2024)/tenant@acme/',
+                    client=client,
+                )
+            uri = await store.put(b'payload')
+
+        expected_path = _canonical_uri(store._object_path(uri, MediaContext()))  # pyright: ignore[reportPrivateUsage]
+        assert captured[0].url.raw_path.decode('ascii') == expected_path
+
     async def test_put_propagates_metadata_as_signed_x_amz_meta_headers(self) -> None:
         captured: list[Request] = []
 
@@ -1571,7 +1636,7 @@ class TestS3MediaStoreWithMockTransport:
                 await store.exists(media_uri_for(b'x'))
 
     async def test_no_client_branch_opens_one_per_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Without `client=`, the store opens a fresh `httpx.AsyncClient` per call."""
+        """Without `client=`, the store opens a fresh `httpx2.AsyncClient` per call."""
 
         captured: list[Request] = []
 
@@ -1579,12 +1644,11 @@ class TestS3MediaStoreWithMockTransport:
             captured.append(request)
             return Response(200)
 
-        original_async_client = httpx.AsyncClient
+        class _MockTransportClient(httpx2.AsyncClient):
+            def __init__(self) -> None:
+                super().__init__(transport=MockTransport(handler))
 
-        def patched_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
-            return original_async_client(transport=MockTransport(handler))
-
-        monkeypatch.setattr(httpx, 'AsyncClient', patched_client)
+        monkeypatch.setattr(httpx2, 'AsyncClient', _MockTransportClient)
 
         store = S3MediaStore(
             bucket='my-bucket',

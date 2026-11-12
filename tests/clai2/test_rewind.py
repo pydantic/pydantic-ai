@@ -15,6 +15,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
     BinaryImage,
+    CompactionPart,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -28,13 +29,15 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
 from pydantic_ai_harness.step_persistence.conversations import ConversationConflict
 from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2 import chat
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Conversation, Transcript
-from pydantic_clai2.runtime._session import Session
-from pydantic_clai2.ui.menus.rewind import RewindPoint, build_rewind_menu, rewind
+from pydantic_clai2.runtime.rewind import RewindPoint
+from pydantic_clai2.runtime.session import Session
+from pydantic_clai2.ui.menus.rewind import build_rewind_menu, rewind
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from tests.clai2.menu_script import Script, pick
 from tests.clai2.test_compaction import make_plugin, two_turns
@@ -134,6 +137,32 @@ async def test_compacted_prompts_are_disabled_but_new_turns_can_rewind(monkeypat
     assert result.item.value == RewindPoint(message_index=2, text='after compaction', images=())
 
 
+async def test_prompts_a_compaction_kept_stay_disabled_after_its_request_is_merged() -> None:
+    """Continuing merges the summary's request into the oldest prompt it kept, and that request's timestamp wins,
+    so the guard reads when the summary was written from the summary part itself."""
+    session = Session(Agent(TestModel()), deps=None)
+    for text in ('first', 'second', 'third'):
+        await session.prompt(text)
+    compacted = await compact_now(
+        SummarizingCompaction(max_messages=1, keep_messages=4, preserve_first_user_message=False),
+        session.messages,
+        model=TestModel(custom_output_text='summary of the first turns'),
+    )
+    session = Session(Agent(TestModel()), deps=None, message_history=compacted)
+    await session.prompt('after compaction')
+
+    summary_request = session.messages[0]
+    assert isinstance(summary_request, ModelRequest)
+    assert [type(part) for part in summary_request.parts] == [CompactionPart, UserPromptPart]
+    menu = build_rewind_menu(session.messages)
+    items = menu._items  # pyright: ignore[reportPrivateUsage]
+    assert [(item.value.text, item.disabled) for item in items if isinstance(item.value, RewindPoint)] == [
+        ('after compaction', False),
+        ('third', True),
+        ('second', True),
+    ]
+
+
 async def test_replacement_images_do_not_count_discarded_draft_against_limit() -> None:
     image = BinaryContent(data=b'x' * (9 * 1024 * 1024), media_type='image/png')
     queued_image = BinaryContent(data=b'queued', media_type='image/png')
@@ -168,7 +197,7 @@ async def test_rewind_is_durable_and_restores_images(tmp_path: Path, index: int)
     menu = build_rewind_menu(before[: index + 1])
     assert menu.highlighted is not None
     script = Script(lists=[MenuResult(item=menu.highlighted)], choices=[], texts=[])
-    async with editor() as (live, _, _):
+    async with editor(key_wait_limit=300) as (live, _, _):
         live.buffer.replace('discard this draft')
         live.buffer.history_index = 0
         async with live.suspended():
@@ -236,7 +265,7 @@ async def test_save_conflict_preserves_history_and_draft(tmp_path: Path) -> None
     before = session.messages
     point = RewindPoint(message_index=0, text='original', images=())
     script = Script(lists=[pick(point)], choices=[], texts=[])
-    async with editor() as (live, _, _):
+    async with editor(key_wait_limit=300) as (live, _, _):
         live.buffer.replace('keep draft')
         with pytest.raises(ConversationConflict):
             await rewind(session, live, runners=script.runners)

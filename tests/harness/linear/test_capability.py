@@ -30,6 +30,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.linear import Linear
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
 from .._docs_examples import python_blocks, run_block
 
@@ -64,7 +65,7 @@ DepsT = TypeVar('DepsT')
 
 
 def transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
-    assert isinstance(toolset, MCPToolset)
+    toolset = mcp_connection(toolset)
     result = toolset.client.transport
     assert isinstance(result, StreamableHttpTransport)
     return result
@@ -100,8 +101,11 @@ class TestLinear:
     @pytest.mark.parametrize(
         ('read_only', 'expected'),
         [
-            (False, '{"read_resource":"read","write_resource":"written","unmarked_resource":"unmarked"}'),
-            (True, '{"read_resource":"read"}'),
+            (
+                False,
+                '{"linear_read_resource":"read","linear_write_resource":"written","linear_unmarked_resource":"unmarked"}',
+            ),
+            (True, '{"linear_read_resource":"read"}'),
         ],
     )
     async def test_agent_executes_selected_tools(self, server: FastMCP, read_only: bool, expected: str) -> None:
@@ -134,7 +138,7 @@ class TestLinear:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: Linear[str | None]) -> None:
-        assert capability.get_toolset().id == 'tenant-linear'
+        assert only_leaf(capability.get_toolset()).id == 'tenant-linear'
 
     def test_read_only_client_keeps_the_id_on_its_mcp_toolset(self) -> None:
         # The read-only filter wraps the connection, so the id lives on the `MCPToolset` inside it.
@@ -145,7 +149,7 @@ class TestLinear:
 
     @pytest.mark.parametrize('id', [None, ''])
     def test_unset_id_connects_under_the_default_id(self, id: str | None) -> None:
-        assert Linear[None](id=id, auth='linear-token').get_toolset().id == 'linear'
+        assert only_leaf(Linear[None](id=id, auth='linear-token').get_toolset()).id == 'linear'
 
     def test_unset_ids_are_not_combined(self) -> None:
         # An unset id has nothing to combine on, so differing settings don't raise when the agent is built,
@@ -185,8 +189,7 @@ class TestLinear:
         self, capability: Linear[str | None], include: bool
     ) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = capability.get_toolset()
-        assert isinstance(toolset, MCPToolset)
+        toolset = mcp_connection(capability.get_toolset())
         assert toolset.include_instructions is include
 
     def test_credential_is_not_in_repr(self) -> None:
@@ -255,9 +258,9 @@ def fake_linear() -> FastMCP:
 
 
 def calls_list_issues(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Calls `list_issues` once when the run offers it, then answers."""
-    if len(messages) == 1 and any(tool.name == 'list_issues' for tool in info.function_tools):
-        return ModelResponse(parts=[ToolCallPart('list_issues', {})])
+    """Calls `linear_list_issues` once when the run offers it, then answers."""
+    if len(messages) == 1 and any(tool.name == 'linear_list_issues' for tool in info.function_tools):
+        return ModelResponse(parts=[ToolCallPart('linear_list_issues', {})])
     return ModelResponse(parts=[TextPart('done')])
 
 
@@ -311,5 +314,5 @@ class TestDocs:
         assert is_agent(agent)
         output = agent.run_sync('List my open issues', model=model).output
         assert isinstance(output, DeferredToolRequests)
-        assert [call.tool_name for call in output.approvals] == ['list_issues']
+        assert [call.tool_name for call in output.approvals] == ['linear_list_issues']
         assert connections[-1] == ('https://mcp.linear.app/mcp', 'docs-token')

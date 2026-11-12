@@ -1,6 +1,6 @@
 """Utilities for handling Pydantic AI and Vercel data streams."""
 
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import replace
 from datetime import datetime
 from typing import Any, cast
@@ -20,7 +20,12 @@ from pydantic_ai.messages import (
     WebCitationSource,
     tool_return_ta,
 )
-from pydantic_ai.ui._utils import INTERNAL_METADATA_KEY, MCP_APPS_UI_TYPE, mcp_app_ui_payload
+from pydantic_ai.ui._utils import (
+    INTERNAL_METADATA_KEY,
+    MCP_APPS_UI_TYPE,
+    mcp_app_ui_payload,
+    without_internal_text_metadata,
+)
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolApprovalRequestedPart,
     DynamicToolApprovalRespondedPart,
@@ -52,6 +57,12 @@ __all__ = []
 TOOL_AVAILABILITY_DELTA_DATA_TYPE = 'data-tool-availability-delta'
 """Data chunk type for tool availability changes."""
 
+CAPABILITY_LOAD_DELTA_DATA_TYPE = 'data-capability-load-delta'
+"""Data chunk type for capabilities loaded from code."""
+
+MODEL_SETTINGS_DELTA_DATA_TYPE = 'data-model-settings-delta'
+"""Data chunk type for changes to the thinking effort in effect."""
+
 COMPACTION_DATA_TYPE = 'data-compaction'
 """Data chunk type for compaction parts."""
 
@@ -60,6 +71,9 @@ ENQUEUED_MESSAGES_DATA_TYPE = 'data-enqueued-messages'
 
 MCP_APPS_DATA_TYPE = f'data-{MCP_APPS_UI_TYPE}'
 """Data chunk type for the MCP Apps data of a tool call, keyed by its tool call ID."""
+
+CONVERSATION_SAVED_DATA_TYPE = 'data-conversation-saved'
+"""Transient data chunk type for the entries a `conversation_store` save stored, sent after the run."""
 
 PROVIDER_METADATA_KEY = 'pydantic_ai'
 
@@ -89,9 +103,10 @@ def tool_return_output(part: BaseToolReturnPart) -> Any:
     Vercel's `output` field is `Any`, so the full return — file data included — is always dumped inline
     and rehydrated on load through the `ToolReturnContent` union (`_validate_tool_output`). No gating.
     The same function serializes both the `dump_messages` history path and the live event stream
-    (`tool-output-available`), so files survive either round-trip.
+    (`tool-output-available`), so files survive either round-trip. The reserved `__pydantic_ai__` namespace of
+    `TextContent` metadata stays server-side.
     """
-    return tool_return_ta.dump_python(part.content, mode='json')
+    return tool_return_ta.dump_python(without_internal_text_metadata(part.content), mode='json')
 
 
 def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[str, Any]:
@@ -198,13 +213,16 @@ def _offset_raw_citation(citation: object, offset: int) -> object:
     return citation
 
 
-def dump_text_metadata(parts: Sequence[TextPart]) -> dict[str, Any] | None:
+def dump_text_metadata(
+    parts: Sequence[TextPart], *, canonical_system_for: Callable[[str | None], str | None] | None = None
+) -> dict[str, Any] | None:
     """Dump provider metadata for a UI text part holding one or more consecutive text parts.
 
     The UI text part loads back as one text part, so it keeps the first part's fields, as merged text always has, with
     every part's citations: ours with their anchors moved onto the merged text, and the provider's, which replay
     sends back, joined under `provider_details['citations']`. The provider name comes from a part with citations
     when the first part has none, since replay only sends back citations from the provider that produced them.
+    `canonical_system_for` gives the `canonical_system` of the response the parts are in that applies to that provider.
     """
     first = parts[0]
     provider_name = first.provider_name or next((part.provider_name for part in parts if part.citations), None)
@@ -225,6 +243,7 @@ def dump_text_metadata(parts: Sequence[TextPart]) -> dict[str, Any] | None:
         id=first.id,
         provider_name=provider_name,
         provider_details=provider_details,
+        canonical_system=canonical_system_for(provider_name) if canonical_system_for is not None else None,
         citations=dump_citations(merged_text_citations(parts)),
     )
 

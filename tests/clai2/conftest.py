@@ -5,10 +5,12 @@ import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import TemporaryDirectory, mkdtemp
 
 import keyring
 import pytest
 from keyring.errors import PasswordDeleteError
+from rich.style import Style
 
 from pydantic_ai import models
 from pydantic_clai2.config import Settings, credential_store
@@ -16,12 +18,6 @@ from tests.clai2.cli_runner import CliRunner
 
 # Keep browser-only fixtures out of ordinary test collection.
 collect_ignore: list[str] = ['browser'] if os.environ.get('CLAI2_BROWSER_TESTS') != '1' else []
-
-
-@pytest.fixture
-def blockbuster_enabled() -> bool:
-    """Not yet: the suite predates the detector. https://github.com/pydantic/pydantic-ai/issues/8821"""
-    return False
 
 
 @pytest.fixture
@@ -72,6 +68,28 @@ def fake_gh(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Monkey
 def no_native_clipboard(monkeypatch: pytest.MonkeyPatch) -> None:
     """Copy out through OSC 52 only: the local clipboard command would replace the developer's clipboard."""
     monkeypatch.setattr('pydantic_clai2.ui.prompt.text_clipboard.copy_command', lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def fresh_rich_styles() -> None:
+    """Build styles afresh: Rich keeps a cached style's first escape codes, whatever colour system a later console uses."""
+    Style.parse.cache_clear()
+    Style._add.cache_clear()  # pyright: ignore[reportPrivateUsage] -- `Style + Style` caches its result here.
+
+
+@pytest.fixture(scope='session')
+def runtime_root() -> Iterator[Path]:
+    """Clean up after test-scoped OS monkeypatches have been restored."""
+    with TemporaryDirectory(prefix='c2-runtime-', dir='/tmp' if os.name == 'posix' else None) as root:
+        yield Path(root)
+
+
+@pytest.fixture(autouse=True)
+def runtime_directory(runtime_root: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Keep live-control sockets private, short, and outside the developer's real runtime directory."""
+    directory = Path(mkdtemp(prefix='r-', dir=runtime_root))
+    monkeypatch.setenv('XDG_RUNTIME_DIR', str(directory))
+    return directory
 
 
 @pytest.fixture(autouse=True)

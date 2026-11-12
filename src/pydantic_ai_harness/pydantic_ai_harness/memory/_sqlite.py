@@ -52,6 +52,35 @@ _SQLITE_METADATA_SCHEMA = (
 )
 
 
+_Decoder = Callable[[bytes, str, bool], tuple[str, int]]
+_DECODERS: dict[str, _Decoder] = {
+    'UTF-8': codecs.utf_8_decode,
+    'UTF-16le': codecs.utf_16_le_decode,
+    'UTF-16be': codecs.utf_16_be_decode,
+}
+
+
+def _create_schema(connection: sqlite3.Connection) -> _Decoder:
+    """Create the tables, adding the `memory_files` columns that earlier releases' databases lack."""
+    connection.execute('BEGIN IMMEDIATE')
+    connection.execute(_SQLITE_MEMORY_SCHEMA)
+    columns = {str(row[1]) for row in connection.execute('PRAGMA table_info(memory_files)').fetchall()}
+    if 'version' not in columns:
+        connection.execute('ALTER TABLE memory_files ADD COLUMN version INTEGER NOT NULL DEFAULT 1')
+    if 'last_operation_id' not in columns:
+        connection.execute('ALTER TABLE memory_files ADD COLUMN last_operation_id TEXT')
+    if 'write_metadata' not in columns:
+        connection.execute('ALTER TABLE memory_files ADD COLUMN write_metadata TEXT')
+    connection.execute(_SQLITE_OPERATIONS_SCHEMA)
+    connection.execute(_SQLITE_METADATA_SCHEMA)
+    connection.execute(
+        'INSERT OR IGNORE INTO memory_metadata(id, generation) SELECT 1, COALESCE(MAX(version), 0) FROM memory_files'
+    )
+    encoding = connection.execute('PRAGMA encoding').fetchone()[0]
+    connection.commit()
+    return _DECODERS[str(encoding)]
+
+
 def _prefix_end(prefix: str) -> str:
     """An upper bound for the paths starting with `prefix`, so SQLite can seek the path index for the range.
 
@@ -80,7 +109,7 @@ class SqliteMemoryStore:
         self._database = database
         self._connection = connection
         self._schema_ready = False
-        self._decode: Callable[[bytes, str, bool], tuple[str, int]] = codecs.utf_8_decode
+        self._decode: _Decoder = codecs.utf_8_decode
         self._thread_lock = threading.RLock()
 
     def _connect(self) -> tuple[sqlite3.Connection, bool]:
@@ -98,28 +127,7 @@ class SqliteMemoryStore:
             if owned:
                 _enable_wal(connection)
             if not self._schema_ready:
-                connection.execute('BEGIN IMMEDIATE')
-                connection.execute(_SQLITE_MEMORY_SCHEMA)
-                columns = {str(row[1]) for row in connection.execute('PRAGMA table_info(memory_files)').fetchall()}
-                if 'version' not in columns:
-                    connection.execute('ALTER TABLE memory_files ADD COLUMN version INTEGER NOT NULL DEFAULT 1')
-                if 'last_operation_id' not in columns:
-                    connection.execute('ALTER TABLE memory_files ADD COLUMN last_operation_id TEXT')
-                if 'write_metadata' not in columns:
-                    connection.execute('ALTER TABLE memory_files ADD COLUMN write_metadata TEXT')
-                connection.execute(_SQLITE_OPERATIONS_SCHEMA)
-                connection.execute(_SQLITE_METADATA_SCHEMA)
-                connection.execute(
-                    'INSERT OR IGNORE INTO memory_metadata(id, generation) '
-                    'SELECT 1, COALESCE(MAX(version), 0) FROM memory_files'
-                )
-                encoding = connection.execute('PRAGMA encoding').fetchone()[0]
-                self._decode = {
-                    'UTF-8': codecs.utf_8_decode,
-                    'UTF-16le': codecs.utf_16_le_decode,
-                    'UTF-16be': codecs.utf_16_be_decode,
-                }[encoding]
-                connection.commit()
+                self._decode = _create_schema(connection)
                 self._schema_ready = True
             return connection, owned
         except BaseException:

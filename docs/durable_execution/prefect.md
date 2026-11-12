@@ -152,7 +152,7 @@ When using Prefect with Pydantic AI agents, there are a few important considerat
 
 Each agent instance must have a unique `name` so Prefect can correctly identify and track its flows and tasks.
 
-Toolsets that implement their own tool listing and calling (i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]) must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify their tasks within the flow.
+Toolsets that implement their own tool listing and calling (i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], [`MCPToolset`][pydantic_ai.mcp.MCPToolset], and [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset]) must have a unique [`id`][pydantic_ai.toolsets.AbstractToolset.id] set, which is used to identify their tasks within the flow. The hostname a URL `MCPToolset` without one takes as its `id` doesn't count.
 
 ### Capabilities at Runtime
 
@@ -169,6 +169,13 @@ keys. Distinct, stable explicit `run_id=` values keep each run's results attache
 when runs arrive in a different order on a flow retry. Repeated identical calls within one run
 keep separate recorded results. Automatically derived run IDs still depend on
 arrival order, so pass explicit IDs for branches that can reorder.
+
+The operation's arguments are part of the cache key too. An operation whose arguments are measured
+in flow code, such as a duration, a timestamp, or a random value, gets different arguments on a
+flow retry, misses its recorded result, and runs again. Where running twice matters, pass arguments
+that stay the same across retries, measuring a changing value inside the operation where you can. This
+is why [online evaluation](../evals/online-evaluation.md#durable-execution) can evaluate a run again
+on a flow retry.
 
 !!! warning "Upgrading custom capability task cache keys"
 
@@ -214,6 +221,8 @@ Agent tools are automatically wrapped as Prefect tasks, which means they benefit
 * **Retry logic**: Failed tool calls can be retried automatically
 * **Caching**: Tool results are cached based on their inputs
 * **Observability**: Tool execution is tracked in the Prefect UI
+
+Because a tool's recorded result can be replayed without re-running it, a tool running as a task can't load an [on-demand capability](../capabilities/on-demand.md) with [`ctx.load_capability()`][pydantic_ai.tools.RunContext.load_capability]; see [Loading a capability from code](../capabilities/on-demand.md#loading-from-code-durable) for where to load it instead.
 
 For a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset], including one contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], tool discovery and each tool call run as Prefect tasks, and flow retries replay recorded discovery and tool results. When the factory is built with `per_run_step=False`, the run resolves the toolset once and each task reuses it, entering it the first time a task needs it and leaving it entered for the rest of the run. Building a toolset is not the same as connecting it — an `MCPToolset` opens nothing until it is entered — so connecting happens inside a task, where it is retried like any other task failure. The factory itself runs in flow code and re-runs whenever that replays, so like the capability factory below it must be deterministic given the run's `deps`: build the toolset in the factory and leave its I/O to the tasks. This is the lifecycle a non-durable run gives the toolset, so a toolset's own caching — such as [`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] on an `MCPToolset` the factory returns — works as it does outside a flow, instead of being discarded between tasks. A `per_run_step=True` factory is re-resolved inside each task, as it asks to be.
 
@@ -296,7 +305,7 @@ The deadline bounds the agent run, not the flow. To bound the whole flow as well
 
 ### Suspended Turns and Background Mode
 
-When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request task. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first task. Size `timeout_seconds` in [Task Configuration](#task-configuration) for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation task. Prefect has no durable sleep, so the wait between polls is a plain sleep in flow code that a retried flow run sleeps again.
+When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request task. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first task. Size `timeout_seconds` in [Task Configuration](#task-configuration) for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation task. Prefect has no durable sleep, so the wait between polls is a plain sleep in flow code that a retried flow run sleeps again. [Batched requests](../batch.md#durable-execution) work the same way: submitting a request and each check on its batch are separate tasks.
 
 ### Toolsets at Runtime
 
@@ -365,7 +374,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 Pydantic AI and provider API clients have their own retry logic. When using Prefect, you may want to:
 
 * Disable [transport retries](../retries.md#transport-retries) in Pydantic AI
-* Turn off your provider API client's retry logic (e.g., `max_retries=0` on a [custom OpenAI client](../models/openai.md#custom-openai-client))
+* Turn off your provider API client's retry logic by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0`, so Prefect is the [one retry owner](../retries.md#choosing-one-retry-owner)
 * Rely on Prefect's task-level retry configuration for consistency
 
 This prevents requests from being retried multiple times at different layers. The layers *multiply*: see [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
@@ -378,6 +387,9 @@ Prefect 3.0 provides built-in caching and transactional semantics. A task whose 
 
 !!! warning "Dynamic-tool cache keys changed"
     Dynamic-tool task keys now include the prepared tool definition. Existing cached results for dynamic tools will miss once after upgrading and recompute. The discovery, argument-validation and tool-call tasks of a dynamic toolset listed under a prefix or rename also key on those prefixes and renames, and miss once after upgrading in the same way. No manual cache deletion is required; subsequent calls reuse the new value-addressed keys.
+
+!!! warning "Binary cache keys changed"
+    Task keys now hash `bytes` and `bytearray` values that aren't valid UTF-8, such as an image in the message history, by value. A task whose inputs hold such a value directly, as a dict value, or in a list, tuple or dataclass misses once after upgrading and runs again, as does one whose dependencies, `metadata`, `validation_context` or tool definition hold it in a Pydantic model that Prefect can't hash, for example because it also holds a lock. Ordinary dictionary keys starting with `__pydantic_ai_binary__` are escaped to keep those inputs distinct from the internal binary encoding; tasks with such keys also miss once, even if their values are only text. Let in-flight flows with either kind of affected input finish before upgrading. Other tasks with only text or UTF-8 bytes keep their keys. No manual cache deletion is required.
 
 * **Task inputs**: A model request's messages, settings and parameters; a tool call's name, arguments, definition and [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] (so two parallel calls to the same tool with the same arguments each execute); the prefixes and renames a dynamic toolset is listed under (so one dynamic toolset under two prefixes keeps a result per prefix); and the run state the task's work can depend on: dependencies, [`metadata`][pydantic_ai.tools.RunContext.metadata], [`validation_context`][pydantic_ai.tools.RunContext.validation_context], the prompt, and the message history.
 
@@ -398,7 +410,7 @@ To access the Prefect UI, you can either:
 1. Use [Prefect Cloud](https://www.prefect.io/cloud) (managed service)
 2. Run a local [Prefect server](https://docs.prefect.io/v3/how-to-guides/self-hosted/server-cli) with `prefect server start`
 
-You can also use [Pydantic Logfire](../logfire.md) for detailed observability. When using both Prefect and Logfire, you'll get complementary views:
+Run `uvx logfire-cli wizard --task pydantic-ai` once to [set up Pydantic Logfire](../logfire.md#using-logfire) for detailed observability. When using both Prefect and Logfire, you'll get complementary views:
 
 * **Prefect**: Workflow-level orchestration, task status, and retry history
 * **Logfire**: Fine-grained tracing of agent runs, model requests, and tool invocations

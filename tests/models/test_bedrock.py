@@ -5,6 +5,7 @@ import json
 import os
 from collections.abc import Callable, Generator, Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from itertools import count
@@ -17,7 +18,7 @@ import anyio
 import anyio.from_thread
 import anyio.to_thread
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
@@ -36,6 +37,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestAttempt,
     ModelResponse,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -61,6 +63,7 @@ from pydantic_ai import (
     VideoUrl,
     WebCitationSource,
 )
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import AbstractCapability, NativeTool
 from pydantic_ai.exceptions import (
@@ -245,6 +248,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 ],
                 usage=RequestUsage(input_tokens=7, output_tokens=30, cost=Decimal('0.000004445')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -311,12 +315,12 @@ async def test_bedrock_model_usage_limit_exceeded(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
 ):
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     agent = Agent(model=model)
 
     with pytest.raises(
         UsageLimitExceeded,
-        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=23\\)',
+        match='The next request would exceed the input_tokens_limit of 18 \\(input_tokens=40\\)',
     ):
         await agent.run(
             ['The quick brown fox jumps over the lazydog.', CachePoint(), 'What was next?'],
@@ -329,21 +333,27 @@ async def test_bedrock_model_usage_limit_not_exceeded(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
 ):
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     agent = Agent(model=model)
 
     result = await agent.run(
         'The quick brown fox jumps over the lazydog.',
-        usage_limits=UsageLimits(input_tokens_limit=25, count_tokens_before_request=True),
+        usage_limits=UsageLimits(input_tokens_limit=40, count_tokens_before_request=True),
     )
 
     assert result.output == snapshot(
-        'I notice there\'s a small typo in your message - it should be "lazy dog" (two words) rather than '
-        '"lazydog."\n\nThe corrected version is: "The quick brown fox jumps over the lazy dog."\n\n'
-        'This is a famous pangram - a sentence that contains every letter of the English alphabet at least once. '
-        "It's commonly used for testing typewriters, keyboards, fonts, and other applications where you want to "
-        "display all the letters.\n\nIs there something specific you'd like to know about this phrase, or were you "
-        'perhaps testing something?'
+        """\
+Here's a fun fact about your sentence:
+
+**"The quick brown fox jumps over the lazy dog"** is a famous **pangram** — a sentence that contains **every letter of the alphabet** at least once! (A-Z)
+
+It's widely used for:
+- 📝 **Typing practice**
+- 🖨️ **Testing fonts and printers**
+- ⌨️ **Keyboard testing**
+
+I noticed you wrote "lazydog" as one word — it's typically written as two words: **"lazy dog."** 😊\
+"""
     )
 
 
@@ -858,6 +868,7 @@ async def test_bedrock_inference_profile_converse(
                 parts=[TextPart(content='Hello')],
                 usage=RequestUsage(input_tokens=8, output_tokens=2, cost=Decimal('5.6E-7')),
                 model_name='amazon.nova-micro-v1:0',
+                model_id='bedrock:amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -871,22 +882,20 @@ async def test_bedrock_inference_profile_converse(
 
 
 async def test_bedrock_inference_profile_count_tokens(
-    allow_model_requests: None,
-    bedrock_provider: BedrockProvider,
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ):
-    # count_tokens only uses model_name (not the inference profile), so the ARN doesn't
-    # matter here. Claude Sonnet is used because it's one of the few Bedrock models that
-    # supports the count_tokens API.
+    """`count_tokens` sends the base model id, not the `bedrock_inference_profile` ARN.
+
+    Claude Sonnet 4.6 is used because Bedrock CountTokens rejects every Claude 5-family id.
+    """
     inference_profile_arn = _bedrock_arn('application-inference-profile/mi1dadi0g15f')
     settings: BedrockModelSettings = {'bedrock_inference_profile': inference_profile_arn}
-    model = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
-    )
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider, settings=settings)
     params = ModelRequestParameters()
 
     result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
     assert result.input_tokens > 0
-    assert model.model_name == 'us.anthropic.claude-sonnet-4-20250514-v1:0'
+    assert vcr.requests[0].path == snapshot('/model/anthropic.claude-sonnet-4-6/count-tokens')
 
 
 async def test_bedrock_count_tokens_additional_model_requests_fields(
@@ -899,9 +908,7 @@ async def test_bedrock_count_tokens_additional_model_requests_fields(
     settings: BedrockModelSettings = {
         'bedrock_additional_model_requests_fields': {'anthropic_beta': ['context-1m-2025-08-07']}
     }
-    model = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider, settings=settings
-    )
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider, settings=settings)
     params = ModelRequestParameters()
 
     result = await model.count_tokens([ModelRequest.user_text_prompt('Hello, world!')], settings, params)
@@ -915,7 +922,7 @@ async def test_bedrock_count_tokens_tool_config(
     allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ):
     """`count_tokens` forwards `toolConfig` to `input.converse`, mirroring the real request so tool schemas are counted."""
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-6', provider=bedrock_provider)
     tool_def = ToolDefinition(
         name='get_weather',
         description='Get the weather for a location',
@@ -1031,6 +1038,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 ],
                 usage=RequestUsage(input_tokens=571, output_tokens=22, cost=Decimal('0.000023065')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsNow(tz=UTC),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -1065,6 +1073,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                 ],
                 usage=RequestUsage(input_tokens=627, output_tokens=67, cost=Decimal('0.000031325')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -1107,6 +1116,7 @@ The temperature in London on 1st January 2022 was 30°C.\
                 ],
                 usage=RequestUsage(input_tokens=821, output_tokens=31, cost=Decimal('0.000033075')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -1155,6 +1165,7 @@ async def test_stream_cancel(allow_model_requests: None, bedrock_provider: Bedro
                 parts=[TextPart(content='The')],
                 usage=RequestUsage(cost=Decimal('0.00000')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -1263,6 +1274,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 ],
                 usage=RequestUsage(input_tokens=426, output_tokens=66, cost=Decimal('0.00002415')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -1299,6 +1311,7 @@ The capital of France is Paris. If you need any further information, feel free t
                 ],
                 usage=RequestUsage(input_tokens=531, output_tokens=76, cost=Decimal('0.000029225')),
                 model_name='us.amazon.nova-micro-v1:0',
+                model_id='bedrock:us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -2420,6 +2433,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=71, cost=Decimal('0.0002376')),
                 model_name='us.amazon.nova-pro-v1:0',
+                model_id='bedrock:us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -2552,6 +2566,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
                 usage=RequestUsage(input_tokens=12, output_tokens=693, cost=Decimal('0.0037584')),
                 model_name='us.deepseek.r1-v1:0',
+                model_id='bedrock:us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -2584,6 +2599,7 @@ async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, 
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
                 usage=RequestUsage(input_tokens=33, output_tokens=907, cost=Decimal('0.00494235')),
                 model_name='us.deepseek.r1-v1:0',
+                model_id='bedrock:us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -2628,9 +2644,11 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 ],
                 usage=RequestUsage(input_tokens=42, output_tokens=313, cost=Decimal('0.004821')),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2667,9 +2685,11 @@ async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None,
                 ],
                 usage=RequestUsage(input_tokens=334, output_tokens=432, cost=Decimal('0.007482')),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2758,9 +2778,11 @@ Is there a specific crossing situation you need help with?\
                 ],
                 usage=RequestUsage(input_tokens=43, output_tokens=309, cost=Decimal('0.0052404')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2857,9 +2879,11 @@ What type of river crossing are you considering?\
                 ],
                 usage=RequestUsage(input_tokens=342, output_tokens=509, cost=Decimal('0.0095271')),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -2932,9 +2956,11 @@ Would you like more specific advice for a particular situation?\
                 ],
                 usage=RequestUsage(input_tokens=14, output_tokens=284, cost=Decimal('0.0047322')),
                 model_name='us.anthropic.claude-sonnet-4-6',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3015,9 +3041,11 @@ Would you like more detail on any specific scenario?\
                 ],
                 usage=RequestUsage(input_tokens=320, output_tokens=574, cost=Decimal('0.010527')),
                 model_name='us.anthropic.claude-sonnet-4-6',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3079,6 +3107,29 @@ async def test_bedrock_opus_5_thinking_uses_native_output(
     assert 'toolConfig' not in sent
     assert sent['outputConfig']['textFormat']['type'] == 'json_schema'
     assert result.output == 42
+
+
+async def test_bedrock_native_output_unsupported_regex_pattern(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+) -> None:
+    """A thinking request uses Native Output, where Bedrock rejects a lookaround `pattern`, so it moves to the description."""
+
+    class Code(BaseModel):
+        # `python-re`, since Pydantic's default Rust regex engine rejects lookaround.
+        model_config = ConfigDict(regex_engine='python-re')
+
+        code: str = Field(pattern=r'^(?!000)\d{3}$')
+
+    model = BedrockConverseModel('us.anthropic.claude-opus-4-7', provider=bedrock_provider)
+    agent = Agent(model, output_type=Code, model_settings={'thinking': True})
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run('Return the code 123.')
+
+    [sent] = sent_requests
+    schema = json.loads(sent['outputConfig']['textFormat']['structure']['jsonSchema']['schema'])
+    assert schema['properties'] == snapshot({'code': {'type': 'string', 'description': 'pattern=^(?!000)\\d{3}$'}})
+    assert result.output == Code(code='123')
 
 
 async def test_bedrock_anthropic_unified_max_effort(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -3146,7 +3197,10 @@ async def test_bedrock_model_thinking_part_anthropic_adaptive_effort(
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime()),
+                    ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True),
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3183,9 +3237,11 @@ Would you like more specific advice for a particular situation?\
                 ],
                 usage=RequestUsage(input_tokens=14, output_tokens=272, cost=Decimal('0.0045342')),
                 model_name='us.anthropic.claude-sonnet-4-6',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3263,9 +3319,11 @@ Would you like more detail on any specific crossing method?\
                 ],
                 usage=RequestUsage(input_tokens=308, output_tokens=800, cost=Decimal('0.0142164')),
                 model_name='us.anthropic.claude-sonnet-4-6',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3315,9 +3373,11 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 ],
                 usage=RequestUsage(input_tokens=92, output_tokens=176, cost=Decimal('0.002916')),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                model_id='bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3355,9 +3415,11 @@ async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, 
                 ],
                 usage=RequestUsage(input_tokens=182, output_tokens=258, cost=Decimal('0.004416')),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                model_id='bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3423,9 +3485,11 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                 ],
                 usage=RequestUsage(input_tokens=92, output_tokens=253, cost=Decimal('0.004071')),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                model_id='bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3444,6 +3508,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     signature=IsStr(),
                     provider_name='bedrock',
                 ),
+                canonical_system='anthropic',
             ),
             PartEndEvent(
                 index=0,
@@ -3454,6 +3519,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     provider_name='bedrock',
                 ),
                 next_part_kind='thinking',
+                canonical_system='anthropic',
             ),
             PartStartEvent(
                 index=1,
@@ -3464,6 +3530,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     provider_name='bedrock',
                 ),
                 previous_part_kind='thinking',
+                canonical_system='anthropic',
             ),
             PartEndEvent(
                 index=1,
@@ -3474,6 +3541,7 @@ async def test_bedrock_model_thinking_part_redacted_stream(
                     provider_name='bedrock',
                 ),
                 next_part_kind='text',
+                canonical_system='anthropic',
             ),
             PartStartEvent(
                 index=2,
@@ -3582,9 +3650,11 @@ async def test_bedrock_model_thinking_part_from_other_model(
                     cost=Decimal('0.02032875'),
                 ),
                 model_name='gpt-5-2025-08-07',
+                model_id='openai:gpt-5',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                canonical_system='openai',
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 10, 22, 46, 57, tzinfo=UTC),
@@ -3634,9 +3704,11 @@ async def test_bedrock_model_thinking_part_from_other_model(
                 ],
                 usage=RequestUsage(input_tokens=1241, output_tokens=495, cost=Decimal('0.011148')),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -3918,6 +3990,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                     provider_name='bedrock',
                 ),
                 next_part_kind='text',
+                canonical_system='anthropic',
             ),
             PartStartEvent(index=1, part=TextPart(content='Hello! It'), previous_part_kind='thinking'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
@@ -3953,9 +4026,11 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                 ],
                 usage=RequestUsage(input_tokens=36, output_tokens=73, cost=Decimal('0.001203')),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -4467,7 +4542,10 @@ async def test_bedrock_thinking_high_openai_variant(
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Reply with the single word: ok', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='Reply with the single word: ok', timestamp=IsDatetime()),
+                    ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True),
+                ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4478,6 +4556,7 @@ async def test_bedrock_thinking_high_openai_variant(
                     input_tokens=IsInstance(int), output_tokens=IsInstance(int), cost=Decimal('0.0000771')
                 ),
                 model_name='openai.gpt-oss-120b-1:0',
+                model_id='bedrock:openai.gpt-oss-120b-1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -4713,6 +4792,14 @@ async def test_bedrock_top_k_nova_variant(
         pytest.param(
             'us.anthropic.claude-opus-5-5', {'max_tokens': 1000}, 'Converse', {'maxTokens': 1000}, id='claude-explicit'
         ),
+        # Bedrock rejects a `max_tokens` above Claude Haiku 4.5's 64,000-token maximum output, so it's lowered to it.
+        pytest.param(
+            'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+            {'max_tokens': 100_000},
+            'Converse',
+            {'maxTokens': 64000},
+            id='claude-explicit-above-maximum',
+        ),
         pytest.param('us.amazon.nova-micro-v1:0', {}, 'Converse', {}, id='non-claude-default'),
     ],
 )
@@ -4725,7 +4812,8 @@ async def test_bedrock_default_max_tokens(
     expected_inference_config: dict[str, Any],
 ) -> None:
     """Without `max_tokens`, Claude gets its maximum output, and the request is streamed behind the scenes, since a
-    response that long can outlast the read timeout. An explicit `max_tokens` and other models keep `Converse`."""
+    response that long can outlast the read timeout. An explicit `max_tokens` and other models keep `Converse`, and an
+    explicit `max_tokens` above Claude's maximum output is lowered to it."""
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     with _capture_bedrock_request_bodies(model, expected_operation) as bodies:
         result = await Agent(model).run('Reply with the single word: ok', model_settings=model_settings)
@@ -5091,43 +5179,6 @@ async def test_bedrock_stream_cancel_suppresses_urllib3_error(
     assert stream.get().state == 'interrupted'
 
 
-async def test_bedrock_stream_closed_when_cancelled_while_opening(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
-):
-    """A request cancelled while `converse_stream` opens the stream closes it, rather than leave Bedrock generating.
-
-    The worker thread still hands the stream back, and the cancellation lands at the first read.
-    Not a VCR test: the cancellation has to land while the worker thread is inside `converse_stream`.
-    """
-
-    class _EventStream:
-        closed = False
-
-        def __iter__(self) -> Iterator[dict[str, Any]]:
-            return iter([])
-
-        def close(self) -> None:
-            self.closed = True
-
-    event_stream = _EventStream()
-    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
-
-    with anyio.CancelScope() as scope:
-
-        def converse_stream(**_: Any) -> dict[str, Any]:
-            anyio.from_thread.run_sync(scope.cancel)
-            return {'stream': event_stream, 'ResponseMetadata': {}}
-
-        mocker.patch.object(model.client, 'converse_stream', side_effect=converse_stream)
-        async with model.request_stream(
-            [ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()
-        ) as stream:
-            assert [event async for event in stream] == []
-
-    assert scope.cancelled_caught
-    assert event_stream.closed
-
-
 @pytest.mark.vcr()
 async def test_bedrock_error(allow_model_requests: None, bedrock_provider: BedrockProvider):
     """Test that errors convert to ModelHTTPError."""
@@ -5263,27 +5314,28 @@ This is a simple addition problem where we combine ten and eleven to get twenty-
 
 @pytest.mark.vcr()
 @pytest.mark.parametrize(
-    'cache,expected_cache_point,expected_usage',
+    'model_name,cache,expected_cache_point,expected_usage',
     [
         pytest.param(
+            'us.anthropic.claude-sonnet-5',
             True,
             # No `ttl`, matching what `bedrock_cache_instructions=True` sends.
             {'cachePoint': {'type': 'default'}},
             snapshot(
                 (
                     RunUsage(
-                        cache_write_tokens=8257,
-                        output_tokens=5,
-                        cache_write_5m_tokens=8257,
-                        input_tokens=8259,
-                        cost=Decimal('0.02276615'),
+                        cache_write_tokens=8442,
+                        output_tokens=4,
+                        cache_write_5m_tokens=8442,
+                        input_tokens=8444,
+                        cost=Decimal('0.0232639'),
                         requests=1,
                     ),
                     RunUsage(
                         output_tokens=5,
-                        input_tokens=8259,
-                        cache_read_tokens=8257,
-                        cost=Decimal('0.00187594'),
+                        input_tokens=8444,
+                        cache_read_tokens=8442,
+                        cost=Decimal('0.00191664'),
                         requests=1,
                     ),
                 )
@@ -5291,34 +5343,61 @@ This is a simple addition problem where we combine ten and eleven to get twenty-
             id='default',
         ),
         pytest.param(
+            'us.anthropic.claude-sonnet-5',
             '1h',
             {'cachePoint': {'type': 'default', 'ttl': '1h'}},
             snapshot(
                 (
                     RunUsage(
-                        cache_write_tokens=8260,
-                        cache_write_1h_tokens=8260,
+                        cache_write_tokens=8445,
+                        cache_write_1h_tokens=8445,
                         output_tokens=5,
-                        input_tokens=8262,
-                        cost=Decimal('0.0364034'),
+                        input_tokens=8447,
+                        cost=Decimal('0.0372174'),
                         requests=1,
                     ),
                     RunUsage(
                         output_tokens=5,
-                        input_tokens=8262,
-                        cache_read_tokens=8260,
-                        cost=Decimal('0.0018766'),
+                        input_tokens=8447,
+                        cache_read_tokens=8445,
+                        cost=Decimal('0.0019173'),
                         requests=1,
                     ),
                 )
             ),
             id='1h',
         ),
+        pytest.param(
+            'us.anthropic.claude-haiku-5-5',
+            '1h',
+            {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+            snapshot(
+                (
+                    RunUsage(
+                        cache_write_1h_tokens=8502,
+                        input_tokens=8506,
+                        cache_write_tokens=8502,
+                        output_tokens=5,
+                        cost=Decimal('0.00187363'),
+                        requests=1,
+                    ),
+                    RunUsage(
+                        cache_read_tokens=8502,
+                        input_tokens=8506,
+                        output_tokens=5,
+                        cost=Decimal('0.000096712'),
+                        requests=1,
+                    ),
+                )
+            ),
+            id='haiku-5-5-1h',
+        ),
     ],
 )
 async def test_unified_cache_writes_then_reads_real_api(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
+    model_name: str,
     cache: Literal[True, '1h'],
     expected_cache_point: dict[str, Any],
     expected_usage: tuple[RunUsage, RunUsage],
@@ -5328,7 +5407,7 @@ async def test_unified_cache_writes_then_reads_real_api(
 
     The same prompt is sent twice: the first run writes the prefix to the cache and the second reads it back.
     """
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-5', provider=bedrock_provider)
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
     agent = Agent(
         model,
         # Distinct per case, so that recording one case doesn't read the cache the other wrote.
@@ -5406,13 +5485,13 @@ async def test_unified_cache_reads_history_after_wide_turn_real_api(
     ] == [(True, True)] * 2
     assert (first.usage, second.usage) == snapshot(
         (
-            RequestUsage(input_tokens=7749, cache_write_tokens=7746, cache_write_5m_tokens=7746, output_tokens=163),
+            RequestUsage(input_tokens=7895, cache_write_tokens=7892, cache_write_5m_tokens=7892, output_tokens=274),
             RequestUsage(
-                input_tokens=8337,
-                cache_read_tokens=7746,
+                input_tokens=8483,
+                cache_read_tokens=7892,
                 cache_write_tokens=584,
                 cache_write_5m_tokens=584,
-                output_tokens=69,
+                output_tokens=133,
             ),
         )
     )
@@ -6377,7 +6456,12 @@ async def test_unified_cache_places_stable_boundary_points(
         ModelRequest(parts=[SystemPromptPart(content='System instructions.'), UserPromptPart(content='Hi!')])
     ]
     system_prompt, _ = await model._map_messages(messages, params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
-    assert system_prompt == snapshot([{'text': 'System instructions.'}, {'cachePoint': {'type': 'default'}}])
+    assert system_prompt == snapshot(
+        [
+            {'text': 'System instructions.'},
+            {'cachePoint': {'type': 'default'}},
+        ]
+    )
 
     tool_config = model._map_tool_config(params, bedrock_settings, [])  # pyright: ignore[reportPrivateUsage]
     assert tool_config and tool_config['tools'][-1] == snapshot({'cachePoint': {'type': 'default'}})
@@ -6420,7 +6504,7 @@ async def test_unified_cache_tool_points_skipped_for_nova(
         ModelRequest(parts=[SystemPromptPart(content='System instructions.'), UserPromptPart(content='Hi!')])
     ]
     system_prompt, _ = await model._map_messages(messages, params, bedrock_settings)  # pyright: ignore[reportPrivateUsage]
-    assert system_prompt[-1] == {'cachePoint': {'type': 'default'}}
+    assert system_prompt[-2:] == [{'text': 'System instructions.'}, {'cachePoint': {'type': 'default'}}]
 
     tool_config = model._map_tool_config(params, bedrock_settings, [])  # pyright: ignore[reportPrivateUsage]
     assert tool_config and all('cachePoint' not in tool for tool in tool_config['tools'])
@@ -6517,13 +6601,94 @@ async def test_bedrock_cache_instructions_mixed_static_dynamic(
     )
 
 
-async def test_bedrock_cache_instructions_all_dynamic_no_system_prompt(
+async def test_bedrock_cache_instructions_add_a_point_after_appending_blocks(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """Test that no cache point is inserted when all instructions are dynamic and there's no system prompt."""
-    from pydantic_ai.messages import InstructionPart
+    """The append blocks between the static and dynamic instructions get a second cache point, which goes first.
+
+    Over the budget of four, `_limit_cache_points` drops the point after the append blocks before any message point,
+    and keeps the one after the static instructions that every conversation shares.
+    """
+    from pydantic_ai.messages import AgentInstructionSource, InstructionId, InstructionPart
 
     model = BedrockConverseModel('us.anthropic.claude-3-5-sonnet-20240620-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Context 1', CachePoint(), 'Context 2', CachePoint(), 'Question'])])
+    ]
+    model_request_parameters = ModelRequestParameters(
+        instruction_parts=[
+            InstructionPart(content='Static instructions.', dynamic=False),
+            InstructionPart(
+                content='Catalog.',
+                dynamic=True,
+                on_change='append',
+                id=InstructionId(AgentInstructionSource(), name='catalog'),
+            ),
+            InstructionPart(content='Dynamic context.', dynamic=True),
+        ],
+    )
+    system_prompt, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages,
+        model_request_parameters,
+        BedrockModelSettings(bedrock_cache_instructions=True, bedrock_cache_messages=True),
+    )
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Static instructions.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Catalog.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Dynamic context.'},
+        ]
+    )
+
+    model._limit_cache_points(system_prompt, bedrock_messages, [])  # pyright: ignore[reportPrivateUsage]
+
+    assert system_prompt == snapshot(
+        [
+            {'text': 'Static instructions.'},
+            {'cachePoint': {'type': 'default'}},
+            {'text': 'Catalog.'},
+            {'text': 'Dynamic context.'},
+        ]
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Context 1'},
+                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                    {'text': 'Context 2'},
+                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                    {'text': 'Question'},
+                    {'cachePoint': {'type': 'default'}},
+                ],
+            }
+        ]
+    )
+
+
+@pytest.mark.parametrize('inline_system_prompts', [False, True])
+async def test_bedrock_cache_instructions_all_dynamic_no_system_prompt(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, inline_system_prompts: bool
+):
+    """With all instructions dynamic and no system prompt, the only static block is the announcement, if any.
+
+    With `framing_announcement='always'`, a model without mid-conversation system messages opens its instructions with
+    the announcement, which never changes, so the cache point goes after it. One with them gets no announcement there,
+    so there's nothing static to cache and no cache point.
+    """
+    from pydantic_ai.messages import InstructionPart
+
+    model = BedrockConverseModel(
+        'us.anthropic.claude-3-5-sonnet-20240620-v1:0',
+        provider=bedrock_provider,
+        settings={'framing_announcement': 'always'},
+        profile=BedrockModelProfile(supports_inline_system_prompts=True, bedrock_supports_prompt_caching=True)
+        if inline_system_prompts
+        else None,
+    )
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[UserPromptPart(content='Hi!')],
@@ -6539,12 +6704,14 @@ async def test_bedrock_cache_instructions_all_dynamic_no_system_prompt(
         model_request_parameters,
         BedrockModelSettings(bedrock_cache_instructions=True),
     )
-    # No cache point should be inserted — nothing static to cache
-    assert system_prompt == snapshot(
-        [
+    if inline_system_prompts:
+        assert system_prompt == [{'text': 'Dynamic only.'}]
+    else:
+        assert system_prompt == [
+            {'text': lookalike_note_announcement(system_role=False)},
+            {'cachePoint': {'type': 'default'}},
             {'text': 'Dynamic only.'},
         ]
-    )
 
 
 async def test_bedrock_cache_messages(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -7388,6 +7555,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 ],
                 usage=RequestUsage(input_tokens=1002, output_tokens=59, cost=Decimal('0.00049291')),
                 model_name='us.amazon.nova-2-lite-v1:0',
+                model_id='bedrock:us.amazon.nova-2-lite-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -7447,6 +7615,7 @@ async def test_bedrock_model_with_code_execution_tool(allow_model_requests: None
                 ],
                 usage=RequestUsage(input_tokens=1148, output_tokens=59, cost=Decimal('0.00054109')),
                 model_name='us.amazon.nova-2-lite-v1:0',
+                model_id='bedrock:us.amazon.nova-2-lite-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -7539,6 +7708,7 @@ while True:
                 ],
                 usage=RequestUsage(input_tokens=996, output_tokens=326, cost=Decimal('0.00122518')),
                 model_name='us.amazon.nova-2-lite-v1:0',
+                model_id='bedrock:us.amazon.nova-2-lite-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -7628,6 +7798,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                 ],
                 usage=RequestUsage(input_tokens=1002, output_tokens=59, cost=Decimal('0.00049291')),
                 model_name='us.amazon.nova-2-lite-v1:0',
+                model_id='bedrock:us.amazon.nova-2-lite-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
@@ -7831,6 +8002,8 @@ async def test_bedrock_model_with_instructions_only(
     See: https://github.com/pydantic/pydantic-ai/issues/4495
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    # Claude's thinking is verified by the Anthropic API too, so its responses record that.
+    canonical_system = 'anthropic' if 'anthropic' in model_name else None
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     result = await agent.run()
@@ -7848,9 +8021,11 @@ async def test_bedrock_model_with_instructions_only(
                 parts=[TextPart(content=IsStr())],
                 usage=IsInstance(RequestUsage),
                 model_name=IsStr(),
+                model_id=f'bedrock:{model_name}',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system=canonical_system,
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7879,6 +8054,8 @@ async def test_bedrock_model_instructions_only_then_message_history(
     See: https://github.com/pydantic/pydantic-ai/issues/4495
     """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    # Claude's thinking is verified by the Anthropic API too, so its responses record that.
+    canonical_system = 'anthropic' if 'anthropic' in model_name else None
     agent = Agent(model=model, system_prompt='Generate a short greeting.')
 
     first_result = await agent.run()
@@ -7897,9 +8074,11 @@ async def test_bedrock_model_instructions_only_then_message_history(
                 parts=[TextPart(content=IsStr())],
                 usage=IsInstance(RequestUsage),
                 model_name=IsStr(),
+                model_id=f'bedrock:{model_name}',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system=canonical_system,
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7915,9 +8094,11 @@ async def test_bedrock_model_instructions_only_then_message_history(
                 parts=[TextPart(content=IsStr())],
                 usage=IsInstance(RequestUsage),
                 model_name=model_name,
+                model_id=f'bedrock:{model_name}',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system=canonical_system,
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -7940,7 +8121,10 @@ async def test_bedrock_non_leading_system_prompt_wraps_as_user_message(bedrock_p
         prepared, ModelRequestParameters(), BedrockModelSettings()
     )
 
-    assert system_prompt == [{'text': 'You are helpful.'}]
+    assert system_prompt == [
+        {'text': lookalike_note_announcement(system_role=False)},
+        {'text': 'You are helpful.'},
+    ]
     text_blocks = [
         block['text']
         for msg in cast(list[Any], bedrock_messages)
@@ -8346,9 +8530,9 @@ async def test_bedrock_mistral_tool_return_image_deferred_to_separate_turn(bedro
             {
                 'role': 'user',
                 'content': [
-                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
+                    {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]
@@ -8403,12 +8587,12 @@ async def test_bedrock_mistral_two_tool_returns_images_grouped_then_deferred(bed
             {
                 'role': 'user',
                 'content': [
-                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
+                    {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="getphoto1" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
-                    {'text': '</tool_result>'},
-                    {'text': '<tool_result tool_name="get_photo" tool_call_id="getphoto2" file_id="d003ad">'},
+                    {'text': '</pyai:tool_result>'},
+                    {'text': '<pyai:tool_result tool_name="get_photo" tool_call_id="getphoto2" file_id="d003ad">'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]
@@ -8453,7 +8637,7 @@ async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: 
                             'status': 'success',
                         }
                     },
-                    {'text': '<tool_result tool_name="get_report" tool_call_id="t1" file_id="49d492">'},
+                    {'text': '<pyai:tool_result tool_name="get_report" tool_call_id="t1" file_id="49d492">'},
                     {
                         'document': {
                             'name': 'Document 1',
@@ -8461,7 +8645,7 @@ async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: 
                             'source': {'s3Location': {'uri': 's3://bucket/report.csv'}},
                         }
                     },
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]
@@ -8946,6 +9130,95 @@ def test_bedrock_non_anthropic_raw_thinking_does_not_override_unified_thinking(
         model.prepare_request(settings, params)
 
 
+def test_bedrock_deepseek_default_output_mode_falls_back_while_thinking_on(bedrock_provider: BedrockProvider) -> None:
+    """A default output type falls back from Tool Output with thinking on, and an explicit output tool is refused.
+
+    Not a VCR test: this is the pre-request output-mode decision, which a recording doesn't capture.
+    """
+    model = BedrockConverseModel('deepseek.v3.2', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
+        output_mode='auto',
+        allow_text_output=False,
+    )
+
+    _, prepared_params = model.prepare_request(BedrockModelSettings(thinking=True), params)
+    assert prepared_params.output_mode == 'prompted'
+
+    with pytest.raises(UserError, match='does not support thinking and output tools'):
+        model.prepare_request(BedrockModelSettings(thinking=True), replace(params, output_mode='tool'))
+
+
+def test_bedrock_zai_default_output_mode_falls_back_while_thinking_on(bedrock_provider: BedrockProvider) -> None:
+    """A default output type falls back from Tool Output to Native Output while Z.AI GLM thinks.
+
+    Not a VCR test: this is the pre-request output-mode decision, which a recording doesn't capture.
+    """
+    model = BedrockConverseModel('zai.glm-5', provider=bedrock_provider)
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema={'type': 'object'})],
+        output_mode='auto',
+        allow_text_output=False,
+    )
+
+    _, prepared_params = model.prepare_request(BedrockModelSettings(thinking=True), params)
+    assert prepared_params.output_mode == 'native'
+
+
+async def test_bedrock_zai_explicit_tool_output_while_thinking_on(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+) -> None:
+    """An explicit `ToolOutput` reaches Z.AI GLM while it thinks, offered with `toolChoice: auto`."""
+
+    class City(BaseModel):
+        city: str
+        country: str
+
+    model = BedrockConverseModel('zai.glm-5', provider=bedrock_provider)
+    agent = Agent(model, output_type=ToolOutput(City))
+    with _capture_bedrock_request_bodies(model, 'Converse') as sent:
+        result = await agent.run('What is the capital of France?', model_settings={'thinking': True})
+
+    assert result.output == City(city='Paris', country='France')
+    assert sent[0]['toolConfig']['toolChoice'] == {'auto': {}}
+    assert sent[0]['additionalModelRequestFields'] == {'reasoning_effort': 'high'}
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'thinking', 'expected_effort', 'reasons'),
+    [
+        pytest.param('zai.glm-4.7', True, 'high', True, id='glm-4.7-on'),
+        pytest.param('zai.glm-4.7-flash', True, 'high', True, id='glm-4.7-flash-on'),
+        pytest.param('zai.glm-5', True, 'high', True, id='glm-5-on'),
+        pytest.param('zai.glm-5', False, 'none', False, id='glm-5-off'),
+        pytest.param('deepseek.v3.2', True, 'high', True, id='deepseek-v3.2-on'),
+        pytest.param('deepseek.v3.2', False, 'none', False, id='deepseek-v3.2-off'),
+    ],
+)
+async def test_bedrock_reasoning_effort_thinking(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    model_name: str,
+    thinking: bool,
+    expected_effort: str,
+    reasons: bool,
+) -> None:
+    """Unified `thinking` reaches Z.AI GLM and DeepSeek V3.2 as `reasoning_effort`, which Converse accepts.
+
+    These models only reason with `'high'`, so `thinking=True` sends it and the response carries reasoning, while
+    `thinking=False` sends `'none'` and gets none back.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    with _capture_bedrock_request_bodies(model, 'Converse') as sent:
+        result = await Agent(model).run('What is 17 * 23?', model_settings={'thinking': thinking})
+
+    assert '391' in result.output
+    assert sent[0]['additionalModelRequestFields'] == {'reasoning_effort': expected_effort}
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert any(isinstance(part, ThinkingPart) for part in response.parts) is reasons
+
+
 @pytest.mark.parametrize('thinking_config', [{'type': 'disabled'}, 'invalid'])
 def test_bedrock_inactive_thinking_config_does_not_block_output_tools(
     bedrock_provider: BedrockProvider, thinking_config: dict[str, str] | str
@@ -8996,9 +9269,11 @@ async def test_bedrock_anthropic_message_history_starting_with_response(
                 parts=[TextPart(content=IsStr())],
                 usage=IsInstance(RequestUsage),
                 model_name='us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                model_id='bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_url='https://bedrock-runtime.us-east-1.amazonaws.com',
+                canonical_system='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
                 run_id=IsStr(),
