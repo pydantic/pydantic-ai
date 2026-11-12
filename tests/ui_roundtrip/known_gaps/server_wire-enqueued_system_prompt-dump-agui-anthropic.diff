@@ -1,0 +1,270 @@
+--- expected
++++ actual
+@@ -119,0 +120,115 @@
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "text": "Noted the background result.",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 2",
++     "type": "text"
++    }
++   ]
++  }
++ ],
++ "tools": [
++  {
++   "name": "start_job",
++   "description": "",
++   "input_schema": {
++    "additionalProperties": false,
++    "properties": {},
++    "type": "object"
++   }
++  }
++ ]
++}
++{
++ "system": "<Omit>",
++ "messages": [
++  {
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 1",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "id": "job-1",
++     "type": "tool_use",
++     "name": "start_job",
++     "input": {}
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "tool_use_id": "job-1",
++     "type": "tool_result",
++     "content": [
++      {
++       "text": "started",
++       "type": "text"
++      }
++     ],
++     "is_error": false
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "text": "Noted the background result.",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 2",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "id": "job-5",
++     "type": "tool_use",
++     "name": "start_job",
++     "input": {}
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "tool_use_id": "job-5",
++     "type": "tool_result",
++     "content": [
++      {
++       "text": "started",
++       "type": "text"
++      }
++     ],
++     "is_error": false
+@@ -126,137 +241,14 @@
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "text": "Noted the background result.",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Question 2",
+-     "type": "text"
+-    }
+-   ]
+-  }
+- ],
+- "tools": [
+-  {
+-   "name": "start_job",
+-   "description": "",
+-   "input_schema": {
+-    "additionalProperties": false,
+-    "properties": {},
+-    "type": "object"
+-   }
+-  }
+- ]
+-}
+-{
+- "system": "<Omit>",
+- "messages": [
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Question 1",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "id": "job-1",
+-     "type": "tool_use",
+-     "name": "start_job",
+-     "input": {}
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "tool_use_id": "job-1",
+-     "type": "tool_result",
+-     "content": [
+-      {
+-       "text": "started",
+-       "type": "text"
+-      }
+-     ],
+-     "is_error": false
+-    },
+-    {
+-     "text": "<system>The job runs in the background.</system>",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "text": "Noted the background result.",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Question 2",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "id": "job-5",
+-     "type": "tool_use",
+-     "name": "start_job",
+-     "input": {}
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "tool_use_id": "job-5",
+-     "type": "tool_result",
+-     "content": [
+-      {
+-       "text": "started",
+-       "type": "text"
+-      }
+-     ],
+-     "is_error": false
+-    },
+-    {
+-     "text": "<system>The job runs in the background.</system>",
+-     "type": "text"
+-    }
+-   ]
+-  }
+- ],
+- "tools": [
+-  {
+-   "name": "start_job",
+-   "description": "",
+-   "input_schema": {
+-    "additionalProperties": false,
+-    "properties": {},
+-    "type": "object"
+-   }
+-  }
+- ]
+-}
++  }
++ ],
++ "tools": [
++  {
++   "name": "start_job",
++   "description": "",
++   "input_schema": {
++    "additionalProperties": false,
++    "properties": {},
++    "type": "object"
++   }
++  }
++ ]
++}

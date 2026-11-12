@@ -5,6 +5,7 @@ import base64
 import hashlib
 import threading
 import webbrowser
+from collections.abc import Callable
 from io import StringIO
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -18,7 +19,7 @@ from rich.console import Console
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.models import openrouter
 from pydantic_clai2.openrouter_auth import OpenRouterAuth, authorization_code
-from tests.clai2.menu_script import make_context
+from tests.clai2.menu_script import QUIET, make_context
 
 
 @pytest.mark.parametrize('text', ['code', 'http://127.0.0.1:123/callback?code=code', '/callback?code=code'])
@@ -38,7 +39,7 @@ def test_invalid_code(text: str) -> None:
 @pytest.mark.parametrize(
     'mode', ['callback', 'paste', 'manual', 'browser_error', 'denied', 'declined', 'timeout', 'cancel']
 )
-async def test_login(mode: str) -> None:
+async def test_login(mode: str, monkeypatch: pytest.MonkeyPatch) -> None:
     output = StringIO()
     console = Console(file=output)
     browser_ready = asyncio.Event()
@@ -47,6 +48,14 @@ async def test_login(mode: str) -> None:
     urls: list[str] = []
     requests: list[httpx.Request] = []
     loop = asyncio.get_running_loop()
+    servers: list[asyncio.Server] = []
+    create_server = loop.create_server
+
+    async def recorded_server(factory: Callable[[], asyncio.BaseProtocol], host: str, port: int) -> asyncio.Server:
+        servers.append(server := await create_server(factory, host, port))
+        return server
+
+    monkeypatch.setattr(loop, 'create_server', recorded_server)
 
     def browser(url: str) -> bool:
         urls.append(url)
@@ -116,9 +125,9 @@ async def test_login(mode: str) -> None:
         assert (await login).get_secret_value() == 'private-api-key'
         assert len(requests) == 1
     assert prompt_closed.is_set()
-    with pytest.raises(httpx.ConnectError):
-        async with httpx.AsyncClient() as client:
-            await client.get(callback)
+    # The callback server itself: by now another test may listen on the port it released.
+    [server] = servers
+    assert not server.is_serving()
     assert 'private-api-key' not in output.getvalue()
     assert 'secret-code' not in output.getvalue()
     if mode in ('manual', 'browser_error'):
@@ -142,6 +151,7 @@ async def test_connect_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(openrouter, 'menu_key', lambda: next(keys))
 
     async def login(self: OpenRouterAuth) -> SecretStr:
+        self.console.print('https://openrouter.ai/auth?code_challenge=x')
         return SecretStr('browser-key')
 
     async def discover(connection: openrouter.Connection) -> list[str]:
@@ -156,13 +166,15 @@ async def test_connect_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         return names[0]
 
     monkeypatch.setattr(openrouter, 'choose', choose)
-    assert await openrouter.connect(context, []) == 'Saved model. Applied.'
+    output = StringIO()
+    assert await openrouter.connect(context, [], console=Console(file=output)) == 'Saved model. Applied.'
     assert openrouter.model('openrouter:my/model').model_name == 'my/model'
+    assert 'https://openrouter.ai/auth' in output.getvalue(), 'the sign-in URL goes to the shell console'
 
 
 async def test_cancel_authentication_menu(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(openrouter, 'menu_key', lambda: 'escape')
-    assert await openrouter.prompt_connection() is None
+    assert await openrouter.prompt_connection(console=QUIET) is None
 
 
 async def test_listener_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -209,10 +221,10 @@ async def test_browser_failure_preserves_connection(
     monkeypatch.setattr(openrouter, 'discover', discover)
     monkeypatch.setattr(openrouter, 'choose', choose)
     if cancel_model:
-        assert await openrouter.connect(context, []) == 'Connection cancelled.'
+        assert await openrouter.connect(context, [], console=QUIET) == 'Connection cancelled.'
     else:
         with pytest.raises(UserError, match='Login failed'):
-            await openrouter.connect(context, [])
+            await openrouter.connect(context, [], console=QUIET)
     raw = openrouter.load_codex_credentials(account='openrouter')
     assert raw is not None
     assert openrouter.Connection.model_validate_json(raw) == original

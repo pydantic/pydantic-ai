@@ -22,11 +22,12 @@ from rich.console import Console
 from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
 
+from pydantic_ai.exceptions import UserError
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.mcp import OAuthSignIn, TokenStore
 from pydantic_clai2.plugins import sign_in
 from pydantic_clai2.plugins.sign_in import (
-    SignInRequired,
+    SignInRequiredError,
     run_subcommand,
     sign_in_command,
     sign_in_now,
@@ -253,7 +254,7 @@ async def test_oauth_runs_never_open_a_browser_and_sign_in_is_only_on_request(
         async with method.client():
             pass  # pragma: no cover -- never connects
     assert 'Not signed in to Example. Run /example login to sign in.' in str(raised.value)
-    assert isinstance(raised.value.__cause__, SignInRequired)
+    assert isinstance(raised.value.__cause__, SignInRequiredError)
     assert browser == []
 
     shown: list[str] = []
@@ -300,3 +301,13 @@ async def test_oauth_over_sse_and_with_headers() -> None:
     assert isinstance(transport, SSETransport)
     assert transport.headers == {'X-A': 'b'}
     assert transport.url == 'https://mcp.example/sse'
+
+
+def test_sign_in_required_error_keeps_its_deprecated_name() -> None:
+    from pydantic_ai.exceptions import PydanticAIDeprecationWarning
+
+    assert issubclass(SignInRequiredError, UserError)
+    with pytest.warns(PydanticAIDeprecationWarning, match='`SignInRequired` has been renamed to `SignInRequiredError`'):
+        from pydantic_clai2.plugins.sign_in import SignInRequired
+    assert SignInRequired is SignInRequiredError
+    assert not hasattr(sign_in, 'SignInMissing')

@@ -11,7 +11,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.builtin_plugins.web import framing, service as service_module
 from pydantic_clai2.builtin_plugins.web.framing import FrameCheck, fetch_headers, frameable
-from pydantic_clai2.builtin_plugins.web.protocol import TurnEnded
+from pydantic_clai2.builtin_plugins.web.protocol import PROTOCOL, TurnEnded
 from pydantic_clai2.config import PluginSettings
 from tests.clai2.test_web import TOKEN, MakeWeb, Web, make_web as make_web, receive_until
 
@@ -283,7 +283,9 @@ def test_side_panels_follow_the_turns(make_web: MakeWeb, tmp_path: Path, monkeyp
         | {'url': 'http://intranet.example/page'},
     ]
     assert panels(web_) == [traces, *rest]
-    with web_.client.websocket_connect(f'/ws?token={TOKEN}', headers={'origin': 'http://testserver'}) as socket:
+    with web_.client.websocket_connect(
+        f'/ws?token={TOKEN}&protocol={PROTOCOL}', headers={'origin': 'http://testserver'}
+    ) as socket:
         socket.receive_text()
         running = web_.run()
         web_.post('/api/input', {'text': 'go'})

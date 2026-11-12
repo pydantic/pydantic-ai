@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin,
 
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
 from pydantic_core import InitErrorDetails, PydanticCustomError, SchemaValidator
-from typing_extensions import TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeForm, TypeVar
 
 from pydantic_ai._utils import get_function_type_hints
 
@@ -26,6 +26,7 @@ from .output import (
     OutputObjectDefinition,
     OutputSpec,
     OutputTypeOrFunction,
+    PendingModelResponse,
     PromptedOutput,
     TextOutput,
     TextOutputFunc,
@@ -122,9 +123,115 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
         return origin is not None and isinstance(value, origin)
 
 
-def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
-    m = _messages.RetryPromptPart.from_error(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
-    return ToolRetryError(m)
+def is_incomplete_json(error: BaseException | None) -> bool:
+    """Whether `error` is the `ValidationError` for JSON that ends before it's complete, as cut-off output does.
+
+    A schema or an output validator rejecting JSON that parsed raises a different error, which keeps its retry.
+    """
+    return isinstance(error, ValidationError) and any(detail['type'] == 'json_invalid' for detail in error.errors())
+
+
+def truncated_output_message(max_tokens: int | None) -> str:
+    """The error message for structured text output that the token limit cut off into incomplete JSON."""
+    return (
+        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating structured output, '
+        'resulting in incomplete JSON. Increase the `max_tokens` model setting, or simplify the prompt '
+        'to result in a shorter response that will fit within the limit.'
+    )
+
+
+def build_retried_tool_return(
+    error: ValidationError | ModelRetry,
+    *,
+    tool_name: str,
+    tool_call_id: str | None = None,
+    tool_kind: _messages.ToolPartKind | None = None,
+    cause: _messages.ToolRetryCause | None = None,
+) -> _messages.ToolReturnPart:
+    """Build the result a tool call that has to be retried is answered with.
+
+    This is the exact result the model receives when the agent loop handles the failure, so anything
+    else presenting the same failure (an instrumentation span, say) must build it the same way.
+
+    A `ValidationError`'s details travel as structured tool-result content, serialized the same way a
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]'s are, so the two channels show the
+    model the same JSON: `ctx` is dropped by `include_context=False`, and `input` is kept once per
+    distinct value.
+
+    `cause` defaults to what the error says: `'validation_error'` for a `ValidationError`,
+    `'model_retry'` for a `ModelRetry`. The tool manager passes its own for a call it rejects before
+    the tool runs. `tool_kind` is the call's, so a retried return stays identifiable by kind the way a
+    failed or denied one does; a non-success return is never promoted to the kind's typed subclass.
+    """
+    content: list[dict[str, Any]] | str
+    if isinstance(error, ValidationError):
+        content = _messages._dump_error_details(  # pyright: ignore[reportPrivateUsage]
+            error.errors(include_url=False, include_context=False)
+        )
+    else:
+        content = error.message
+    if cause is None:
+        cause = 'validation_error' if isinstance(error, ValidationError) else 'model_retry'
+
+    part = _messages.ToolReturnPart(
+        tool_name=tool_name,
+        content=content,
+        tool_kind=tool_kind,
+        outcome='retried',
+        retry=_messages.RetryInfo(cause=cause),
+    )
+    if tool_call_id:
+        part.tool_call_id = tool_call_id
+    return part
+
+
+# TODO(v3): remove `retried_return_from_legacy` along with `RetryPromptPart`
+def retried_return_from_legacy(
+    part: _messages.RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    *,
+    tool_name: str,
+    tool_call_id: str,
+    tool_kind: _messages.ToolPartKind | None = None,
+) -> _messages.ToolReturnPart:
+    """The result a deferred call is answered with when its handler hands back the deprecated part.
+
+    It means what a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] there means: the retry answers
+    this call, so it travels as the call's own result. The part's own `tool_name` and `tool_call_id`
+    are ignored, since the call being resolved is the one it answers.
+    """
+    content = part.content
+    return _messages.ToolReturnPart(
+        tool_name=tool_name,
+        content=content if isinstance(content, str) else _messages._dump_error_details(content),  # pyright: ignore[reportPrivateUsage]
+        tool_call_id=tool_call_id,
+        tool_kind=tool_kind,
+        outcome='retried',
+        retry=_messages.RetryInfo(cause='model_retry' if isinstance(content, str) else 'validation_error'),
+    )
+
+
+def _make_retry_signal(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
+    """Build the retry signal for output that failed validation or asked to be retried.
+
+    An output *tool* call answers its own call, so its retry is a tool result. Text, native and
+    prompted output have no call to answer, so theirs is harness feedback the model renders in its
+    own voice rather than as a fabricated user turn.
+    """
+    if run_context.tool_name is None:
+        if isinstance(e, ValidationError):
+            return ToolRetryError(
+                _messages.RetryFeedbackPart(
+                    content=e.errors(include_url=False, include_context=False),
+                    retry=_messages.RetryInfo(cause='validation_error'),
+                )
+            )
+        return ToolRetryError(
+            _messages.RetryFeedbackPart(content=e.message, retry=_messages.RetryInfo(cause='model_retry'))
+        )
+
+    return ToolRetryError(
+        build_retried_tool_return(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
+    )
 
 
 async def run_output_validate_hooks(
@@ -166,7 +273,7 @@ async def run_output_validate_hooks(
         )
     except (ValidationError, ModelRetry) as e:
         if wrap_validation_errors:
-            raise _make_retry_prompt(e, run_context) from e
+            raise _make_retry_signal(e, run_context) from e
         raise
 
 
@@ -215,7 +322,7 @@ async def run_output_process_hooks(
         raise  # Already wrapped, propagate
     except (ValidationError, ModelRetry) as e:
         if wrap_validation_errors:
-            raise _make_retry_prompt(e, run_context) from e
+            raise _make_retry_signal(e, run_context) from e
         raise
 
 
@@ -386,10 +493,12 @@ async def execute_output_function(
         return await function_schema.call(args, run_context)
     except ModelRetry as r:
         if wrap_validation_errors:
-            m = _messages.RetryPromptPart.from_error(
-                r, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id
-            )
-            raise ToolRetryError(m) from r
+            # Only text, native and prompted output wrap here: an output *tool* call reaches this
+            # with `wrap_validation_errors=False` and rebuilds the retry from its own call in
+            # `_make_retry_signal`, so there is never a call for this one to answer.
+            raise ToolRetryError(
+                _messages.RetryFeedbackPart(content=r.message, retry=_messages.RetryInfo(cause='model_retry'))
+            ) from r
         else:
             raise
 
@@ -448,6 +557,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     object_def: OutputObjectDefinition | None = None
     allows_deferred_tools: bool = False
     allows_image: bool = False
+    allows_pending_model_response: bool = False
 
     @property
     def mode(self) -> OutputMode:
@@ -458,7 +568,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         return self.text_processor is not None
 
     @classmethod
-    def build(  # noqa: C901
+    def build(
         cls,
         output_spec: OutputSpec[OutputDataT],
         *,
@@ -468,7 +578,25 @@ class OutputSchema(ABC, Generic[OutputDataT]):
     ) -> OutputSchema[OutputDataT]:
         """Build an OutputSchema dataclass from an output type."""
         outputs = _flatten_output_spec(output_spec)
+        # A pending response isn't something the model outputs, so it doesn't shape the output mode or schema.
+        allows_pending_model_response = PendingModelResponse in outputs
+        if allows_pending_model_response:
+            outputs = [output for output in outputs if output is not PendingModelResponse]
+            if len(outputs) == 0:
+                raise UserError('At least one output type must be provided other than `PendingModelResponse`.')
+        schema = cls._build(outputs, name=name, description=description, strict=strict)
+        schema.allows_pending_model_response = allows_pending_model_response
+        return schema
 
+    @classmethod
+    def _build(  # noqa: C901
+        cls,
+        outputs: Sequence[_OutputSpecItem[OutputDataT]],
+        *,
+        name: str | None,
+        description: str | None,
+        strict: bool | None,
+    ) -> OutputSchema[OutputDataT]:
         # `str | None` produces NoneType (the class) via get_union_args; bare `None` value produces None itself.
         # `Annotated[None, Field(description=...)]` is still `None`, and its description goes to the `None` output tool.
         none_outputs = [output for output in outputs if _utils.unwrap_annotated(output) in (NoneType, None)]
@@ -498,6 +626,10 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 raise UserError(
                     '`NativeOutput` cannot contain `DeferredToolRequests`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), DeferredToolRequests]`'
                 )
+            if PendingModelResponse in flattened_outputs:
+                raise UserError(
+                    '`NativeOutput` cannot contain `PendingModelResponse`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), PendingModelResponse]`'
+                )
             if _messages.BinaryImage in flattened_outputs:
                 raise UserError(
                     '`NativeOutput` cannot contain `BinaryImage`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), BinaryImage]`'
@@ -524,6 +656,10 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             if DeferredToolRequests in flattened_outputs:
                 raise UserError(
                     '`PromptedOutput` cannot contain `DeferredToolRequests`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), DeferredToolRequests]`'
+                )
+            if PendingModelResponse in flattened_outputs:
+                raise UserError(
+                    '`PromptedOutput` cannot contain `PendingModelResponse`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), PendingModelResponse]`'
                 )
             if _messages.BinaryImage in flattened_outputs:
                 raise UserError(
@@ -914,7 +1050,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             validation_type_adapter: TypeAdapter[Any]
             unwrapped_output = _utils.unwrap_annotated(output)
             if _utils.is_model_like(unwrapped_output):
-                json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)
+                # Model detection unwraps `Annotated`; Pydantic needs the original metadata-bearing annotation.
+                json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)  # pyright: ignore[reportArgumentType]
             else:
                 self.outer_typed_dict_key = 'response'
                 output_type: type[OutputDataT] = cast(type[OutputDataT], output)
@@ -1156,9 +1293,8 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         # Constrain `kind` to the registered discriminator keys so an unknown value fails as a
         # regular `ValidationError` (mirroring the `const` discriminator we advertise to the
         # provider) instead of slipping through to the `_processors` lookup in `validate()`.
-        constrained_result = create_model(
-            UnionOutputResult.__name__, __base__=UnionOutputResult, kind=(Literal[tuple(self._processors)], ...)
-        )
+        kind_type: TypeForm[str] = Literal[tuple(self._processors)]  # pyright: ignore[reportAssignmentType]
+        constrained_result = create_model(UnionOutputResult.__name__, __base__=UnionOutputResult, kind=(kind_type, ...))
         union_model = create_model(
             UnionOutputModel.__name__, __base__=UnionOutputModel, result=(constrained_result, ...)
         )
@@ -1671,14 +1807,14 @@ def _function_return_types(func: Callable[..., Any]) -> Sequence[Any]:
     return [str]
 
 
-def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
+def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[TypeForm[object]]:
     outputs: Sequence[OutputSpec[T] | _NoneOutput[T]]
     if isinstance(output_spec, Sequence):
         outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
     else:
         outputs = (output_spec,)
 
-    outputs_flat: list[T | type[str]] = []
+    outputs_flat: list[TypeForm[object]] = []
     for output in outputs:
         if isinstance(output, NativeOutput):
             outputs_flat.extend(types_from_output_spec(output.outputs))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
@@ -1696,8 +1832,9 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
         elif (choices := _ChoicesActions.of(output)) is not None:
             # What a `Choices` set with callable values asks the model for is a key; what the action it
             # stands for returns is only known once it has run, so the keys are what a schema can describe.
-            outputs_flat.append(cast(T, choices.keys_type))
+            outputs_flat.append(choices.keys_type)
         else:
-            outputs_flat.append(cast(T, output))
+            # Function/method detection does not narrow the remaining output specs to type expressions.
+            outputs_flat.append(output)  # pyright: ignore[reportArgumentType]
 
     return outputs_flat

@@ -6,21 +6,40 @@ Run your agent's commands and file edits in a persistent [Fly.io Sprite](https:/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Sprites Sandbox: your agent's commands run in a persistent Fly.io Sprite
+    accDescr: On your machine, the model calls Coder, Shell or FileSystem tools such as run_command, using ctx.workspace. SpritesSandbox's get_workspace hands the run a Sprite via the Sprites API and SPRITE_TOKEN. The Fly.io Sprite sleeps when idle, destroy(ref) deletes it, and a later run reattaches with the WorkspaceRef in the message history and result.workspace.ref, waking it if asleep.
+    subgraph machine["Your machine"]
+        model(["model"])
+        tools["Coder, Shell or<br/>FileSystem tools,<br/>such as run_command"]
+        ref["WorkspaceRef<br/>in the message history,<br/>result.workspace.ref"]
+        sprites["SpritesSandbox()<br/>get_workspace hands<br/>the run a Sprite"]:::capability
+    end
+    sandbox["Fly.io Sprite<br/>sleeps when idle,<br/>deleted by destroy(ref)"]:::external
+    model <-->|"tool call, result"| tools
+    tools -->|"ctx.workspace"| sprites
+    ref -.->|"a later run reattaches,<br/>waking it if asleep"| sprites
+    sprites <-->|"Sprites API,<br/>SPRITE_TOKEN"| sandbox
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
+
 ## Install
 
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[sprites,anthropic]"
+uv add "pydantic-ai-harness[coder,sprites,anthropic]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[sprites,anthropic]"
+pip install "pydantic-ai-harness[coder,sprites,anthropic]"
 ```
 
-The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `SPRITE_TOKEN` to your Sprites API token, and `ANTHROPIC_API_KEY` for the examples.
+The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `SPRITE_TOKEN` to your Sprites API token, and `ANTHROPIC_API_KEY` for the examples.
 
 ## Quick start
 
@@ -110,7 +129,7 @@ later = agent.run_sync('Which capability would you add next, and where would it 
 
 The ref holds no credentials, so the process that reattaches needs `SPRITE_TOKEN` too. Pass `workspace='new'` to start a fresh Sprite even when the message history names one.
 
-`runtime` only shapes a new Sprite, and an unknown one raises a clear error on first use; `working_dir` and `env` apply to every command, including after you reattach. A new Sprite gets `working_dir` created for it; on an attached or caller-supplied Sprite it must already exist, or commands fail with `WorkspaceError`.
+`runtime` only shapes a new Sprite, and an unknown one raises `WorkspaceUnavailableError` on first use; `working_dir` and `env` apply to every command, including after you reattach. A new Sprite gets `working_dir` created for it; on an attached or caller-supplied Sprite it must already exist, or commands fail with `WorkspaceError`.
 
 Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite)` to a run, with `SpritesSandboxBackend` from `pydantic_ai_harness.sprites_sandbox`. `SpritesSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
 
@@ -164,6 +183,8 @@ A failed run returns no result, so there is no ref to store. To terminate its sa
 ```python
 from typing import Any
 
+import anyio
+
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.run import AgentRunResult
@@ -176,7 +197,10 @@ hooks = Hooks()
 @hooks.on.run_error
 async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        await SpritesSandbox().destroy(ctx.workspace.ref)
+        # Shielded, so an `anyio` deadline around the run doesn't cut the kill short,
+        # and bounded, so a hung API call can't hang the run indefinitely.
+        with anyio.move_on_after(30, shield=True):
+            await SpritesSandbox().destroy(ctx.workspace.ref)
     raise error
 
 

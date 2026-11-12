@@ -11,6 +11,22 @@ Let a second model approve the low-risk tool calls that need approval, and leave
 > [!TIP]
 > **Approval Reviewer or Tool Call Judge?** Both ask a second model one yes/no question about a tool call, but give it opposite powers. Use [Tool Call Judge](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/tool_call_judge/) when you want a model to say no: its `yes` blocks a call, whether or not a person is watching. Use Approval Reviewer when you want a model to say yes on a person's behalf: it reviews only calls that already need approval, its `no` approves the call, and everything else still goes to the person. A judge cannot do the second job, because it runs when a call executes, after the person has already approved it.
 
+```mermaid
+flowchart TB
+    accTitle: Approval Reviewer: a second model approves low-risk calls
+    accDescr: The model makes a tool call that needs approval, which reaches ApprovalReviewer in the handle_deferred_tool_calls hook. The capability asks a reviewer model one risk question and gets its answer. On no, the call is approved and your tool runs in the same run step, and on yes, unsure or a failed review, the call goes to a person, who approves or denies it.
+    model(["model"])
+    reviewer["ApprovalReviewer()<br/>handle_deferred_tool_calls<br/>hook"]:::capability
+    second(["reviewer model"])
+    tool["your tool<br/>runs in the same<br/>run step"]
+    person(["person<br/>approves or denies"])
+    model -->|"tool call that<br/>needs approval"| reviewer
+    reviewer <-->|"one risk<br/>question"| second
+    reviewer -->|"no: approved"| tool
+    reviewer -->|"yes, unsure or<br/>failed review"| person
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
+
 ## The problem
 
 [Human approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval) is the dependable gate for a tool like `run_shell`, but most of the calls it stops are harmless: `ls`, `git status`, `rg TODO`. A person asked to approve every one of them stops reading the requests, and the request that mattered gets the same click as the rest. Allowlists cut the volume, but which calls are risky depends on the arguments, and a list only covers the shapes you anticipated.
@@ -49,7 +65,7 @@ reviewer = ApprovalReviewer(
     question='Could this command delete or overwrite data, reach the network, or expose secrets?',
 )
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     capabilities=[reviewer],
     output_type=[str, DeferredToolRequests],
 )
@@ -77,7 +93,7 @@ The reviewing model returns only the literal `yes`, `no`, or `unsure`, not a fre
 
 Only calls that need approval reach the reviewer. A call needs approval when its tool is registered with `requires_approval=True` or raises [`ApprovalRequired`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#human-in-the-loop-tool-approval), which includes a [`ToolGuardrail`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/guardrails/) that returns `GuardrailResult.approve()` and a [`ToolCallJudge`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/tool_call_judge/) with `on_uncertain='ask'`. Calls that run without approval are not reviewed and cost nothing. Externally executed calls (`CallDeferred`) are not approval requests, so they are left alone too.
 
-`tools` narrows that further. It is a [`ToolSelector`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.ToolSelector), the same selector the other tool-scoped capabilities take:
+`tools` narrows that further. It is a [`ToolSelector`](https://pydantic.dev/docs/ai/api/pydantic-ai/tools/#pydantic_ai.tools.ToolSelector), the same selector the other tool-scoped capabilities take:
 
 | Value | Reviews approval requests for |
 |---|---|
@@ -86,7 +102,7 @@ Only calls that need approval reach the reviewer. A call needs approval when its
 | `{'risk': 'low'}` | tools whose metadata includes those pairs |
 | `lambda ctx, tool_def: ...` | whatever the predicate returns |
 
-Approval requests for tools the selector does not match go to the person unreviewed.
+Approval requests for tools the selector does not match go to the person unreviewed. `'all'` also covers the requests a `ToolGuardrail` or a `ToolCallJudge` raises and any approval-required tool added later, all answered by the one `question`, so name the tools the question was written for.
 
 ## What happens to the rest
 
@@ -99,7 +115,7 @@ Approval requests for tools the selector does not match go to the person unrevie
 
 There is no setting for the failure case, because leaving a call for the person is what happens without a reviewer: a reviewer that is down, overloaded, or out of budget makes the run ask, and never makes it approve.
 
-A call left for the person goes where it would have gone without the reviewer. If the agent has a [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/) handler, the handler receives only the requests the reviewer left; the reviewer is ordered ahead of it whichever order you list them in. Otherwise the requests end the run as [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) output, so include `DeferredToolRequests` in the agent's output type, and resume with `DeferredToolResults` once the person decides. A call the person decides is not reviewed again.
+A call left for the person goes where it would have gone without the reviewer. If the agent has a [`HandleDeferredToolCalls`](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/) handler, the handler receives only the requests the reviewer left; the reviewer is ordered ahead of it whichever order you list them in. The same holds for [`RequestInput`](https://pydantic.dev/docs/ai/capabilities/request-input/), which asks the person inside the run. Otherwise the requests end the run as [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) output, so include `DeferredToolRequests` in the agent's output type, and resume with `DeferredToolResults` once the person decides. A call the person decides is not reviewed again.
 
 ```python
 from pydantic_ai import Agent
@@ -117,9 +133,9 @@ def ask_in_terminal(ctx: RunContext[None], requests: DeferredToolRequests) -> De
 
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     capabilities=[
-        ApprovalReviewer('anthropic:claude-haiku-5-5', question='Could this destroy data or leak secrets?'),
+        ApprovalReviewer('anthropic:claude-haiku-5-5', tools=['run_shell'], question='Could this destroy data or leak secrets?'),
         HandleDeferredToolCalls(handler=ask_in_terminal),
     ],
 )
@@ -129,7 +145,49 @@ agent = Agent(
 
 [`ToolCallJudge`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/tool_call_judge/) and `ApprovalReviewer` ask the same kind of question at different points, and in opposite directions. A judge can only narrow what runs: its `yes` blocks a call. A reviewer can only widen what runs without a person: its `no` approves a call.
 
-Both can apply to one call. A call the reviewer approves is executed, and a judge on the same tool is asked then, about the validated arguments; the judge can still block it. A judge with `on_uncertain='ask'` raises an approval request, and that request reaches the reviewer like any other. Scope the reviewer's `tools` away from the judge's when you want the judge's escalations to reach a person.
+Together they sort every call into blocked, run, or sent to a person. Let the judge block what must never run and escalate what it cannot settle with `on_uncertain='ask'`, and let the reviewer approve the escalations that are safe enough to run unattended:
+
+```python
+from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
+from pydantic_ai_harness.tool_call_judge import ToolCallJudge
+
+agent = Agent(
+    'anthropic:claude-fable-5-2',
+    capabilities=[
+        ToolCallJudge(
+            'anthropic:claude-haiku-5-5',
+            tools=['run_shell'],
+            question='Could this command delete or overwrite data outside the project directory?',
+            on_uncertain='ask',
+        ),
+        ApprovalReviewer(
+            'anthropic:claude-haiku-5-5',
+            tools=['run_shell'],
+            question='Could this command delete or overwrite data, reach the network, or expose secrets?',
+        ),
+    ],
+    output_type=[str, DeferredToolRequests],
+)
+
+
+@agent.tool_plain
+def run_shell(command: str) -> str:
+    return f'Would run: {command}'
+```
+
+| Judge | Reviewer | What happens |
+|---|---|---|
+| `no` | not asked | the call runs |
+| `yes` | not asked | the call is blocked |
+| `unsure` or failed | `no` | the call is approved, and the judge is asked again before it runs |
+| `unsure` or failed | `yes`, `unsure`, or failed | the call is left for the person |
+
+`run_shell` is not registered with `requires_approval=True`, so the judge's escalations are the only approval requests the reviewer sees for it. On a tool that also requires approval, the reviewer answers those requests too, under the same `question`.
+
+A call the reviewer approves is judged again, like any approved call ([working with human approval](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/tool_call_judge/#working-with-human-approval)): a `yes` still blocks it, and an `unsure` now lets it run. An escalated call that runs costs two judgements and one review.
+
+Scope the reviewer's `tools` away from the judge's when you want the judge's escalations to reach a person.
 
 ## What the reviewer sees
 
@@ -142,7 +200,7 @@ The outer agent's conversation, instructions, and tool results are not forwarded
 
 Set `include_conversation=True` when the question needs the conversation that led to the call, such as "does this go beyond what the user asked for?". The reviewer then also receives a `<conversation>` block: user messages, assistant messages, tool calls, and tool results, clamped to the most recent `conversation_window` tokens (estimated at ~4 characters per token). System prompts and thinking parts are left out.
 
-Turning it on widens the reviewer's own prompt-injection surface, because the transcript includes third-party content, and a reviewer that is talked into answering `no` approves the call. The instructions label both blocks as untrusted data and both are escaped before they are embedded, which reduces the risk rather than removing it.
+Turning it on widens the reviewer's own prompt-injection surface, because the transcript includes third-party content, and a reviewer that is talked into answering `no` approves the call. The instructions label both blocks as untrusted data, and the `<` of every opening or closing framework tag inside either block is escaped (`<tool_call>`, `<conversation>`, and Pydantic AI framing tags such as `<system>`), so content cannot end its block or forge another. Everything else is embedded as written. That reduces the risk rather than removing it.
 
 Either way, what the reviewer is shown leaves the process: a call's arguments go to the reviewing model's provider, including for calls the reviewer then leaves for the person. Where a tool's arguments can carry credentials or customer data, scope `tools` away from it, or route the reviewer to a provider you already trust with that data.
 
@@ -157,7 +215,7 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
 
 agent = Agent(
-    'anthropic:claude-fable-5-1',
+    'anthropic:claude-fable-5-2',
     output_type=[str, DeferredToolRequests],
     capabilities=[
         ApprovalReviewer(
@@ -279,10 +337,13 @@ from pydantic_ai_harness.approval_reviewer import ApprovalReview, ApprovalReview
 reviews: list[ApprovalReview] = []
 reviewer = ApprovalReviewer(
     'anthropic:claude-haiku-5-5',
+    tools=['run_shell'],
     question='Could this destroy data or leak secrets?',
     on_review=reviews.append,
 )
 ```
+
+An exception raised by `on_review` is not caught: it ends the run, and approvals already made in the same batch are not applied.
 
 ## Safety boundary
 

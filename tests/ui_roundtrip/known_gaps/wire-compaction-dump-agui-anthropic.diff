@@ -1,0 +1,32 @@
+--- expected
++++ actual
+@@ -5,0 +6,9 @@
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 0",
++     "type": "text"
++    }
++   ]
++  },
++  {
+@@ -8,4 +16,0 @@
+-    {
+-     "content": "Summary so far.",
+-     "type": "compaction"
+-    },
+@@ -34,0 +40,9 @@
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 0",
++     "type": "text"
++    }
++   ]
++  },
++  {
+@@ -37,4 +50,0 @@
+-    {
+-     "content": "Summary so far.",
+-     "type": "compaction"
+-    },

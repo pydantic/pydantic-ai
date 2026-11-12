@@ -4,11 +4,29 @@ Give an agent bounded, pattern-filtered access to a directory tree.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/filesystem/)
 
+```mermaid
+flowchart TB
+    accTitle: FileSystem: file tools bounded by one directory
+    accDescr: The model calls FileSystem tools such as read_file, write_file and edit_file, which before any I/O resolve the path, check it is inside root_dir and match the patterns. They reject calls outside root_dir, denied or writing to a read-only path and pass allowed ones to the workspace root_dir/. Before a change your listener gets FileChangeRequestedEvent and can call cancel(reason).
+    model(["model"])
+    tools["FileSystem()<br/>read_file, write_file,<br/>edit_file and more"]:::capability
+    checks["resolve the path, check<br/>it is inside root_dir,<br/>match the patterns"]:::capability
+    rejected["outside root_dir,<br/>denied, or a write<br/>to a read-only path"]:::blocked
+    workspace["workspace<br/>root_dir/"]
+    listener["your listener<br/>can call cancel(reason)"]
+    model <-->|"tool call, result"| tools
+    tools -->|"before any I/O"| checks
+    checks -.-x|"rejects"| rejected
+    checks -->|"allowed"| workspace
+    checks -.->|"FileChangeRequestedEvent<br/>before a change"| listener
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## The problem
 
 Letting an agent touch the filesystem directly is risky: path traversal
-(`../../etc/passwd`), clobbering `.git`, or leaking `.env` secrets. Hand-rolling the guards around every tool call is
-repetitive and easy to get subtly wrong.
+(`../../etc/passwd`), clobbering `.git`, or leaking `.env` secrets.
 
 ## The solution
 
@@ -49,14 +67,14 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
 | `search_files` | Regex search over file contents, optionally narrowed by an `include_glob`; skips files over 10 MiB or unreadable files and reports skipped paths. |
 | `find_files` | Glob search over file names (e.g. `*.py`, `**/*.json`). The pattern is relative to `path`; absolute patterns are rejected. |
 | `create_directory` | Create a directory and any missing parents. |
-| `file_info` | Metadata for a file or directory: size, type, line count, hash, and symlink target, where the workspace provides them. |
+| `file_info` | Metadata for a file or directory: size, type, whether a file is binary, a text file's line count and hash, and symlink target, where the workspace provides them. A file over 64 MiB reports its size only. |
 | `list_files` | Opt-in, ripgrep-backed: files under a directory, recursively, sorted by path, with an optional `glob`. |
 | `grep` | Opt-in, ripgrep-backed: content search with `glob`, `file_type`, `ignore_case`, `literal`, and `context` (0 to 20) options; a `path` may name a file or a directory. |
 
@@ -64,7 +82,15 @@ An explicitly unavailable run workspace fails at run start with its configured r
 
 Missing paths (including directories passed to `read_file`) return `Path not found: <path>` as a tool result, so repeated lookups do not exhaust the model's tool retry budget. Invalid arguments still request a retry.
 
-For remote workspaces, use the file tools (`grep`, `find_files`, `read_file`) rather than `cat` through a shell. Install `rg` and `git` in the sandbox image for fast searches; installing `rg` on the agent host does not install it in a remote workspace. For large or generated trees, use Shell with `rg -n 'pattern' path` and cap its output. Without `rg`, command-capable POSIX workspaces use one in-sandbox git/grep/find command for `grep`, `list_files`, and `search_files` (after an initial `rg` probe). Filesystem-only backends use slower, bounded file walks. The POSIX fallback honors nested `.gitignore` in repositories and search-root `.ignore` with git available; nested `.ignore` rules are not applied by the POSIX fallback, and rg-specific regex features require `rg`. Without git, the POSIX fallback cannot apply ignore files. With git, it also searches files git tracks even though `.gitignore` lists them, which `rg` skips. The first search that falls back in a workspace logs one debug message saying so. An explicitly named file is searched even when ignored. Searches report output and result caps rather than presenting partial results as complete. A file a search cannot read (with `rg`, a directory too) is skipped, and a note at the end of the result names it and the reason.
+For remote workspaces, use the file tools (`grep`, `find_files`, `read_file`) rather than `cat` through a shell. Install `rg` and `git` in the sandbox image for fast searches; installing `rg` on the agent host does not install it in a remote workspace. For large or generated trees, use Shell with `rg -n 'pattern' path` and cap its output.
+
+Without `rg`, command-capable POSIX workspaces use one in-sandbox git/grep/find command for `grep`, `list_files`, and `search_files` (after an initial `rg` probe).
+
+Filesystem-only and read-only workspaces use slower, bounded file walks in Python, whose regex engine has no time limit, so they refuse a regex that repeats a repeating group, such as `(a+)+`: that shape can take exponential time. A bounded repeat of a bounded group, such as `([0-9]{1,3}[.]){3}`, is allowed. The check is a heuristic for that shape, not a time limit: other slow shapes, such as overlapping alternatives (`(a|aa)+`) or runs of quantifiers (`a*a*a*a*b`), still run.
+
+The POSIX fallback honors nested `.gitignore` in repositories and search-root `.ignore` with git available; nested `.ignore` rules are not applied by the POSIX fallback, and rg-specific regex features require `rg`. Without git, the POSIX fallback cannot apply ignore files. With git, it also searches files git tracks even though `.gitignore` lists them, which `rg` skips. The first search that falls back in a workspace logs one debug message saying so.
+
+An explicitly named file is searched even when ignored. Searches report output and result caps rather than presenting partial results as complete. A file a search cannot read (with `rg`, a directory too) is skipped, and a note at the end of the result names it and the reason.
 
 Recursive file walks visit each real directory once, so aliases to a directory do not duplicate its contents.
 
@@ -112,12 +138,83 @@ beyond the project directory without spelling out absolute paths. `root_dir`
 must contain the working directory. To work in a subdirectory, set it on the
 workspace instead (`LocalWorkspace('./repo')`).
 
+[`PrefixTools`](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) renames the tools so the model can tell two
+`FileSystem`s apart (`FileSystem().prefix_tools('wiki')` offers `wiki_read_file`), but it
+doesn't scope them to a folder. Every `FileSystem` in a run works in the run's one
+workspace, under a `root_dir` that contains its working directory, so two prefixed
+`FileSystem`s reach the same files.
+
 `list_directory`, `find_files`, `search_files`, `list_files`, and `grep` return
 paths relative to the working directory, even when searching a subdirectory.
 These paths can be passed directly to read/write tools. Files outside the
 working directory but inside `root_dir` use `..` components. Containment,
 access patterns, and event paths retain their `root_dir` basis, as does
 `search_files`'s `include_glob` filter.
+
+`include_glob` is matched with `fnmatch`, where `*` also spans `/`, so `src/*.py` covers subdirectories of `src` too. With `rg`, a glob without a `/` matches file names at any depth, and a glob using syntax only `rg` has (`**`, `{a,b}`, `!`, a leading `/`) is passed to `rg --glob`.
+
+### Tool kinds
+
+Each tool declares a [tool kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts) in the `file_system`
+namespace, named after the tool: `read_file` has the kind
+`file_system.read_file`, exported as `READ_FILE_KIND`, and likewise
+`WRITE_FILE_KIND`, `EDIT_FILE_KIND`, `LIST_DIRECTORY_KIND`, `SEARCH_FILES_KIND`,
+`FIND_FILES_KIND`, `CREATE_DIRECTORY_KIND`, `FILE_INFO_KIND`, `LIST_FILES_KIND`,
+and `GREP_KIND`. The kind is part of the tool's definition rather than its name,
+so another capability or a history processor can recognize these tools by kind
+instead of comparing tool names. Each kind declares the shape of its tool's
+arguments (`ReadFileArgs`, `WriteFileArgs`, and so on), and a call whose
+arguments fit it is promoted to a typed part (`ReadFileCallPart`,
+`WriteFileCallPart`, and so on) in a run's messages and in a loaded history,
+with the validated arguments as `typed_args`:
+
+```python
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai_harness.filesystem import ReadFileCallPart
+
+
+def paths_read(messages: list[ModelMessage]) -> list[str]:
+    return [
+        args['path']
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ReadFileCallPart) and (args := part.typed_args) is not None
+    ]
+```
+
+`read_file` also has a typed return part, `ReadFileReturnPart`, for a return
+whose outcome is `'success'`, which includes a `Path not found: <path>` result and the
+description `read_file` returns for a file over 64 MiB, so neither means the file's content was read.
+Its `content` is the text with its header, or `[header, BinaryContent]` for an
+image or PDF. The kind declares no content shape, since `ToolKind` takes a class
+and not a union, so `typed_content` is untyped. The other tools return text
+written for the model rather than a format to parse, so their returns stay plain
+`ToolReturnPart`s that carry the kind as `tool_kind`; the [events](#events)
+carry their outcomes as structured data.
+
+### Capabilities that step aside for `read_file`
+
+Some capabilities have a reader of their own for files they keep in the workspace. When those files
+are in the run's workspace, the reader is marked with
+[`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind) set to `READ_FILE_KIND`,
+so it is left out of every run step that has `read_file`. The instructions name no reader, so
+they stay the same either way; the spill marker and `Memory`'s per-call notices name `read_file` as it
+is called in the run:
+
+- `ToolOutputLimits`' `read_tool_result`, with the default `WorkspaceStore()`. Reads of its spill
+  files through `read_file` are not reduced again.
+- `Memory`'s `read_memory`, with a `FileStore` that has no `workspace=` of its own and a relative
+  `directory` inside the working directory.
+- `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
+
+The dedicated reader steps aside for a renamed `FileSystem` too, such as one under `PrefixTools`.
+
+The capability decides from its own configuration, not from `FileSystem`'s access rules. With
+`denied_patterns` that cover those files (`.pydantic-ai-harness/` for spills, the memory directory,
+the asset roots), or `allowed_patterns` that leave them out, the dedicated reader is still left out
+and `read_file` refuses the files. To keep the dedicated reader, give `ToolOutputLimits` or `Memory` a store with a workspace of its
+own, and for `RepoContext` keep the asset roots readable or use an asset root outside the working
+directory.
 
 ## Events
 
@@ -127,46 +224,45 @@ lands, without parsing tool arguments:
 
 | Event | Dispatch | Operation | Payload |
 |---|---|---|---|
-| `FileChangeRequestEvent` | immediate | `write_file`, `edit_file`, `create_directory` | `path`, `root_dir`, `operation`, `diff`, `truncated`; `cancel(reason)` |
+| `FileChangeRequestedEvent` | immediate | `write_file`, `edit_file`, `create_directory` | `path`, `root_dir`, `operation`, `diff`, `truncated`; `cancel(reason)` |
 | `FileReadEvent` | stream | `read_file` | `path`, `root_dir`, `content_hash` |
 | `DirectoryListedEvent` | stream | `list_directory` | `path`, `root_dir`, `entry_count` |
 | `FileWrittenEvent` | stream | `write_file` | `path`, `root_dir`, `content_hash` |
 | `FileEditedEvent` | stream | `edit_file` | a `FileWrittenEvent` plus `diff`, `truncated` |
 | `DirectoryCreatedEvent` | stream | `create_directory` | `path`, `root_dir` |
-| `FilesSearchedEvent` | stream | `search_files`, `find_files`, `list_files`, `grep` | `path`, `root_dir`, `pattern`, `search` (`grep` or `find`), `match_count`, `truncated` |
+| `FilesSearchedEvent` | stream | `search_files`, `find_files`, `list_files`, `grep` | `path`, `root_dir`, `pattern`, `search_kind` (`grep` or `find`), `match_count`, `truncated` |
 
-`FileChangeRequestEvent` is a decision. It fires after the path has passed the
-access checks and, for `write_file` and `edit_file`, after the conflict check,
-so a listener only sees changes that would otherwise go ahead: a denied path,
-a missing parent for `write_file`, a parent that is not a directory, a stale
-`expected_hash` for a file that exists, or a directory that collides with a
-file emits no request, so a listener cannot approve what the policy or the
-filesystem refuses. A
-listener may take a while (a human approving the diff, say), so once the
-request returns the path is resolved and checked again, and a write or edit
-re-reads the file just before writing and checks that it still holds what the
-listener was shown: a file changed in the meantime fails after it was
-announced instead of being overwritten, and an edit does not recreate a file
-deleted in the meantime. This holds the window between the check and the write
-(see [Security model](#security-model)) to what it is without a listener for
-readable targets. For a target the workspace cannot read, an approved write has
-no content guard; passing `expected_hash` instead refuses the write before
-announcement. A listener that calls `cancel(reason)`
-stops the change before it touches the disk, and the model gets the reason as the tool
-result. A listener that raises instead aborts the run, as any raising event
-listener does, and the change is not applied. `diff` is the unified diff from
-the current content to the proposed content: a new file diffs from empty, a
-file the workspace cannot read is announced with the file headers alone and
-`truncated` set, since what it holds cannot be shown, and a `create_directory`
-has no diff. A `create_directory` on a directory that already exists changes
-nothing and emits nothing. The other events are notifications.
+`FileChangeRequestedEvent` is a decision; the other events are notifications.
+
+- **When it fires**: after the path has passed the access checks and, for
+  `write_file` and `edit_file`, after the conflict check. A denied path, a
+  missing parent for `write_file`, a parent that is not a directory, a stale
+  `expected_hash` for a file that exists, or a directory that collides with a
+  file emits no request, so a listener cannot approve what the policy or the
+  filesystem refuses. A `create_directory` on a directory that already exists
+  changes nothing and emits nothing.
+- **Re-check after the listener**: a listener may take a while (a human
+  approving the diff, say), so once the request returns the path is resolved
+  and checked again, and a write or edit re-reads the file just before writing
+  and checks that it still holds what the listener was shown: a file changed in
+  the meantime fails after it was announced instead of being overwritten, and an
+  edit does not recreate a file deleted in the meantime. This holds the window
+  between the check and the write (see [Security model](#security-model)) to
+  what it is without a listener for readable targets. For a target the
+  workspace cannot read, an approved write has no content guard; passing
+  `expected_hash` instead refuses the write before announcement.
+- **Cancel or raise**: a listener that calls `cancel(reason)` stops the change
+  before it touches the disk, and the model gets the reason as the tool result.
+  A listener that raises instead aborts the run, as any raising event listener
+  does, and the change is not applied.
+- **Diff**: `diff` is the unified diff from the current content to the proposed
+  content. A new file diffs from empty, a file the workspace cannot read is
+  announced with the file headers alone and `truncated` set, and a
+  `create_directory` has no diff.
 
 `FileEditedEvent` subclasses `FileWrittenEvent`, so a listener for writes
-receives edits too and can read the `diff` when it has one. Before this
-release `edit_file` emitted a plain `FileWrittenEvent`, so a serialized edit
-had the kind `file_system.file_written`; it is now `file_system.file_edited`.
-A listener registered for `FileWrittenEvent` still receives it; code that
-matches on the serialized kind needs to accept both. Diffs are cut at
+receives edits too and can read the `diff` when it has one. A serialized edit
+has the kind `file_system.file_edited`. Diffs are cut at
 `MAX_EVENT_DIFF_CHARS` (8192) with a `truncated` flag, so a persisted or
 forwarded event stream cannot be flooded by one large write, and a change
 whose text is longer than `MAX_DIFF_SOURCE_CHARS` (32768) on either side is
@@ -176,7 +272,9 @@ exceeds 65536, bounding line-matching work before calling the differ.
 A final line without a newline is marked the way `git diff` marks it, so a
 change to the final newline alone is visible. A `FilesSearchedEvent` counts
 the matches the model received; `truncated` says the search stopped at
-`max_search_results` or `max_find_results`.
+`max_search_results` or `max_find_results`. `search` is the deprecated name of
+`search_kind`: it still reads, with a warning, and a payload saved under it
+still loads.
 
 `path` is the normalized location relative to `root_dir`, never an absolute
 path, so it is safe to echo to the model or a UI. `root_dir` is the emitting
@@ -195,21 +293,21 @@ its entries are. A denied or failed operation emits no event, including a
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import FileSystem
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent
+from pydantic_ai_harness.filesystem import FileChangeRequestedEvent
 
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[LocalWorkspace('.'), FileSystem()])
 
-@agent.on_event(FileChangeRequestEvent)
+@agent.on_event(FileChangeRequestedEvent)
 async def hold_migrations(ctx, event):
     if event.path.startswith('migrations/'):
         event.cancel('migrations need a human')
 ```
 
 Other capabilities subscribe with `@on_event` on a method, the way
-`RepoContext` follows `FileReadEvent` and `DirectoryListedEvent`. A host with
-its own file tools can emit the same event types by importing them from
-`pydantic_ai_harness.filesystem`, which lets subscribers react without
-depending on tool names or raw model arguments.
+`RepoContext` follows `FileReadEvent`, `DirectoryListedEvent` and
+`FileWrittenEvent`. A host with its own file tools can emit the same event types
+by importing them from `pydantic_ai_harness.filesystem`, which lets subscribers
+react without depending on tool names or raw model arguments.
 
 `FileSystem` emits no OpenTelemetry spans of its own: the core tool-call span
 already records each operation and its result, and the events above carry the
@@ -218,7 +316,7 @@ diff a trace would not.
 Tool errors the model can correct -- a missing file, a denied path, a stale
 edit, a directory that collides with an existing file, an invalid glob pattern,
 a path name rejected by Windows, a path name the filesystem cannot encode, an
-over-long path name, a symlink loop -- are surfaced as
+over-long path name, a symlink loop, a FIFO or other special file -- are surfaced as
 [`ModelRetry`](https://ai.pydantic.dev/agents/#reflection-and-self-correction),
 so the agent gets the error message back and can adjust rather than aborting
 the run. Failures the model can do nothing about, such as a full disk or a
@@ -236,7 +334,9 @@ applies the same rule to absolute symlink targets.
   writing it is rejected, and the directory walkers don't descend into it.
   Patterns match the path relative to `root_dir`; `read_only_patterns` and
   `denied_patterns` also match a symlink's target, so a link to `.env` is
-  read-only like `.env` itself. `root_dir='/'` turns containment off; the
+  read-only like `.env` itself. Denied and read-only patterns ignore case, so
+  `.GIT/config` cannot get past `**/.git` on a case-insensitive filesystem.
+  `root_dir='/'` turns containment off; the
   patterns still apply, and with no patterns set as well the boundary check is
   off entirely.
 - **Symlinks need the workspace's `realpath`.** Local and command-running
@@ -269,17 +369,23 @@ applies the same rule to absolute symlink targets.
   instead, as is any other binary file.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
-  rather than silently overwriting newer content.
-- **Write targets.** `write_file` won't overwrite a directory. With
-  `LocalWorkspace`, reading or writing a FIFO blocks.
+  rather than overwriting newer content.
+- **Text encodings.** Text is read as UTF-8, and a byte that isn't valid UTF-8
+  is shown as U+FFFD. `edit_file` writes such bytes back unchanged when an edit
+  matches only the text around them; `write_file` replaces the whole file with
+  the UTF-8 content it is given.
+- **Write targets.** `write_file` won't overwrite a directory. A FIFO, socket,
+  or device is refused as not a regular file.
+- **Bounded reads.** `read_file` and `file_info` read a file whole, for its line
+  count and hash, so a file over 64 MiB is described by its size instead. A workspace that
+  doesn't report sizes still reads such a file before describing it.
 
 ### Custom storage
 
 To keep files somewhere else, write a `WorkspaceBackend` that implements
 `SupportsFilesystem` (and `SupportsCommands`, for ripgrep searches and
 `file_info` symlink targets) and attach it to the run. Containment, patterns,
-events, and hashes apply unchanged. This replaces the removed
-`FileSystemToolset.open_read` and `open_write` hooks.
+events, and hashes apply unchanged.
 
 To call a tool method yourself, outside a run, pass the workspace:
 
@@ -303,14 +409,15 @@ need `**`.
 | Field | Effect |
 |---|---|
 | `allowed_patterns` | If non-empty, only matching paths are accessible (allowlist). |
-| `denied_patterns` | Matching paths are rejected (denylist), even when `allowed_patterns` matches them. |
-| `read_only_patterns` | Matching paths are read-only: reads succeed, writes are rejected. |
+| `denied_patterns` | Matching paths are rejected (denylist), even when `allowed_patterns` matches them. Matching ignores case. |
+| `read_only_patterns` | Matching paths are read-only: reads succeed, writes are rejected. Matching ignores case. |
 
 A directory pattern also applies to descendants: `denied_patterns=['private']` denies `private/notes.txt` as well as `private`. Read-only directory patterns similarly protect writes below them.
 
-`read_only_patterns` defaults to `**/.git/*`, `**/.env`, `**/.env.*`, `*.pem`, `*.key`,
+`read_only_patterns` defaults to `**/.git`, `**/.env`, `**/.env.*`, `*.pem`, `*.key`,
 `**/secrets*`, and `**/.pydantic-ai-harness/**`, which match at any depth. For example,
-`apps/api/.env` and `sub/.git/config` are protected along with root-level files. Protected paths stay
+`apps/api/.env` and `sub/.git/config` are protected along with root-level files, and so is a
+`.git` file, which a git worktree or submodule has in place of the directory. Protected paths stay
 readable; add a path to `denied_patterns` to make it unreadable. Harness capabilities keep their own files,
 such as spilled tool output and background job status, under `.pydantic-ai-harness/`. Pass an empty list to
 make every path writable.
@@ -339,9 +446,8 @@ that pass the allowed, denied, and dotfile filters remain visible to the
 walkers and directly readable via `read_file`/`file_info`; write operations
 reject them.
 
-> Dotfiles and dot-directories (`.git`, `.env`, `.github`, ...) are skipped by
-> every walker -- `list_directory`, `search_files`, `find_files`, `list_files`, and `grep` --
-> regardless of patterns.
+> Walkers (`list_directory`, `search_files`, `find_files`, `list_files`, and `grep`) skip
+> dotfiles and dot-directories unless the glob names one (`.github/*`) or the search path is one.
 
 ## Configuration
 
@@ -353,7 +459,7 @@ FileSystem(
     allowed_patterns=[],           # allowlist globs (empty = allow all)
     denied_patterns=[],            # denylist globs
     read_only_patterns=[...],      # read-only globs (defaults to secrets/.git)
-    max_read_lines=2000,           # cap for a single read_file
+    max_read_lines=2000,           # most lines one read_file returns, and its default limit
     max_read_chars=50_000,         # cap on a whole read_file result, ending on a complete line
     max_list_results=1000,         # cap for list_directory
     max_search_results=1000,       # cap for search_files and grep
@@ -367,7 +473,7 @@ FileSystem(
 
 The integer limits must be positive; they are validated at construction. A
 walker that hits its cap ends its output with a `[... truncated at N ...]`
-marker, and only when a further entry was actually dropped.
+marker, and only when a further entry was dropped.
 
 ## Agent spec (YAML/JSON)
 
