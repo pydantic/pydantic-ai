@@ -80,7 +80,10 @@ async def test_gemini_batch_request_is_the_generate_content_request_without_secr
     assert json.loads(encoded.body) == snapshot(
         {
             'contents': [{'parts': [{'text': 'Hello'}], 'role': 'user'}],
-            'systemInstruction': {'parts': [{'text': 'Be brief.'}], 'role': 'user'},
+            'systemInstruction': {
+                'parts': [{'text': 'Be brief.'}],
+                'role': 'user',
+            },
             'generationConfig': {
                 'maxOutputTokens': 100,
                 'stopSequences': ['END'],

@@ -816,6 +816,21 @@ support what you send. This is also the escape hatch for custom endpoints and
 provider options not listed in the form. Reset `custom_params` to remove all
 pairs. Do not put credentials here: values are stored as plaintext in SQLite.
 
+Set `base_url` to send a model's requests to your own endpoint, such as a corporate
+proxy, an AI gateway, or a self-hosted server. It must be an `http://` or `https://`
+URL. It is saved per model, so two models of one provider can use different endpoints,
+and it wins over the provider's environment variable, such as `OPENAI_BASE_URL`. It
+sets the provider's own endpoint option: `azure_endpoint` for Azure, `api_base` for
+LiteLLM, and `api_host` for xAI, which takes an `https://HOST[:PORT]` URL. A model on one
+account, `PROVIDER@PROFILE:MODEL`, uses its own `base_url`, else the one saved for
+`PROVIDER@*:MODEL`, else for `PROVIDER:MODEL`, so pooled accounts share it.
+`openai-codex` sends its credentials to that origin, which must be HTTPS. A chain uses
+each of its models' own `base_url`, so chains and plugin models have no Base URL row;
+a provider with no endpoint, such as `sentence-transformers`, fails the turn. CLAI
+versions before this setting ignore it and send to the provider's default endpoint, so
+if you depend on a gateway, also set the provider's environment variable or don't
+downgrade.
+
 For `/set` and `/model add`, Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,
 which core supports but does not currently include in that model catalog. Complete
@@ -1216,13 +1231,25 @@ are read locally and converted to PNG (the first frame of animated images).
 Each image appears as `[image:...]`. Add your question and press Enter, or submit
 the image alone. Delete a marker before submitting to remove that attachment.
 Images in queued follow-ups belong to that follow-up, not the running turn.
-Paste errors appear in the footer without submitting a message or losing the draft.
+Paste errors appear in the footer without submitting a message. They clear after
+30 seconds, even without keyboard input, so the status row can return. Each new
+paste error starts its own 30-second lifetime. Expiry preserves your draft,
+attachments, and queued input; it does not clear a newer notice. Successful
+attachment feedback and unrelated notices do not use this timeout.
 
 Clipboard access uses Pillow's native Windows and macOS backends. On Linux,
-install `wl-clipboard` for Wayland or `xclip` for X11 and run inside that graphical
-session. SSH and headless sessions generally cannot read your local desktop
-clipboard; paste a path to an image accessible on the machine running CLAI instead.
-The clipboard is read only when you invoke the image shortcut.
+Pillow uses `wl-paste` (from `wl-clipboard`) for Wayland or `xclip` for X11.
+If the active desktop backend's binary is missing, CLAI names the package to
+install. It includes an installation command only when it recognizes your
+Linux distribution and finds its package manager; otherwise, use your
+distribution's package manager.
+
+If an installed backend cannot read the clipboard, check access to the graphical
+session or, over SSH, your remote clipboard bridge. Installing the package again
+does not restore that access. A working remote bridge can provide clipboard
+images in a headless session. Alternatively, paste a path to an image accessible
+on the machine running CLAI. The clipboard is read only when you invoke the
+image shortcut.
 
 Use a model that accepts images. CLAI sends the image bytes to the selected model;
 provider-specific size and format restrictions can still apply. Each source file
@@ -2955,7 +2982,10 @@ of the launch directory and its ancestors into the agent's
 instructions, and a subdirectory's as the agent works there; `/plugins disable
 repo_context` turns that off.
 On Windows, CLAI does not provide an agent workspace or repository context yet.
-`coder` clears old tool results as the context fills. The built-in `compaction`
+`coder` clears old tool results as the context fills.
+CLAI sends every tool, MCP tool, and output tool with strict mode off, whatever the
+provider, and relies on argument repair and retries instead. A `NativeOutput` schema keeps
+the provider's mode, as Anthropic and Bedrock only offer native output in strict mode. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
 it summarises older messages before the context runs out and adds `/compact`.
 The built-in `refinement` plugin adds `/refine`: the model reviews its last answer and gives it

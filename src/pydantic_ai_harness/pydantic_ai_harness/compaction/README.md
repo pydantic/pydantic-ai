@@ -14,7 +14,25 @@ alternative: they work with every model and keep the compaction logic (and its c
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/compaction/)
 
-![Compaction runs in the before_model_request hook, between the message history and the model. TieredCompaction runs its tiers in order: DeduplicateFileReads and ClearToolResults cost no model call, SummarizingCompaction makes one. After each tier it re-measures the history and stops as soon as it fits target_tokens, so in this example the summary tier never runs. The shortened history persists into the run.](https://pydantic.dev/docs/ai/img/harness/compaction.svg)
+```mermaid
+flowchart TB
+    accTitle: Compaction: keep the history inside the context window
+    accDescr: When the message history is over target_tokens, TieredCompaction runs in before_model_request, starting with DeduplicateFileReads, which makes no model call. If the history is still over, ClearToolResults runs, also with no model call, and if still over, SummarizingCompaction makes one model call. The history goes to the model once it fits, or after SummarizingCompaction.
+    history["message history<br/>over target_tokens"]
+    subgraph tiers["TieredCompaction()"]
+        dedupe["DeduplicateFileReads<br/>no model call"]:::capability
+        clear["ClearToolResults<br/>no model call"]:::capability
+        summary["SummarizingCompaction<br/>one model call"]:::capability
+    end
+    model(["model"])
+    history -->|"before_model_request"| dedupe
+    dedupe -->|"still over"| clear
+    clear -->|"still over"| summary
+    dedupe -->|"fits"| model
+    clear -->|"fits"| model
+    summary --> model
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## The menu
 
@@ -660,7 +678,7 @@ instead of using `keep_messages`.
 
 The summary is a `CompactionPart` in a `ModelRequest` of its own, after the original system prompts,
 which stay exactly as they were, and the original first user turn when `preserve_first_user_message`
-keeps it. Each provider model receives it as user-voice text inside `<conversation_summary>`, saying a
+keeps it. Each provider model receives it as user-voice text inside `<pyai:conversation_summary>`, saying a
 separate summarization model wrote it (a `FunctionModel` gets the part itself), never as part of the
 system prompt: a model wrote it, from a history that can include tool output. Because it is a compaction
 part, Pydantic AI also treats it as a compaction boundary, which would reset tool discoveries and on-demand
@@ -694,7 +712,7 @@ for a tool call or return, its tool name. Retry feedback, the correction a rejec
 got, is a `role="retry_feedback"` element carrying the retry's `cause` (and, for a tool call, its tool
 name), so the summary records the correction rather than the rejected call as something that happened;
 feedback that answers no tool call is shown as the model saw it. Content that looks like the transcript's
-own tags or a framing tag Pydantic AI writes (`<system>`, `<context>`, `<tool_result>` and the rest), in
+own tags or a framing tag Pydantic AI writes (`<system>`, `<pyai:context>`, `<pyai:tool_result>` and the rest), in
 any case or spacing, is escaped, so a tool return stays inside its own message and can't end the
 transcript early. Each tool return and retry feedback is capped, after that escaping, at
 `tool_return_max_chars` (default 500) characters using the same explicit truncation marker as kept user

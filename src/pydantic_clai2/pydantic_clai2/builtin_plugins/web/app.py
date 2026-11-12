@@ -702,7 +702,7 @@ def _tasks(app: FastAPI, service: WebService) -> None:
 
     @app.get('/api/tasks/{task_id}')
     async def task(task_id: str) -> TaskTranscript:
-        return _run(lambda: service.task_transcript(task_id))
+        return await _wait(service.task_transcript(task_id))
 
     # Before the action route, which would otherwise take `steer` and `prompt` for actions.
     @app.post('/api/tasks/{task_id}/steer')

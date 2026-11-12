@@ -1173,6 +1173,7 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-4-argon',
                         'google-cloud:gemini-4-carbon',
                         'google-cloud:gemini-4-hydrogen',
+                        'google-decisions:gemini-decision-1',
                         'google:gemini-3-pro-image',
                         'google:gemini-3.1-flash-image',
                         'google:gemini-3.1-flash-lite',

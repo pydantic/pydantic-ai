@@ -11,7 +11,21 @@ description: "Let a Pydantic AI agent call its tools from one sandboxed Python s
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![Two lanes compare the same task. With tool calling, the model makes three requests: it calls list_items, then get_item ten times, then answers, and every tool result is sent back to the model on each later request. With Code Mode, the model makes two requests: its first writes one run_code program, which runs in the Monty sandbox, calls list_items and then get_item ten times in parallel, filters the items in Python, and returns only the names that match; the second request answers.](../img/harness/code-mode.svg)
+```mermaid
+sequenceDiagram
+    accTitle: Code Mode: one program instead of a tool call per step
+    accDescr: The model sends one run_code program to the CodeMode capability, which runs it in the Monty sandbox. The program calls list_items on your tools and gets 10 ids, then calls get_item 10 times in parallel and gets 10 full items. It filters them in Python, the 10 items stay in the sandbox, and only the 3 matching names go back to the model.
+    participant model
+    participant cap as CodeMode()<br/>Monty sandbox
+    participant tools as your tools
+    model->>cap: run_code,<br/>one program
+    cap->>tools: list_items
+    tools-->>cap: 10 ids
+    cap->>tools: get_item x 10,<br/>in parallel
+    tools-->>cap: 10 full items
+    Note over cap: filters in Python,<br/>the 10 items stay here
+    cap-->>model: only the 3<br/>matching names
+```
 
 ## The problem
 
@@ -197,6 +211,8 @@ Reserve `print()` for supplementary logging: printed text is surfaced separately
 | Print output with a multimodal final expression | List with printed text followed by native multimodal content |
 
 When a nested tool returns a [`ToolReturn`](../tools-advanced.md#advanced-tool-returns), the snippet receives its `return_value`. Its `content`, such as a screenshot, never enters the sandbox: it is sent to the model alongside the `run_code` result, in call order, just as it would be for a direct tool call.
+
+A nested tool that raises [`ToolFailed`](../tools-advanced.md#tool-failed) the snippet does not catch ends `run_code` with a failed tool result instead of a retry, as when the model calls that tool directly. The result is the tool's message, after any printed output and followed by a summary of the other nested calls when the snippet made any, and does not spend `run_code`'s retries. A hook on the nested tool receives the exception the tool raised. The `ToolFailed` that `run_code` raises is a new one carrying that extra text, with the tool's exception as its `__cause__`. A hook around `run_code` that needs a `ToolFailed` subclass and its attributes should walk the `__cause__` chain, which is one step longer than for a direct call. A nested `ModelRetry` the snippet does not catch is still a retry.
 
 Printed output is limited to 10 MiB. Exceeding the limit makes `run_code` return a model retry.
 

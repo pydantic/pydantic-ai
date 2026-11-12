@@ -42,6 +42,7 @@ from pydantic_clai2.models.profiles import parse_model
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
 from pydantic_clai2.runtime.session import ModelDefaults, SessionModels, resolve_model_name, supports_local_workspace
+from pydantic_clai2.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_clai2.runtime.tasks import REVIEW_AGENT_NAME, review_workspace
 from pydantic_clai2.ui.menus.field_menu import first_error
 from pydantic_clai2.ui.rendering import theme
@@ -84,6 +85,8 @@ class DelegateModel(BaseModel):
         from pydantic_clai2.models.model_settings import ModelSettingsForm
 
         ModelSettingsForm.model_validate(value)
+        if 'base_url' in value:
+            raise ValueError('Set base_url in /model settings, where the model is built with it.')
         return value
 
     @model_serializer(mode='plain')
@@ -460,7 +463,11 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
                         'Review the code or changes described in the task. '
                         'Return actionable findings with file paths.'
                     ),
-                    capabilities=[FileSystem[object](read_only=True), RepoContext[object](walk_up='repo_root')],
+                    capabilities=[
+                        FileSystem[object](read_only=True),
+                        RepoContext[object](walk_up='repo_root'),
+                        NON_STRICT_SCHEMAS,
+                    ],
                 )
                 agents.append(SubAgent(reviewer, read_only=True, resumable=False, can_ask_questions=False))
             models: dict[str, ModelOption] = {

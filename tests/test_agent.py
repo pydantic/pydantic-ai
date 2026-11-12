@@ -2020,7 +2020,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
-                usage=RequestUsage(input_tokens=80, output_tokens=5),
+                usage=RequestUsage(input_tokens=82, output_tokens=5),
                 model_name='function:call_tool:',
                 model_id='function:function:call_tool:',
                 timestamp=IsDatetime(),
@@ -3183,7 +3183,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=91, output_tokens=12),
+                usage=RequestUsage(input_tokens=93, output_tokens=12),
                 model_name='function:return_city_location:',
                 model_id='function:function:return_city_location:',
                 timestamp=IsDatetime(),
@@ -3265,7 +3265,7 @@ def test_prompted_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=RequestUsage(input_tokens=80, output_tokens=11),
+                usage=RequestUsage(input_tokens=82, output_tokens=11),
                 model_name='function:call_tool:',
                 model_id='function:function:call_tool:',
                 timestamp=IsDatetime(),
@@ -13792,7 +13792,7 @@ async def test_agent_allows_none_output_validator_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
-                usage=RequestUsage(input_tokens=75, output_tokens=1),
+                usage=RequestUsage(input_tokens=77, output_tokens=1),
                 model_name='function:model_then_text:',
                 model_id='function:function:model_then_text:',
                 timestamp=IsNow(tz=UTC),
