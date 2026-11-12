@@ -295,7 +295,7 @@ interactions:
                   additionalProperties: false
                   description: |-
                     A rectangle on the screenshot, from its top left corner to its bottom right one.
-                    
+
                     `right` and `bottom` are just outside it: `left=0, right=10` is 10 pixels wide.
                   properties:
                     left:
@@ -372,7 +372,7 @@ interactions:
                       default: []
                       description: |-
                         Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`.
-                        
+
                         `shift` scrolls sideways in some applications.
                       items:
                         type: string
@@ -385,7 +385,7 @@ interactions:
                   additionalProperties: false
                   description: |-
                     Type text at the keyboard focus. Use `keypress` for shortcuts and special keys.
-                    
+
                     `\n` presses Enter and `\t` presses Tab. Other control characters, including `\r`, are refused when the action
                     is validated, so every backend types the same keys.
                   properties:
@@ -803,7 +803,7 @@ interactions:
                   additionalProperties: false
                   description: |-
                     A rectangle on the screenshot, from its top left corner to its bottom right one.
-                    
+
                     `right` and `bottom` are just outside it: `left=0, right=10` is 10 pixels wide.
                   properties:
                     left:
@@ -880,7 +880,7 @@ interactions:
                       default: []
                       description: |-
                         Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`.
-                        
+
                         `shift` scrolls sideways in some applications.
                       items:
                         type: string
@@ -893,7 +893,7 @@ interactions:
                   additionalProperties: false
                   description: |-
                     Type text at the keyboard focus. Use `keypress` for shortcuts and special keys.
-                    
+
                     `\n` presses Enter and `\t` presses Tab. Other control characters, including `\r`, are refused when the action
                     is validated, so every backend types the same keys.
                   properties:
@@ -1343,7 +1343,7 @@ interactions:
                   additionalProperties: false
                   description: |-
                     A rectangle on the screenshot, from its top left corner to its bottom right one.
-                    
+
                     `right` and `bottom` are just outside it: `left=0, right=10` is 10 pixels wide.
                   properties:
                     left:
@@ -1420,7 +1420,7 @@ interactions:
                       default: []
                       description: |-
                         Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`.
-                        
+
                         `shift` scrolls sideways in some applications.
                       items:
                         type: string
@@ -1433,7 +1433,7 @@ interactions:
                   additionalProperties: false
                   description: |-
                     Type text at the keyboard focus. Use `keypress` for shortcuts and special keys.
-                    
+
                     `\n` presses Enter and `\t` presses Tab. Other control characters, including `\r`, are refused when the action
                     is validated, so every backend types the same keys.
                   properties:

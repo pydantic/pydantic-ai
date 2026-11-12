@@ -119,6 +119,11 @@ async def test_the_display_waits_for_the_window_manager(docker: FakeDocker, cont
         f'[ "$(wc -l < {bin_dir}/xprop-probes)" -ge 2 ] && echo "_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x1"\n'
     )
     (bin_dir / 'xprop').chmod(0o755)
+    # A window manager keeps running, so the wait doesn't end early: this one runs until it has been seen.
+    (bin_dir / 'fluxbox').write_text(
+        f'#!/bin/sh\ni=0; until [ "$(cat {bin_dir}/xprop-probes 2>/dev/null | wc -l)" -ge 2 ] || [ $i -ge 100 ]; '
+        'do sleep 0.1; i=$((i+1)); done\n'
+    )
 
     await _screen(_desktop(container_dir, image='my-desktop')).display_size()
     assert (bin_dir / 'xprop-probes').read_text().splitlines() == ['probe', 'probe']
