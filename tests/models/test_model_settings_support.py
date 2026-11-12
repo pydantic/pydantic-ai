@@ -113,6 +113,7 @@ with try_import() as google_available:
     from google.genai.types import HttpRetryOptions
 
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_decisions import GoogleDecisionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as groq_available:
@@ -709,6 +710,10 @@ def _google(client: httpx2.AsyncClient) -> Model:
     return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _google_decisions(client: httpx2.AsyncClient) -> Model:
+    return GoogleDecisionsModel('gemini-decision-1', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
+
+
 def _typesafe(client: httpx2.AsyncClient) -> Model:
     return TypeSafeModel('jev-latest', provider=TypeSafeProvider(api_key=PROBE_KEY, http_client=client))
 
@@ -790,6 +795,13 @@ CASES = [
         ('OpenAI Decisions',),
         decision_probe(_openai_decisions),
         _needs(openai_available, 'openai'),
+        DECISION_HOLDS_WITHOUT_SENDING,
+    ),
+    Case(
+        'GoogleDecisionsModel',
+        ('Google Decisions',),
+        decision_probe(_google_decisions),
+        _needs(google_available, 'google'),
         DECISION_HOLDS_WITHOUT_SENDING,
     ),
 ]
@@ -1100,6 +1112,16 @@ RETRY_CASES = [
         _google_with_client_retries,
         (4, 1, 2),
         status=418,
+        marks=_needs(google_available, 'google'),
+    ),
+    # Like `GoogleModel`: no retries without the provider's `retry_options`, and the SDK's default delays apply.
+    RetryCase(
+        'GoogleDecisionsModel',
+        ('Google Decisions',),
+        _google_decisions,
+        (1, 1, 2),
+        decision=True,
+        sdk_patches=(('google.genai._api_client._RETRY_MAX_DELAY', 0.001),),
         marks=_needs(google_available, 'google'),
     ),
     RetryCase('MistralModel', ('Mistral',), _mistral, (1, 1, 1), marks=_needs(mistral_available, 'mistral')),
