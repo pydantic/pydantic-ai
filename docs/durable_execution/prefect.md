@@ -279,7 +279,8 @@ their Prefect task, so `metadata={'prefect': False}` on an MCP tool raises a `Us
 
 To keep a tool out of its task on any engine, set the engine-neutral
 [`metadata={'durable': False}`](overview.md#running-a-tool-outside-the-durable-unit) instead. A `'prefect'`
-key on the same tool wins.
+key on the same tool wins. The deprecated `PrefectAgent` doesn't read `'durable'` on the tools it wraps, so use
+`'prefect': False` there.
 
 ### Streaming
 
