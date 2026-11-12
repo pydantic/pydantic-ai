@@ -8612,8 +8612,8 @@ def _map_computer_call_output(
             'detail': 'original',  # pyright: ignore[reportAssignmentType]
         },
     }
-    # Read from the stored details as the approval gate reads them: a restored call whose arguments didn't validate
-    # is a plain `ToolCallPart`, and may still have run, approved with corrected arguments.
+    # Read from the stored details, as the approval gate does: a restored call whose arguments didn't validate is a
+    # plain `ToolCallPart`, and may still have run with corrected arguments.
     if computer_return and call is not None and (checks := _safety_checks(call.provider_details)):
         output['acknowledged_safety_checks'] = [
             responses.response_input_param.ComputerCallOutputAcknowledgedSafetyCheck(
