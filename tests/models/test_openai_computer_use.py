@@ -682,7 +682,7 @@ def _is_a_valid_png(data_uri: str) -> bool:
 
 
 def _computer_history(
-    call_args: dict[str, Any] | str, item: dict[str, Any], result: ToolReturnPart
+    call_args: dict[str, Any] | str, item: dict[str, Any], result: ToolReturnPart, **details: Any
 ) -> list[ModelMessage]:
     call = ToolCallPart(
         'computer',
@@ -690,7 +690,7 @@ def _computer_history(
         tool_call_id='call_1',
         tool_kind=COMPUTER_KIND.id,
         provider_name='openai',
-        provider_details={'computer_call': item},
+        provider_details={'computer_call': item, **details},
     )
     return [
         ModelRequest.user_text_prompt('Go.'),
@@ -756,8 +756,10 @@ async def test_a_pixel_scroll_that_ran_says_how_it_ran_as_wheel_clicks(
     result = ToolReturnPart(
         'computer', [summary, _SCREEN], tool_call_id='call_1', metadata=metadata, tool_kind=COMPUTER_KIND.id
     )
-    tool_actions = [mapped for action in actions for mapped in _map_computer_action(action)]
-    history = _computer_history({'actions': tool_actions}, item, result)
+    mapped = [_map_computer_action(action) for action in actions]
+    tool_actions = [tool_action for tool_actions in mapped for tool_action in tool_actions]
+    counts = [len(tool_actions) for tool_actions in mapped]
+    history = _computer_history({'actions': tool_actions}, item, result, computer_action_counts=counts)
     computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
     await model.request(
         history,
@@ -770,6 +772,46 @@ async def test_a_pixel_scroll_that_ran_says_how_it_ran_as_wheel_clicks(
         'role': 'user',
         'content': f'<tool_result tool_name="computer" tool_call_id="call_1">{summary}{notes}</tool_result>',
     }
+
+
+@pytest.mark.parametrize(
+    'counts, notes',
+    [
+        # Mapped by an earlier release at another number of pixels per click: described as it ran.
+        pytest.param([1], ' scroll_y=340 ran as 5 wheel clicks of about 100 pixels each.', id='kept'),
+        # Such as a history a UI rebuilt without them.
+        pytest.param(None, '', id='missing'),
+        pytest.param([2], '', id='not-matching-its-actions'),
+    ],
+)
+async def test_a_pixel_scroll_note_reads_the_clicks_by_the_counts_kept_on_the_call(
+    allow_model_requests: None, counts: list[int] | None, notes: str
+) -> None:
+    client = MockOpenAIResponses.create_mock(_done())
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    item = {**_COMPUTER_ITEM, 'actions': [{'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': 340}]}
+    scroll: dict[str, Any] = {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 5, 'modifiers': []}
+    result = ToolReturnPart(
+        'computer',
+        ['Ran 1 action.', _SCREEN],
+        tool_call_id='call_1',
+        metadata={'performed': 1},
+        tool_kind=COMPUTER_KIND.id,
+    )
+    history = _computer_history({'actions': [scroll]}, item, result, computer_action_counts=counts)
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    await model.request(
+        history,
+        None,
+        ModelRequestParameters(function_tools=[computer], native_tools=[COMPUTER_TOOL], allow_text_output=True),
+    )
+
+    (request,) = get_mock_responses_kwargs(client)
+    # A call that ran in full needs no text beside its screenshot, unless a note says how it ran.
+    texts = [item['content'] for item in request['input'] if item.get('role') == 'user'][1:]
+    assert texts == (
+        [f'<tool_result tool_name="computer" tool_call_id="call_1">Ran 1 action.{notes}</tool_result>'] if notes else []
+    )
 
 
 @pytest.mark.parametrize('native', [True, False], ids=['native', 'opted-out-since'])
