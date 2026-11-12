@@ -364,12 +364,12 @@ Every other failure fails the job, including a rejected key, a provider outage, 
 invalid answer. A run the other account also refuses fails the job. A fallback run gets
 only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only, so each Z.AI run
 sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
-`compaction` and `summary` agents to its model. Its environment holds only that account's key. The job log names the
+`compaction` and `summary` agents to its model. Its environment holds no provider key but that account's. The job log names the
 model and the plan that served the run. When a run's process fails, the job log names that run's model, its plan, and the
 `type` and `status` of its stream's last `error` event. It also names the provider's `error.code` from that event's
-response body, such as Z.AI's `1302` request-rate limit or `1305` overload, which OpenCode both types
+response body, such as Z.AI's `1302` request-rate limit or `1305` overload, both of which OpenCode types
 `provider.rate-limit`. It prints a type only when the type is shaped like OpenCode's own, such as `provider.auth`. It
-prints a code only when the code is all digits. It never prints the error message or the rest of the response body,
+prints a code only when the code is one to six digits. It never prints the error message or the rest of the response body,
 which can repeat the provider's response. When `PR Review Checks` or threat detection rejects a run's stream or
 answer, the job log names the reason: a fixed message from `final_text` in
 `.github/scripts/douwebot_opencode_result.py`, the sorted validation error types, or the exception's class name. It

@@ -22,7 +22,7 @@ _EVENT = TypeAdapter(dict[str, object])
 # The shape of every error type OpenCode 2.2.5 sets, such as `provider.auth` or `unknown`.
 ERROR_TYPE = re.compile(r'[a-z][a-z.-]*')
 # The shape of a provider's own error code, such as Z.AI's `1302` request-rate limit or `1305` overload.
-PROVIDER_CODE = re.compile(r'[0-9]+')
+PROVIDER_CODE = re.compile(r'[0-9]{1,6}')
 LOGFIRE_URL = 'https://logfire-api.pydantic.dev'
 
 
@@ -172,8 +172,8 @@ def run_with_fallback(
     its job matrix, picks the account tried first: the primary when the sum is even, the backup when it is odd.
     `launch` runs the command in the environment it is given and writes the event stream to the stream it is given,
     which `output` holds after each run. Each run gets a config that allows only its provider,
-    and an environment that holds only that account's key. A run whose process fails prints its model and OpenCode
-    error type. Each run appends an `Attempt` to `attempts`, so a caller can report a chain that raised.
+    and an environment whose only provider key is that account's. A run whose process fails prints its model and
+    OpenCode error type. Each run appends an `Attempt` to `attempts`, so a caller can report a chain that raised.
 
     With `LOGFIRE_TOKEN` set, OpenCode exports its spans and logs to Logfire over OTLP/HTTP. Their resource attributes
     name the repository, the workflow run, its attempt and job, then `attributes`, then the run's plan and its place in

@@ -494,6 +494,7 @@ def test_go_failure_stays_on_go(
         ),
         pytest.param(zai_error('unknown', 1305), 'error type unknown, status 429, code 1305', id='numeric-code'),
         pytest.param(zai_error('unknown', '1302: sk-key'), 'error type unknown, status 429', id='code-not-all-digits'),
+        pytest.param(zai_error('unknown', '1302130213'), 'error type unknown, status 429', id='code-too-long'),
         pytest.param(zai_error('unknown', True), 'error type unknown, status 429', id='code-not-a-number'),
         pytest.param(
             {'type': 'unknown', 'status': 429, 'response': {'body': 'code 1302'}},

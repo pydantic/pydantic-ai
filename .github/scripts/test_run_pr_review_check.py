@@ -504,6 +504,23 @@ def test_cancelled_review_exports_its_span(
     }
 
 
+def test_review_that_fails_before_opencode_runs_exports_its_span(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[dict[str, object]]
+) -> None:
+    """A review its checkout rejects never starts OpenCode; its span still says it failed, and names no plan."""
+    _fake_opencode(tmp_path, monkeypatch, 'exit 1')
+    monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
+    (tmp_path / 'workspace' / 'pr-head' / 'escape').symlink_to(tmp_path)
+    with pytest.raises(ValueError, match='Symlink escapes review checkout'):
+        run_pr_review_check.main()
+    [span] = exported
+    assert _span_attributes(span) == {
+        **REVIEW_ATTRIBUTES,
+        'pr_review_checks.outcome': 'FAILED',
+        'pr_review_checks.exception': 'ValueError',
+    }
+
+
 def test_complete_review_keeps_the_models_outcome(tmp_path: Path) -> None:
     """A review that finished under its step budget reports what the model found."""
     result, private_report = check_result(
