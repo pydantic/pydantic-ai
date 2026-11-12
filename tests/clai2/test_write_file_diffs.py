@@ -5,6 +5,7 @@ import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import anyio
 import pytest
 from rich.console import Console
 from rich.text import Text
@@ -12,7 +13,7 @@ from rich.text import Text
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
+from pydantic_ai_harness.filesystem import FileChangeRequestedEvent, FileSystem
 from pydantic_clai2 import Session, StreamRenderer
 
 
@@ -86,10 +87,10 @@ async def test_unsuccessful_write_does_not_render_diff(tmp_path: Path, conflict:
     path.write_text('old\n')
     agent = Agent(write_model('new\n'), capabilities=[FileSystem()])
 
-    @agent.on_event(FileChangeRequestEvent)
-    async def refuse(ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
+    @agent.on_event(FileChangeRequestedEvent)
+    async def refuse(ctx: RunContext[None], event: FileChangeRequestedEvent) -> None:
         if conflict:
-            path.write_text('external\n')
+            await anyio.to_thread.run_sync(path.write_text, 'external\n')
         else:
             event.cancel('not approved')
 

@@ -301,7 +301,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             models: Optional models the client may switch between with the stable ACP session
                 config option `model`. The first is each session's default. A selection applies as
                 a per-run override (the shared agent is never mutated) and is persisted with the
-                session. Pass `'all'` to offer every model Pydantic AI knows (its default is then
+                session. Pass `'all'` to offer every model `KnownModelName` lists (its default is then
                 the first known model, so the user should pick one). Defaults to `None`,
                 advertising no model config option.
             model_resolver: Optional hook mapping an advertised model id to the `Model` (or model

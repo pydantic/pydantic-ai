@@ -30,7 +30,7 @@ directory are already loaded into your context when they exist; do not search fo
 
 _NESTED_REPO_FILES = """\
 A subdirectory's instruction files are added to your context the first time you
-read or list something in it.
+read, list, write or edit something in it.
 """
 """Only with `RepoContext`'s default `nested_traversal=True, nested_inject='contents'`; a pointer note
 already tells the model to read the file."""

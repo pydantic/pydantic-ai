@@ -6,6 +6,7 @@ from typing import overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -63,8 +64,10 @@ class VercelProvider(_OpenAISDKProvider):
 
         profile = None
 
+        route_profile = special_token_route_profile('vercel', model_name)
+
         if '/' not in model_name:
-            return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+            return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), route_profile)
 
         provider, model_name = model_name.split('/', 1)
         if provider in provider_to_profile:
@@ -72,7 +75,9 @@ class VercelProvider(_OpenAISDKProvider):
 
         # As VercelProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile, route_profile
+        )
 
     @overload
     def __init__(self) -> None: ...
