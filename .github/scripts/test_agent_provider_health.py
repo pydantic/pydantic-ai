@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import re
 import ssl
 import sys
 import threading
@@ -4055,7 +4054,7 @@ def test_each_decision_exports_one_span_with_both_accounts_quota(
     if job == 'agent':
         trace = {'traceId': 'a' * 32, 'parentSpanId': 'b' * 16}
     else:
-        assert re.fullmatch('[0-9a-f]{32}', trace_id)
+        assert len(bytes.fromhex(trace_id)) == 16
         trace = {'traceId': trace_id}
     span = {
         **trace,
