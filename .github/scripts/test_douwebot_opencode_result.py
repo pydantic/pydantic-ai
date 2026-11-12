@@ -76,6 +76,12 @@ def test_fence_with_other_text_still_fails(tmp_path: Path, text: str) -> None:
         review_result(_stream(tmp_path, text))
 
 
+def test_fence_heavy_answer_is_rejected_in_linear_time(tmp_path: Path) -> None:
+    """A model-controlled answer of a million fence characters cannot stall validation."""
+    with pytest.raises(ValidationError):
+        review_result(_stream(tmp_path, '```\n' * 250_000 + 'x'))
+
+
 @pytest.mark.parametrize(
     'events',
     [
