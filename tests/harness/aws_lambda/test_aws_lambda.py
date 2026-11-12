@@ -7,7 +7,7 @@ import gc
 import re
 import threading
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager, suppress
 from typing import Any, assert_type
 
@@ -578,13 +578,15 @@ def _rate_limited(retry_after: float | None) -> ModelHTTPError:
     )
 
 
-def _failed_model_step(error: Exception, **kwargs: Any) -> tuple[Callable[[Exception, int], RetryDecision], Exception]:
+def _failed_model_step(
+    error: Exception, *, step_config: Mapping[str, object] | None = None
+) -> tuple[Callable[[Exception, int], RetryDecision], Exception]:
     """The retry strategy the model step that failed with `error` was given, and the error the SDK hands it."""
 
     def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise error
 
-    agent = Agent(FunctionModel(fail), name='a', capabilities=[AWSLambdaDurability(**kwargs)])
+    agent = Agent(FunctionModel(fail), name='a', capabilities=[AWSLambdaDurability(step_config=step_config)])
     ctx = FakeDurableContext()
     with pytest.raises(ModelAPIError):
         run_durable(lambda: agent.run('go'), context=ctx)
@@ -615,7 +617,7 @@ class TestRetryAfter:
         ],
     )
     def test_retry_waits_the_model_errors_retry_after(
-        self, retry_after: float, step_config: dict[str, Any] | None, delay: int
+        self, retry_after: float, step_config: Mapping[str, object] | None, delay: int
     ) -> None:
         strategy, error = _failed_model_step(_rate_limited(retry_after), step_config=step_config)
 

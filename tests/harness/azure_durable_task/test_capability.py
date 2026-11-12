@@ -7,10 +7,11 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import product
-from typing import Any
+from typing import NotRequired
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
+from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -65,6 +66,16 @@ with try_import() as imports_successful:
     )
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='durabletask not installed')
+
+
+class _RetryPolicyOptions(TypedDict):
+    """The `durabletask.task.RetryPolicy` arguments a test builds its policy from."""
+
+    first_retry_interval: timedelta
+    max_number_of_attempts: int
+    backoff_coefficient: NotRequired[float]
+    max_retry_interval: NotRequired[timedelta]
+    retry_timeout: NotRequired[timedelta]
 
 
 @dataclass
@@ -1085,7 +1096,7 @@ class TestAzureDurableTaskDurability:
     def test_model_retry_after_waits_on_a_durable_timer(
         self,
         durable_worker: InMemoryWorker,
-        policy: dict[str, Any] | None,
+        policy: _RetryPolicyOptions | None,
         answer_on: int | None,
         waits: list[float],
         output: str,
