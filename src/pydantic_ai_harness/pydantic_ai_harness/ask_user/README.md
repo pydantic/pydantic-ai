@@ -181,7 +181,9 @@ makes the wait durable on an engine that supports it:
   an answer sent through a resume token without holding a worker. The same rule applies: return quickly.
   The tool runs in an activity, which can't emit events yet
   ([#7971](https://github.com/pydantic/pydantic-ai/issues/7971)), so `AskUserRequestedEvent` isn't emitted;
-  `AskUserAnsweredEvent` is.
+  `AskUserAnsweredEvent` is. Import the module that defines the agent under
+  `workflow.unsafe.imports_passed_through()`, or the answerer is the workflow sandbox's copy, with its
+  own copies of the clients it uses ([details](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#waiting-for-approvals-and-answers)).
 - On DBOS, Prefect and other durable engines without support for waiting, the engine refuses
   the wait with a `UserError`. A wait in process would not be recorded: a replay would ask the user
   again, could get a different answer than the one the run already acted on and diverge from the

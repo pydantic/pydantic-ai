@@ -234,8 +234,11 @@ async def decide(client: Client, token: str, tool_call_ids: list[str], approved:
     await resolve_external_event(client, token, decision)
 ```
 
-1. Write the token and `requests` to where the approver will see them, such as a database table your admin UI lists, or a Slack message whose buttons carry the token. `ask` runs in a local activity on the worker running the workflow, so it can do I/O, and it gets the run's own context, so `ctx.deps` doesn't have to be serializable. Under the workflow sandbox it's the sandbox's copy of `ask`; see [Waiting for approvals and answers](../durable_execution/temporal.md#waiting-for-approvals-and-answers) for sharing its clients with the worker.
+1. Write the token and `requests` to where the approver will see them, such as a database table your admin UI lists, or a Slack message whose buttons carry the token. `ask` runs in a local activity on the worker running the workflow, so it can do I/O, and it gets the run's own context, so `ctx.deps` doesn't have to be serializable.
 2. Runs in your approval endpoint, with a client connected with [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] to the workflow's namespace.
+
+!!! warning "Import the agent with `imports_passed_through()`"
+    Temporal's workflow sandbox re-imports the workflow's modules, and `ask` comes from the agent the workflow runs. Defined in the workflow module as above, `ask` is the sandbox's copy, with the sandbox's own copies of the clients and state it uses. Define the agent and `ask` in a module of their own, and import it in the workflow module under `workflow.unsafe.imports_passed_through()`, so `ask` uses the worker's clients. See [Waiting for approvals and answers](../durable_execution/temporal.md#waiting-for-approvals-and-answers).
 
 An `ask` that answers in place works the same on Temporal: its answer is recorded, and the workflow continues without waiting. See [Waiting for approvals and answers](../durable_execution/temporal.md#waiting-for-approvals-and-answers) for what the workflow history records.
 

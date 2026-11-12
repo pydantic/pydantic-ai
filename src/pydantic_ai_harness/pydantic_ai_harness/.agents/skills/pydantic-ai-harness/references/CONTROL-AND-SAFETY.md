@@ -590,7 +590,8 @@ print(agent.run_sync('Set up storage').output)
   a local activity whose result the history records, the workflow waits on a condition, and the token is
   resolved with `await pydantic_ai.durable_exec.temporal.resolve_external_event(client, token, payload)`,
   which signals the workflow; the tool runs in an activity, which can't emit events yet (#7971), so
-  `AskUserRequestedEvent` isn't emitted there); on DBOS/Prefect the engine refuses it with `UserError`
+  `AskUserRequestedEvent` isn't emitted there; import the agent's module under
+  `workflow.unsafe.imports_passed_through()`, or the answerer is the sandbox's copy); on DBOS/Prefect the engine refuses it with `UserError`
   (an unrecorded wait could diverge from the journal on replay). Works under `run_stream()` too: the
   tool body defers, so streaming doesn't stop on the call.
 - Three required positional parameters receive `(ctx, request, token)` (`TokenAnswerer[DepsT]`): return the

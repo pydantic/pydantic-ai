@@ -324,11 +324,32 @@ Capabilities that only observe the run are safe to attach per-run: their hooks r
 [`RequestInput`](../capabilities/request-input.md), and Pydantic AI Harness's [`AskUser`](../harness/ask-user.md), get an answer on a deferred tool call without ending the run, through [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event]. Under `TemporalDurability`, the workflow records the wait and holds no worker while it lasts, so a person can take days and a worker restart doesn't lose it. [The same agent on Temporal](../capabilities/request-input.md#the-same-agent-on-temporal) shows an approval flow end to end.
 
 - **`ask` runs in a local activity**, `agent__<name>__external_event_ask`, on the worker running the workflow. It gets the run's own [`RunContext`][pydantic_ai.tools.RunContext], so `deps` don't have to be serializable for it. The history records its result, so a replay doesn't call it again, and an answer it returns in place is reused. It takes the timeouts, retry policy and cancellation type from `activity_config`. Temporal retries it when it fails, so keep it quick and idempotent, for example by keying the message it sends on the token.
-- **`ask` is the workflow's copy of your function.** Unlike a tool, which runs the copy the worker registered, `ask` comes from the agent the workflow runs, so under Temporal's workflow sandbox it belongs to the sandbox's re-import of your module: the module-level clients and state it reads are the sandbox's, not the rest of the worker's. To share them, define `ask` in a module the workflow imports under `workflow.unsafe.imports_passed_through()`.
 - **The token names the workflow**: it's `<workflow ID>:<event key>`, where the event key is a UUID the workflow draws for each wait, so a token for an earlier wait never resolves a later one. The key is in the workflow history and isn't a secret: whoever may signal the workflow can resolve its waits without going through your approval endpoint, so limit who may signal workflows in the namespace, and authorize the approver in your endpoint. Resolve it with [`resolve_external_event(client, token, payload)`][pydantic_ai.durable_exec.temporal.resolve_external_event], or end the wait with [`fail_external_event(client, token, reason)`][pydantic_ai.durable_exec.temporal.fail_external_event]. Both signal the workflow, which doesn't declare the signal: `TemporalDurability` registers a handler for it the first time the workflow waits. Once the wait ended, another resolution has no effect. When the workflow is no longer running, the signal raises Temporal's `RPCError`.
 - **A `timeout` becomes a workflow timer**: when it fires, the wait raises [`ExternalEventError`][pydantic_ai.external_events.ExternalEventError], and `RequestInput` denies the pending calls. Adding or removing a timeout changes the commands the workflow issues, so treat it like any other workflow change that in-flight workflows replay.
 
 Like the agent's other activities, `AgentPlugin`, `PydanticAIPlugin` and `temporal_activities` register the local activity with the worker. Waiting from a tool that runs in an activity isn't possible: the wait has to be recorded by the workflow, so `wait_for_external_event` raises a `UserError` there.
+
+!!! warning "Import the agent with `imports_passed_through()` so `ask` uses the worker's clients"
+    A tool runs the copy of your code that the worker registered, but `ask` (and `AskUser`'s answerer) comes from the agent the workflow runs. Temporal's workflow sandbox re-imports the workflow's modules, so unless the module that defines the agent is passed through, `ask` is the sandbox's copy: the Slack client, database connection pool or other module-level state it uses are the sandbox's own copies, not the ones the rest of the worker set up, and anything they cache is lost when the sandbox is rebuilt. Define the agent and `ask` in their own module, and import it in the workflow module under `workflow.unsafe.imports_passed_through()`:
+
+    ```python {title="support_workflow.py" test="skip" lint="skip"}
+    from temporalio import workflow
+
+    with workflow.unsafe.imports_passed_through():
+        from support_agent import agent  # (1)!
+
+
+    @workflow.defn
+    class SupportWorkflow:
+        @workflow.run
+        async def run(self, prompt: str) -> str:
+            result = await agent.run(prompt)
+            return result.output
+    ```
+
+    1. `support_agent.py` builds the agent with `TemporalDurability()` and `RequestInput(ask)`, and the clients `ask` uses. Passed through, the workflow runs the worker's own module, so `ask` uses the worker's clients and state.
+
+    Running `ask` from the worker's own agent without this step is tracked in [#13227](https://github.com/pydantic/pydantic-ai/issues/13227).
 
 ### Large Payloads
 
