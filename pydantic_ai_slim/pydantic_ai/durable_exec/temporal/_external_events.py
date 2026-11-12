@@ -75,7 +75,8 @@ class _Inbox:
         Temporal delivers a signal that arrived before the handler was registered once it is, so
         registering on the first wait, before `ask` hands the token out, misses none.
         """
-        handler: object = workflow.get_signal_handler(_SIGNAL_NAME)  # pyright: ignore[reportUnknownMemberType]
+        # Temporal types a handler as a bare `Callable`; only whether it is this workflow's inbox matters here.
+        handler: object = workflow.get_signal_handler(_SIGNAL_NAME)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
         if isinstance(handler, cls):
             return handler
         inbox = cls()
