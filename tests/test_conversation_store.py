@@ -1114,6 +1114,15 @@ async def test_the_last_messages_dropped_from_a_run_s_history_after_it_are_kept(
     )
 
 
+async def test_a_summary_put_in_place_of_a_run_s_last_messages_after_it_is_kept_after_them() -> None:
+    result = await Agent(TestModel()).run('hello')
+    result.all_messages()[1:] = [ModelRequest(parts=[UserPromptPart('summary')])]
+
+    assert conversation_view(result.conversation.messages) == snapshot(
+        ['user-prompt: hello', 'text: success (no tool calls)', 'user-prompt: summary']
+    )
+
+
 @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
 async def test_a_trimmed_run_result_dumped_without_its_messages_leaves_out_its_whole_conversation_too() -> None:
     result = await _trimming_agent(_LookUp(calls=3)).run('look it up')
